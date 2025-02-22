@@ -36,3 +36,9 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+data
+chroma_db/
+__pycache__/
+confluence_pages.json
+.ipynb_checkpoints/
+vector_db/

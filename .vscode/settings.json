@@ -3,5 +3,8 @@
     {
       "mode": "auto"
     }
+  ],
+  "python.analysis.extraPaths": [
+    "./apps/confluence-rag/src/utils"
   ]
 }
