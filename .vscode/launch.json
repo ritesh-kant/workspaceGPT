@@ -12,6 +12,17 @@
             "skipFiles": [
                 "<node_internals>/**"
             ],
+            "cwd": "${workspaceFolder}/apps/confluence-extractor",
+            "program": "${workspaceFolder}/apps/confluence-extractor/src/index.js",
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "cleanup",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
             "program": "${workspaceFolder}/apps/confluence-extractor/src/index.js",
             "envFile": "${workspaceFolder}/apps/confluence-extractor/.env"
         }

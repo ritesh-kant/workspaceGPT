@@ -11,7 +11,7 @@
     "env:create": "_make create",
     "env:remove": "_make remove",
     "app:confluence-rag": "pnpm --filter confluence-rag",
-    "app:confluence-extract": "pnpm --filter confluence-extractor",
+    "app:confluence-extractor": "pnpm --filter confluence-extractor",
     "_make": "make -C apps/confluence-rag"
   },
   "devDependencies": {
