@@ -1,7 +1,6 @@
 # loader.py
 from langchain_community.document_loaders import PyMuPDFLoader, UnstructuredMarkdownLoader
 import os
-from pathlib import Path
 
 def load_pdfs(pdf_folder):
     documents = []

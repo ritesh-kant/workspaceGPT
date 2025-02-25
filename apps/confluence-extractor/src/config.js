@@ -11,3 +11,11 @@ export const API_TOKEN = process.env.API_TOKEN;
 export const BASE_URL= process.env.BASE_URL;
 export const MODEL= process.env.MODEL;
 export const API_KEY= process.env.API_KEY;
+
+export const ACTIVE_APP_MODE = process.env.APP_MODE;
+
+export const APP_MODES = {
+    LITE: "LITE",
+    STANDARD: "STANDARD",
+    EXPERT: "EXPERT"
+};

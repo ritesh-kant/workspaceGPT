@@ -7,7 +7,7 @@ export class FolderManager {
         this.paths = {
             confluence: path.resolve(rootDir, "./.data/confluence/pages"),
             output: path.resolve(rootDir, "./.data/confluence/pdfs"),
-            cleanOutput: path.resolve(rootDir, "./.data/confluence/cleanPdfs")
+            cleanOutput: path.resolve(rootDir, "./.data/confluence/mds")
         };
     }
 

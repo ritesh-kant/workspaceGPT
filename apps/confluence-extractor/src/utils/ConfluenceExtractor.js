@@ -26,7 +26,7 @@ export class ConfluenceExtractor {
 
             // Process PDFs
             const paths = this.folderManager.getPaths();
-            await processAllPDFs(pages, paths.cleanOutput);
+            await processAllPDFs(pages, paths.cleanOutput, paths.output);
 
             console.log("✅ Processing completed successfully");
         } catch (error) {
