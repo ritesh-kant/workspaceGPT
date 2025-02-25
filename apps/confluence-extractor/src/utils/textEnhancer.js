@@ -6,10 +6,7 @@ const openai = new OpenAI({
     apiKey: API_KEY
 });
 
-export async function enhanceTextBatch(batch) {
-    const prompt = batch.map(({ filename, text, pageUrl }) => 
-        `File: ${filename}\nText: ${text}\nPage: ${pageUrl}`
-    ).join("\n\n---\n\n");
+export async function enhanceTextBatch(prompt) {
 
     const response = await openai.chat.completions.create({
         model: MODEL,
@@ -20,10 +17,13 @@ export async function enhanceTextBatch(batch) {
             },
             {
                 role: "user",
-                content: `Respond only in markdown format without any additional instructions also do not include the file name in the response, just provide the markdown text and remove emojis if present. If you can't find any relevant text then just give empty markdown:\n\n${prompt}`
+                content: `Respond only in markdown format without any additional instructions also do not include the file name in the response, just provide the markdown text and remove emojis if present. If you can't find any relevant text then just give empty markdown:\n\n${JSON.stringify(prompt)}`
             },
         ],
     });
+    if(response?.error?.code === 429) {
+        throw new Error("OpenAI API rate limit exceeded");
+    }
 
     return response.choices[0].message.content;
 }
