@@ -41,5 +41,5 @@ chroma_db/
 __pycache__/
 confluence_pages.json
 .ipynb_checkpoints/
-vector_db/
+vector_db*/
 apps/confluence-extractor/.batchTrack

@@ -7,8 +7,7 @@ load_dotenv()
 
 # Default to "llama3.2" if MODEL not in .env
 MODEL = os.getenv("MODEL", "llama3.2")
-# Default to "vector_db" if DB_NAME not in .env
-DB_NAME = os.getenv("DB_NAME", "vector_db")
+
 # Default if not in .env
 OLLAMA_API = os.getenv("OLLAMA_API", "http://localhost:11434/api/chat")
 
@@ -29,7 +28,10 @@ APP_MODES = {
 }
 
 # Document source type: "pdf" or "md"
-DOC_SOURCE = "pdf" if ACTIVE_APP_MODE == APP_MODES.LITE else "md"
+DOC_SOURCE = "pdf" if ACTIVE_APP_MODE == APP_MODES["LITE"] else "md"
 
 #  Embedding model based on app mode
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL_"+ACTIVE_APP_MODE)
+
+# Default to "vector_db" if DB_NAME not in .env
+DB_NAME = "vector_db_"+ACTIVE_APP_MODE.lower()
