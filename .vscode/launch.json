@@ -4,7 +4,14 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-
+        {
+            "name": "confluence-rag",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/confluence-rag/src/main.py",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env"
+        },
         {
             "type": "node",
             "request": "launch",
@@ -16,15 +23,5 @@
             "program": "${workspaceFolder}/apps/confluence-extractor/src/index.js",
             "envFile": "${workspaceFolder}/.env"
         },
-        {
-            "type": "node",
-            "request": "launch",
-            "name": "cleanup",
-            "skipFiles": [
-                "<node_internals>/**"
-            ],
-            "program": "${workspaceFolder}/apps/confluence-extractor/src/index.js",
-            "envFile": "${workspaceFolder}/apps/confluence-extractor/.env"
-        }
     ]
 }

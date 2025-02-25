@@ -48,3 +48,6 @@ dependencies:
     - feedparser
     - twilio
     - pydub
+    - "unstructured[md]"
+    - nltk
+    - langchain_ollama
