@@ -4,8 +4,7 @@ from utils.loader import load_documents
 from utils.chunker import chunk_documents
 from utils.embeddings import store_in_db, retrieve_from_db, check_db_exists, load_from_db
 from utils.chain_setup import create_conversational_chain
-import gradio as gr
-import streamlit as st
+from utils.chain_setup import create_streaming_chain
 
 class WorkspaceAssistant:
     def __init__(self):
@@ -44,10 +43,17 @@ class WorkspaceAssistant:
         # Create conversational chain
         self.qa_chain = create_conversational_chain(self.retriever, MODEL)
 
-    def chat(self, question):
-        """Handle chat interactions."""
-        result = self.qa_chain.invoke({"question": question})
-        return result["answer"]
+    def chat(self, question, stream_handler=None):
+        """Handle chat interactions with optional streaming."""
+        if stream_handler:
+            # Create a new chain with streaming enabled
+            streaming_chain = create_streaming_chain(self.retriever, MODEL, [stream_handler])
+            result = streaming_chain.invoke({"question": question})
+            return result["answer"]
+        else:
+            # Use the regular chain for non-streaming responses
+            result = self.qa_chain.invoke({"question": question})
+            return result["answer"]
     
     def new_chat(self):
         """Reset the conversation by creating a new chain with fresh memory."""
