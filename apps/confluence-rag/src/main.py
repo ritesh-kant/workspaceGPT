@@ -5,17 +5,20 @@ from utils.chunker import chunk_documents
 from utils.embeddings import store_in_db, retrieve_from_db, check_db_exists, load_from_db
 from utils.chain_setup import create_conversational_chain
 import gradio as gr
+import streamlit as st
 
 class WorkspaceAssistant:
     def __init__(self):
         self.vectorstore = None
         self.qa_chain = None
+        self.retriever = None
 
     def initialize(self):
         """Initialize the assistant by loading documents and setting up the QA chain."""
         # Check if database already exists
         if check_db_exists(DB_NAME):
             # Load existing database
+            print(f"✅ Found existing FAISS database for {DB_NAME}\n")
             self.vectorstore = load_from_db(DB_NAME)
         else:
             # Determine which folder to use based on DOC_SOURCE
@@ -35,34 +38,27 @@ class WorkspaceAssistant:
             self.vectorstore = store_in_db(chunks, DB_NAME)
         
         # Create retriever from vectorstore
-        retriever = retrieve_from_db(self.vectorstore)
+        self.retriever = retrieve_from_db(self.vectorstore)
 
+        print(f"✅ Created FAISS database for {MODEL} with {DB_NAME} db name.\n")
         # Create conversational chain
-        self.qa_chain = create_conversational_chain(retriever, MODEL)
+        self.qa_chain = create_conversational_chain(self.retriever, MODEL)
 
-    def chat(self, question, history):
+    def chat(self, question):
         """Handle chat interactions."""
-        # if question.lower() in ["hi", "hello"]:
-        #     return "Hi, I am Workspace Assistant. How can I help you?"
-
         result = self.qa_chain.invoke({"question": question})
         return result["answer"]
+    
+    def new_chat(self):
+        """Reset the conversation by creating a new chain with fresh memory."""
+        print("🔄 Starting a new conversation...")
+        self.qa_chain = create_conversational_chain(self.retriever, MODEL)
+        # Return an empty list to clear the chat history
+        return []
 
-def main():
-    # Initialize the assistant
-    assistant = WorkspaceAssistant()
-    try:
-        assistant.initialize()
-    except ValueError as e:
-        print(f"Error: {e}")
-        return
+# def main():
+#     # Initialize the assistant
+  
 
-    # Launch Gradio interface
-    view = gr.ChatInterface(
-        assistant.chat,
-        title="Workspace Assistant",
-        description="Ask questions about your workspace documents",
-    ).launch(inbrowser=True)
-
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

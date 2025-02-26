@@ -19,5 +19,6 @@ def create_conversational_chain(retriever, model):
         
         Answer:"""
     )
+    
     qa_chain = ConversationalRetrievalChain.from_llm(llm=llm, retriever=retriever, memory=memory, combine_docs_chain_kwargs={"prompt": prompt_template})
     return qa_chain

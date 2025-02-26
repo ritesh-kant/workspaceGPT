@@ -13,6 +13,15 @@
             "envFile": "${workspaceFolder}/.env"
         },
         {
+            "request": "launch",
+            "name": "confluence-rag-streamlit",
+            "type": "debugpy",
+            "module": "streamlit",
+            "args": "run ${workspaceFolder}/apps/confluence-rag/src/main.py",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
             "type": "node",
             "request": "launch",
             "name": "confluence",
