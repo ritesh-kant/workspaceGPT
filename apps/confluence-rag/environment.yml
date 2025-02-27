@@ -32,6 +32,7 @@ dependencies:
     - anthropic
     - google-generativeai
     - gradio
+    - streamlit
     - gensim
     - modal
     - ollama
@@ -50,7 +51,7 @@ dependencies:
     - pydub
     - "unstructured[md]"
     - nltk
-    - langchain_ollama
-    - langchain_huggingface
+    - langchain-ollama
+    - langchain-huggingface
     - langgraph 
     - watchdog
