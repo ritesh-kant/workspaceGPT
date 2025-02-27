@@ -6,6 +6,22 @@
 
 Workspace GPT helps your organization work smarter, not harder.
 
+## 🧰 Prerequisites:
+
+Before you begin, ensure you have the following installed:
+
+*   **Node.js:** (v18 or later) - [https://nodejs.org/](https://nodejs.org/)
+*   **pnpm:** (latest version) - [https://pnpm.io/](https://pnpm.io/)
+*   **Python:** (3.10 or later) - [https://www.python.org/](https://www.python.org/)
+*   **Conda:** (latest version) - [https://docs.conda.io/en/latest/](https://docs.conda.io/en/latest/)
+* **Ollama**: (latest version) - [https://ollama.com/](https://ollama.com/)
+
+## 🔹 Supported Data Sources:
+
+*   **Atlassian Confluence:** (SUPPORTED) - Extract data from Confluence spaces and pages.
+*   **Codebase:** (IN PROGRESS) -  Currently working on extracting information directly from code repositories.
+*   **Jira/Azure DevOps:** (TBD) - Support for Jira and Azure DevOps integration is planned for the future.
+
 ## 🔹 Key Features:
 
 -   **Smart Q&A:** Developers can ask natural language questions about technical documentation, codebases, and internal best practices, and receive accurate, context-aware answers.
