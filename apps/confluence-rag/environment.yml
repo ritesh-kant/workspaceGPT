@@ -51,3 +51,6 @@ dependencies:
     - "unstructured[md]"
     - nltk
     - langchain_ollama
+    - langchain_huggingface
+    - langgraph 
+    - watchdog
