@@ -11,6 +11,9 @@ importers:
       prettier:
         specifier: ^3.5.0
         version: 3.5.0
+      shx:
+        specifier: ^0.3.4
+        version: 0.3.4
       turbo:
         specifier: ^2.4.2
         version: 2.4.2

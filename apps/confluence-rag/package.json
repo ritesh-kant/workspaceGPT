@@ -5,9 +5,11 @@
   "scripts": {
     "start": "streamlit run src/chat.py",
     "reset": "shx rm -rf vector_db",
+    "postinstall": "pnpm run env:create",
     "env:create": "conda env create -f environment.yml",
     "env:update": "conda env update -f environment.yml --prune",
-    "env:remove": "conda env remove --name workspacegpt"
+    "env:remove": "conda env remove --name workspacegpt --all",
+    "env:info": "echo 'To activate the environment, run: conda activate workspacegpt'"
   },
   "author": "Ritesh kant",
   "license": "ISC",

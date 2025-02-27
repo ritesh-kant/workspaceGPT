@@ -3,17 +3,23 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "prepare": "ollama pull llama3.2",
-    "build": "turbo run build",
-    "dev": "turbo run dev",
+    "preinstall": "pnpm _env:setup",
+    "postinstall": "pnpm _ollama:setup",
+    "extractor": "pnpm run app:confluence-extractor",
+    "workspaceGPT": "pnpm run app:confluence-rag",
+    "reset:extractor": "shx rm -rf .data",
+    "reset:workspaceGPT": "pnpm run app:confluence-rag reset",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
     "app:confluence-rag": "pnpm --filter confluence-rag",
-    "app:confluence-extractor": "pnpm --filter confluence-extractor"
+    "app:confluence-extractor": "pnpm --filter confluence-extractor",
+    "_ollama:setup": "ollama pull llama3.2",
+    "_env:setup": "shx test -f .env || shx cp .env.example .env"
   },
   "devDependencies": {
     "prettier": "^3.5.0",
+    "shx": "^0.3.4",
     "turbo": "^2.4.2",
     "typescript": "5.7.3"
   },

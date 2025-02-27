@@ -1,10 +1,14 @@
 # Workspace GPT 🧠🚀 (In Development)
 
-**Stop losing time searching for information!** Workspace GPT is an AI-powered knowledge assistant designed to break down data silos and make your organization's collective knowledge instantly accessible. This **Retrieval-Augmented Generation (RAG)** system, powered by the **LLaMA 3.2** model, centralizes information from various sources, allowing your teams to focus on what matters most: building great products.
+**Stop losing time searching for information!** Workspace GPT is an AI-powered knowledge assistant designed to break down data silos and make your organization's collective knowledge instantly accessible **within your own local environment**. This **Retrieval-Augmented Generation (RAG)** system, powered by the **LLaMA 3.2** model, centralizes information from various sources, allowing your teams to focus on what matters most: building great products. **Crucially, all operations are performed locally, ensuring complete data privacy and security.**
 
-**Who is this for?** Workspace GPT is designed for developers, product owners, managers, and anyone in your organization who needs quick access to relevant information.
+**Who is this for?** Workspace GPT is designed for developers, product owners, managers, and anyone in your organization who needs quick access to relevant information **without compromising data privacy**.
 
-Workspace GPT helps your organization work smarter, not harder.
+Workspace GPT helps your organization work smarter, not harder. **All while keeping your data under your control.**
+
+## 🔒 Key Principle: Local-Only & Completely Private
+
+**Workspace GPT is built from the ground up with privacy in mind.**  All data extraction, processing, and querying happen **entirely within your local environment**. No data is ever sent to the internet or any external servers. Your organizational knowledge remains completely private and secure.
 
 ## 🧰 Prerequisites:
 
@@ -14,7 +18,7 @@ Before you begin, ensure you have the following installed:
 *   **pnpm:** (latest version) - [https://pnpm.io/](https://pnpm.io/)
 *   **Python:** (3.10 or later) - [https://www.python.org/](https://www.python.org/)
 *   **Conda:** (latest version) - [https://docs.conda.io/en/latest/](https://docs.conda.io/en/latest/)
-* **Ollama**: (latest version) - [https://ollama.com/](https://ollama.com/)
+*   **Ollama:** (latest version) - [https://ollama.com/](https://ollama.com/)
 
 ## 🔹 Supported Data Sources:
 
@@ -39,101 +43,71 @@ Before you begin, ensure you have the following installed:
         *   "Find all the functions that use the Y class."
         *   "Show me examples of how to use the `calculate_total` function."
         * "Where is the network call defined?"
--   **Secure & Private:** Designed for internal use, ensuring organizational data privacy. All data stays within your organization's infrastructure, and access is controlled via secure authentication. Data is stored in your own vector database, and no data is sent outside.
+-   **Secure & Private:** Designed for internal use, ensuring organizational data privacy. All data stays within your organization's infrastructure, and access is controlled via secure authentication. **All operations occur locally. Data is stored in your own vector database, and no data is ever sent outside your environment.**
 
 ## ⚙️ Installation & Setup:
 
-1.  **Environment Configuration:**
-    *   Copy the `.env.example` file to `.env`:
-        ```bash
-        cp .env.example .env
-        ```
-    *   Open the newly created `.env` file and fill in the necessary details according to your environment and needs.
-    *   **Note:** The `APP_MODE` controls how the app behaves, such as the amount of data extracted from confluence. It can be used for dev/prod/test mode.
-
-2.  **Install Dependencies:**
+1.  **Install Dependencies and Prepare the Environment:**
     *   Navigate to the root directory of the project in your terminal.
     *   Run the following command to install the required packages:
         ```bash
         pnpm install
         ```
 
-3.  **Prepare the Environment:**
-    *   Run the preparation script:
-        ```bash
-        pnpm run prepare
-        ```
-
-4.  **Start the Confluence Extractor Service:**
-    * This step extracts data from your confluence, this is a long running process and can take a while depending on the amount of data you are trying to pull.
-    * This is one time service, no need to rerun it again unless you want to refresh the data.
+2.  **Start the Confluence Extractor Service:**
+    *   This step extracts data from your confluence. This is a long-running process and can take a while, depending on the amount of data you are trying to pull and the `APP_MODE` setting in your `.env` file. **This process happens entirely locally.**
     *   Run the following command to start the Confluence extractor service:
         ```bash
-        pnpm run app:confluence-extractor start
+        pnpm extractor start
         ```
         *   **Note:** The duration of this process will depend on the `APP_MODE` setting in your `.env` file and the size of your Confluence data. The app will try to extract all the pages from confluence and put it in a vector database.
-        *   **Limitations:** The app can only extract content from pages, if you have a lot of attachments, they might not be extracted.
-        * **Confluence Extraction Data**: The max size of the data extracted depends on the `APP_MODE`, if you have a lot of data to extract, consider updating the `.env` file, and check the current limits of your vector database.
-        * **Confluence Data Update**: Data extraction is done once, if you need to refresh it, you have to rerun this command.
+        *   **Limitations:** The app can only extract content from pages. If you have a lot of attachments, they might not be extracted.
+        *   **Confluence Extraction Data:** Use `APP_MODE=LITE` in the .env file if you just want to try out the app; it's faster but might not cover all your needs. For better data extraction, use `APP_MODE=STANDARD` or `APP_MODE=EXPERT`.
+        *   **Confluence Data Update:** Data extraction is done once. If you need to refresh it, you have to run `pnpm reset:extractor`. This will **locally** clean up the database and restart the extraction.
 
-5. **Create Confluence RAG Environment**
-    * Run the following command
-    ```bash
-    pnpm run app:confluence-rag env:create
-    ```
+3.  **Activate conda environment**
 
-6. **Setup Ollama**
-    * Download your model:
-    ```bash
-    ollama pull llama3
-    ```
-    * For more info about how to use ollama, see [https://ollama.com/](https://ollama.com/)
-
-7. **Activate conda environment**
-    * Create a conda environment:
-    ```bash
-    conda create -n workspacegpt python=3.10
-    ```
-     *   Activate the `workspacegpt` Conda environment.
+    *   Activate the `workspacegpt` Conda environment.
         ```bash
         conda activate workspacegpt
         ```
 
-8.  **Start the Confluence RAG Service:**
-    *   Now that the data is extracted, run the service that answers query against it.
+4.  **Start the Confluence RAG Service:**
+    *   Now that the data is extracted, run the service that answers queries against it. **All processing happens locally**.
     *   Run the following command to start the Confluence RAG service:
         ```bash
-        pnpm run app:confluence-rag start
+        pnpm workspaceGPT start
         ```
-        * **Note:** Run this command after each data extraction or if the server crashes.
+        *   **Note:** Run this command after each data extraction or if the server crashes.
 
-9.  **Setup Complete!**
-    *   The RAG application setup is now complete! You are all set to use it.
+5.  **Setup Complete!**
+    *   The RAG application setup is now complete! You are all set to use it **within your local environment**.
     *   **Next time you want to use WorkspaceGPT, simply run:**
         ```bash
-        pnpm run app:confluence-rag start
+        pnpm workspaceGPT start
         ```
-    * If you have any issues, please check the logs in the `logs` folder or contact the development team.
+    *   If you have any issues, please check the logs or contact the development team.
 
 ## 🚀 Future Enhancements:
 
-*   **Support for More Data Sources:**  We plan to add support for extracting data from other platforms like Slack, Google Drive, and more.
+*   **Support for More Data Sources:**  We plan to add support for extracting data from other platforms like Slack, Google Drive, and more. **All these features will be implemented with the same commitment to local operation and privacy.**
 *   **Improved Code Analysis:** Deeper code understanding, including dependency graphs and code smells detection.
 *   **Customizable AI Models:** Allow users to choose and fine-tune their own AI models for specific use cases.
-* **Scheduled Extraction**: Allow user to schedule the extraction of data from their different sources.
+*   **Scheduled Extraction**: Allow users to schedule the extraction of data from their different sources.
 
-* **Near Term**: Support for Github Code
-* **Mid Term**: Support for Google Drive/Slack.
-* **Long Term**: Add a proper UI.
+*   **Near Term:** Support for GitHub Code
+*   **Mid Term:** Support for Google Drive/Slack.
+*   **Long Term:** Add a proper UI.
 
-##🤝 Collaboration
+## 🤝 Collaboration
 
 If you are interested in contributing or have ideas for more features, we welcome your collaboration! Please reach out to us or create a pull request with your proposed changes.
 
 ## 🙏 Acknowledgments
 
-* [Ollama](https://ollama.com/)
+*   [Ollama](https://ollama.com/)
 
 ## ⚠️ Disclaimer
 
-Workspace GPT is currently in active development. Features and functionality may change as the project evolves.
+Workspace GPT is currently in active development. Features and functionality may change as the project evolves. **However, the core commitment to local operation and data privacy will remain a fundamental aspect of the project.**
+
