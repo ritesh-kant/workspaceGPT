@@ -1,6 +1,6 @@
 # embeddings.py
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_core.documents import Document
 from typing import List

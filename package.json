@@ -3,16 +3,14 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
+    "prepare": "ollama pull llama3.2",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
-    "env:create": "_make create",
-    "env:remove": "_make remove",
     "app:confluence-rag": "pnpm --filter confluence-rag",
-    "app:confluence-extractor": "pnpm --filter confluence-extractor",
-    "_make": "make -C apps/confluence-rag"
+    "app:confluence-extractor": "pnpm --filter confluence-extractor"
   },
   "devDependencies": {
     "prettier": "^3.5.0",
