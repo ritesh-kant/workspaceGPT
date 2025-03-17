@@ -5,10 +5,31 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode-extensions",
+                "--disable-extensions"
+            ],
+            "name": "workspacegpt-extension",
+            "outFiles": [
+                "${workspaceFolder}/apps/vscode-extensions/**/*.js"
+            ],
+            "request": "launch",
+            "preLaunchTask": "npm: compile - apps/vscode-extensions",
+            "type": "extensionHost"
+        },
+        {
             "name": "confluence-rag",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/apps/confluence-rag/src/main.py",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "confluence-rag-api",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apps/confluence-rag/src/api.py",
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/.env"
         },

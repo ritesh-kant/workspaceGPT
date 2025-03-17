@@ -8,50 +8,20 @@ dependencies:
   - python-dotenv
   - requests
   - numpy
-  - pandas
-  - scipy
-  - pytorch
-  - jupyterlab
-  - ipywidgets
-  - matplotlib
-  - scikit-learn
-  - chromadb
-  - jupyter-dash
-  - sentencepiece
-  - pyarrow
+  - pydantic
   - faiss-cpu
   - pip:
-    - beautifulsoup4
-    - plotly
-    - bitsandbytes
     - transformers
     - sentence-transformers
-    - datasets
-    - accelerate
-    - openai
-    - anthropic
-    - google-generativeai
-    - gradio
     - streamlit
-    - gensim
-    - modal
-    - ollama
-    - psutil
-    - setuptools
-    - speedtest-cli
     - langchain
     - langchain-core
     - langchain-text-splitters
-    - langchain-openai
-    - langchain-chroma
     - langchain-community
-    - faiss-cpu
-    - feedparser
-    - twilio
-    - pydub
-    - "unstructured[md]"
-    - nltk
     - langchain-ollama
     - langchain-huggingface
-    - langgraph 
     - watchdog
+    - fastapi
+    - uvicorn
+    - asyncio
+    - starlette

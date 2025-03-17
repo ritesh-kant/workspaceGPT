@@ -1,0 +1,79 @@
+{
+  "name": "workspacegpt-extension",
+  "displayName": "WorkspaceGPT Extension",
+  "description": "VS Code extension that integrates with RAG system via API",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "workspacegpt.ask",
+        "title": "Ask WorkspaceGPT"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "workspacegpt.ask",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "workspacegpt-sidebar",
+          "title": "WorkspaceGPT",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "workspacegpt-sidebar": [
+        {
+          "type": "webview",
+          "id": "workspacegpt.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "WorkspaceGPT",
+      "properties": {
+        "workspaceGPT.apiBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "Base URL for the RAG API"
+        },
+        "workspaceGPT.authToken": {
+          "type": "string",
+          "default": "",
+          "description": "Authorization token for API requests"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "pnpm run compile &.then(data => await data.json()).then(console.log);& pnpm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "dev": "pnpm run compile && cursor --new-window --extensionDevelopmentPath=${PWD}"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "18.x",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  }
+}
