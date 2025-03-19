@@ -1,8 +1,9 @@
 {
   "name": "workspacegpt-extension",
-  "displayName": "WorkspaceGPT Extension",
+  "displayName": "WorkspaceGPT",
   "description": "VS Code extension that integrates with RAG system via API",
-  "version": "0.0.1",
+  "version": "0.0.2",
+  "publisher": "Riteshkant",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -60,13 +61,16 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile",
+    "vscode:prepublish": "pnpm run compile && pnpm run build-webview",
+    "vscode:publish": "vsce publish",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "pnpm run compile &.then(data => await data.json()).then(console.log);& pnpm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "dev": "pnpm run compile && cursor --new-window --extensionDevelopmentPath=${PWD}"
+    "dev": "pnpm run compile && cursor --new-window --extensionDevelopmentPath=${PWD}",
+    "build-webview": "cd webview && pnpm install && pnpm run build",
+    "watch-webview": "cd webview && pnpm run dev"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
@@ -75,5 +79,10 @@
     "@typescript-eslint/parser": "^6.15.0",
     "eslint": "^8.56.0",
     "typescript": "^5.3.3"
-  }
+  },
+  "files": [
+    "dist",
+    "webview/dist",
+    "resources"
+  ]
 }

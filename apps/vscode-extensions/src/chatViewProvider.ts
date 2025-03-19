@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
@@ -21,6 +23,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             ]
         };
 
+        // Set the webview's HTML content
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
         // Handle messages from the WebView
@@ -37,9 +40,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             question: data.message,
                             stream: false
                         };
-                        // body: JSON.stringify({
-                            //     messages: [{ role: 'user', content: data.message }]
-                            // })
                         
                         console.log("Sending request payload:", JSON.stringify(requestPayload));
                         
@@ -77,6 +77,66 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
+        try {
+            // Get path to the React build directory
+            const reactDistPath = path.join(this._extensionUri.fsPath, 'webview', 'dist');
+            console.log('Looking for React build at:', reactDistPath);
+            
+            // Check if the build directory exists
+            if (!fs.existsSync(reactDistPath)) {
+                console.error('React build directory not found:', reactDistPath);
+                return this._getFallbackHtml(); // Use embedded HTML as fallback
+            }
+            
+            // List files in the directory to help debug
+            console.log('Files in build directory:', fs.readdirSync(reactDistPath));
+            
+            // Get the index.html content
+            const indexHtmlPath = path.join(reactDistPath, 'index.html');
+            console.log('Looking for index.html at:', indexHtmlPath);
+            
+            if (!fs.existsSync(indexHtmlPath)) {
+                console.error('index.html not found in React build directory');
+                return this._getFallbackHtml(); // Use embedded HTML as fallback
+            }
+            
+            let indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
+            console.log('Successfully loaded index.html');
+            
+            // Convert local paths to webview URIs
+            indexHtml = indexHtml.replace(
+                /(href|src)="([^"]+)"/g,
+                (match, attr, value) => {
+                    // Skip external URLs
+                    if (value.startsWith('http') || value.startsWith('//')) {
+                        return match;
+                    }
+                    
+                    // Convert local path to webview URI
+                    const localPath = path.join(reactDistPath, value);
+                    const webviewUri = webview.asWebviewUri(vscode.Uri.file(localPath));
+                    console.log(`Converting path: ${value} -> ${webviewUri}`);
+                    return `${attr}="${webviewUri}"`;
+                }
+            );
+            
+            // Add CSP meta tag to allow scripts to run
+            if (!indexHtml.includes('<meta http-equiv="Content-Security-Policy"')) {
+                const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} https:; connect-src ${webview.cspSource} https:;">`;
+                indexHtml = indexHtml.replace('</head>', `${csp}\n</head>`);
+            }
+            
+            console.log('Returning React webview HTML');
+            return indexHtml;
+        } catch (error) {
+            console.error('Error loading React webview:', error);
+            return this._getFallbackHtml(); // Use embedded HTML as fallback
+        }
+    }
+    
+    // Fallback to embedded HTML if React build is not available
+    private _getFallbackHtml() {
+        // Your current embedded HTML implementation
         return `
             <!DOCTYPE html>
             <html lang="en">
@@ -150,7 +210,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             <body>
                 <div id="chat-container">
                     <div id="messages"></div>
-                    <div class="loading">Processing...</div>
+                    <div class="loading">html Processing...</div>
                     <div id="input-container">
                         <input type="text" id="message-input" placeholder="Type your message...">
                         <button id="send-button">Send</button>

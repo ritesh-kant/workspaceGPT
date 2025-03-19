@@ -1,0 +1,165 @@
+/* Main container styles */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+/* Messages container styles */
+.messages-container {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Message styles */
+.message {
+  max-width: 80%;
+  padding: 0.8rem 1rem;
+  border-radius: 1rem;
+  word-wrap: break-word;
+}
+
+.user-message {
+  align-self: flex-end;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.assistant-message {
+  align-self: flex-start;
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-editor-lineHighlightBorder);
+  color: var(--vscode-editor-foreground);
+}
+
+/* Input container styles */
+.input-container {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background-color: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-editor-lineHighlightBorder);
+}
+
+/* Input field styles */
+input {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid var(--vscode-input-border);
+  background-color: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border-radius: 4px;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--vscode-focusBorder);
+}
+
+/* Button styles */
+button {
+  padding: 0.5rem 1rem;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+button:hover:not(:disabled) {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+/* Loading indicator styles */
+.loading-indicator {
+  align-self: center;
+  color: var(--vscode-descriptionForeground);
+  margin: 0.5rem 0;
+  font-style: italic;
+}
+
+
+.markdown-content {
+  font-family: var(--vscode-font-family);
+  line-height: 1.5;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  color: var(--vscode-foreground);
+}
+
+.markdown-content p {
+  margin: 0.5em 0;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-content code {
+  font-family: var(--vscode-editor-font-family);
+  background-color: var(--vscode-textBlockQuote-background);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.markdown-content pre {
+  background-color: var(--vscode-textBlockQuote-background);
+  padding: 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.markdown-content blockquote {
+  border-left: 4px solid var(--vscode-textBlockQuote-border);
+  margin: 0.5em 0;
+  padding-left: 1em;
+  color: var(--vscode-textBlockQuote-foreground);
+}
+
+.markdown-content a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+}
+
+.markdown-content a:hover {
+  text-decoration: underline;
+}
+
+.markdown-content table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid var(--vscode-input-border);
+  padding: 0.5em;
+}
+
+.markdown-content th {
+  background-color: var(--vscode-input-background);
+}
