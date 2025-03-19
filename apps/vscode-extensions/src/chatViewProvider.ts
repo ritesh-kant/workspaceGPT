@@ -173,7 +173,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 <title>WorkspaceGPT Chat</title>
                 <style>
                     body {
-                        padding: 10px;
+                        padding: 4px;
                         color: var(--vscode-foreground);
                         font-family: var(--vscode-font-family);
                     }
