@@ -1,9 +1,14 @@
 {
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
-  "description": "VS Code extension that integrates with RAG system via API",
+  "description": "Your AI-powered coding assistant that understands your entire workspace. Get intelligent answers, code explanations, and suggestions based on your project context.",
   "version": "0.0.2",
   "publisher": "Riteshkant",
+  "icon": "resources/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ritesh-kant/workspaceGPT"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -63,12 +68,12 @@
   "scripts": {
     "vscode:prepublish": "pnpm run compile && pnpm run build-webview",
     "vscode:publish": "vsce publish",
-    "compile": "tsc -p ./",
+    "compile": "pnpm build-webview && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "pnpm run compile &.then(data => await data.json()).then(console.log);& pnpm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "dev": "pnpm run compile && cursor --new-window --extensionDevelopmentPath=${PWD}",
+    "dev": "pnpm run compile && code --new-window --extensionDevelopmentPath=${PWD}",
     "build-webview": "cd webview && pnpm install && pnpm run build",
     "watch-webview": "cd webview && pnpm run dev"
   },
