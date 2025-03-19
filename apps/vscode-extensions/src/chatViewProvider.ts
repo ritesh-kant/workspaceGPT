@@ -29,6 +29,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Handle messages from the WebView
         webviewView.webview.onDidReceiveMessage(async (data) => {
             switch (data.type) {
+                case 'newChat':
+                    try {
+                        const config = vscode.workspace.getConfiguration('workspaceGPT');
+                        const apiBaseUrl = config.get<string>('apiBaseUrl');
+                        
+                        const response = await fetch(`${apiBaseUrl}/v1/chat/completions/new_chat`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            }
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`Failed to start new chat: ${response.status}`);
+                        }
+
+                        webviewView.webview.postMessage({
+                            type: 'newChatCreated'
+                        });
+                    } catch (error) {
+                        vscode.window.showErrorMessage(`Error starting new chat: ${error instanceof Error ? error.message : String(error)}`);
+                        webviewView.webview.postMessage({
+                            type: 'error',
+                            message: error instanceof Error ? error.message : String(error)
+                        }); 
+                    }
+                    break;
                 case 'sendMessage':
                     try {
                         const config = vscode.workspace.getConfiguration('workspaceGPT');

@@ -12,9 +12,19 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showTips] = useState(true);
+  const [showTips, setShowTips] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
+
+  const handleNewChat = () => {
+    setIsLoading(true);
+    vscode.postMessage({
+      type: 'newChat'
+    });
+    setMessages([]);
+    setInputValue('');
+    setShowTips(true);
+  };
 
   useEffect(() => {
     // Handle messages from the extension
@@ -66,6 +76,22 @@ const App: React.FC = () => {
 
   return (
     <div className="chat-container">
+      <div className="header-buttons">
+        <button
+          onClick={handleNewChat}
+          className="new-chat-button"
+          aria-label="Start new chat"
+        >
+          +
+        </button>
+        <button
+          className="settings-button"
+          aria-label="Open settings"
+          onClick={() => vscode.postMessage({ type: 'openSettings' })}
+        >
+          ⚙️
+        </button>
+      </div>
       {showTips && messages.length === 0 ? (
         <div className="welcome-container">
           <h1 className="welcome-title">Hello</h1>
