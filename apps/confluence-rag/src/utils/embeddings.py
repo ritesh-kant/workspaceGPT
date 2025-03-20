@@ -25,6 +25,13 @@ def load_from_db(db_name: str) -> FAISS:
     print(f"🚥 Loading existing FAISS index from database {persist_directory}\n")
     vectorstore: FAISS = FAISS.load_local(
         persist_directory, embeddings, allow_dangerous_deserialization=True)
+    
+    faiss_index = vectorstore.index
+
+    num_vectors = faiss_index.ntotal
+
+    print(f"Number of vectors in the FAISS index: {num_vectors}")
+
     return vectorstore
 
 def check_db_exists(db_name: str) -> bool:
