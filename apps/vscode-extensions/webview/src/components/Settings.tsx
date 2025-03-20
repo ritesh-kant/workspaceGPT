@@ -1,15 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { VSCodeAPI } from '../vscode';
 import './Settings.css';
-
-interface SettingsButtonConfig {
-  baseUrl: string;
-  spaceKey: string;
-  userEmail: string;
-  apiToken: string;
-  repoPath: string;
-  scanFrequency: string;
-}
+import { useSettingsStore } from '../store';
 
 interface SettingsButtonProps {
   isVisible: boolean;
@@ -20,22 +12,26 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   isVisible,
   onClose,
 }) => {
-  const [config, setConfig] = useState<SettingsButtonConfig>({
-    baseUrl: '',
-    spaceKey: '',
-    userEmail: '',
-    apiToken: '',
-    repoPath: '',
-    scanFrequency: 'daily',
-  });
-  const [isConfluenceEnabled, setIsConfluenceEnabled] = useState(false);
-  const [isCodebaseEnabled, setIsCodebaseEnabled] = useState(false);
-  const [isSyncing, setSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState(0);
-  const [connectionStatus, setConnectionStatus] = useState<
-    'unknown' | 'success' | 'error'
-  >('unknown');
-  const [statusMessage, setStatusMessage] = useState('');
+  // Use settings store instead of local state
+  const {
+    config,
+    isConfluenceEnabled,
+    isCodebaseEnabled,
+    isConfluenceSyncing,
+    isCodebaseSyncing,
+    confluenceSyncProgress,
+    connectionStatus,
+    statusMessage,
+    setConfig,
+    setIsConfluenceEnabled,
+    setIsCodebaseEnabled,
+    setIsConfluenceSyncing,
+    setIsCodebaseSyncing,
+    setConfluenceSyncProgress,
+    setCodebaseSyncProgress,
+    setConnectionStatus,
+    setStatusMessage
+  } = useSettingsStore();
 
   const vscode = VSCodeAPI();
 
@@ -46,6 +42,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     // Listen for configuration and sync updates from extension
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
+      console.log('handleMessage', event);
 
       switch (message.type) {
         case 'SettingsButtonConfig':
@@ -56,18 +53,35 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           setStatusMessage(message.message || '');
           break;
         case 'syncProgress':
-          setSyncProgress(message.progress);
-          if (message.progress >= 100) {
-            setSyncing(false);
+          setCodebaseSyncProgress(message.progress);
+          if (message.source === 'confluence') {
+            setConfluenceSyncProgress(message.progress);
+            if (message.progress >= 100) {
+              setIsConfluenceSyncing(false);
+            }
+          } else if (message.source === 'codebase') {
+            setCodebaseSyncProgress(message.progress);
+            if (message.progress >= 100) {
+              setIsCodebaseSyncing(false);
+            }
           }
           break;
         case 'syncComplete':
-          setSyncing(false);
-          setSyncProgress(100);
+          if (message.source === 'confluence') {
+            setIsConfluenceSyncing(false);
+            setConfluenceSyncProgress(100);
+          } else if (message.source === 'codebase') {
+            setIsCodebaseSyncing(false);
+            setCodebaseSyncProgress(100);
+          }
           setStatusMessage('Sync completed successfully');
           break;
         case 'syncError':
-          setSyncing(false);
+          if (message.source === 'confluence') {
+            setIsConfluenceSyncing(false);
+          } else if (message.source === 'codebase') {
+            setIsCodebaseSyncing(false);
+          }
           setConnectionStatus('error');
           setStatusMessage(`Sync error: ${message.message}`);
           break;
@@ -79,13 +93,19 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   }, []);
 
   const handleInputChange = (
-    field: keyof SettingsButtonConfig,
+    section: 'confluence' | 'codebase',
+    field: string,
     value: string
   ) => {
-    setConfig({
+    console.log('handleInputChange', section, field, value, config);
+    const updatedConfig = {
       ...config,
-      [field]: value,
-    });
+      [section]: {
+        ...config[section],
+        [field]: value
+      }
+    };
+    setConfig(updatedConfig);
   };
 
   const saveConfig = () => {
@@ -105,8 +125,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   };
 
   const startSync = () => {
-    setSyncing(true);
-    setSyncProgress(0);
+    setIsConfluenceSyncing(true);
+    setConfluenceSyncProgress(0);
     setStatusMessage('Starting sync process...');
     vscode.postMessage({
       type: 'startConfluenceSync',
@@ -152,9 +172,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   <input
                     id='confluence-base-url'
                     type='text'
-                    value={config.baseUrl}
+                    value={config.confluence?.baseUrl}
                     onChange={(e) =>
-                      handleInputChange('baseUrl', e.target.value)
+                      handleInputChange('confluence', 'baseUrl', e.target.value)
                     }
                     placeholder='https://your-domain.atlassian.net'
                   />
@@ -165,9 +185,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   <input
                     id='confluence-space-key'
                     type='text'
-                    value={config.spaceKey}
+                    value={config.confluence?.spaceKey}
                     onChange={(e) =>
-                      handleInputChange('spaceKey', e.target.value)
+                      handleInputChange('confluence', 'spaceKey', e.target.value)
                     }
                     placeholder='SPACE'
                   />
@@ -178,9 +198,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   <input
                     id='confluence-user-email'
                     type='email'
-                    value={config.userEmail}
+                    value={config.confluence?.userEmail}
                     onChange={(e) =>
-                      handleInputChange('userEmail', e.target.value)
+                      handleInputChange('confluence', 'userEmail', e.target.value)
                     }
                     placeholder='your.email@example.com'
                   />
@@ -191,9 +211,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   <input
                     id='confluence-api-token'
                     type='password'
-                    value={config.apiToken}
+                    value={config.confluence?.apiToken}
                     onChange={(e) =>
-                      handleInputChange('apiToken', e.target.value)
+                      handleInputChange('confluence', 'apiToken', e.target.value)
                     }
                     placeholder='Your Atlassian API token'
                   />
@@ -204,7 +224,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   <button onClick={checkConnection}>Check Connection</button>
                   <button
                     onClick={startSync}
-                    disabled={isSyncing || connectionStatus !== 'success'}
+                    disabled={isConfluenceSyncing || connectionStatus !== 'success'}
                   >
                     Start Sync
                   </button>
@@ -216,15 +236,15 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   </div>
                 )}
 
-                {isSyncing && (
+                {isConfluenceSyncing && (
                   <div className='sync-progress'>
                     <div className='progress-label'>
-                      Syncing: {syncProgress}%
+                      Syncing: {confluenceSyncProgress}%
                     </div>
                     <div className='progress-bar'>
                       <div
                         className='progress-fill'
-                        style={{ width: `${syncProgress}%` }}
+                        style={{ width: `${confluenceSyncProgress}%` }}
                       ></div>
                     </div>
                   </div>
@@ -253,9 +273,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   <input
                     id='codebase-repo-path'
                     type='text'
-                    value={config.repoPath}
+                    value={config.codebase?.repoPath}
                     onChange={(e) =>
-                      handleInputChange('repoPath', e.target.value)
+                      handleInputChange('codebase', 'repoPath', e.target.value)
                     }
                     placeholder='/path/to/your/repository'
                   />
@@ -267,9 +287,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   </label>
                   <select
                     id='codebase-scan-frequency'
-                    value={config.scanFrequency}
+                    value={config.codebase?.scanFrequency}
                     onChange={(e) =>
-                      handleInputChange('scanFrequency', e.target.value)
+                      handleInputChange('codebase', 'scanFrequency', e.target.value)
                     }
                   >
                     <option value='hourly'>Hourly</option>
@@ -280,7 +300,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
 
                 <div className='button-group'>
                   <button onClick={saveConfig}>Save</button>
-                  <button onClick={startSync} disabled={isSyncing}>
+                  <button onClick={startSync} disabled={isCodebaseSyncing}>
                     Scan Codebase
                   </button>
                 </div>

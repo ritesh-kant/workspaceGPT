@@ -1,20 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import './App.css';
 import ChatMessage from './components/ChatMessage';
 import SettingsButton from './components/Settings';
 import { VSCodeAPI } from './vscode';
-
-interface Message {
-  content: string;
-  isUser: boolean;
-}
+import { useChatStore, useSettingsStore } from './store';
 
 const App: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputValue, setInputValue] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [showTips, setShowTips] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
+  // Use Zustand stores instead of local state
+  const { 
+    messages, 
+    inputValue, 
+    isLoading, 
+    showTips, 
+    addMessage, 
+    clearMessages, 
+    setInputValue, 
+    setIsLoading, 
+    setShowTips 
+  } = useChatStore();
+  
+  const { showSettings, setShowSettings } = useSettingsStore();
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
@@ -23,7 +29,7 @@ const App: React.FC = () => {
     vscode.postMessage({
       type: 'newChat'
     });
-    setMessages([]);
+    clearMessages();
     setInputValue('');
     setShowTips(true);
   };
@@ -36,10 +42,10 @@ const App: React.FC = () => {
       
       switch (message.type) {
         case 'response':
-          setMessages(prev => [...prev, { content: message.message, isUser: false }]);
+          addMessage({ content: message.message, isUser: false });
           break;
         case 'error':
-          setMessages(prev => [...prev, { content: `Error: ${message.message}`, isUser: false }]);
+          addMessage({ content: `Error: ${message.message}`, isUser: false });
           break;
       }
     };
@@ -56,7 +62,7 @@ const App: React.FC = () => {
   const handleSendMessage = () => {
     if (inputValue.trim()) {
       // Add user message to the chat
-      setMessages(prev => [...prev, { content: inputValue, isUser: true }]);
+      addMessage({ content: inputValue, isUser: true });
       setIsLoading(true);
       
       // Send message to extension

@@ -78,11 +78,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             await new Promise(resolve => setTimeout(resolve, 500));
                             webviewView.webview.postMessage({
                                 type: 'syncProgress',
+                                source: 'confluence',
                                 progress: i
                             });
                         }
                         webviewView.webview.postMessage({
-                            type: 'syncComplete'
+                            type: 'syncComplete',
+                            source: 'confluence',
+
                         });
                     } catch (error) {
                         webviewView.webview.postMessage({

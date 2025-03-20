@@ -4,6 +4,7 @@ declare global {
       postMessage: (message: any) => void;
       getState: () => any;
       setState: (state: any) => void;
+      clearState: () => void; // Add this
     };
   }
 }
@@ -11,8 +12,16 @@ declare global {
 let vscodeApi: any;
 
 export function VSCodeAPI() {
-    if (!vscodeApi) {
-        vscodeApi = window.acquireVsCodeApi();
-    }
-    return vscodeApi;
+  if (!vscodeApi) {
+    vscodeApi = window.acquireVsCodeApi();
+    // vscodeApi.setState({});
+
+  }
+  return vscodeApi;
+}
+
+// Function to clear stored webview state
+export function clearVSCodeState() {
+  const vscode = VSCodeAPI();
+  vscode.setState({});
 }
