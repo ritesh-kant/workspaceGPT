@@ -201,3 +201,16 @@ input:checked + .slider:before {
 .slider.round:before {
   border-radius: 50%;
 }
+
+.select-larger {
+  height: 36px; /* Increased height */
+  padding: 8px;
+  font-size: 14px;
+}
+
+/* Style for the dropdown options */
+.select-larger option {
+  padding: 8px;
+  height: 30px; /* Height for individual options */
+  line-height: 30px; /* Helps with vertical alignment */
+}

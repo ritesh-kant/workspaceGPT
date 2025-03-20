@@ -287,6 +287,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   </label>
                   <select
                     id='codebase-scan-frequency'
+                    className='select-larger'
                     value={config.codebase?.scanFrequency}
                     onChange={(e) =>
                       handleInputChange('codebase', 'scanFrequency', e.target.value)
