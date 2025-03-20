@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import ChatMessage from './components/ChatMessage';
+import SettingsButton from './components/Settings';
 import { VSCodeAPI } from './vscode';
 
 interface Message {
@@ -13,6 +14,7 @@ const App: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showTips, setShowTips] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
@@ -74,23 +76,36 @@ const App: React.FC = () => {
     }
   };
 
+  // Add a handler for showing settings
+  const handleShowSettings = () => {
+    setShowSettings(true);
+  };
+
+  // Add a handler for hiding settings
+  const handleCloseSettings = () => {
+    setShowSettings(false);
+  };
+
   return (
     <div className="chat-container">
-      <div className="header-buttons">
-        <button
-          onClick={handleNewChat}
-          className="new-chat-button"
-          aria-label="Start new chat"
-        >
-          +
-        </button>
-        <button
-          className="settings-button"
-          aria-label="Open settings"
-          onClick={() => vscode.postMessage({ type: 'openSettings' })}
-        >
-          ⚙️
-        </button>
+      <div className="chat-header">
+        <h2>WorkspaceGPT</h2>
+        <div className="header-buttons">
+          <button 
+            className="settings-button" 
+            onClick={handleShowSettings}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <span className="settings-icon">⚙️</span>
+          </button>
+          <button 
+            className="new-chat-button" 
+            onClick={handleNewChat} 
+            title="Start a new chat"
+            aria-label="Start new chat"
+          />
+        </div>
       </div>
       {showTips && messages.length === 0 ? (
         <div className="welcome-container">
@@ -145,6 +160,10 @@ const App: React.FC = () => {
           ➤
         </button>
       </div>
+      <SettingsButton 
+        isVisible={showSettings} 
+        onClose={handleCloseSettings} 
+      />
     </div>
   );
 };

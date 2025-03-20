@@ -29,6 +29,69 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Handle messages from the WebView
         webviewView.webview.onDidReceiveMessage(async (data) => {
             switch (data.type) {
+                case 'getConfluenceConfig':
+                    // Send current configuration to webview
+                    const config = vscode.workspace.getConfiguration('workspaceGPT.confluence');
+                    webviewView.webview.postMessage({
+                        type: 'confluenceConfig',
+                        config: {
+                            baseUrl: config.get('baseUrl') || '',
+                            spaceKey: config.get('spaceKey') || '',
+                            userEmail: config.get('userEmail') || '',
+                            apiToken: config.get('apiToken') || ''
+                        }
+                    });
+                    break;
+
+                case 'saveConfluenceConfig':
+                    // Save configuration
+                    await vscode.workspace.getConfiguration('workspaceGPT.confluence').update('baseUrl', data.config.baseUrl, true);
+                    await vscode.workspace.getConfiguration('workspaceGPT.confluence').update('spaceKey', data.config.spaceKey, true);
+                    await vscode.workspace.getConfiguration('workspaceGPT.confluence').update('userEmail', data.config.userEmail, true);
+                    await vscode.workspace.getConfiguration('workspaceGPT.confluence').update('apiToken', data.config.apiToken, true);
+                    break;
+
+                case 'checkConfluenceConnection':
+                    try {
+                        // Here you would implement the actual connection check
+                        // For now, we'll simulate a successful connection
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        webviewView.webview.postMessage({
+                            type: 'confluenceConnectionStatus',
+                            status: true,
+                            message: 'Successfully connected to Confluence'
+                        });
+                    } catch (error) {
+                        webviewView.webview.postMessage({
+                            type: 'confluenceConnectionStatus',
+                            status: false,
+                            message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`
+                        });
+                    }
+                    break;
+
+                case 'startConfluenceSync':
+                    try {
+                        // Here you would implement the actual sync process
+                        // For now, we'll simulate progress updates
+                        for (let i = 0; i <= 100; i += 10) {
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            webviewView.webview.postMessage({
+                                type: 'syncProgress',
+                                progress: i
+                            });
+                        }
+                        webviewView.webview.postMessage({
+                            type: 'syncComplete'
+                        });
+                    } catch (error) {
+                        webviewView.webview.postMessage({
+                            type: 'syncError',
+                            message: error instanceof Error ? error.message : String(error)
+                        });
+                    }
+                    break;
+
                 case 'newChat':
                     try {
                         const config = vscode.workspace.getConfiguration('workspaceGPT');

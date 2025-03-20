@@ -10,18 +10,29 @@
   position: relative;
 }
 
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--vscode-editor-lineHighlightBorder);
+  background-color: var(--vscode-editor-background);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
 .header-buttons {
-  position: absolute;
-  top: 0;
-  right: 0;
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
-  z-index: 10;
-  padding: 0.25rem 0.75rem;
-  border-bottom: 1px solid var(--vscode-editor-lineHighlightBorder);
-  background-color: var(--vscode-editor-background);
-  width: calc(100% - 1.5rem);
+  align-items: center;
 }
 
 .new-chat-button,
@@ -37,6 +48,16 @@
   height: 32px;
   transition: all 0.2s ease;
   border-radius: 4px;
+}
+
+.new-chat-button::before {
+  content: "+";
+  display: block;
+  width: 16px;
+  height: 16px;
+  font-size: 20px;
+  line-height: 16px;
+  text-align: center;
 }
 
 .settings-button::before {
@@ -272,3 +293,5 @@ button:hover:not(:disabled) {
 .markdown-content th {
   background-color: var(--vscode-input-background);
 }
+
+/* Settings Panel Styles */
