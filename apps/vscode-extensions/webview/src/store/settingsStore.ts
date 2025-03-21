@@ -43,23 +43,35 @@ interface SettingsState {
   setShowSettings: (show: boolean) => void;
 }
 
-// Create a custom storage adapter for VSCode
+// Create a custom storage adapter for VSCode global state
 const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
-    const state = vscode.getState() || {};
-    return JSON.stringify(state.settings || {});
+    const globalState = vscode.getState()?.globalSettings || {};
+    return JSON.stringify(globalState || {});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
-    const state = vscode.getState() || {};
-    vscode.setState({ ...state, settings: JSON.parse(value) });
+    const currentState = vscode.getState() || {};
+    vscode.setState({
+      ...currentState,
+      globalSettings: JSON.parse(value)
+    });
+    // Send message to extension to sync global state
+    vscode.postMessage({
+      type: 'syncGlobalState',
+      state: JSON.parse(value)
+    });
   },
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { settings, ...rest } = state;
+    const { globalSettings, ...rest } = state;
     vscode.setState(rest);
+    // Notify extension about state removal
+    vscode.postMessage({
+      type: 'clearGlobalState'
+    });
   }
 };
 

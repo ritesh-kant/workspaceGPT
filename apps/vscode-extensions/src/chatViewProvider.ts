@@ -7,6 +7,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
+        private readonly _context: vscode.ExtensionContext
     ) {}
 
     public resolveWebviewView(
@@ -29,6 +30,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Handle messages from the WebView
         webviewView.webview.onDidReceiveMessage(async (data) => {
             switch (data.type) {
+                case 'syncGlobalState':
+                    // Save to VSCode's global state storage
+                    await this._context.globalState.update('workspaceGPT-settings', data.state);
+                    break;
+
+                case 'clearGlobalState':
+                    // Clear from VSCode's global state storage
+                    await this._context.globalState.update('workspaceGPT-settings', undefined);
+                    break;
                 case 'getConfluenceConfig':
                     // Send current configuration to webview
                     const config = vscode.workspace.getConfiguration('workspaceGPT.confluence');

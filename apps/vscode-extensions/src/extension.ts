@@ -3,7 +3,7 @@ import { ChatViewProvider } from './chatViewProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     // Register ChatViewProvider
-    const chatViewProvider = new ChatViewProvider(context.extensionUri);
+    const chatViewProvider = new ChatViewProvider(context.extensionUri, context);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider('workspacegpt.chatView', chatViewProvider)
     );
