@@ -36,7 +36,7 @@
         {
           "id": "workspacegpt-sidebar",
           "title": "WorkspaceGPT",
-          "icon": "resources/icon.svg"
+          "icon": "resources/icon.png"
         }
       ]
     },
