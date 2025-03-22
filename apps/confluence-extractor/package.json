@@ -7,9 +7,9 @@
   "scripts": {
     "start": "node dist/index.js",
     "clean": "rm -rf dist",
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --external:@workspace-gpt/confluence-utils --sourcemap",
-    "dev": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --external:@workspace-gpt/confluence-utils --sourcemap --watch",
-    "watch": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --external:@workspace-gpt/confluence-utils --sourcemap --watch"
+    "build": "node esbuild.config.js",
+    "dev": "node esbuild.config.js --watch",
+    "watch": "node esbuild.config.js --watch"
   },
   "keywords": [],
   "author": "Ritesh kant",
