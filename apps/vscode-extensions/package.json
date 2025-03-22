@@ -77,6 +77,9 @@
     "build-webview": "cd webview && pnpm install && pnpm run build",
     "watch-webview": "cd webview && pnpm run dev"
   },
+  "dependencies": {
+    "@workspace-gpt/confluence-utils": "workspace:*"
+  },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
     "@types/node": "18.x",

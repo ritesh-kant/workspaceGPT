@@ -36,7 +36,7 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
-.data
+.data*
 chroma_db/
 __pycache__/
 confluence_pages.json

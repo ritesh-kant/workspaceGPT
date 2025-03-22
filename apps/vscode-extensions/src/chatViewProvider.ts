@@ -82,22 +82,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
                 case 'startConfluenceSync':
                     try {
-                        // Here you would implement the actual sync process
-                        // For now, we'll simulate progress updates
-                        for (let i = 0; i <= 100; i += 10) {
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                            webviewView.webview.postMessage({
-                                type: 'syncProgress',
-                                source: 'confluence',
-                                progress: i
-                            });
+                        // Get Confluence configuration
+                        const config = vscode.workspace.getConfiguration('workspaceGPT.confluence');
+                        const confluenceConfig = {
+                            baseUrl: config.get('baseUrl') || '',
+                            spaceKey: config.get('spaceKey') || '',
+                            userEmail: config.get('userEmail') || '',
+                            apiToken: config.get('apiToken') || ''
+                        };
+                        
+                        // Validate configuration
+                        if (!confluenceConfig.baseUrl || !confluenceConfig.spaceKey || 
+                            !confluenceConfig.userEmail || !confluenceConfig.apiToken) {
+                            throw new Error('Confluence configuration is incomplete. Please check your settings.');
                         }
-                        webviewView.webview.postMessage({
-                            type: 'syncComplete',
-                            source: 'confluence',
-
-                        });
+                        
+                        // Import the worker manager
+                        const { ConfluenceWorkerManager } = require('./utils/confluenceWorkerManager');
+                        
+                        // Create worker manager and start sync
+                        const workerManager = new ConfluenceWorkerManager(webviewView, this._context);
+                        await workerManager.startSync(confluenceConfig);
+                        
                     } catch (error) {
+                        console.error('Error in Confluence sync:', error);
                         webviewView.webview.postMessage({
                             type: 'syncError',
                             message: error instanceof Error ? error.message : String(error)

@@ -4,6 +4,7 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        
         {
             "args": [
                 "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode-extensions",
@@ -45,13 +46,20 @@
         {
             "type": "node",
             "request": "launch",
-            "name": "confluence",
+            "name": "confluence-extractor",
             "skipFiles": [
                 "<node_internals>/**"
             ],
             "cwd": "${workspaceFolder}/apps/confluence-extractor",
-            "program": "${workspaceFolder}/apps/confluence-extractor/src/index.js",
-            "envFile": "${workspaceFolder}/.env"
-        },
+            "program": "${workspaceFolder}/apps/confluence-extractor/dist/index.js",
+            "preLaunchTask": "build:all",
+            "outFiles": ["${workspaceFolder}/apps/confluence-extractor/dist/**/*.js"],
+            "sourceMaps": true,
+            "envFile": "${workspaceFolder}/.env",
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/apps/confluence-extractor/dist/**/*.js",
+                "${workspaceFolder}/packages/confluence-utils/dist/**/*.js"
+            ]
+        }
     ]
 }
