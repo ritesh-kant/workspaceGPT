@@ -2,13 +2,74 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 
+import { ChatManager } from './utils/chatManager';
+
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
+    private chatManager?: ChatManager;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
         private readonly _context: vscode.ExtensionContext
     ) {}
+    
+    /**
+     * Get a list of all Confluence MD files in the global storage
+     */
+    private async getConfluenceFiles(): Promise<{filename: string, path: string}[]> {
+        try {
+            // Get the directory path for Confluence MD files
+            const mdDirPath = path.join(this._context.globalStorageUri.fsPath, 'confluence', 'mds');
+            
+            // Check if directory exists
+            if (!fs.existsSync(mdDirPath)) {
+                console.log('Confluence MD directory does not exist:', mdDirPath);
+                return [];
+            }
+            
+            // Read all files in the directory
+            const files = fs.readdirSync(mdDirPath);
+            
+            // Filter for MD files and create file objects
+            const mdFiles = files
+                .filter(file => file.endsWith('.md'))
+                .map(file => ({
+                    filename: file.replace('.md', ''),
+                    path: path.join(mdDirPath, file)
+                }));
+            
+            console.log(`Found ${mdFiles.length} Confluence MD files`);
+            return mdFiles;
+        } catch (error) {
+            console.error('Error getting Confluence files:', error);
+            throw error;
+        }
+    }
+    
+    /**
+     * Get the content of a specific Confluence MD file
+     */
+    private async getConfluenceFileContent(filename: string): Promise<string> {
+        try {
+            // Get the directory path for Confluence MD files
+            const mdDirPath = path.join(this._context.globalStorageUri.fsPath, 'confluence', 'mds');
+            
+            // Create the file path
+            const filePath = path.join(mdDirPath, `${filename}.md`);
+            
+            // Check if file exists
+            if (!fs.existsSync(filePath)) {
+                throw new Error(`File not found: ${filename}.md`);
+            }
+            
+            // Read the file content
+            const content = fs.readFileSync(filePath, 'utf8');
+            return content;
+        } catch (error) {
+            console.error('Error getting Confluence file content:', error);
+            throw error;
+        }
+    }
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -120,23 +181,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
                 case 'newChat':
                     try {
-                        const config = vscode.workspace.getConfiguration('workspaceGPT');
-                        const apiBaseUrl = config.get<string>('apiBaseUrl');
-                        
-                        const response = await fetch(`${apiBaseUrl}/v1/chat/completions/new_chat`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            }
-                        });
-
-                        if (!response.ok) {
-                            throw new Error(`Failed to start new chat: ${response.status}`);
+                        if (!this.chatManager) {
+                            this.chatManager = new ChatManager(webviewView, this._context);
                         }
-
-                        webviewView.webview.postMessage({
-                            type: 'newChatCreated'
-                        });
+                        await this.chatManager.newChat();
                     } catch (error) {
                         vscode.window.showErrorMessage(`Error starting new chat: ${error instanceof Error ? error.message : String(error)}`);
                         webviewView.webview.postMessage({
@@ -147,45 +195,50 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'sendMessage':
                     try {
-                        const config = vscode.workspace.getConfiguration('workspaceGPT');
-                        const apiBaseUrl = config.get<string>('apiBaseUrl');
-                        const authToken = config.get<string>('authToken');
-                        
-                        // Use the actual message from the input
-                        const requestPayload = {
-                            question: data.message,
-                            stream: false
-                        };
-                        
-                        console.log("Sending request payload:", JSON.stringify(requestPayload));
-                        
-                        const response = await fetch(`${apiBaseUrl}/v1/chat/completions`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify(requestPayload)
-                        });
-
-                        if (!response.ok) {
-                            const errorText = await response.text();
-                            console.error(`API request failed: ${response.status} ${response.statusText}`, errorText);
-                            throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
+                        if (!this.chatManager) {
+                            this.chatManager = new ChatManager(webviewView, this._context);
                         }
-
-                        const result = await response.json() as {answer: string};
-                        console.log("API response:", JSON.stringify(result));
-                        
-                        webviewView.webview.postMessage({
-                            type: 'response',
-                            message: result.answer || "No answer received"
-                        });
+                        await this.chatManager.sendMessage(data.message);
                     } catch (error) {
                         vscode.window.showErrorMessage(`Error: ${error instanceof Error ? error.message : String(error)}`);
                         webviewView.webview.postMessage({
                             type: 'error',
                             message: error instanceof Error ? error.message : String(error)
                         }); 
+                    }
+                    break;
+                    
+                case 'getConfluenceFiles':
+                    try {
+                        // Get the list of Confluence MD files
+                        const files = await this.getConfluenceFiles();
+                        webviewView.webview.postMessage({
+                            type: 'confluenceFiles',
+                            files
+                        });
+                    } catch (error) {
+                        console.error('Error getting Confluence files:', error);
+                        webviewView.webview.postMessage({
+                            type: 'error',
+                            message: error instanceof Error ? error.message : String(error)
+                        });
+                    }
+                    break;
+                    
+                case 'getConfluenceFileContent':
+                    try {
+                        // Get the content of a specific Confluence MD file
+                        const content = await this.getConfluenceFileContent(data.filename);
+                        webviewView.webview.postMessage({
+                            type: 'confluenceFileContent',
+                            content
+                        });
+                    } catch (error) {
+                        console.error('Error getting Confluence file content:', error);
+                        webviewView.webview.postMessage({
+                            type: 'error',
+                            message: error instanceof Error ? error.message : String(error)
+                        });
                     }
                     break;
             }

@@ -78,11 +78,13 @@
     "watch-webview": "cd webview && pnpm run dev"
   },
   "dependencies": {
-    "@workspace-gpt/confluence-utils": "workspace:*"
+    "@workspace-gpt/confluence-utils": "workspace:*",
+    "hnswlib-node": "^3.0.0",
+    "@xenova/transformers": "^2.14.0"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
     "@types/node": "18.x",
+    "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
     "eslint": "^8.56.0",

@@ -3,6 +3,8 @@ import * as vscode from 'vscode';
 import { Worker } from 'worker_threads';
 import * as fs from 'fs';
 import { promisify } from 'util';
+import { EmbeddingManager } from './embeddingManager';
+import { EmbeddingConfig } from 'src/types';
 
 interface ProcessedPage {
   filename: string;
@@ -74,7 +76,7 @@ export class ConfluenceWorkerManager {
             console.log(`Sync complete. Processed ${message.pages.length} pages.`);
             
             // Save the processed pages to global state
-            await this.saveToGlobalState(message.pages);
+            // await this.saveToGlobalState(message.pages);
             
             // Notify the webview that sync is complete
             this.webviewView.webview.postMessage({
@@ -83,6 +85,13 @@ export class ConfluenceWorkerManager {
               pagesCount: message.pages.length
             });
             
+            // Start embedding creation after sync is complete
+            const embeddingManager = new EmbeddingManager(this.webviewView, this.context);
+            await embeddingManager.createEmbeddings({
+              dimensions: 384, // Default dimension for all-MiniLM-L6-v2
+              maxElements: message.pages.length
+            } as EmbeddingConfig);
+
             // Clean up the worker
             this.stopSync();
             break;
@@ -128,26 +137,26 @@ export class ConfluenceWorkerManager {
     }
   }
 
-  private async saveToGlobalState(pages: ProcessedPage[]): Promise<void> {
-    try {
-      // Get existing confluence data or initialize empty object
-      const existingData = this.context.globalState.get('workspaceGPT-confluence-data') || {};
+  // private async saveToGlobalState(pages: ProcessedPage[]): Promise<void> {
+  //   try {
+  //     // Get existing confluence data or initialize empty object
+  //     const existingData = this.context.globalState.get('workspaceGPT-confluence-data') || {};
       
-      // Update with new pages data
-      const updatedData = {
-        ...existingData,
-        pages: pages,
-        lastSyncTime: new Date().toISOString()
-      };
+  //     // Update with new pages data
+  //     const updatedData = {
+  //       ...existingData,
+  //       pages: pages,
+  //       lastSyncTime: new Date().toISOString()
+  //     };
       
-      // Save to global state
-      await this.context.globalState.update('workspaceGPT-confluence-data', updatedData);
-      console.log('Saved confluence data to global state');
-    } catch (error) {
-      console.error('Error saving to global state:', error);
-      throw error;
-    }
-  }
+  //     // Save to global state
+  //     await this.context.globalState.update('workspaceGPT-confluence-data', updatedData);
+  //     console.log('Saved confluence data to global state');
+  //   } catch (error) {
+  //     console.error('Error saving to global state:', error);
+  //     throw error;
+  //   }
+  // }
 
   private async saveProcessedPageAsMd(page: ProcessedPage): Promise<void> {
     try {
