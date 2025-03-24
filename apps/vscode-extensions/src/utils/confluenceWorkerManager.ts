@@ -1,11 +1,13 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Worker } from 'worker_threads';
+import * as fs from 'fs';
+import { promisify } from 'util';
 
 interface ProcessedPage {
-  title: string;
-  url: string;
-  content: string;
+  filename: string;
+  text: string;
+  pageUrl?: string;
 }
 
 interface ConfluenceConfig {
@@ -44,14 +46,6 @@ export class ConfluenceWorkerManager {
       // Handle messages from the worker
       this.worker.on('message', async (message) => {
         switch (message.type) {
-          case 'totalPages':
-            console.log(`Total pages found: ${message.count}`);
-            break;
-
-          case 'pagesFetched':
-            console.log(`Pages fetched: ${message.count}`);
-            break;
-
           case 'progress':
             // Update progress in the webview
             this.webviewView.webview.postMessage({
@@ -61,6 +55,11 @@ export class ConfluenceWorkerManager {
               current: message.current,
               total: message.total
             });
+            break;
+
+          case 'processedPage':
+            // Save individual processed page as MD file
+            await this.saveProcessedPageAsMd(message.page);
             break;
 
           case 'error':
@@ -146,6 +145,41 @@ export class ConfluenceWorkerManager {
       console.log('Saved confluence data to global state');
     } catch (error) {
       console.error('Error saving to global state:', error);
+      throw error;
+    }
+  }
+
+  private async saveProcessedPageAsMd(page: ProcessedPage): Promise<void> {
+    try {
+      // Create the directory path for storing MD files
+      const mdDirPath = path.join(this.context.globalStorageUri.fsPath, 'confluence', 'mds');
+      
+      // Ensure the directory exists
+      await this.ensureDirectoryExists(mdDirPath);
+      
+      // Create the file path for the MD file
+      const mdFilePath = path.join(mdDirPath, `${page.filename}.md`);
+      
+      // Write the content to the file
+      const writeFile = promisify(fs.writeFile);
+      await writeFile(mdFilePath, page.text, 'utf8');
+      
+      console.log(`Saved MD file: ${page.filename}.md`);
+    } catch (error) {
+      console.error('Error saving MD file:', error);
+      throw error;
+    }
+  }
+  
+  private async ensureDirectoryExists(dirPath: string): Promise<void> {
+    try {
+      // Check if directory exists
+      await promisify(fs.access)(dirPath).catch(async () => {
+        // Create directory recursively if it doesn't exist
+        await promisify(fs.mkdir)(dirPath, { recursive: true });
+      });
+    } catch (error) {
+      console.error('Error creating directory:', error);
       throw error;
     }
   }

@@ -5,7 +5,7 @@
   "scripts": {
     "start": "streamlit run src/chat.py",
     "reset": "shx rm -rf vector_db",
-    "postinstall": "pnpm run env:create",
+    "#postinstall": "pnpm run env:create",
     "env:create": "conda info --envs | grep -w workspacegpt || conda env create -f environment.yml",
     "env:update": "conda env update -f environment.yml --prune",
     "env:remove": "conda env remove --name workspacegpt",

@@ -5,4 +5,4 @@ export { extractTextFromXML } from './utils/xmlParser';
 export { createFolders } from './utils/folderManager';
 export { sleep } from './utils/sleep.js';
 
-export * from './types';
+export type { ConfluencePage, ConfluencePageResponse, ProcessedPage } from './types';

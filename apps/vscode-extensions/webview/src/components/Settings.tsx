@@ -224,7 +224,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                   <button onClick={checkConnection}>Check Connection</button>
                   <button
                     onClick={startSync}
-                    disabled={isConfluenceSyncing || connectionStatus !== 'success'}
+                    // disabled={isConfluenceSyncing || connectionStatus !== 'success'}
                   >
                     Start Sync
                   </button>
@@ -239,7 +239,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 {isConfluenceSyncing && (
                   <div className='sync-progress'>
                     <div className='progress-label'>
-                      Syncing: {confluenceSyncProgress}%
+                      Syncing: {confluenceSyncProgress}% 
                     </div>
                     <div className='progress-bar'>
                       <div

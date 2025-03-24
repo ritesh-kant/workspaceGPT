@@ -17,53 +17,34 @@ export class ConfluencePageFetcher {
         this.apiToken = apiToken;
     }
 
-    async fetchPages(): Promise<ConfluencePage[]> {
+    async fetchPages(start: number = 0, limit: number = 10): Promise<ConfluencePageResponse> {
         const headers = {
             'Accept': 'application/json'
         };
         const auth = { username: this.userEmail, password: this.apiToken };
 
-        let allPages: ConfluencePage[] = [];
-        let start = 0;
-        const limit = 10;
-        let hasMore = true;
-
-        while (hasMore) {
-            try {
-                const response = await axios.get<ConfluencePageResponse>(
-                    `${this.confluenceBaseUrl}/rest/api/content`,
-                    {
-                        headers,
-                        auth,
-                        params: {
-                            spaceKey: this.spaceKey,
-                            expand: 'body.storage,_links.webui',
-                            start,
-                            limit,
-                            status: 'current'
-                        }
+        try {
+            const response = await axios.get<ConfluencePageResponse>(
+                `${this.confluenceBaseUrl}/rest/api/content`,
+                {
+                    headers,
+                    auth,
+                    params: {
+                        spaceKey: this.spaceKey,
+                        expand: 'body.storage,_links.webui',
+                        start,
+                        limit,
+                        status: 'current'
                     }
-                );
-
-                const { results, size, _links } = response.data;
-                allPages = allPages.concat(results);
-
-                if (!_links.next) {
-                    hasMore = false;
-                } else {
-                    start += size;
-                    await sleep(1000); // Rate limiting
                 }
+            );
 
-                console.log(`✅ Fetched ${allPages.length} pages`);
-            } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                console.error('❌ Error fetching pages:', errorMessage);
-                throw error;
-            }
+            return response.data;
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error('❌ Error fetching pages:', errorMessage);
+            throw error;
         }
-
-        return allPages;
     }
 
     async getTotalPages(): Promise<number> {

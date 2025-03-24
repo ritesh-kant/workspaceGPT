@@ -41,24 +41,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'getConfluenceConfig':
                     // Send current configuration to webview
-                    const config = vscode.workspace.getConfiguration('workspaceGPT.confluence');
+                    const config: any = this._context.globalState.get("workspaceGPT-settings")
+                    const confluenceConfig = config.state.config.confluence
                     webviewView.webview.postMessage({
                         type: 'confluenceConfig',
                         config: {
-                            baseUrl: config.get('baseUrl') || '',
-                            spaceKey: config.get('spaceKey') || '',
-                            userEmail: config.get('userEmail') || '',
-                            apiToken: config.get('apiToken') || ''
+                            baseUrl: confluenceConfig.baseUrl ?? '',
+                            spaceKey: confluenceConfig.spaceKey ?? '',
+                            userEmail: confluenceConfig.userEmail ?? '',
+                            apiToken: confluenceConfig.apiToken ?? ''
                         }
                     });
                     break;
 
                 case 'saveConfluenceConfig':
-                    // Save configuration
-                    await vscode.workspace.getConfiguration('workspaceGPT.confluence').update('baseUrl', data.config.baseUrl, true);
-                    await vscode.workspace.getConfiguration('workspaceGPT.confluence').update('spaceKey', data.config.spaceKey, true);
-                    await vscode.workspace.getConfiguration('workspaceGPT.confluence').update('userEmail', data.config.userEmail, true);
-                    await vscode.workspace.getConfiguration('workspaceGPT.confluence').update('apiToken', data.config.apiToken, true);
+                    // Get current configuration
+                    const currentConfig: any = this._context.globalState.get("workspaceGPT-settings") || { state: { config: { confluence: {} } } };
+                    
+                    // Update confluence config
+                    currentConfig.state.config.confluence = {
+                        ...currentConfig.state.config.confluence,
+                        baseUrl: data.config.baseUrl,
+                        spaceKey: data.config.spaceKey,
+                        userEmail: data.config.userEmail,
+                        apiToken: data.config.apiToken
+                    };
+
+                    // Save to global state
+                    await this._context.globalState.update('workspaceGPT-settings', currentConfig);
                     break;
 
                 case 'checkConfluenceConnection':
@@ -82,14 +92,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
                 case 'startConfluenceSync':
                     try {
-                        // Get Confluence configuration
-                        const config = vscode.workspace.getConfiguration('workspaceGPT.confluence');
-                        const confluenceConfig = {
-                            baseUrl: config.get('baseUrl') || '',
-                            spaceKey: config.get('spaceKey') || '',
-                            userEmail: config.get('userEmail') || '',
-                            apiToken: config.get('apiToken') || ''
-                        };
+                        // Get Confluence configuration from global state
+                        const config: any = this._context.globalState.get("workspaceGPT-settings");
+                        const confluenceConfig = config.state.config.confluence;
                         
                         // Validate configuration
                         if (!confluenceConfig.baseUrl || !confluenceConfig.spaceKey || 
