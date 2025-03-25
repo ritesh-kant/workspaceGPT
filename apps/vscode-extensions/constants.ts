@@ -41,9 +41,3 @@ export const MODEL = {
   DEFAULT_DIMENSIONS: 384, // Default dimension for all-MiniLM-L6-v2
   DEFAULT_NAME: 'Xenova/all-MiniLM-L6-v2'
 };
-
-// Configuration Constants
-export const CONFIG = {
-  API_BASE_URL_DEFAULT: 'http://localhost:8000',
-  SECTION_NAME: 'workspaceGPT'
-};
