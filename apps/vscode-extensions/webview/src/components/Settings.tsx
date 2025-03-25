@@ -104,7 +104,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     updateConfig('confluence', 'connectionStatus', 'unknown');
     updateConfig('confluence', 'statusMessage', 'Checking connection...');
     vscode.postMessage({
-      type: MESSAGE_TYPES.CHECK_CONNECTION,
+      type: MESSAGE_TYPES.CHECK_CONFLUENCE_CONNECTION,
       section: 'confluence',
       config,
     });
@@ -115,7 +115,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     updateConfig('confluence', 'confluenceSyncProgress', 0);
     updateConfig('confluence', 'statusMessage', 'Starting sync process...');
     vscode.postMessage({
-      type: MESSAGE_TYPES.START_SYNC,
+      type: MESSAGE_TYPES.START_CONFLUENCE_SYNC,
       section: 'confluence',
       config,
     });

@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { HierarchicalNSW } from 'hnswlib-node';
 import MarkdownIt from 'markdown-it';
-import { EmbeddingConfig } from 'src/types';
+import { EmbeddingConfig } from 'src/types/types';
 
 let pipeline: any;
 let transformers: any;

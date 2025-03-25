@@ -3,11 +3,15 @@ export const MESSAGE_TYPES = {
   SEND_MESSAGE: 'send-message',
   RECEIVE_MESSAGE: 'receive-message',
   CLEAR_CHAT: 'clear-chat',
+  NEW_CHAT: 'new-chat',
   UPDATE_SETTINGS: 'update-settings',
-  CHECK_CONNECTION: 'check-connection',
-  START_SYNC: 'start-sync',
-  SYNC_PROGRESS: 'sync-progress',
-  SYNC_COMPLETE: 'sync-complete',
+  CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
+  START_CONFLUENCE_SYNC: 'start-confluence-sync',
+  SYNC_CONFLUENCE_PROGRESS: 'sync-confluence-progress',
+  SYNC_CONFLUENCE_COMPLETE: 'sync-confluence-complete',
+  SYNC_CONFLUENCE_ERROR:'sync-confluence-error',
+  SYNC_GLOBAL_STATE:'sync-global-state',
+  CLEAR_GLOBAL_STATE:'clear-global-state',
   SYNC_ERROR: 'sync-error'
 };
 

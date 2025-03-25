@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
-import { EmbeddingManager } from './embeddingManager';
+import { EmbeddingManager } from './embeddingService';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
-export class ChatManager {
+export class ChatService {
   private embeddingManager: EmbeddingManager;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;

@@ -3,8 +3,8 @@ import * as vscode from 'vscode';
 import { Worker } from 'worker_threads';
 import * as fs from 'fs';
 import { promisify } from 'util';
-import { EmbeddingManager } from './embeddingManager';
-import { EmbeddingConfig } from 'src/types';
+import { EmbeddingManager } from './embeddingService';
+import { EmbeddingConfig } from 'src/types/types';
 
 interface ProcessedPage {
   filename: string;
@@ -19,7 +19,7 @@ interface ConfluenceConfig {
   apiToken: string;
 }
 
-export class ConfluenceWorkerManager {
+export class ConfluenceService {
   private worker: Worker | null = null;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
@@ -89,7 +89,8 @@ export class ConfluenceWorkerManager {
             const embeddingManager = new EmbeddingManager(this.webviewView, this.context);
             await embeddingManager.createEmbeddings({
               dimensions: 384, // Default dimension for all-MiniLM-L6-v2
-              maxElements: message.pages.length
+              maxElements: message.pages.length,
+              modelName: 'Xenova/all-MiniLM-L6-v2'
             } as EmbeddingConfig);
 
             // Clean up the worker

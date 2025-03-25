@@ -47,13 +47,13 @@ const App: React.FC = () => {
           });
           setIsLoading(false);
           break;
-        case MESSAGE_TYPES.SYNC_PROGRESS:
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_PROGRESS:
           updateConfig('confluence', 'confluenceSyncProgress', message.progress);
           break;
-        case MESSAGE_TYPES.SYNC_COMPLETE:
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE:
           updateConfig('confluence', 'isSyncing', false);
           break;
-        case MESSAGE_TYPES.SYNC_ERROR:
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR:
           updateConfig('confluence', 'isSyncing', false);
           updateConfig('confluence', 'statusMessage', message.error);
           break;

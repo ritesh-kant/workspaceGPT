@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Worker } from 'worker_threads';
-import { EmbeddingConfig } from 'src/types';
+import { EmbeddingConfig } from 'src/types/types';
 
 
 

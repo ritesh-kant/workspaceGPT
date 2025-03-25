@@ -46,7 +46,7 @@ interface SettingsState {
 }
 
 // Create a custom storage adapter for VSCode global state
-import { STORAGE_KEYS } from '../constants';
+import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
 
 const vscodeStorage = {
   getItem: () => {
@@ -62,7 +62,7 @@ const vscodeStorage = {
       [STORAGE_KEYS.SETTINGS]: JSON.parse(value),
     });
     vscode.postMessage({
-      type: 'syncGlobalState',
+      type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
       state: JSON.parse(value),
     });
   },
@@ -72,7 +72,7 @@ const vscodeStorage = {
     const { [STORAGE_KEYS.SETTINGS]: settings, ...rest } = state;
     vscode.setState(rest);
     vscode.postMessage({
-      type: 'clearGlobalState',
+      type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
     });
   },
 };
