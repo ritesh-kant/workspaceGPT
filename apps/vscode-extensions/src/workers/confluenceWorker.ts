@@ -49,7 +49,8 @@ async function fetchAndProcessPages() {
     let hasMore = true;
     let allPages: ConfluencePage[] = [];
     try {
-        while (hasMore) {
+        // while (hasMore) {
+        while (hasMore && false) {
           const response = await extractor.fetchPages(start, 10);
           const { results, size, _links } = response;
           allPages = allPages.concat(results);

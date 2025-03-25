@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { HierarchicalNSW } from 'hnswlib-node';
 import MarkdownIt from 'markdown-it';
+import { EmbeddingConfig } from 'src/types';
 
 let pipeline: any;
 let transformers: any;
@@ -12,10 +13,7 @@ let md: MarkdownIt;
 interface WorkerData {
   mdDirPath: string;
   embeddingDirPath: string;
-  config: {
-    dimensions: number;
-    maxElements: number;
-  };
+  config: EmbeddingConfig;
 }
 
 interface Metadata {
@@ -36,7 +34,7 @@ async function createEmbeddings(): Promise<void> {
       .readdirSync(mdDirPath)
       .filter((file) => file.endsWith('.md'));
     const total = files.length;
-    
+
     // Add 20% buffer for future additions
     const maxElements = Math.ceil(total * 2000 * 1.2);
     const index = new HierarchicalNSW('cosine', config.dimensions);
@@ -45,7 +43,9 @@ async function createEmbeddings(): Promise<void> {
     console.log(`Initialized index with ${maxElements} capacity.`);
 
     // Memory usage check
-    console.log(`Memory Usage: ${process.memoryUsage().heapUsed / 1024 / 1024} MB`);
+    console.log(
+      `Memory Usage: ${process.memoryUsage().heapUsed / 1024 / 1024} MB`
+    );
     // Files are already loaded above
 
     // Process each file
@@ -54,10 +54,13 @@ async function createEmbeddings(): Promise<void> {
       const filePath = path.join(mdDirPath, file);
       const markdownContent = fs.readFileSync(filePath, 'utf8');
       // Convert markdown to structured plain text
-      const content = md.render(markdownContent).replace(/<[^>]*>/g, '').trim();
+      const content = md
+        .render(markdownContent)
+        .replace(/<[^>]*>/g, '')
+        .trim();
 
       // Create embedding for the content using all-MiniLM-L6-v2
-      const embedding = await createEmbeddingForText(content);
+      const embedding = await createEmbeddingForText(content, config.modelName);
 
       // Add to index
       index.addPoint(embedding, i);
@@ -100,7 +103,10 @@ async function createEmbeddings(): Promise<void> {
 }
 
 // Create embedding using all-MiniLM-L6-v2 model
-async function createEmbeddingForText(text: string): Promise<number[]> {
+async function createEmbeddingForText(
+  text: string,
+  modelName: string
+): Promise<number[]> {
   // Using dynamic import for ESM compatibility
   const importModule = new Function('modulePath', 'return import(modulePath)');
   try {
@@ -109,10 +115,7 @@ async function createEmbeddingForText(text: string): Promise<number[]> {
       transformers = await importModule('@xenova/transformers');
 
       pipeline = transformers.pipeline;
-      extractor = await pipeline(
-        'feature-extraction',
-        'Xenova/all-MiniLM-L6-v2'
-      );
+      extractor = await pipeline('feature-extraction', modelName);
     }
     const output = await extractor(text, { pooling: 'mean', normalize: true });
     return Array.from(output.data).map(Number);

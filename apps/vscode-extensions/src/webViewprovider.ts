@@ -4,7 +4,7 @@ import * as fs from 'fs';
 
 import { ChatManager } from './utils/chatManager';
 
-export class ChatViewProvider implements vscode.WebviewViewProvider {
+export class WebViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private chatManager?: ChatManager;
 

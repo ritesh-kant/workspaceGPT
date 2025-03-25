@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { VSCodeAPI } from '../vscode';
 import './Settings.css';
 import { useSettingsStore } from '../store';
+import { MESSAGE_TYPES } from '../constants';
 
 interface SettingsButtonProps {
   isVisible: boolean;
@@ -103,7 +104,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     updateConfig('confluence', 'connectionStatus', 'unknown');
     updateConfig('confluence', 'statusMessage', 'Checking connection...');
     vscode.postMessage({
-      type: 'checkConfluenceConnection',
+      type: MESSAGE_TYPES.CHECK_CONNECTION,
+      section: 'confluence',
       config,
     });
   };
@@ -113,7 +115,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     updateConfig('confluence', 'confluenceSyncProgress', 0);
     updateConfig('confluence', 'statusMessage', 'Starting sync process...');
     vscode.postMessage({
-      type: 'startConfluenceSync',
+      type: MESSAGE_TYPES.START_SYNC,
+      section: 'confluence',
       config,
     });
   };

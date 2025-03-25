@@ -46,20 +46,21 @@ interface SettingsState {
 }
 
 // Create a custom storage adapter for VSCode global state
+import { STORAGE_KEYS } from '../constants';
+
 const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
-    const globalState = vscode.getState()?.globalSettings || {};
-    return JSON.stringify(globalState || {});
+    const state = vscode.getState() || {};
+    return JSON.stringify(state[STORAGE_KEYS.SETTINGS] || {});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
     const currentState = vscode.getState() || {};
     vscode.setState({
       ...currentState,
-      globalSettings: JSON.parse(value),
+      [STORAGE_KEYS.SETTINGS]: JSON.parse(value),
     });
-    // Send message to extension to sync global state
     vscode.postMessage({
       type: 'syncGlobalState',
       state: JSON.parse(value),
@@ -68,9 +69,8 @@ const vscodeStorage = {
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { globalSettings, ...rest } = state;
+    const { [STORAGE_KEYS.SETTINGS]: settings, ...rest } = state;
     vscode.setState(rest);
-    // Notify extension about state removal
     vscode.postMessage({
       type: 'clearGlobalState',
     });

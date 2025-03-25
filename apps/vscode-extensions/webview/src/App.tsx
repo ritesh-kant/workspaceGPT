@@ -4,6 +4,7 @@ import ChatMessage from './components/ChatMessage';
 import SettingsButton from './components/Settings';
 import { VSCodeAPI } from './vscode';
 import { useChatStore, useSettingsStore } from './store';
+import { MESSAGE_TYPES } from './constants';
 
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
@@ -19,7 +20,7 @@ const App: React.FC = () => {
     setShowTips 
   } = useChatStore();
   
-  const { showSettings, setShowSettings } = useSettingsStore();
+  const { showSettings, setShowSettings, updateConfig } = useSettingsStore();
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
@@ -38,14 +39,23 @@ const App: React.FC = () => {
     // Handle messages from the extension
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      setIsLoading(false);
-      
       switch (message.type) {
-        case 'response':
-          addMessage({ content: message.message, isUser: false });
+        case MESSAGE_TYPES.RECEIVE_MESSAGE:
+          addMessage({
+            content: message.content,
+            isUser: false,
+          });
+          setIsLoading(false);
           break;
-        case 'error':
-          addMessage({ content: `Error: ${message.message}`, isUser: false });
+        case MESSAGE_TYPES.SYNC_PROGRESS:
+          updateConfig('confluence', 'confluenceSyncProgress', message.progress);
+          break;
+        case MESSAGE_TYPES.SYNC_COMPLETE:
+          updateConfig('confluence', 'isSyncing', false);
+          break;
+        case MESSAGE_TYPES.SYNC_ERROR:
+          updateConfig('confluence', 'isSyncing', false);
+          updateConfig('confluence', 'statusMessage', message.error);
           break;
       }
     };
@@ -60,20 +70,21 @@ const App: React.FC = () => {
   }, [messages]);
 
   const handleSendMessage = () => {
-    if (inputValue.trim()) {
-      // Add user message to the chat
-      addMessage({ content: inputValue, isUser: true });
-      setIsLoading(true);
-      
-      // Send message to extension
-      vscode.postMessage({
-        type: 'sendMessage',
-        message: inputValue
-      });
-      
-      // Clear input
-      setInputValue('');
-    }
+    if (inputValue.trim() === '') return;
+
+    addMessage({
+      content: inputValue,
+      isUser: true,
+    });
+
+    setInputValue('');
+    setIsLoading(true);
+    setShowTips(false);
+
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      message: inputValue,
+    });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

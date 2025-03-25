@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
+import { STORAGE_KEYS } from '../constants';
 
 interface Message {
   content: string;
@@ -25,19 +26,19 @@ const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    return JSON.stringify(state.chat || {});
+    return JSON.stringify(state[STORAGE_KEYS.CHAT] || []);
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    vscode.setState({ ...state, chat: JSON.parse(value) });
+    vscode.setState({ ...state, [STORAGE_KEYS.CHAT]: JSON.parse(value) });
   },
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { chat, ...rest } = state;
+    const { [STORAGE_KEYS.CHAT]: chat, ...rest } = state;
     vscode.setState(rest);
-  }
+  },
 };
 
 export const useChatStore = create<ChatState>()(
