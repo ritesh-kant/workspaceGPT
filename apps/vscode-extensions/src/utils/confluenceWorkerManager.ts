@@ -95,6 +95,14 @@ export class ConfluenceWorkerManager {
             // Clean up the worker
             this.stopSync();
             break;
+          case 'indexComplete':
+            console.log(`Indexing complete.`);
+            this.webviewView.webview.postMessage({
+              type: 'indexComplete',
+              source: 'confluence'
+            });
+            
+          
         }
       });
 

@@ -2,10 +2,12 @@ import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
 import { HierarchicalNSW } from 'hnswlib-node';
+import MarkdownIt from 'markdown-it';
 
 let pipeline: any;
 let transformers: any;
 let extractor: any;
+let md: MarkdownIt;
 
 interface WorkerData {
   mdDirPath: string;
@@ -24,23 +26,35 @@ interface Metadata {
 
 const { mdDirPath, embeddingDirPath, config } = workerData as WorkerData;
 
+// Initialize markdown-it
+md = new MarkdownIt({ html: false });
+
 async function createEmbeddings(): Promise<void> {
   try {
     // Initialize HNSW index
-    const index = new HierarchicalNSW('cosine', config.dimensions);
-    index.initIndex(config.maxElements);
-
-    // Read all MD files
     const files = fs
       .readdirSync(mdDirPath)
       .filter((file) => file.endsWith('.md'));
     const total = files.length;
+    
+    // Add 20% buffer for future additions
+    const maxElements = Math.ceil(total * 2000 * 1.2);
+    const index = new HierarchicalNSW('cosine', config.dimensions);
+    index.initIndex(maxElements);
+
+    console.log(`Initialized index with ${maxElements} capacity.`);
+
+    // Memory usage check
+    console.log(`Memory Usage: ${process.memoryUsage().heapUsed / 1024 / 1024} MB`);
+    // Files are already loaded above
 
     // Process each file
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const filePath = path.join(mdDirPath, file);
-      const content = fs.readFileSync(filePath, 'utf8');
+      const markdownContent = fs.readFileSync(filePath, 'utf8');
+      // Convert markdown to structured plain text
+      const content = md.render(markdownContent).replace(/<[^>]*>/g, '').trim();
 
       // Create embedding for the content using all-MiniLM-L6-v2
       const embedding = await createEmbeddingForText(content);
@@ -75,7 +89,8 @@ async function createEmbeddings(): Promise<void> {
     index.writeIndex(indexPath);
 
     // Complete
-    parentPort?.postMessage({ type: 'complete' });
+    parentPort?.postMessage({ type: 'indexComplete' });
+    console.log('Embeddings created successfully!');
   } catch (error) {
     parentPort?.postMessage({
       type: 'error',

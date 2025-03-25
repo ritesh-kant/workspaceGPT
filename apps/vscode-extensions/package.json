@@ -79,10 +79,12 @@
   },
   "dependencies": {
     "@workspace-gpt/confluence-utils": "workspace:*",
+    "@xenova/transformers": "^2.14.0",
     "hnswlib-node": "^3.0.0",
-    "@xenova/transformers": "^2.14.0"
+    "markdown-it": "^14.1.0"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "18.x",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
