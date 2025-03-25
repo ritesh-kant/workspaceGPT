@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
 
 import { ChatService } from './services/chatService';
 import { ConfluenceService } from './services/confluenceService';
@@ -33,25 +34,21 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     // Handle messages from the WebView
     webviewView.webview.onDidReceiveMessage(async (data) => {
       switch (data.type) {
-        case 'sync-global-state':
-          // Save to VSCode's global state storage
+        case MESSAGE_TYPES.SYNC_GLOBAL_STATE:
           await this._context.globalState.update(
-            'workspaceGPT-settings',
+            STORAGE_KEYS.WORKSPACE_SETTINGS,
             data.state
           );
           break;
 
-        case 'clear-global-state':
-          // Clear from VSCode's global state storage
+        case MESSAGE_TYPES.CLEAR_GLOBAL_STATE:
           await this._context.globalState.update(
-            'workspaceGPT-settings',
+            STORAGE_KEYS.WORKSPACE_SETTINGS,
             undefined
           );
           break;
-        case 'check-confluence-connection':
+        case MESSAGE_TYPES.CHECK_CONFLUENCE_CONNECTION:
           try {
-            // Here you would implement the actual connection check
-            // For now, we'll simulate a successful connection
             await new Promise((resolve) => setTimeout(resolve, 1000));
             webviewView.webview.postMessage({
               type: 'confluenceConnectionStatus',
@@ -67,7 +64,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
           }
           break;
 
-        case 'start-confluence-sync':
+        case MESSAGE_TYPES.START_CONFLUENCE_SYNC:
           try {
             // Get Confluence configuration from global state
             const config: any = this._context.globalState.get(
@@ -103,7 +100,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
           }
           break;
 
-        case 'new-chat':
+        case MESSAGE_TYPES.NEW_CHAT:
           try {
             if (!this.chatService) {
               this.chatService = new ChatService(webviewView, this._context);
@@ -119,7 +116,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
             });
           }
           break;
-        case 'send-message':
+        case MESSAGE_TYPES.SEND_MESSAGE:
           try {
             if (!this.chatService) {
               this.chatService = new ChatService(webviewView, this._context);

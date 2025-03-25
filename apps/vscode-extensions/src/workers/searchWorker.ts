@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
 import { HierarchicalNSW } from 'hnswlib-node';
+import { MODEL } from '../../constants';
 
 interface WorkerData {
   query: string;
@@ -71,7 +72,7 @@ async function createEmbeddingForText(text: string): Promise<number[]> {
     if (!extractor) {
       transformers = await importModule('@xenova/transformers');
       pipeline = transformers.pipeline;
-      extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      extractor = await pipeline('feature-extraction', MODEL.DEFAULT_NAME);
     }
     const output = await extractor(text, { pooling: 'mean', normalize: true });
     return Array.from(output.data).map(Number);

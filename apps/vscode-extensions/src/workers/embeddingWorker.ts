@@ -4,6 +4,7 @@ import path from 'path';
 import { HierarchicalNSW } from 'hnswlib-node';
 import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
+import { MODEL } from '../../constants';
 
 let pipeline: any;
 let transformers: any;
@@ -60,7 +61,7 @@ async function createEmbeddings(): Promise<void> {
         .trim();
 
       // Create embedding for the content using all-MiniLM-L6-v2
-      const embedding = await createEmbeddingForText(content, config.modelName);
+      const embedding = await createEmbeddingForText(content);
 
       // Add to index
       index.addPoint(embedding, i);
@@ -105,17 +106,13 @@ async function createEmbeddings(): Promise<void> {
 // Create embedding using all-MiniLM-L6-v2 model
 async function createEmbeddingForText(
   text: string,
-  modelName: string
 ): Promise<number[]> {
-  // Using dynamic import for ESM compatibility
   const importModule = new Function('modulePath', 'return import(modulePath)');
   try {
     if (!extractor) {
-      //   transformers = await import('@xenova/transformers');
       transformers = await importModule('@xenova/transformers');
-
       pipeline = transformers.pipeline;
-      extractor = await pipeline('feature-extraction', modelName);
+      extractor = await pipeline('feature-extraction', MODEL.DEFAULT_NAME);
     }
     const output = await extractor(text, { pooling: 'mean', normalize: true });
     return Array.from(output.data).map(Number);

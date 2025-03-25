@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { promisify } from 'util';
 import { EmbeddingManager } from './embeddingService';
 import { EmbeddingConfig } from 'src/types/types';
+import { MESSAGE_TYPES, MODEL } from '../../constants';
 
 interface ProcessedPage {
   filename: string;
@@ -80,7 +81,7 @@ export class ConfluenceService {
             
             // Notify the webview that sync is complete
             this.webviewView.webview.postMessage({
-              type: 'syncComplete',
+              type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
               source: 'confluence',
               pagesCount: message.pages.length
             });
@@ -88,9 +89,8 @@ export class ConfluenceService {
             // Start embedding creation after sync is complete
             const embeddingManager = new EmbeddingManager(this.webviewView, this.context);
             await embeddingManager.createEmbeddings({
-              dimensions: 384, // Default dimension for all-MiniLM-L6-v2
+              dimensions: MODEL.DEFAULT_DIMENSIONS,
               maxElements: message.pages.length,
-              modelName: 'Xenova/all-MiniLM-L6-v2'
             } as EmbeddingConfig);
 
             // Clean up the worker
