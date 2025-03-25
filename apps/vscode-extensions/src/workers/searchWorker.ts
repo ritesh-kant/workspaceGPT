@@ -66,9 +66,10 @@ let extractor: any;
 
 // Create embedding using all-MiniLM-L6-v2 model
 async function createEmbeddingForText(text: string): Promise<number[]> {
+  const importModule = new Function('modulePath', 'return import(modulePath)');
   try {
     if (!extractor) {
-      transformers = await import('@xenova/transformers');
+      transformers = await importModule('@xenova/transformers');
       pipeline = transformers.pipeline;
       extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
     }
