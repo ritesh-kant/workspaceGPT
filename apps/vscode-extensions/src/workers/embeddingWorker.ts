@@ -4,7 +4,7 @@ import path from 'path';
 import { HierarchicalNSW } from 'hnswlib-node';
 import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
-import { MODEL } from '../../constants';
+import { MODEL, WORKER_STATUS } from '../../constants';
 
 let pipeline: any;
 let transformers: any;
@@ -81,8 +81,8 @@ async function createEmbeddings(): Promise<void> {
 
       // Report progress
       parentPort?.postMessage({
-        type: 'progress',
-        progress: ((i + 1) / total) * 100,
+        type: WORKER_STATUS.PROCESSING,
+        progress: (((i + 1) / total) * 100).toFixed(1),
         current: i + 1,
         total,
       });
@@ -93,11 +93,11 @@ async function createEmbeddings(): Promise<void> {
     index.writeIndex(indexPath);
 
     // Complete
-    parentPort?.postMessage({ type: 'indexComplete' });
+    parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED });
     console.log('Embeddings created successfully!');
   } catch (error) {
     parentPort?.postMessage({
-      type: 'error',
+      type: WORKER_STATUS.ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
   }

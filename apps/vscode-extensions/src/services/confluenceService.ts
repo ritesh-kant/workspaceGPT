@@ -3,9 +3,7 @@ import * as vscode from 'vscode';
 import { Worker } from 'worker_threads';
 import * as fs from 'fs';
 import { promisify } from 'util';
-import { EmbeddingManager } from './embeddingService';
-import { EmbeddingConfig } from 'src/types/types';
-import { MESSAGE_TYPES, MODEL, WORKER_STATUS } from '../../constants';
+import { MESSAGE_TYPES, WORKER_STATUS } from '../../constants';
 
 interface ProcessedPage {
   filename: string;
@@ -25,25 +23,36 @@ export class ConfluenceService {
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
 
-  constructor(webviewView: vscode.WebviewView, context: vscode.ExtensionContext) {
+  constructor(
+    webviewView: vscode.WebviewView,
+    context: vscode.ExtensionContext
+  ) {
     this.webviewView = webviewView;
     this.context = context;
   }
 
-  public async startSync(config: ConfluenceConfig): Promise<void> {
+  public async startSync(
+    config: ConfluenceConfig,
+    onComplete?: () => Promise<void>
+  ): Promise<void> {
     try {
       // Stop any existing worker
       this.stopSync();
 
       // Create a new worker
-      const workerPath = path.join(__dirname, '..', 'workers', 'confluenceWorker.js');
+      const workerPath = path.join(
+        __dirname,
+        '..',
+        'workers',
+        'confluenceWorker.js'
+      );
       this.worker = new Worker(workerPath, {
         workerData: {
           spaceKey: config.spaceKey,
           confluenceBaseUrl: config.baseUrl,
           apiToken: config.apiToken,
-          userEmail: config.userEmail
-        }
+          userEmail: config.userEmail,
+        },
       });
 
       // Handle messages from the worker
@@ -56,7 +65,7 @@ export class ConfluenceService {
               source: 'confluence',
               progress: message.progress,
               current: message.current,
-              total: message.total
+              total: message.total,
             });
             break;
 
@@ -69,13 +78,14 @@ export class ConfluenceService {
             console.error(`Worker error: ${message.message}`);
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
-              message: message.message
+              message: message.message,
             });
             break;
 
           case WORKER_STATUS.COMPLETED:
-            console.log(`Sync complete. Processed ${message.pages.length} pages.`);
-            
+            console.log(
+              `Sync complete. Processed ${message.pages.length} pages.`
+            );
             // Notify the webview that sync is complete
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
@@ -83,24 +93,14 @@ export class ConfluenceService {
               pagesCount: message.pages.length
             });
             
-            // Start embedding creation after sync is complete
-            const embeddingManager = new EmbeddingManager(this.webviewView, this.context);
-            await embeddingManager.createEmbeddings({
-              dimensions: MODEL.DEFAULT_DIMENSIONS,
-              maxElements: message.pages.length,
-            } as EmbeddingConfig);
-
             // Clean up the worker
             this.stopSync();
+
+            // Execute completion callback if provided
+            if (onComplete) {
+              await onComplete();
+            }
             break;
-          case 'indexComplete':
-            console.log(`Indexing complete.`);
-            this.webviewView.webview.postMessage({
-              type: 'indexComplete',
-              source: 'confluence'
-            });
-            
-          
         }
       });
 
@@ -109,7 +109,7 @@ export class ConfluenceService {
         console.error('Worker error:', error);
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
-          message: error.message
+          message: error.message,
         });
         this.stopSync();
       });
@@ -120,17 +120,16 @@ export class ConfluenceService {
           console.error(`Worker stopped with exit code ${code}`);
           this.webviewView.webview.postMessage({
             type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
-            message: `Worker process exited with code ${code}`
+            message: `Worker process exited with code ${code}`,
           });
         }
         this.worker = null;
       });
-
     } catch (error) {
       console.error('Error starting worker:', error);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
       });
       this.stopSync();
     }
@@ -147,14 +146,14 @@ export class ConfluenceService {
   //   try {
   //     // Get existing confluence data or initialize empty object
   //     const existingData = this.context.globalState.get('workspaceGPT-confluence-data') || {};
-      
+
   //     // Update with new pages data
   //     const updatedData = {
   //       ...existingData,
   //       pages: pages,
   //       lastSyncTime: new Date().toISOString()
   //     };
-      
+
   //     // Save to global state
   //     await this.context.globalState.update('workspaceGPT-confluence-data', updatedData);
   //     console.log('Saved confluence data to global state');
@@ -167,25 +166,29 @@ export class ConfluenceService {
   private async saveProcessedPageAsMd(page: ProcessedPage): Promise<void> {
     try {
       // Create the directory path for storing MD files
-      const mdDirPath = path.join(this.context.globalStorageUri.fsPath, 'confluence', 'mds');
-      
+      const mdDirPath = path.join(
+        this.context.globalStorageUri.fsPath,
+        'confluence',
+        'mds'
+      );
+
       // Ensure the directory exists
       await this.ensureDirectoryExists(mdDirPath);
-      
+
       // Create the file path for the MD file
       const mdFilePath = path.join(mdDirPath, `${page.filename}.md`);
-      
+
       // Write the content to the file
       const writeFile = promisify(fs.writeFile);
       await writeFile(mdFilePath, page.text, 'utf8');
-      
+
       console.log(`Saved MD file: ${page.filename}.md`);
     } catch (error) {
       console.error('Error saving MD file:', error);
       throw error;
     }
   }
-  
+
   private async ensureDirectoryExists(dirPath: string): Promise<void> {
     try {
       // Check if directory exists

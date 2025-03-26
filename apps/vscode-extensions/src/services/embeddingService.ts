@@ -3,8 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Worker } from 'worker_threads';
 import { EmbeddingConfig } from 'src/types/types';
-
-
+import { WORKER_STATUS, MESSAGE_TYPES } from '../../constants';
 
 interface SearchResult {
   text: string;
@@ -12,7 +11,7 @@ interface SearchResult {
   source: string;
 }
 
-export class EmbeddingManager {
+export class EmbeddingService {
   private worker: Worker | null = null;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
@@ -47,29 +46,29 @@ export class EmbeddingManager {
       // Handle messages from the worker
       this.worker.on('message', (message) => {
         switch (message.type) {
-          case 'progress':
+          case WORKER_STATUS.PROCESSING:
             this.webviewView.webview.postMessage({
-              type: 'embeddingProgress',
+              type: MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS,
               progress: message.progress,
               current: message.current,
               total: message.total
             });
             break;
 
-          case 'error':
+          case WORKER_STATUS.ERROR:
             console.error(`Worker error: ${message.message}`);
             this.webviewView.webview.postMessage({
-              type: 'embeddingError',
+              type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
               message: message.message
             });
             break;
 
-          case 'complete':
+          case WORKER_STATUS.COMPLETED:
             console.log('Embedding creation complete');
             this.webviewView.webview.postMessage({
-              type: 'embeddingComplete'
+              type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE
             });
-            this.stopWorker();
+            // this.stopWorker();
             break;
         }
       });
@@ -78,10 +77,10 @@ export class EmbeddingManager {
       this.worker.on('error', (error) => {
         console.error('Worker error:', error);
         this.webviewView.webview.postMessage({
-          type: 'embeddingError',
+          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
           message: error.message
         });
-        this.stopWorker();
+        this.worker = null;
       });
 
       // Handle worker exit
@@ -89,7 +88,7 @@ export class EmbeddingManager {
         if (code !== 0) {
           console.error(`Worker stopped with exit code ${code}`);
           this.webviewView.webview.postMessage({
-            type: 'embeddingError',
+            type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
             message: `Worker process exited with code ${code}`
           });
         }
@@ -99,7 +98,7 @@ export class EmbeddingManager {
     } catch (error) {
       console.error('Error starting worker:', error);
       this.webviewView.webview.postMessage({
-        type: 'embeddingError',
+        type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error)
       });
       this.stopWorker();
@@ -137,7 +136,7 @@ export class EmbeddingManager {
 
   private stopWorker(): void {
     if (this.worker) {
-      this.worker.terminate();
+      this.worker?.terminate();
       this.worker = null;
     }
   }

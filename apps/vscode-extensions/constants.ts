@@ -4,19 +4,27 @@ export const MESSAGE_TYPES = {
   RECEIVE_MESSAGE: 'receive-message',
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
+
   UPDATE_SETTINGS: 'update-settings',
+  SYNC_GLOBAL_STATE: 'sync-global-state',
+  CLEAR_GLOBAL_STATE: 'clear-global-state',
+
   CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
   START_CONFLUENCE_SYNC: 'start-confluence-sync',
   SYNC_CONFLUENCE_IN_PROGRESS: 'sync-confluence-progress',
   SYNC_CONFLUENCE_COMPLETE: 'sync-confluence-complete',
   CONFLUENCE_CONNECTION_STATUS:'confluence-connection-status',
   SYNC_CONFLUENCE_ERROR: 'sync-confluence-error',
+
   SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
   SYNC_CODEBASE_COMPLETE: 'sync-codebase-complete',
   CODEBASE_CONNECTION_STATUS:'codebase-connection-status',
   SYNC_CODEBASE_ERROR: 'sync-codebase-error',
-  SYNC_GLOBAL_STATE: 'sync-global-state',
-  CLEAR_GLOBAL_STATE: 'clear-global-state'
+
+  INDEXING_CONFLUENCE_ERROR: 'indexing-confluence-error',
+  INDEXING_CONFLUENCE_IN_PROGRESS: 'indexing-confluence-progress',
+  INDEXING_CONFLUENCE_COMPLETE: 'indexing-confluence-complete',
+
 };
 
 // UI Constants

@@ -14,7 +14,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   onClose,
 }) => {
   // Use settings store instead of local state
-  const { config, setConfig,updateConfig, batchUpdateConfig } = useSettingsStore();
+  const { config, setConfig, updateConfig, batchUpdateConfig } =
+    useSettingsStore();
 
   const vscode = VSCodeAPI();
 
@@ -31,58 +32,88 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         case 'SettingsButtonConfig':
           setConfig(message.config);
           break;
+
+        // Confluence
         case MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS:
           batchUpdateConfig('confluence', {
             connectionStatus: message.status ? 'success' : 'error',
-            statusMessage: message.message || ''
+            statusMessage: message.message || '',
           });
           break;
         case MESSAGE_TYPES.SYNC_CONFLUENCE_IN_PROGRESS:
           batchUpdateConfig('confluence', {
             confluenceSyncProgress: message.progress,
             connectionStatus: 'unknown',
-            isSyncing: message.progress < 100
+            isSyncing: message.progress < 100,
           });
           break;
+
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE:
+          batchUpdateConfig('confluence', {
+            connectionStatus: 'success',
+            statusMessage: 'Sync completed successfully',
+            confluenceSyncProgress: 100,
+            isSyncing: false,
+          });
+          console.log('SYNC_CONFLUENCE_COMPLETE', message);
+          break;
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR:
+          batchUpdateConfig('confluence', {
+            isSyncing: false,
+            connectionStatus: 'error',
+            statusMessage: `Sync error: ${message.message}`,
+          });
+          break;
+
+        // Codebase
         case MESSAGE_TYPES.SYNC_CODEBASE_IN_PROGRESS:
-          batchUpdateConfig('codebase',{ 
+          batchUpdateConfig('codebase', {
             codebaseSyncProgress: message.progress,
-            connectionStatus: 'unknown'
+            connectionStatus: 'unknown',
           });
 
           if (message.progress >= 100) {
             updateConfig('codebase', 'isSyncing', false);
           }
           break;
-        case MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE:
-          batchUpdateConfig('confluence', {
-            connectionStatus: 'success',
-            statusMessage: 'Sync completed successfully',
-            confluenceSyncProgress: 100,
-            isSyncing: false
-          });
-          console.log('SYNC_CONFLUENCE_COMPLETE', message);
-          break;
         case MESSAGE_TYPES.SYNC_CODEBASE_COMPLETE:
           batchUpdateConfig('codebase', {
             isSyncing: false,
             codebaseSyncProgress: 100,
             connectionStatus: 'success',
-            statusMessage: 'Sync completed successfully'
-          });
-          break;
-        case MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR:
-          batchUpdateConfig('confluence', {
-            isSyncing: false,
-            connectionStatus: 'error',
-            statusMessage: `Sync error: ${message.message}`
+            statusMessage: 'Sync completed successfully',
           });
           break;
         case MESSAGE_TYPES.SYNC_CODEBASE_ERROR:
           batchUpdateConfig('codebase', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync error: ${message.message}`
+            statusMessage: `Sync error: ${message.message}`,
+          });
+          break;
+
+        // Indexing
+        case MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS:
+          batchUpdateConfig('confluence', {
+            confluenceIndexProgress: message.progress,
+            connectionStatus: 'unknown',
+            isIndexing: message.progress < 100,
+          });
+          break;
+        case MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE:
+          batchUpdateConfig('confluence', {
+            confluenceIndexProgress: 100,
+            connectionStatus: 'success',
+            isIndexing: false,
+            statusMessage: 'Indexing completed successfully',
+          });
+          break;
+
+        case MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR:
+          batchUpdateConfig('confluence', {
+            isSyncing: false,
+            connectionStatus: 'error',
+            statusMessage: `Indexing error: ${message.message}`,
           });
           break;
       }
@@ -261,6 +292,21 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                         className='progress-fill'
                         style={{
                           width: `${config.confluence.confluenceSyncProgress}%`,
+                        }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+                {config.confluence.isIndexing && (
+                  <div className='sync-progress'>
+                    <div className='progress-label'>
+                      Indexing: {config.confluence.confluenceIndexProgress}%
+                    </div>
+                    <div className='progress-bar'>
+                      <div
+                        className='progress-fill'
+                        style={{
+                          width: `${config.confluence.confluenceIndexProgress}%`,
                         }}
                       ></div>
                     </div>

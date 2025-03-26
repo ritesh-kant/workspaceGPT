@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { EmbeddingManager } from './embeddingService';
+import { EmbeddingService } from './embeddingService';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -7,7 +7,7 @@ interface ChatMessage {
 }
 
 export class ChatService {
-  private embeddingManager: EmbeddingManager;
+  private embeddingService: EmbeddingService;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private chatHistory: ChatMessage[] = [];
@@ -15,7 +15,7 @@ export class ChatService {
   constructor(webviewView: vscode.WebviewView, context: vscode.ExtensionContext) {
     this.webviewView = webviewView;
     this.context = context;
-    this.embeddingManager = new EmbeddingManager(webviewView, context);
+    this.embeddingService = new EmbeddingService(webviewView, context);
   }
 
   public async newChat(): Promise<void> {
@@ -37,7 +37,7 @@ export class ChatService {
       });
 
       // Search embeddings
-      const searchResults = await this.embeddingManager.searchEmbeddings(message);
+      const searchResults = await this.embeddingService.searchEmbeddings(message);
 
       // Format search results as markdown
       const formattedResults = this.formatSearchResults(searchResults);
