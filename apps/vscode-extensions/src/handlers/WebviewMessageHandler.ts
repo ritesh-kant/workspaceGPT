@@ -53,13 +53,13 @@ export class WebviewMessageHandler {
     try {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       this.webviewView.webview.postMessage({
-        type: 'confluenceConnectionStatus',
+        type: MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS,
         status: true,
         message: 'Successfully connected to Confluence',
       });
     } catch (error) {
       this.webviewView.webview.postMessage({
-        type: 'confluenceConnectionStatus',
+        type: MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS,
         status: false,
         message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
       });
@@ -83,7 +83,7 @@ export class WebviewMessageHandler {
     } catch (error) {
       console.error('Error in Confluence sync:', error);
       this.webviewView.webview.postMessage({
-        type: 'syncError',
+        type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -115,7 +115,7 @@ export class WebviewMessageHandler {
     const errorMessage = error instanceof Error ? error.message : String(error);
     vscode.window.showErrorMessage(`${prefix} ${errorMessage}`);
     this.webviewView.webview.postMessage({
-      type: 'error',
+      type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
       message: errorMessage,
     });
   }

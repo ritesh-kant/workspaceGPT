@@ -7,12 +7,16 @@ export const MESSAGE_TYPES = {
   UPDATE_SETTINGS: 'update-settings',
   CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
   START_CONFLUENCE_SYNC: 'start-confluence-sync',
-  SYNC_CONFLUENCE_PROGRESS: 'sync-confluence-progress',
+  SYNC_CONFLUENCE_IN_PROGRESS: 'sync-confluence-progress',
   SYNC_CONFLUENCE_COMPLETE: 'sync-confluence-complete',
+  CONFLUENCE_CONNECTION_STATUS:'confluence-connection-status',
   SYNC_CONFLUENCE_ERROR: 'sync-confluence-error',
+  SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
+  SYNC_CODEBASE_COMPLETE: 'sync-codebase-complete',
+  CODEBASE_CONNECTION_STATUS:'codebase-connection-status',
+  SYNC_CODEBASE_ERROR: 'sync-codebase-error',
   SYNC_GLOBAL_STATE: 'sync-global-state',
-  CLEAR_GLOBAL_STATE: 'clear-global-state',
-  SYNC_ERROR: 'sync-error'
+  CLEAR_GLOBAL_STATE: 'clear-global-state'
 };
 
 // UI Constants
@@ -40,4 +44,11 @@ export const EXTENSION = {
 export const MODEL = {
   DEFAULT_DIMENSIONS: 384, // Default dimension for all-MiniLM-L6-v2
   DEFAULT_NAME: 'Xenova/all-MiniLM-L6-v2'
+};
+
+export const WORKER_STATUS = {
+  PROCESSING: 'processing',
+  COMPLETED: 'completed',
+  ERROR: 'error',
+  PROCESSED: 'processed'
 };

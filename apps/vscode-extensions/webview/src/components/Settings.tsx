@@ -14,7 +14,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   onClose,
 }) => {
   // Use settings store instead of local state
-  const { config, setConfig, updateConfig } = useSettingsStore();
+  const { config, setConfig,updateConfig, batchUpdateConfig } = useSettingsStore();
 
   const vscode = VSCodeAPI();
 
@@ -31,44 +31,59 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         case 'SettingsButtonConfig':
           setConfig(message.config);
           break;
-        case 'confluenceConnectionStatus':
-          updateConfig('confluence', 'connectionStatus', message.status ? 'success' : 'error');
-          updateConfig('confluence', 'statusMessage', message.message || '');
+        case MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS:
+          batchUpdateConfig('confluence', {
+            connectionStatus: message.status ? 'success' : 'error',
+            statusMessage: message.message || ''
+          });
           break;
-        case 'syncProgress':
-          if (message.source === 'confluence') {
-            updateConfig('confluence', 'confluenceSyncProgress', message.progress);
-            if (message.progress >= 100) {
-              updateConfig('confluence', 'isSyncing', false);
-            }
-          } else if (message.source === 'codebase') {
-            updateConfig('codebase', 'codebaseSyncProgress', message.progress);
-            if (message.progress >= 100) {
-              updateConfig('codebase', 'isSyncing', false);
-            }
-          }
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_IN_PROGRESS:
+          batchUpdateConfig('confluence', {
+            confluenceSyncProgress: message.progress,
+            connectionStatus: 'unknown',
+            isSyncing: message.progress < 100
+          });
           break;
-        case 'syncComplete':
-          if (message.source === 'confluence') {
-            updateConfig('confluence', 'isSyncing', false);
-            updateConfig('confluence', 'confluenceSyncProgress', 100);
-            updateConfig('confluence', 'statusMessage', 'Sync completed successfully');
-          } else if (message.source === 'codebase') {
+        case MESSAGE_TYPES.SYNC_CODEBASE_IN_PROGRESS:
+          batchUpdateConfig('codebase',{ 
+            codebaseSyncProgress: message.progress,
+            connectionStatus: 'unknown'
+          });
+
+          if (message.progress >= 100) {
             updateConfig('codebase', 'isSyncing', false);
-            updateConfig('codebase', 'codebaseSyncProgress', 100);
-            updateConfig('codebase', 'statusMessage', 'Sync completed successfully');
           }
           break;
-        case 'syncError':
-          if (message.source === 'confluence') {
-            updateConfig('confluence', 'isSyncing', false);
-            updateConfig('confluence', 'connectionStatus', 'error');
-            updateConfig('confluence', 'statusMessage', `Sync error: ${message.message}`);
-          } else if (message.source === 'codebase') {
-            updateConfig('codebase', 'isSyncing', false);
-            updateConfig('codebase', 'connectionStatus', 'error');
-            updateConfig('codebase', 'statusMessage', `Sync error: ${message.message}`);
-          }
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE:
+          batchUpdateConfig('confluence', {
+            connectionStatus: 'success',
+            statusMessage: 'Sync completed successfully',
+            confluenceSyncProgress: 100,
+            isSyncing: false
+          });
+          console.log('SYNC_CONFLUENCE_COMPLETE', message);
+          break;
+        case MESSAGE_TYPES.SYNC_CODEBASE_COMPLETE:
+          batchUpdateConfig('codebase', {
+            isSyncing: false,
+            codebaseSyncProgress: 100,
+            connectionStatus: 'success',
+            statusMessage: 'Sync completed successfully'
+          });
+          break;
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR:
+          batchUpdateConfig('confluence', {
+            isSyncing: false,
+            connectionStatus: 'error',
+            statusMessage: `Sync error: ${message.message}`
+          });
+          break;
+        case MESSAGE_TYPES.SYNC_CODEBASE_ERROR:
+          batchUpdateConfig('codebase', {
+            isSyncing: false,
+            connectionStatus: 'error',
+            statusMessage: `Sync error: ${message.message}`
+          });
           break;
       }
     };
@@ -87,17 +102,10 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       ...config,
       [section]: {
         ...config[section],
-        [field]: value
-      }
+        [field]: value,
+      },
     };
     setConfig(updatedConfig);
-  };
-
-  const saveConfig = () => {
-    vscode.postMessage({
-      type: 'saveSettingsButtonConfig',
-      config,
-    });
   };
 
   const checkConnection = () => {
@@ -114,6 +122,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     updateConfig('confluence', 'isSyncing', true);
     updateConfig('confluence', 'confluenceSyncProgress', 0);
     updateConfig('confluence', 'statusMessage', 'Starting sync process...');
+    updateConfig('confluence', 'connectionStatus', 'unknown');
     vscode.postMessage({
       type: MESSAGE_TYPES.START_CONFLUENCE_SYNC,
       section: 'confluence',
@@ -145,7 +154,13 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 <input
                   type='checkbox'
                   checked={config.confluence.isConfluenceEnabled}
-                  onChange={() => updateConfig('confluence', 'isConfluenceEnabled', !config.confluence.isConfluenceEnabled)}
+                  onChange={() =>
+                    updateConfig(
+                      'confluence',
+                      'isConfluenceEnabled',
+                      !config.confluence.isConfluenceEnabled
+                    )
+                  }
                 />
                 <span className='slider round'></span>
               </label>
@@ -174,7 +189,11 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                     type='text'
                     value={config.confluence?.spaceKey}
                     onChange={(e) =>
-                      handleInputChange('confluence', 'spaceKey', e.target.value)
+                      handleInputChange(
+                        'confluence',
+                        'spaceKey',
+                        e.target.value
+                      )
                     }
                     placeholder='SPACE'
                   />
@@ -187,7 +206,11 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                     type='email'
                     value={config.confluence?.userEmail}
                     onChange={(e) =>
-                      handleInputChange('confluence', 'userEmail', e.target.value)
+                      handleInputChange(
+                        'confluence',
+                        'userEmail',
+                        e.target.value
+                      )
                     }
                     placeholder='your.email@example.com'
                   />
@@ -200,14 +223,17 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                     type='password'
                     value={config.confluence?.apiToken}
                     onChange={(e) =>
-                      handleInputChange('confluence', 'apiToken', e.target.value)
+                      handleInputChange(
+                        'confluence',
+                        'apiToken',
+                        e.target.value
+                      )
                     }
                     placeholder='Your Atlassian API token'
                   />
                 </div>
 
                 <div className='button-group'>
-                  <button onClick={saveConfig}>Save</button>
                   <button onClick={checkConnection}>Check Connection</button>
                   <button
                     onClick={startSync}
@@ -218,7 +244,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 </div>
 
                 {config.confluence.connectionStatus !== 'unknown' && (
-                  <div className={`status-message ${config.confluence.connectionStatus}`}>
+                  <div
+                    className={`status-message ${config.confluence.connectionStatus}`}
+                  >
                     {config.confluence.statusMessage}
                   </div>
                 )}
@@ -226,12 +254,14 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 {config.confluence.isSyncing && (
                   <div className='sync-progress'>
                     <div className='progress-label'>
-                      Syncing: {config.confluence.confluenceSyncProgress}% 
+                      Syncing: {config.confluence.confluenceSyncProgress}%
                     </div>
                     <div className='progress-bar'>
                       <div
                         className='progress-fill'
-                        style={{ width: `${config.confluence.confluenceSyncProgress}%` }}
+                        style={{
+                          width: `${config.confluence.confluenceSyncProgress}%`,
+                        }}
                       ></div>
                     </div>
                   </div>
@@ -248,7 +278,13 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 <input
                   type='checkbox'
                   checked={config.codebase.isCodebaseEnabled}
-                  onChange={() => updateConfig('codebase', 'isCodebaseEnabled', !config.codebase.isCodebaseEnabled)}
+                  onChange={() =>
+                    updateConfig(
+                      'codebase',
+                      'isCodebaseEnabled',
+                      !config.codebase.isCodebaseEnabled
+                    )
+                  }
                 />
                 <span className='slider round'></span>
               </label>
@@ -277,7 +313,11 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                     className='select-larger'
                     value={config.codebase?.scanFrequency}
                     onChange={(e) =>
-                      handleInputChange('codebase', 'scanFrequency', e.target.value)
+                      handleInputChange(
+                        'codebase',
+                        'scanFrequency',
+                        e.target.value
+                      )
                     }
                   >
                     <option value='hourly'>Hourly</option>
@@ -287,8 +327,10 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 </div>
 
                 <div className='button-group'>
-                  <button onClick={saveConfig}>Save</button>
-                  <button onClick={startSync} disabled={config.codebase.isSyncing}>
+                  <button
+                    onClick={startSync}
+                    disabled={config.codebase.isSyncing}
+                  >
                     Scan Codebase
                   </button>
                 </div>

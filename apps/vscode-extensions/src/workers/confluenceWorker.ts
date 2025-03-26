@@ -1,10 +1,9 @@
 // Import only types to avoid direct imports of ES Module
 import type { ConfluencePage } from '@workspace-gpt/confluence-utils';
 import { parentPort, workerData } from 'worker_threads';
+import { WORKER_STATUS } from '../../constants';
 // Import path for dynamic import
 const CONFLUENCE_MODULE = '@workspace-gpt/confluence-utils';
-import fs from 'fs';
-import path from 'path';
 
 interface WorkerData {
   spaceKey: string;
@@ -49,8 +48,7 @@ async function fetchAndProcessPages() {
     let hasMore = true;
     let allPages: ConfluencePage[] = [];
     try {
-        // while (hasMore) {
-        while (hasMore && false) {
+        while (hasMore && allPages.length < 40) {
           const response = await extractor.fetchPages(start, 10);
           const { results, size, _links } = response;
           allPages = allPages.concat(results);
@@ -74,29 +72,23 @@ async function fetchAndProcessPages() {
             `📊 Progress: ${progress}% (${processedCount}/${totalSize} pages)`
           );
           parentPort?.postMessage({
-            type: 'progress',
+            type: WORKER_STATUS.PROCESSING,
             progress,
             current: processedCount,
             total: totalSize,
           });
         }
-      
-      // const pagesContext = fs.readFileSync(
-      //   "/Users/ritesh/codebase/ritesh-codebase/workspaceGPT/.data/confluence/pages/confluence_pages.json",
-      //   'utf8'
-      // );
-      // const allPages = JSON.parse(pagesContext) as ConfluencePage[];
 
-      parentPort?.postMessage({ type: 'complete', pages: allPages });
+      parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED, pages: allPages });
     } catch (error) {
       parentPort?.postMessage({
-        type: 'error',
+        type: WORKER_STATUS.ERROR,
         message: `Error processing page : ${error instanceof Error ? error.message : String(error)}`,
       });
     }
   } catch (error) {
     parentPort?.postMessage({
-      type: 'error',
+      type: WORKER_STATUS.ERROR,
       message: `Error in worker: ${error instanceof Error ? error.message : String(error)}`,
     });
   }
@@ -106,12 +98,6 @@ interface ProcessedPage {
   filename: string;
   text: string;
   pageUrl?: string;
-}
-
-interface ExtractorConfig {
-  outputDir: string;
-  batchSize: number;
-  rateLimit: number;
 }
 
 async function processPageBatch(
@@ -129,7 +115,7 @@ async function processPageBatch(
       if (processedPage.text.length > 60) {
         // Send each processed page back to the manager for saving
         parentPort?.postMessage({
-          type: 'processedPage',
+          type: WORKER_STATUS.PROCESSED,
           page: processedPage
         });
         

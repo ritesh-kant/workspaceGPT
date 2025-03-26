@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import { promisify } from 'util';
 import { EmbeddingManager } from './embeddingService';
 import { EmbeddingConfig } from 'src/types/types';
-import { MESSAGE_TYPES, MODEL } from '../../constants';
+import { MESSAGE_TYPES, MODEL, WORKER_STATUS } from '../../constants';
 
 interface ProcessedPage {
   filename: string;
@@ -49,10 +49,10 @@ export class ConfluenceService {
       // Handle messages from the worker
       this.worker.on('message', async (message) => {
         switch (message.type) {
-          case 'progress':
+          case WORKER_STATUS.PROCESSING:
             // Update progress in the webview
             this.webviewView.webview.postMessage({
-              type: 'syncProgress',
+              type: MESSAGE_TYPES.SYNC_CONFLUENCE_IN_PROGRESS,
               source: 'confluence',
               progress: message.progress,
               current: message.current,
@@ -60,24 +60,21 @@ export class ConfluenceService {
             });
             break;
 
-          case 'processedPage':
+          case WORKER_STATUS.PROCESSED:
             // Save individual processed page as MD file
             await this.saveProcessedPageAsMd(message.page);
             break;
 
-          case 'error':
+          case WORKER_STATUS.ERROR:
             console.error(`Worker error: ${message.message}`);
             this.webviewView.webview.postMessage({
-              type: 'syncError',
+              type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
               message: message.message
             });
             break;
 
-          case 'complete':
+          case WORKER_STATUS.COMPLETED:
             console.log(`Sync complete. Processed ${message.pages.length} pages.`);
-            
-            // Save the processed pages to global state
-            // await this.saveToGlobalState(message.pages);
             
             // Notify the webview that sync is complete
             this.webviewView.webview.postMessage({
@@ -111,7 +108,7 @@ export class ConfluenceService {
       this.worker.on('error', (error) => {
         console.error('Worker error:', error);
         this.webviewView.webview.postMessage({
-          type: 'syncError',
+          type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
           message: error.message
         });
         this.stopSync();
@@ -122,7 +119,7 @@ export class ConfluenceService {
         if (code !== 0) {
           console.error(`Worker stopped with exit code ${code}`);
           this.webviewView.webview.postMessage({
-            type: 'syncError',
+            type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
             message: `Worker process exited with code ${code}`
           });
         }
@@ -132,7 +129,7 @@ export class ConfluenceService {
     } catch (error) {
       console.error('Error starting worker:', error);
       this.webviewView.webview.postMessage({
-        type: 'syncError',
+        type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error)
       });
       this.stopSync();

@@ -43,6 +43,10 @@ interface SettingsState {
     value: SettingsConfig[T][K]
   ) => void;
   setShowSettings: (show: boolean) => void;
+  batchUpdateConfig: <T extends keyof SettingsConfig>(
+    section: T,
+    updates: Partial<SettingsConfig[T]>
+  ) => void;
 }
 
 // Create a custom storage adapter for VSCode global state
@@ -91,7 +95,7 @@ export const useSettingsStore = create<SettingsState>()(
           confluenceIndexProgress: 0,
           isSyncing: false,
           isIndexing: false,
-          connectionStatus: 'unknown',
+          connectionStatus: 'unknown', // Ensure this is explicitly set
           statusMessage: ''
         },
         codebase: {
@@ -102,19 +106,37 @@ export const useSettingsStore = create<SettingsState>()(
           isCodebaseEnabled: false,
           codebaseSyncProgress: 0,
           codebaseIndexProgress: 0,
-          connectionStatus: 'unknown',
+          connectionStatus: 'unknown', // Ensure this is explicitly set
           statusMessage: ''
         },
       },
       showSettings: false,
       setConfig: (config) => set({ config }),
-      updateConfig: (section, field, value) =>
+      updateConfig: (section, field, value) => {
         set((state) => {
           const newConfig = { ...state.config };
-          (newConfig[section] as any)[field] = value;
+          // Add type checking and logging
+          console.log(`Updating ${section}.${String(field)} to:`, value);
+          if (section in newConfig && field in newConfig[section]) {
+            (newConfig[section] as any)[field] = value;
+          } else {
+            console.warn(`Invalid update attempt: ${section}.${String(field)}`);
+          }
           return { config: newConfig };
-        }),
+        });
+      },
       setShowSettings: (showSettings) => set({ showSettings }),
+      batchUpdateConfig: (section, updates) => {
+        set((state) => {
+          const newConfig = { ...state.config };
+          newConfig[section] = {
+            ...newConfig[section],
+            ...updates
+          };
+          console.log(`Batch updating ${section}:`, updates);
+          return { config: newConfig };
+        });
+      },
     }),
     {
       name: 'workspaceGPT-settings-storage',
