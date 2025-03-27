@@ -3,7 +3,8 @@ import './App.css';
 import ChatMessage from './components/ChatMessage';
 import SettingsButton from './components/Settings';
 import { VSCodeAPI } from './vscode';
-import { useChatStore, useSettingsStore } from './store';
+import { useChatStore, useSettingsStore, useModelStore } from './store';
+import { MESSAGE_TYPES } from './constants';
 
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
@@ -20,6 +21,7 @@ const App: React.FC = () => {
   } = useChatStore();
   
   const { showSettings, setShowSettings } = useSettingsStore();
+  const { config: modelConfig, updateConfig: updateModelConfig } = useModelStore();
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
@@ -31,21 +33,49 @@ const App: React.FC = () => {
     });
     clearMessages();
     setInputValue('');
+    setIsLoading(false);
     setShowTips(true);
+  };
+
+  const handleModelChange = (modelId: string) => {
+    updateModelConfig('selectedModel', modelId);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.UPDATE_MODEL,
+      modelId
+    });
   };
 
   useEffect(() => {
     // Handle messages from the extension
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      setIsLoading(false);
-      
       switch (message.type) {
-        case 'response':
-          addMessage({ content: message.message, isUser: false });
+        case MESSAGE_TYPES.RECEIVE_MESSAGE:
+          addMessage({
+            content: message.content,
+            isUser: false,
+          });
+          setIsLoading(false);
           break;
-        case 'error':
-          addMessage({ content: `Error: ${message.message}`, isUser: false });
+        case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
+          
+          updateModelConfig('isDownloading', true);
+          updateModelConfig('downloadProgress', message.progress ?? '0');
+          updateModelConfig('downloadStatus', 'downloading');
+          updateModelConfig('downloadDetails', {
+            current: message.current || '0 MB',
+            total: message.total || '0 MB'
+          });
+          break;
+        case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
+          updateModelConfig('isDownloading', false);
+          updateModelConfig('downloadProgress', 100);
+          updateModelConfig('downloadStatus', 'completed');
+          break;
+        case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
+          updateModelConfig('isDownloading', false);
+          updateModelConfig('downloadStatus', 'error');
+          updateModelConfig('errorMessage', message.message);
           break;
       }
     };
@@ -60,20 +90,21 @@ const App: React.FC = () => {
   }, [messages]);
 
   const handleSendMessage = () => {
-    if (inputValue.trim()) {
-      // Add user message to the chat
-      addMessage({ content: inputValue, isUser: true });
-      setIsLoading(true);
-      
-      // Send message to extension
-      vscode.postMessage({
-        type: 'sendMessage',
-        message: inputValue
-      });
-      
-      // Clear input
-      setInputValue('');
-    }
+    if (inputValue.trim() === '') return;
+
+    addMessage({
+      content: inputValue,
+      isUser: true,
+    });
+
+    setInputValue('');
+    setIsLoading(true);
+    setShowTips(false);
+
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      message: inputValue,
+    });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -96,21 +127,55 @@ const App: React.FC = () => {
     <div className="chat-container">
       <div className="chat-header">
         <h2>WorkspaceGPT</h2>
-        <div className="header-buttons">
-          <button 
-            className="settings-button" 
-            onClick={handleShowSettings}
-            title="Settings"
-            aria-label="Settings"
-          >
-            <span className="settings-icon">⚙️</span>
-          </button>
-          <button 
-            className="new-chat-button" 
-            onClick={handleNewChat} 
-            title="Start a new chat"
-            aria-label="Start new chat"
-          />
+        <div className="header-controls">
+          <div className="model-selector">
+            <select
+              value={modelConfig.selectedModel}
+              onChange={(e) => handleModelChange(e.target.value)}
+              disabled={modelConfig.isDownloading}
+              className={modelConfig.isDownloading ? 'loading' : ''}
+            >
+              <option value="Xenova/TinyLlama-1.1B-Chat-v1.0">
+                {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/TinyLlama-1.1B-Chat-v1.0" 
+                  ? `TinyLlama (${modelConfig.downloadProgress}%)` 
+                  : "TinyLlama 1.1B Chat"}
+              </option>
+              <option value="Xenova/Phi-2">
+                {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/Phi-2" 
+                  ? `Phi-2 (${modelConfig.downloadProgress}%)` 
+                  : "Phi-2"}
+              </option>
+              <option value="Xenova/CodeLlama-7B-Instruct">
+                {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/CodeLlama-7B-Instruct" 
+                  ? `CodeLlama 7B (${modelConfig.downloadProgress}%)` 
+                  : "CodeLlama 7B"}
+              </option>
+            </select>
+            {modelConfig.isDownloading && (
+              <div className="model-progress">
+                <div 
+                  className="progress-bar" 
+                  style={{ width: `${modelConfig.downloadProgress}%` }} 
+                />
+              </div>
+            )}
+          </div>
+          <div className="header-buttons">
+            <button 
+              className="settings-button" 
+              onClick={handleShowSettings}
+              title="Settings"
+              aria-label="Settings"
+            >
+              <span className="settings-icon">⚙️</span>
+            </button>
+            <button 
+              className="new-chat-button" 
+              onClick={handleNewChat} 
+              title="Start a new chat"
+              aria-label="Start new chat"
+            />
+          </div>
         </div>
       </div>
       {showTips && messages.length === 0 ? (

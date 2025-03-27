@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "preinstall": "pnpm _env:setup",
-    "postinstall": "pnpm _ollama:setup",
+    "#preinstall": "pnpm _env:setup",
+    "#postinstall": "pnpm _ollama:setup",
     "extractor": "pnpm run app:confluence-extractor",
     "workspaceGPT": "pnpm run app:confluence-rag",
     "reset:extractor": "shx rm -rf .data",

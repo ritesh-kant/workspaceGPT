@@ -1,0 +1,25 @@
+{
+  "name": "@workspace-gpt/confluence-utils",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --sourcemap --splitting=false --tree-shaking=true && tsc --emitDeclarationOnly",
+    "dev": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --sourcemap --splitting=false --tree-shaking=true --watch"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "htmlparser2": "^10.0.0",
+    "puppeteer": "^24.3.0"
+  },
+  "peerDependencies": {
+    "openai": "^4.85.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.1"
+  }
+}

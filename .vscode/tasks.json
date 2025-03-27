@@ -1,0 +1,59 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "clean:confluence-extractor",
+			"type": "shell",
+			"command": "cd apps/confluence-extractor && pnpm run clean",
+			"presentation": {
+				"reveal": "silent",
+				"panel": "shared"
+			}
+		},
+		{
+			"label": "clean:utils",
+			"type": "shell",
+			"command": "rm -rf packages/confluence-utils/dist",
+			"presentation": {
+				"reveal": "silent",
+				"panel": "shared"
+			}
+		},
+		{
+			"label": "build:confluence-extractor",
+			"type": "shell",
+			"command": "cd apps/confluence-extractor && pnpm run build",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "silent",
+				"panel": "shared"
+			},
+			"problemMatcher": ["$tsc"],
+			"dependsOn": ["build:utils"]
+		},
+		{
+			"label": "build:utils",
+			"type": "shell",
+			"command": "cd packages/confluence-utils && pnpm run build",
+			"group": "build",
+			"presentation": {
+				"reveal": "silent",
+				"panel": "shared"
+			},
+			"problemMatcher": ["$tsc"],
+			"dependsOn": ["clean:utils"]
+		},
+		{
+			"label": "build:all",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"dependsOrder": "sequence",
+			"dependsOn": ["clean:confluence-extractor", "build:utils", "build:confluence-extractor"]
+		}
+	]
+}

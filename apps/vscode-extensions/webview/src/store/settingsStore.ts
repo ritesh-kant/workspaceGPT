@@ -7,11 +7,25 @@ export interface ConfluenceConfig {
   spaceKey: string;
   userEmail: string;
   apiToken: string;
+  isConfluenceEnabled: boolean;
+  confluenceSyncProgress: number;
+  confluenceIndexProgress: number;
+  isSyncing: boolean;
+  isIndexing: boolean;
+  connectionStatus: 'unknown' | 'success' | 'error';
+  statusMessage: string;
 }
 
 export interface CodebaseConfig {
   repoPath: string;
   scanFrequency: string;
+  isSyncing: boolean;
+  isIndexing: boolean;
+  isCodebaseEnabled: boolean;
+  codebaseSyncProgress: number;
+  codebaseIndexProgress: number;
+  connectionStatus: 'unknown' | 'success' | 'error';
+  statusMessage: string;
 }
 
 export interface SettingsConfig {
@@ -21,58 +35,50 @@ export interface SettingsConfig {
 
 interface SettingsState {
   config: SettingsConfig;
-  isConfluenceEnabled: boolean;
-  isCodebaseEnabled: boolean;
-  isConfluenceSyncing: boolean;
-  isCodebaseSyncing: boolean;
-  confluenceSyncProgress: number;
-  codebaseSyncProgress: number;
-  connectionStatus: 'unknown' | 'success' | 'error';
-  statusMessage: string;
   showSettings: boolean;
   setConfig: (config: SettingsConfig) => void;
-  updateConfig: (field: keyof SettingsConfig, value: string) => void;
-  setIsConfluenceEnabled: (enabled: boolean) => void;
-  setIsCodebaseEnabled: (enabled: boolean) => void;
-  setIsConfluenceSyncing: (syncing: boolean) => void;
-  setIsCodebaseSyncing: (syncing: boolean) => void;
-  setConfluenceSyncProgress: (progress: number) => void;
-  setCodebaseSyncProgress: (progress: number) => void;
-  setConnectionStatus: (status: 'unknown' | 'success' | 'error') => void;
-  setStatusMessage: (message: string) => void;
+  updateConfig: <T extends keyof SettingsConfig, K extends keyof SettingsConfig[T]>(
+    section: T,
+    field: K,
+    value: SettingsConfig[T][K]
+  ) => void;
   setShowSettings: (show: boolean) => void;
+  batchUpdateConfig: <T extends keyof SettingsConfig>(
+    section: T,
+    updates: Partial<SettingsConfig[T]>
+  ) => void;
 }
 
 // Create a custom storage adapter for VSCode global state
+import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
+
 const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
-    const globalState = vscode.getState()?.globalSettings || {};
-    return JSON.stringify(globalState || {});
+    const state = vscode.getState() || {};
+    return JSON.stringify(state[STORAGE_KEYS.SETTINGS] || {});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
     const currentState = vscode.getState() || {};
     vscode.setState({
       ...currentState,
-      globalSettings: JSON.parse(value)
+      [STORAGE_KEYS.SETTINGS]: JSON.parse(value),
     });
-    // Send message to extension to sync global state
     vscode.postMessage({
-      type: 'syncGlobalState',
-      state: JSON.parse(value)
+      type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
+      state: JSON.parse(value),
     });
   },
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { globalSettings, ...rest } = state;
+    const { [STORAGE_KEYS.SETTINGS]: settings, ...rest } = state;
     vscode.setState(rest);
-    // Notify extension about state removal
     vscode.postMessage({
-      type: 'clearGlobalState'
+      type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
     });
-  }
+  },
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -83,42 +89,54 @@ export const useSettingsStore = create<SettingsState>()(
           baseUrl: '',
           spaceKey: '',
           userEmail: '',
-          apiToken: ''
+          apiToken: '',
+          isConfluenceEnabled: false,
+          confluenceSyncProgress: 0,
+          confluenceIndexProgress: 0,
+          isSyncing: false,
+          isIndexing: false,
+          connectionStatus: 'unknown', // Ensure this is explicitly set
+          statusMessage: ''
         },
         codebase: {
           repoPath: '',
-          scanFrequency: 'daily'
-        }
+          scanFrequency: 'daily',
+          isSyncing: false,
+          isIndexing: false,
+          isCodebaseEnabled: false,
+          codebaseSyncProgress: 0,
+          codebaseIndexProgress: 0,
+          connectionStatus: 'unknown', // Ensure this is explicitly set
+          statusMessage: ''
+        },
       },
-      isConfluenceEnabled: false,
-      isCodebaseEnabled: false,
-      isConfluenceSyncing: false,
-      isCodebaseSyncing: false,
-      confluenceSyncProgress: 0,
-      codebaseSyncProgress: 0,
-      connectionStatus: 'unknown',
-      statusMessage: '',
       showSettings: false,
       setConfig: (config) => set({ config }),
-      updateConfig: (field: keyof SettingsConfig | keyof ConfluenceConfig | keyof CodebaseConfig, value: string) =>
+      updateConfig: (section, field, value) => {
         set((state) => {
           const newConfig = { ...state.config };
-          if (field in newConfig.confluence) {
-            newConfig.confluence = { ...newConfig.confluence, [field]: value };
-          } else if (field in newConfig.codebase) {
-            newConfig.codebase = { ...newConfig.codebase, [field]: value };
+          // Add type checking and logging
+          console.log(`Updating ${section}.${String(field)} to:`, value);
+          if (section in newConfig && field in newConfig[section]) {
+            (newConfig[section] as any)[field] = value;
+          } else {
+            console.warn(`Invalid update attempt: ${section}.${String(field)}`);
           }
           return { config: newConfig };
-        }),
-      setIsConfluenceEnabled: (isConfluenceEnabled) => set({ isConfluenceEnabled }),
-      setIsCodebaseEnabled: (isCodebaseEnabled) => set({ isCodebaseEnabled }),
-      setIsConfluenceSyncing: (isConfluenceSyncing) => set({ isConfluenceSyncing }),
-      setIsCodebaseSyncing: (isCodebaseSyncing) => set({ isCodebaseSyncing }),
-      setConfluenceSyncProgress: (confluenceSyncProgress) => set({ confluenceSyncProgress }),
-      setCodebaseSyncProgress: (codebaseSyncProgress) => set({ codebaseSyncProgress }),
-      setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
-      setStatusMessage: (statusMessage) => set({ statusMessage }),
-      setShowSettings: (showSettings) => set({ showSettings })
+        });
+      },
+      setShowSettings: (showSettings) => set({ showSettings }),
+      batchUpdateConfig: (section, updates) => {
+        set((state) => {
+          const newConfig = { ...state.config };
+          newConfig[section] = {
+            ...newConfig[section],
+            ...updates
+          };
+          console.log(`Batch updating ${section}:`, updates);
+          return { config: newConfig };
+        });
+      },
     }),
     {
       name: 'workspaceGPT-settings-storage',

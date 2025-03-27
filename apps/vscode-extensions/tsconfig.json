@@ -3,9 +3,8 @@
     "module": "commonjs",
     "target": "ES2020",
     "outDir": "dist",
-    "lib": ["ES2020"],
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "sourceMap": true,
-    "rootDir": "src",
     "strict": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
@@ -14,6 +13,15 @@
     "noImplicitThis": true,
     "noUnusedLocals": false,
     "allowUnreachableCode": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "paths": {
+      "@workspace-gpt/confluence-utils": ["../../packages/confluence-utils/src"]
+    }
   },
-  "exclude": ["node_modules", ".vscode-test", "webview"]
+  "exclude": ["node_modules", ".vscode-test", "webview"],
+  "references": [
+    { "path": "../../packages/confluence-utils" }
+  ]
 }
