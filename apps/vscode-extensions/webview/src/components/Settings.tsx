@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { VSCodeAPI } from '../vscode';
 import './Settings.css';
-import { useSettingsStore } from '../store';
+import { useSettingsStore, useModelStore } from '../store';
 import { MESSAGE_TYPES } from '../constants';
 
 interface SettingsButtonProps {
@@ -17,6 +17,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   const { config, setConfig, updateConfig, batchUpdateConfig } =
     useSettingsStore();
 
+  const {
+    config: modelConfig,
+    updateConfig: updateModelConfig,
+    batchUpdateConfig: batchUpdateModelConfig,
+  } = useModelStore();
+
   const vscode = VSCodeAPI();
 
   useEffect(() => {
@@ -31,6 +37,35 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       switch (message.type) {
         case 'SettingsButtonConfig':
           setConfig(message.config);
+          break;
+
+        case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
+          console.log('DOWNLOAD IN PROGRESS', message.progress);
+          batchUpdateModelConfig({
+            isDownloading: true,
+            downloadProgress: parseFloat(message.progress) || 0,
+            downloadStatus: 'downloading',
+            downloadDetails: {
+              current: message.current || '0 MB',
+              total: message.total || '0 MB',
+            },
+          });
+          break;
+
+        case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
+          batchUpdateModelConfig({
+            isDownloading: false,
+            downloadProgress: 100,
+            downloadStatus: 'completed',
+          });
+          break;
+
+        case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
+          batchUpdateModelConfig({
+            isDownloading: false,
+            downloadStatus: 'error',
+            errorMessage: message.message,
+          });
           break;
 
         // Confluence
@@ -161,6 +196,14 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     });
   };
 
+  const handleModelChange = (modelId: string) => {
+    updateModelConfig('selectedModel', modelId);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.UPDATE_MODEL,
+      modelId,
+    });
+  };
+
   if (!isVisible) return null;
 
   return (
@@ -175,6 +218,57 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           ×
         </button>
       </div>
+
+      <div className='settings-section'>
+        <div className='section-header'>
+          <h3>Model Settings</h3>
+        </div>
+        <div className='settings-form'>
+          <div className='form-group'>
+            <label htmlFor='model-select'>Select Model</label>
+            <div className='model-select-container'>
+              <select
+                id='model-select'
+                className='select-larger'
+                value={modelConfig.selectedModel}
+                onChange={(e) => handleModelChange(e.target.value)}
+                disabled={modelConfig.isDownloading}
+              >
+                <option value='Xenova/TinyLlama-1.1B-Chat-v1.0'>
+                  TinyLlama 1.1B Chat
+                </option>
+                <option value='Xenova/Phi-2'>Phi-2</option>
+                <option value='Xenova/CodeLlama-7B-Instruct'>
+                  CodeLlama 7B Instruct
+                </option>
+              </select>
+              {modelConfig.isDownloading && (
+                <div className='model-download-status'>
+                  <div className='progress-bar'>
+                    <div
+                      className='progress-fill'
+                      style={{
+                        width: `${modelConfig.downloadProgress}%`,
+                      }}
+                    ></div>
+                  </div>
+                  <span className='progress-text'>
+                    Downloading: {modelConfig.downloadProgress}%
+                    {modelConfig.downloadDetails &&
+                      ` (${modelConfig.downloadDetails.current} / ${modelConfig.downloadDetails.total})`}
+                  </span>
+                </div>
+              )}
+              {modelConfig.downloadStatus === 'error' && (
+                <div className='error-message'>
+                  {modelConfig.errorMessage || 'Failed to download model'}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+      <br />
 
       {
         <>

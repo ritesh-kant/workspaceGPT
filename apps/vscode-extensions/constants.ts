@@ -4,6 +4,7 @@ export const MESSAGE_TYPES = {
   RECEIVE_MESSAGE: 'receive-message',
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
+  UPDATE_MODEL: 'update-model',
 
   UPDATE_SETTINGS: 'update-settings',
   SYNC_GLOBAL_STATE: 'sync-global-state',
@@ -25,6 +26,10 @@ export const MESSAGE_TYPES = {
   INDEXING_CONFLUENCE_IN_PROGRESS: 'indexing-confluence-progress',
   INDEXING_CONFLUENCE_COMPLETE: 'indexing-confluence-complete',
 
+  MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
+  MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
+  MODEL_DOWNLOAD_ERROR: 'model-download-error',
+
 };
 
 // UI Constants
@@ -38,7 +43,8 @@ export const UI_CONSTANTS = {
 export const STORAGE_KEYS = {
   CHAT: 'chat',
   SETTINGS: 'globalSettings',
-  WORKSPACE_SETTINGS: 'workspaceGPT-settings'
+  WORKSPACE_SETTINGS: 'workspaceGPT-settings',
+  MODEL: 'Xenova/TinyLlama-1.1B-Chat-v1.0'
 };
 
 // Extension Constants

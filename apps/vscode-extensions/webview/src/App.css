@@ -295,3 +295,59 @@ button:hover:not(:disabled) {
 }
 
 /* Settings Panel Styles */
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.model-selector {
+  position: relative;
+  min-width: 180px;
+}
+
+.model-selector select {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 0.9rem;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  background-color: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  cursor: pointer;
+  appearance: none;
+  padding-right: 24px;
+}
+
+.model-selector select.loading {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.model-selector::after {
+  content: '▼';
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-size: 0.8rem;
+  color: var(--vscode-input-foreground);
+}
+
+.model-progress {
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: var(--vscode-progressBar-background);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.model-progress .progress-bar {
+  height: 100%;
+  background-color: var(--vscode-progressBar-foreground);
+  transition: width 0.3s ease;
+}

@@ -35,6 +35,9 @@ export class WebviewMessageHandler {
       case MESSAGE_TYPES.SEND_MESSAGE:
         await this.handleSendMessage(data);
         break;
+      case MESSAGE_TYPES.UPDATE_MODEL:
+        await this.handleUpdateModel(data);
+        break;
     }
   }
 
@@ -157,5 +160,38 @@ export class WebviewMessageHandler {
       config.userEmail &&
       config.apiToken
     );
+  }
+
+  private async handleUpdateModel(data: any): Promise<void> {
+    try {
+      // Update the model in global state
+      await this.context.globalState.update(
+        STORAGE_KEYS.MODEL,
+        data.modelId
+      );
+
+      // Notify webview that model download is starting
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS,
+        progress: 0
+      });
+
+      // Initialize the model in the chat service
+      if (!this.chatService) {
+        this.chatService = new ChatService(this.webviewView, this.context);
+      }
+      await this.chatService.initializeModel(data.modelId);
+
+      // Notify webview that model download is complete
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE
+      });
+    } catch (error) {
+      console.error('Error updating model:', error);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }
