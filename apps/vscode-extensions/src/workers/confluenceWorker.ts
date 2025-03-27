@@ -48,6 +48,7 @@ async function fetchAndProcessPages() {
     let hasMore = true;
     let allPages: ConfluencePage[] = [];
     try {
+      // TODO: remove (allPages.length < 40) condition
         while (hasMore && allPages.length < 40) {
           const response = await extractor.fetchPages(start, 10);
           const { results, size, _links } = response;

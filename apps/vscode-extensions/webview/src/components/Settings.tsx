@@ -25,6 +25,20 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
 
   const vscode = VSCodeAPI();
 
+  // Helper function to clear status messages after a timeout
+  const clearStatusMessageAfterDelay = (
+    section: 'confluence' | 'codebase',
+    field: 'statusMessage' | 'connectionStatus',
+    value: string | 'unknown',
+    delay: number = 2000
+  ) => {
+    setTimeout(() => {
+      batchUpdateConfig(section, {
+        [field]: value
+      });
+    }, delay);
+  };
+
   useEffect(() => {
     // Request current configuration when component mounts
     vscode.postMessage({ type: 'getSettingsButtonConfig' });
@@ -90,6 +104,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             confluenceSyncProgress: 100,
             isSyncing: false,
           });
+          
+          // Clear the 'Sync completed successfully' message after 2 seconds
+          clearStatusMessageAfterDelay('confluence', 'connectionStatus', 'unknown');
           console.log('SYNC_CONFLUENCE_COMPLETE', message);
           break;
         case MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR:
@@ -118,6 +135,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             connectionStatus: 'success',
             statusMessage: 'Sync completed successfully',
           });
+          
+          // Clear the 'Sync completed successfully' message after 2 seconds
+          clearStatusMessageAfterDelay('codebase', 'connectionStatus', 'unknown');
           break;
         case MESSAGE_TYPES.SYNC_CODEBASE_ERROR:
           batchUpdateConfig('codebase', {
@@ -142,6 +162,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             isIndexing: false,
             statusMessage: 'Indexing completed successfully',
           });
+          
+          // Clear the 'Indexing completed successfully' message after 2 seconds
+          clearStatusMessageAfterDelay('confluence', 'statusMessage', 'unknown');
           break;
 
         case MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR:

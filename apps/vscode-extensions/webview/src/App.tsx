@@ -91,6 +91,16 @@ const App: React.FC = () => {
 
   const handleSendMessage = () => {
     if (inputValue.trim() === '') return;
+    
+    // Check if model is currently downloading
+    if (modelConfig.isDownloading) {
+      // Show notification to wait for model download to complete
+      addMessage({
+        content: "Please wait for the model download to complete before sending messages.",
+        isUser: false,
+      });
+      return;
+    }
 
     addMessage({
       content: inputValue,
@@ -219,12 +229,12 @@ const App: React.FC = () => {
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask WorkspaceGPT..."
-          disabled={isLoading}
+          placeholder={modelConfig.isDownloading ? "Please wait for model download to complete..." : "Ask WorkspaceGPT..."}
+          disabled={isLoading || modelConfig.isDownloading}
         />
         <button 
           onClick={handleSendMessage}
-          disabled={isLoading || !inputValue.trim()}
+          disabled={isLoading || !inputValue.trim() || modelConfig.isDownloading}
           className="send-button"
           aria-label="Send message"
         >
