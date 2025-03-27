@@ -137,17 +137,17 @@ const App: React.FC = () => {
             >
               <option value="Xenova/TinyLlama-1.1B-Chat-v1.0">
                 {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/TinyLlama-1.1B-Chat-v1.0" 
-                  ? `TinyLlama (${typeof modelConfig.downloadProgress === 'number' ? modelConfig.downloadProgress : '0'}%)` 
+                  ? `TinyLlama (${modelConfig.downloadProgress}%)` 
                   : "TinyLlama 1.1B Chat"}
               </option>
               <option value="Xenova/Phi-2">
                 {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/Phi-2" 
-                  ? `Phi-2 (${typeof modelConfig.downloadProgress === 'number' ? modelConfig.downloadProgress : '0'}%)` 
+                  ? `Phi-2 (${modelConfig.downloadProgress}%)` 
                   : "Phi-2"}
               </option>
               <option value="Xenova/CodeLlama-7B-Instruct">
                 {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/CodeLlama-7B-Instruct" 
-                  ? `CodeLlama 7B (${typeof modelConfig.downloadProgress === 'number' ? modelConfig.downloadProgress : '0'}%)` 
+                  ? `CodeLlama 7B (${modelConfig.downloadProgress}%)` 
                   : "CodeLlama 7B"}
               </option>
             </select>
