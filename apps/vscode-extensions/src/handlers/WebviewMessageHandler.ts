@@ -138,7 +138,7 @@ export class WebviewMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context);
       }
-      await this.chatService.sendMessage(data.message);
+      await this.chatService.sendMessage(data.message, data.modelId);
     } catch (error) {
       this.handleError('Error:', error);
     }
@@ -166,7 +166,7 @@ export class WebviewMessageHandler {
     try {
       // Update the model in global state
       await this.context.globalState.update(
-        STORAGE_KEYS.MODEL,
+        STORAGE_KEYS.DEFAULT_MODEL,
         data.modelId
       );
 

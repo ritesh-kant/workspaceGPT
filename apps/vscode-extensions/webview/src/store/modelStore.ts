@@ -3,6 +3,22 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
 
+export interface OllamaModel {
+  name: string;
+  model: string;
+  modified_at: string;
+  size: number;
+  digest: string;
+  details: {
+    parent_model: string;
+    format: string;
+    family: string;
+    families: string[];
+    parameter_size: string;
+    quantization_level: string;
+  };
+}
+
 export interface ModelConfig {
   selectedModel: string;
   isDownloading: boolean;
@@ -13,6 +29,7 @@ export interface ModelConfig {
     current: string;
     total: string;
   };
+  availableModels?: OllamaModel[];
 }
 
 interface ModelState {
@@ -30,14 +47,14 @@ const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    return JSON.stringify(state[STORAGE_KEYS.MODEL] || {});
+    return JSON.stringify(state[STORAGE_KEYS.DEFAULT_MODEL] || {});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
     const currentState = vscode.getState() || {};
     vscode.setState({
       ...currentState,
-      [STORAGE_KEYS.MODEL]: JSON.parse(value),
+      [STORAGE_KEYS.DEFAULT_MODEL]: JSON.parse(value),
     });
     vscode.postMessage({
       type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
@@ -47,7 +64,7 @@ const vscodeStorage = {
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { [STORAGE_KEYS.MODEL]: model, ...rest } = state;
+    const { [STORAGE_KEYS.DEFAULT_MODEL]: model, ...rest } = state;
     vscode.setState(rest);
     vscode.postMessage({
       type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
@@ -59,7 +76,7 @@ export const useModelStore = create<ModelState>()(
   persist(
     (set) => ({
       config: {
-        selectedModel: 'Xenova/TinyLlama-1.1B-Chat-v1.0',
+        selectedModel: 'llama3.2:1b',
         isDownloading: false,
         downloadProgress: 0,
         downloadStatus: 'idle',
@@ -87,4 +104,4 @@ export const useModelStore = create<ModelState>()(
       storage: createJSONStorage(() => vscodeStorage),
     }
   )
-); 
+);

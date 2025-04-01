@@ -44,7 +44,8 @@ export const STORAGE_KEYS = {
   CHAT: 'chat',
   SETTINGS: 'globalSettings',
   WORKSPACE_SETTINGS: 'workspaceGPT-settings',
-  MODEL: 'Xenova/TinyLlama-1.1B-Chat-v1.0'
+  MODEL_PROVIDER: 'OLLAMA',
+  DEFAULT_MODEL: 'llama3.2:1b'
 };
 
 // Extension Constants

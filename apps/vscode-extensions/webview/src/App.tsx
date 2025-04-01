@@ -29,7 +29,7 @@ const App: React.FC = () => {
   const handleNewChat = () => {
     setIsLoading(true);
     vscode.postMessage({
-      type: 'newChat'
+      type: MESSAGE_TYPES.NEW_CHAT,
     });
     clearMessages();
     setInputValue('');
@@ -71,6 +71,10 @@ const App: React.FC = () => {
           updateModelConfig('isDownloading', false);
           updateModelConfig('downloadProgress', 100);
           updateModelConfig('downloadStatus', 'completed');
+          // Store available models if provided
+          if (message.models && Array.isArray(message.models)) {
+            updateModelConfig('availableModels', message.models);
+          }
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
           updateModelConfig('isDownloading', false);
@@ -114,6 +118,7 @@ const App: React.FC = () => {
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
       message: inputValue,
+      modelId: modelConfig.selectedModel, // Include the selected model ID in the message event
     });
   };
 
@@ -145,21 +150,35 @@ const App: React.FC = () => {
               disabled={modelConfig.isDownloading}
               className={modelConfig.isDownloading ? 'loading' : ''}
             >
-              <option value="Xenova/TinyLlama-1.1B-Chat-v1.0">
-                {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/TinyLlama-1.1B-Chat-v1.0" 
-                  ? `TinyLlama (${modelConfig.downloadProgress}%)` 
-                  : "TinyLlama 1.1B Chat"}
-              </option>
-              <option value="Xenova/Phi-2">
-                {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/Phi-2" 
-                  ? `Phi-2 (${modelConfig.downloadProgress}%)` 
-                  : "Phi-2"}
-              </option>
-              <option value="Xenova/CodeLlama-7B-Instruct">
-                {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/CodeLlama-7B-Instruct" 
-                  ? `CodeLlama 7B (${modelConfig.downloadProgress}%)` 
-                  : "CodeLlama 7B"}
-              </option>
+              {modelConfig.availableModels && modelConfig.availableModels.length > 0 ? (
+                // Render options from available models
+                modelConfig.availableModels.map((model) => (
+                  <option key={model.model} value={model.model}>
+                    {modelConfig.isDownloading && modelConfig.selectedModel === model.model
+                      ? `${model.name} (${modelConfig.downloadProgress}%)`
+                      : `${model.name} (${model.details.parameter_size})`}
+                  </option>
+                ))
+              ) : (
+                // Fallback options if no models are available
+                <>
+                  <option value="llama3.2:1b">
+                    {modelConfig.isDownloading && modelConfig.selectedModel === "llama3.2:1b"
+                      ? `TinyLlama (${modelConfig.downloadProgress}%)`
+                      : "TinyLlama 1.1B Chat"}
+                  </option>
+                  <option value="Xenova/Phi-2">
+                    {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/Phi-2"
+                      ? `Phi-2 (${modelConfig.downloadProgress}%)`
+                      : "Phi-2"}
+                  </option>
+                  <option value="Xenova/CodeLlama-7B-Instruct">
+                    {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/CodeLlama-7B-Instruct"
+                      ? `CodeLlama 7B (${modelConfig.downloadProgress}%)`
+                      : "CodeLlama 7B"}
+                  </option>
+                </>
+              )}
             </select>
             {modelConfig.isDownloading && (
               <div className="model-progress">

@@ -38,8 +38,8 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     // If the model hasn't been initialized yet in the background, do it now
     if (!this.isModelInitialized) {
       const modelId =
-        this._context.globalState.get<string>(STORAGE_KEYS.MODEL) ||
-        STORAGE_KEYS.MODEL;
+        this._context.globalState.get<string>(STORAGE_KEYS.DEFAULT_MODEL) ||
+        STORAGE_KEYS.DEFAULT_MODEL;
 
       // Notify UI that model is being downloaded
       webviewView.webview.postMessage({
@@ -52,20 +52,6 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       // Start model initialization
       this.chatService
         .initializeModel(modelId)
-        .then(() => {
-          this.isModelInitialized = true;
-          // Notify UI that model download is complete
-          webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE,
-          });
-        })
-        .catch((error) => {
-          console.error('Error initializing model:', error);
-          webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR,
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
     }
   }
 

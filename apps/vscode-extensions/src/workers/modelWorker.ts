@@ -1,17 +1,5 @@
 import { parentPort, workerData } from 'worker_threads';
 import { createStructuredPrompt } from './promptTemplates';
-import type { Pipeline } from '@xenova/transformers';
-import { WORKER_STATUS } from '../../constants';
-import path from 'path';
-
-interface PipelineOptions {
-  quantized: boolean;
-  autoConfig: boolean;
-  progress_callback: (progress: any) => void;
-  cache_dir: string;
-  low_cpu_mem_usage: boolean;
-  max_memory: { [key: number]: string };
-}
 
 interface WorkerData {
   prompt: string;
@@ -21,124 +9,48 @@ interface WorkerData {
     source: string;
   }>;
   modelId?: string;
-  mode?: 'initialize' | 'generate';
-  globalStoragePath: string; // Add this to receive the path from the main thread
+  chatHistory?: string;
 }
 
-interface ModelResponse {
-  generated_text: string;
+interface OllamaResponse {
+  response: string;
+  done: boolean;
 }
 
-// Using dynamic import for ESM compatibility
-let pipeline: Pipeline;
-let transformers: any;
-let generator: any;
-let env: any;
-
-const { prompt, searchResults, modelId = 'Xenova/TinyLlama-1.1B-Chat-v1.0', mode = 'generate', globalStoragePath } = workerData as WorkerData;
+const { prompt, searchResults, modelId = 'llama2', chatHistory = '' } = workerData as WorkerData;
 
 async function generateResponse(): Promise<void> {
   try {
-    // Initialize model using dynamic import
-    const importModule = new Function(
-      'modulePath',
-      'return import(modulePath)'
-    );
-    
-    if (!generator) {
-      transformers = await importModule('@xenova/transformers');
-      pipeline = transformers.pipeline;
-      
-      // Create a detailed progress callback
-      const progressCallback = (progress: any) => {
-        const totalSize = `${((progress.total ?? 0) / 1024 / 1024).toFixed(2)} MB`;
-        const downloaded = `${((progress.loaded ?? 0) / 1024 / 1024).toFixed(2)} MB`;
-        
-        // Calculate progress percentage
-        let progressValue = '0';
-        if (progress.total && progress.loaded) {
-          progressValue = ((progress.loaded / progress.total) * 100).toFixed(1);
+    const structuredPrompt = createStructuredPrompt(searchResults, prompt, chatHistory);
+
+    const response = await fetch('http://localhost:11434/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: modelId,
+        prompt: structuredPrompt,
+        stream: false,
+        options: {
+          temperature: 0.3,
+          num_predict: 512,
         }
-        
-        parentPort?.postMessage({
-          type: WORKER_STATUS.PROCESSING,
-          progress: progressValue,
-          current: downloaded,
-          total: totalSize,
-        });
-      };
-      
-      // Initialize the model
-      console.log(`Initializing model: ${modelId}`);
-      const cachePath = path.join(
-        globalStoragePath,
-        '.cache',
-      );
-      generator = await pipeline(
-        'text-generation',
-        modelId,
-        {
-          quantized: true, // Ensure 4-bit quantization
-          autoConfig: true, // Prevent network calls to Hugging Face
-          progress_callback: progressCallback,
-          cache_dir: cachePath, // Use the path directly from workerData
-          low_cpu_mem_usage: true, // Add this to reduce memory usage
-          // max_memory: { 0: '2GB' }, // Limit memory usage
-        } as PipelineOptions
-      );
-      
-      // If this is just model initialization, return early
-      if (mode === 'initialize') {
-        parentPort?.postMessage({
-          type: WORKER_STATUS.COMPLETED,
-          message: 'Model initialization completed successfully'
-        });
-        return;
-      }
+      })
+    });
 
-      // Near the end of model initialization
-      const memoryUsage = process.memoryUsage();
-      console.log('Memory usage after model load:', {
-        rss: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`,
-        heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
-        heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`,
-      });
+    if (!response.ok) {
+      throw new Error(`Generation failed: ${response.statusText}`);
     }
 
-    // Only proceed with text generation if we're not in initialize mode
-    if (mode === 'generate') {
-      // Import and use the prompt template
-      const structuredPrompt = createStructuredPrompt(searchResults, prompt);
+    const result = await response.json() as OllamaResponse;
 
-      // Generate response with configured parameters
-      const result = await generator(structuredPrompt, {
-        max_new_tokens: 512, // Maximum number of tokens (words/subwords) to generate in the response
-        temperature: 0.3, // Controls randomness in generation (0.0 = deterministic, 1.0 = more random)
-        repetition_penalty: 1.3, // Penalizes repetition of tokens, higher values reduce repetition
-        do_sample: true, // Enables sampling-based generation instead of greedy decoding
-      });
-
-      // Extract generated text from the result
-      let generatedText: string;
-
-      if (Array.isArray(result)) {
-        const firstResult = result[0] as ModelResponse;
-        generatedText = firstResult.generated_text;
-      } else {
-        const singleResult = result as ModelResponse;
-        generatedText = singleResult.generated_text;
-      }
-
-      if (!generatedText) {
-        throw new Error('No text was generated by the model');
-      }
-
-      // Send response back to main thread
-      parentPort?.postMessage({
-        type: 'response',
-        content: generatedText.substring(structuredPrompt.length),
-      });
+    if (!result.response) {
+      throw new Error('No text was generated by the model');
     }
+
+    parentPort?.postMessage({
+      type: 'response',
+      content: result.response
+    });
   } catch (error) {
     parentPort?.postMessage({
       type: 'error',

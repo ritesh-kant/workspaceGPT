@@ -14,7 +14,7 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Initialize the model immediately
-  const modelId = context.globalState.get<string>(STORAGE_KEYS.MODEL) || STORAGE_KEYS.MODEL;
+  const modelId = context.globalState.get<string>(STORAGE_KEYS.DEFAULT_MODEL) || STORAGE_KEYS.DEFAULT_MODEL;
 
   // Show notification that model is being downloaded
   vscode.window.setStatusBarMessage(

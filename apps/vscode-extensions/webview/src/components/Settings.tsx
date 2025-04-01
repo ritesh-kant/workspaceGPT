@@ -67,10 +67,13 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           break;
 
         case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
+          console.log(event)
           batchUpdateModelConfig({
             isDownloading: false,
             downloadProgress: 100,
             downloadStatus: 'completed',
+            // Store available models if provided
+            ...(message.models && Array.isArray(message.models) ? { availableModels: message.models, selectedModel: message.models[0].model } : {})
           });
           break;
 
@@ -257,13 +260,19 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 onChange={(e) => handleModelChange(e.target.value)}
                 disabled={modelConfig.isDownloading}
               >
-                <option value='Xenova/TinyLlama-1.1B-Chat-v1.0'>
-                  TinyLlama 1.1B Chat
-                </option>
-                <option value='Xenova/Phi-2'>Phi-2</option>
-                <option value='Xenova/CodeLlama-7B-Instruct'>
-                  CodeLlama 7B Instruct
-                </option>
+                {modelConfig.availableModels && modelConfig.availableModels.length > 0 ? (
+                  // Render options from available models
+                  modelConfig.availableModels.map((model) => (
+                    <option key={model.model} value={model.model}>
+                      {model.name} ({model.details.parameter_size})
+                    </option>
+                  ))
+                ) : (
+                  // Fallback options if no models are available
+                  <>
+                    <option value='llama3.2:1b'>llama3.2:1b</option>
+                  </>
+                )}
               </select>
               {modelConfig.isDownloading && (
                 <div className='model-download-status'>

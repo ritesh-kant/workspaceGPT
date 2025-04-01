@@ -25,7 +25,7 @@ export class ChatService {
     this.context = context;
     this.embeddingService = new EmbeddingService(webviewView, context);
     this.currentModel =
-      context.globalState.get(STORAGE_KEYS.MODEL) || STORAGE_KEYS.MODEL;
+      context.globalState.get(STORAGE_KEYS.DEFAULT_MODEL) || STORAGE_KEYS.DEFAULT_MODEL;
   }
 
   public async initializeModel(modelId: string): Promise<void> {
@@ -34,15 +34,12 @@ export class ChatService {
         __dirname,
         '..',
         'workers',
-        'modelWorker.js'
+        'modelDownloader.js'
       );
       const modelWorker = new Worker(workerPath, {
         workerData: {
-          prompt: '',
-          searchResults: [],
           modelId,
-          mode: 'initialize',
-          globalStoragePath: this.context.globalStorageUri.fsPath, // Pass the path directly
+          globalStoragePath: this.context.globalStorageUri.fsPath,
         },
       });
 
@@ -59,6 +56,7 @@ export class ChatService {
             progress?: string;
             current?: string;
             total?: string;
+            models?: any[];
           }) => {
             if (result.type === WORKER_STATUS.PROCESSING) {
               const now = Date.now();
@@ -89,6 +87,7 @@ export class ChatService {
               // Send final complete message
               this.webviewView.webview.postMessage({
                 type: MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE,
+                models: result.models,
               });
               console.log(`Model ${modelId} initialized successfully`);
               resolve();
@@ -127,7 +126,7 @@ export class ChatService {
     });
   }
 
-  public async sendMessage(message: string): Promise<void> {
+  public async sendMessage(message: string, modelId: string): Promise<void> {
     try {
       // Add user message to history
       this.chatHistory.push({
@@ -142,7 +141,8 @@ export class ChatService {
       // Generate response using TinyLlama model
       const modelResponse = await this.generateModelResponse(
         message,
-        searchResults
+        searchResults,
+        modelId
       );
 
       // Add assistant response to history
@@ -151,8 +151,11 @@ export class ChatService {
         content: modelResponse,
       });
 
-      // Stream response to webview
-      await this.streamResponse(modelResponse);
+      // Send complete response to webview at once instead of streaming
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.RECEIVE_MESSAGE,
+        content: modelResponse,
+      });
     } catch (error) {
       console.error('Error in chat:', error);
       this.webviewView.webview.postMessage({
@@ -183,24 +186,12 @@ export class ChatService {
     return markdown;
   }
 
-  private async streamResponse(content: string): Promise<void> {
-    const chunkSize = 50; // Characters per chunk
-    const delay = 30; // Milliseconds between chunks
-
-    for (let i = 0; i < content.length; i += chunkSize) {
-      const chunk = content.slice(i, i + chunkSize);
-      this.webviewView.webview.postMessage({
-        type: 'streamResponse',
-        content: chunk,
-        isComplete: i + chunkSize >= content.length,
-      });
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
+  // streamResponse method removed as we're now sending the complete response at once
 
   private async generateModelResponse(
     message: string,
-    searchResults: Array<{ text: string; score: number; source: string }>
+    searchResults: Array<{ text: string; score: number; source: string }>,
+    modelId: string
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -210,11 +201,18 @@ export class ChatService {
         'workers',
         'modelWorker.js'
       );
+      
+      // Format chat history for the prompt
+      const formattedChatHistory = this.chatHistory
+        .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .join('\n\n');
+        
       const modelWorker = new Worker(workerPath, {
         workerData: {
           prompt: message,
           searchResults,
-          modelId: this.currentModel,
+          modelId: modelId ?? this.currentModel,
+          chatHistory: formattedChatHistory
         },
       });
 
