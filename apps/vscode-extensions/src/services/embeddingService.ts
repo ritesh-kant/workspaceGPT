@@ -108,7 +108,7 @@ export class EmbeddingService {
   public async searchEmbeddings(query: string): Promise<SearchResult[]> {
     try {
       // Create a new worker for search
-      const workerPath = path.join(__dirname, '..', 'workers', 'searchWorker.js');
+      const workerPath = path.join(__dirname, 'workers', 'searchWorker.js');
       const searchWorker = new Worker(workerPath, {
         workerData: {
           query,

@@ -15,7 +15,7 @@
                 "${workspaceFolder}/apps/vscode-extensions/**/*.js"
             ],
             "request": "launch",
-            "preLaunchTask": "npm: compile - apps/vscode-extensions",
+            "preLaunchTask": "npm: build - apps/vscode-extensions",
             "type": "extensionHost"
         },
         {

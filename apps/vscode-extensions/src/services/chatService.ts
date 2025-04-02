@@ -32,7 +32,6 @@ export class ChatService {
     try {
       const workerPath = path.join(
         __dirname,
-        '..',
         'workers',
         'modelDownloader.js'
       );
@@ -197,7 +196,6 @@ export class ChatService {
       // Create a new worker for model inference
       const workerPath = path.join(
         __dirname,
-        '..',
         'workers',
         'modelWorker.js'
       );

@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "(Under Development) Your AI-powered coding assistant that understands your entire workspace. Get intelligent answers, code explanations, and suggestions based on your project context.",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
@@ -16,7 +16,7 @@
     "Other"
   ],
   "activationEvents": [],
-  "main": "./dist/src/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
@@ -66,15 +66,14 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile && pnpm run build-webview",
-    "vscode:publish": "vsce publish",
-    "compile": "pnpm build-webview && tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "pnpm run compile &.then(data => await data.json()).then(console.log);& pnpm run lint",
+    "vscode:prepublish": "pnpm run build",
+    "build": "pnpm build-webview && tsup",
+    "watch": "pnpm watch-webview && tsup --watch",
+    "vscode:publish": "vsce publish --no-dependencies",
+    "build-webview": "cd webview && pnpm install && pnpm run build",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
     "dev": "pnpm run compile && code --new-window --extensionDevelopmentPath=${PWD}",
-    "build-webview": "cd webview && pnpm install && pnpm run build",
     "watch-webview": "cd webview && pnpm run dev"
   },
   "dependencies": {
@@ -90,7 +89,8 @@
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
     "eslint": "^8.56.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "tsup": "^8.0.2"
   },
   "files": [
     "dist",
