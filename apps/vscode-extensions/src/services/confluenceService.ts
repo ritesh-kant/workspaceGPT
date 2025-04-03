@@ -42,7 +42,6 @@ export class ConfluenceService {
       // Create a new worker
       const workerPath = path.join(
         __dirname,
-        '..',
         'workers',
         'confluenceWorker.js'
       );

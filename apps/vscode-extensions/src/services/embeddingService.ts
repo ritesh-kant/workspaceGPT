@@ -16,7 +16,10 @@ export class EmbeddingService {
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
 
-  constructor(webviewView: vscode.WebviewView, context: vscode.ExtensionContext) {
+  constructor(
+    webviewView: vscode.WebviewView,
+    context: vscode.ExtensionContext
+  ) {
     this.webviewView = webviewView;
     this.context = context;
   }
@@ -27,20 +30,27 @@ export class EmbeddingService {
       this.stopWorker();
 
       // Get the directory path for Confluence MD files
-      const mdDirPath = path.join(this.context.globalStorageUri.fsPath, 'confluence', 'mds');
-      const embeddingDirPath = path.join(this.context.globalStorageUri.fsPath, 'embeddings');
+      const mdDirPath = path.join(
+        this.context.globalStorageUri.fsPath,
+        'confluence',
+        'mds'
+      );
+      const embeddingDirPath = path.join(
+        this.context.globalStorageUri.fsPath,
+        'embeddings'
+      );
 
       // Ensure embedding directory exists
       await this.ensureDirectoryExists(embeddingDirPath);
 
       // Create a new worker
-      const workerPath = path.join(__dirname, '..', 'workers', 'embeddingWorker.js');
+      const workerPath = path.join(__dirname, 'workers', 'embeddingWorker.js');
       this.worker = new Worker(workerPath, {
         workerData: {
           mdDirPath,
           embeddingDirPath,
-          config
-        }
+          config,
+        },
       });
 
       // Handle messages from the worker
@@ -51,7 +61,7 @@ export class EmbeddingService {
               type: MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS,
               progress: message.progress,
               current: message.current,
-              total: message.total
+              total: message.total,
             });
             break;
 
@@ -59,14 +69,14 @@ export class EmbeddingService {
             console.error(`Worker error: ${message.message}`);
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-              message: message.message
+              message: message.message,
             });
             break;
 
           case WORKER_STATUS.COMPLETED:
             console.log('Embedding creation complete');
             this.webviewView.webview.postMessage({
-              type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE
+              type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
             });
             // this.stopWorker();
             break;
@@ -78,7 +88,7 @@ export class EmbeddingService {
         console.error('Worker error:', error);
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-          message: error.message
+          message: error.message,
         });
         this.worker = null;
       });
@@ -89,17 +99,16 @@ export class EmbeddingService {
           console.error(`Worker stopped with exit code ${code}`);
           this.webviewView.webview.postMessage({
             type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-            message: `Worker process exited with code ${code}`
+            message: `Worker process exited with code ${code}`,
           });
         }
         this.worker = null;
       });
-
     } catch (error) {
       console.error('Error starting worker:', error);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
       });
       this.stopWorker();
     }
@@ -112,8 +121,11 @@ export class EmbeddingService {
       const searchWorker = new Worker(workerPath, {
         workerData: {
           query,
-          embeddingDirPath: path.join(this.context.globalStorageUri.fsPath, 'embeddings')
-        }
+          embeddingDirPath: path.join(
+            this.context.globalStorageUri.fsPath,
+            'embeddings'
+          ),
+        },
       });
 
       return new Promise((resolve, reject) => {
@@ -127,7 +139,6 @@ export class EmbeddingService {
           searchWorker.terminate();
         });
       });
-
     } catch (error) {
       console.error('Error in embedding search:', error);
       throw error;
