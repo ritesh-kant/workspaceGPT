@@ -44,8 +44,6 @@ export const STORAGE_KEYS = {
   CHAT: 'chat',
   SETTINGS: 'globalSettings',
   WORKSPACE_SETTINGS: 'workspaceGPT-settings',
-  MODEL_PROVIDER: 'OLLAMA',
-  DEFAULT_MODEL: 'llama3.2:1b'
 };
 
 // Extension Constants
@@ -57,6 +55,8 @@ export const EXTENSION = {
 
 // Model Constants
 export const MODEL = {
+  MODEL_PROVIDER: 'OLLAMA',
+  DEFAULT_MODEL: 'llama3.2:1b',
   DEFAULT_DIMENSIONS: 384, // Default dimension for all-MiniLM-L6-v2
   DEFAULT_OLLAMA_EMBEDDING_MODEL: 'nomic-embed-text' // Default Ollama embedding model
 };

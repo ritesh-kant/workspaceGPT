@@ -2,8 +2,7 @@ import * as vscode from 'vscode';
 import { EmbeddingService } from './embeddingService';
 import path from 'path';
 import { Worker } from 'worker_threads';
-import { WORKER_STATUS, MESSAGE_TYPES } from '../../constants';
-import { STORAGE_KEYS } from '../../constants';
+import { WORKER_STATUS, MESSAGE_TYPES, MODEL } from '../../constants';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -24,8 +23,7 @@ export class ChatService {
     this.webviewView = webviewView;
     this.context = context;
     this.embeddingService = new EmbeddingService(webviewView, context);
-    this.currentModel =
-      context.globalState.get(STORAGE_KEYS.DEFAULT_MODEL) || STORAGE_KEYS.DEFAULT_MODEL;
+    this.currentModel = MODEL.DEFAULT_MODEL;
   }
 
   public async initializeModel(modelId: string): Promise<void> {

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { WebviewHtmlTemplate } from './templates/WebviewHtmlTemplate';
 import { ChatService } from './services/chatService';
-import { STORAGE_KEYS, MESSAGE_TYPES } from '../constants';
+import { MESSAGE_TYPES, MODEL } from '../constants';
 
 export class WebViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -37,9 +37,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
 
     // If the model hasn't been initialized yet in the background, do it now
     if (!this.isModelInitialized) {
-      const modelId =
-        this._context.globalState.get<string>(STORAGE_KEYS.DEFAULT_MODEL) ||
-        STORAGE_KEYS.DEFAULT_MODEL;
+      const modelId = MODEL.DEFAULT_MODEL;
 
       // Notify UI that model is being downloaded
       webviewView.webview.postMessage({

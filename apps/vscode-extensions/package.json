@@ -67,8 +67,8 @@
   },
   "scripts": {
     "vscode:prepublish": "pnpm run build",
-    "build": "pnpm build-webview && tsup",
-    "watch": "pnpm watch-webview && tsup --watch",
+    "build": "pnpm build-webview && node esbuild.config.js",
+    "watch": "pnpm watch-webview && node esbuild.config.js --watch",
     "vscode:publish": "vsce publish --no-dependencies",
     "build-webview": "cd webview && pnpm install && pnpm run build",
     "lint": "eslint src --ext ts",
@@ -88,9 +88,9 @@
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
+    "esbuild": "^0.20.1",
     "eslint": "^8.56.0",
-    "typescript": "^5.3.3",
-    "tsup": "^8.0.2"
+    "typescript": "^5.3.3"
   },
   "files": [
     "dist",

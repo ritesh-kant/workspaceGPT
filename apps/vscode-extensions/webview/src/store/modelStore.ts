@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
-import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
+import { MESSAGE_TYPES } from '../constants';
+import { MODEL } from '../../../constants';
 
 export interface OllamaModel {
   name: string;
@@ -47,14 +48,14 @@ const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    return JSON.stringify(state[STORAGE_KEYS.DEFAULT_MODEL] || {});
+    return JSON.stringify(state[MODEL.DEFAULT_MODEL] || {});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
     const currentState = vscode.getState() || {};
     vscode.setState({
       ...currentState,
-      [STORAGE_KEYS.DEFAULT_MODEL]: JSON.parse(value),
+      [MODEL.DEFAULT_MODEL]: JSON.parse(value),
     });
     vscode.postMessage({
       type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
@@ -64,7 +65,7 @@ const vscodeStorage = {
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { [STORAGE_KEYS.DEFAULT_MODEL]: model, ...rest } = state;
+    const { [MODEL.DEFAULT_MODEL]: model, ...rest } = state;
     vscode.setState(rest);
     vscode.postMessage({
       type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,

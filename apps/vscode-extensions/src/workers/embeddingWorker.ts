@@ -95,71 +95,16 @@ async function createEmbeddings(): Promise<void> {
   }
 }
 
-// Check if model exists in Ollama and download if needed
-async function checkAndDownloadModel(modelName: string): Promise<boolean> {
-  try {
-    // First check if the model exists
-    const modelCheckResponse = await fetch('http://localhost:11434/api/tags', {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    if (!modelCheckResponse.ok) {
-      throw new Error(`Failed to check model status: ${modelCheckResponse.statusText}`);
-    }
-
-    const modelList = await modelCheckResponse.json();
-    const modelExists = modelList.models?.some((model: { name: string }) => model.name === modelName);
-
-    if (modelExists) {
-      console.log(`Model ${modelName} already exists`);
-      return true;
-    }
-
-    // Model doesn't exist, pull it
-    console.log(`Model ${modelName} not found, downloading...`);
-    parentPort?.postMessage({
-      type: WORKER_STATUS.PROCESSING,
-      progress: '0',
-      current: 0,
-      total: 1,
-      message: `Downloading embedding model ${modelName}...`
-    });
-
-    const pullResponse = await fetch('http://localhost:11434/api/pull', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: modelName })
-    });
-
-    if (!pullResponse.ok) {
-      throw new Error(`Failed to pull model: ${pullResponse.statusText}`);
-    }
-
-    console.log(`Model ${modelName} downloaded successfully`);
-    return true;
-  } catch (error) {
-    console.error('Error checking/downloading model:', error);
-    throw error;
-  }
-}
-
 // Create embedding using Ollama API
 async function createEmbeddingForText(
   text: string,
 ): Promise<number[]> {
   try {
-    // Ensure model is available
-    if (!ollamaModel) {
-      ollamaModel = config.modelName || MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL;
-      await checkAndDownloadModel(ollamaModel);
-    }
-
     const response = await fetch('http://localhost:11434/api/embeddings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: ollamaModel,
+        model: MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL,
         prompt: text
       })
     });

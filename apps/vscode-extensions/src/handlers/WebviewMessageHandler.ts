@@ -102,7 +102,6 @@ export class WebviewMessageHandler {
   private async handleCompleteConfluenceSync(): Promise<void> {
     try {
       // Start embedding creation after sync is complete
-      // const embeddingService = new EmbeddingService(this.webviewView, this.context);
       if (!this.embeddingService) {
         this.embeddingService = new EmbeddingService(
           this.webviewView,
@@ -166,7 +165,7 @@ export class WebviewMessageHandler {
     try {
       // Update the model in global state
       await this.context.globalState.update(
-        STORAGE_KEYS.DEFAULT_MODEL,
+        MODEL.DEFAULT_MODEL,
         data.modelId
       );
 

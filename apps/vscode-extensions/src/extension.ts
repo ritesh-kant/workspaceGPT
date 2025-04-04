@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { WebViewProvider } from './webViewprovider';
-import { EXTENSION, STORAGE_KEYS, MESSAGE_TYPES } from '../constants';
+import { EXTENSION, STORAGE_KEYS, MESSAGE_TYPES, MODEL } from '../constants';
 import { ChatService } from './services/chatService';
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -13,17 +13,19 @@ export async function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Initialize the model immediately
-  const modelId = context.globalState.get<string>(STORAGE_KEYS.DEFAULT_MODEL) || STORAGE_KEYS.DEFAULT_MODEL;
+  // Initialize the models immediately
+  const modelId = MODEL.DEFAULT_MODEL;
+  const embeddingModelId = MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL;
 
-  // Show notification that model is being downloaded
+  // Show notification that models are being downloaded
   vscode.window.setStatusBarMessage(
-    `Downloading ${modelId.split('/')[1]} model...`,
+    `Downloading ${modelId.split('/')[1]} and ${embeddingModelId} models...`,
     3000
   );
 
-  // Start model download in the background
+  // Start model downloads in the background
   downloadModelInBackground(modelId, context, webViewProvider);
+  downloadModelInBackground(embeddingModelId, context, webViewProvider);
 
   // Register the command
   let disposable = vscode.commands.registerCommand(
