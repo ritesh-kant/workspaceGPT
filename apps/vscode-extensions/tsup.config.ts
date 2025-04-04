@@ -17,12 +17,11 @@ export default defineConfig({
   clean: true,
   external: [
     'vscode',
-    '@workspace-gpt/confluence-utils',
-    'hnswlib-node'
   ],
   noExternal: [
     '@xenova/transformers',
-    'markdown-it'
+    'markdown-it',
+    '@workspace-gpt/confluence-utils',
   ],
   dts: true,
   treeshake: true,
