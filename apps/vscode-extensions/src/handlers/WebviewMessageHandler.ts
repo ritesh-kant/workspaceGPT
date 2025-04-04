@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
+import { MESSAGE_TYPES, MODEL, ModelTypeEnum, STORAGE_KEYS } from '../../constants';
 import { ChatService } from '../services/chatService';
 import { ConfluenceService } from '../services/confluenceService';
 import { EmbeddingService } from '../services/embeddingService';
@@ -179,7 +179,7 @@ export class WebviewMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context);
       }
-      await this.chatService.initializeModel(data.modelId);
+      await this.chatService.initializeModel(data.modelId, ModelTypeEnum.Chat);
 
       // Notify webview that model download is complete
       this.webviewView.webview.postMessage({

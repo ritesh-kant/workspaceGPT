@@ -67,3 +67,9 @@ export const WORKER_STATUS = {
   ERROR: 'error',
   PROCESSED: 'processed'
 };
+
+export type ModelType = 'chat' | 'embedding'
+export enum ModelTypeEnum {
+  Chat = 'chat',
+  Embedding = 'embedding'
+}

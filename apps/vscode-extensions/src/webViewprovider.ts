@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { WebviewHtmlTemplate } from './templates/WebviewHtmlTemplate';
 import { ChatService } from './services/chatService';
-import { MESSAGE_TYPES, MODEL } from '../constants';
+import { MESSAGE_TYPES, MODEL, ModelTypeEnum } from '../constants';
 
 export class WebViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -50,8 +50,9 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       });
 
       // Start model initialization
-      this.chatService.initializeModel(chatModelId);
-      this.chatService.initializeModel(embeddingModelId);
+      await this.chatService.initializeModel(chatModelId, ModelTypeEnum.Chat)
+      await this.chatService.initializeModel(embeddingModelId, ModelTypeEnum.Embedding);
+
     }
   }
 

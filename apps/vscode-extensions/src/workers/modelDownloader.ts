@@ -1,12 +1,13 @@
 import { parentPort, workerData } from 'worker_threads';
-import { WORKER_STATUS } from '../../constants';
+import { ModelType, WORKER_STATUS } from '../../constants';
 
 interface WorkerData {
   modelId: string;
   globalStoragePath: string;
+  modelType: ModelType;
 }
 
-const { modelId } = workerData as WorkerData;
+const { modelId, modelType } = workerData as WorkerData;
 
 async function fetchAvailableModels() {
   const modelCheckResponse = await fetch(`http://localhost:11434/api/tags`, {
@@ -19,7 +20,12 @@ async function fetchAvailableModels() {
   }
 
   const modelList = await modelCheckResponse.json();
-  return modelList.models?.filter((model: { name: string }) => !model.name.includes("embed"));
+  // If the modelType is embedding, return the list of embedding models
+  if(modelType === 'embedding') {
+    return modelList.tags?.filter((model: { name: string }) => model.name.includes('embed'));
+  }
+  // Get the list of available models other than embedder, as the embedder is a special model and not needed for the chat
+  return modelList.models?.filter((model: { name: string }) => !model.name.includes('embde'));
 }
 
 async function checkAndDownloadModel(): Promise<void> {
@@ -28,6 +34,7 @@ async function checkAndDownloadModel(): Promise<void> {
     const availableModels = await fetchAvailableModels();
     const modelExists = availableModels?.some((model: { name: string }) => model.name );
     
+    // if (modelExists && false) {
     if (modelExists) {
       parentPort?.postMessage({
         type: WORKER_STATUS.COMPLETED,
@@ -72,7 +79,8 @@ async function checkAndDownloadModel(): Promise<void> {
               progress: percentage,
               current: `${downloadedSize} MB`,
               total: `${totalSize} MB`,
-              modelId: modelId
+              modelId: modelId,
+              modelType: modelType
             });
           }
         }
