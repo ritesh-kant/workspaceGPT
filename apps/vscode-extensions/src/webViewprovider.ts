@@ -37,7 +37,9 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
 
     // If the model hasn't been initialized yet in the background, do it now
     if (!this.isModelInitialized) {
-      const modelId = MODEL.DEFAULT_MODEL;
+      // Initialize the models immediately
+      const chatModelId = MODEL.DEFAULT_CHAT_MODEL;
+      const embeddingModelId = MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL;
 
       // Notify UI that model is being downloaded
       webviewView.webview.postMessage({
@@ -48,8 +50,8 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       });
 
       // Start model initialization
-      this.chatService
-        .initializeModel(modelId)
+      this.chatService.initializeModel(chatModelId);
+      this.chatService.initializeModel(embeddingModelId);
     }
   }
 

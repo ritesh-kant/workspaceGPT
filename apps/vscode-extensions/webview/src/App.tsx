@@ -156,7 +156,7 @@ const App: React.FC = () => {
                   <option key={model.model} value={model.model}>
                     {modelConfig.isDownloading && modelConfig.selectedModel === model.model
                       ? `${model.name} (${modelConfig.downloadProgress}%)`
-                      : `${model.name} (${model.details.parameter_size})`}
+                      : `${model.name} (${model?.details?.parameter_size})`}
                   </option>
                 ))
               ) : (
@@ -164,18 +164,8 @@ const App: React.FC = () => {
                 <>
                   <option value="llama3.2:1b">
                     {modelConfig.isDownloading && modelConfig.selectedModel === "llama3.2:1b"
-                      ? `TinyLlama (${modelConfig.downloadProgress}%)`
-                      : "TinyLlama 1.1B Chat"}
-                  </option>
-                  <option value="Xenova/Phi-2">
-                    {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/Phi-2"
-                      ? `Phi-2 (${modelConfig.downloadProgress}%)`
-                      : "Phi-2"}
-                  </option>
-                  <option value="Xenova/CodeLlama-7B-Instruct">
-                    {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/CodeLlama-7B-Instruct"
-                      ? `CodeLlama 7B (${modelConfig.downloadProgress}%)`
-                      : "CodeLlama 7B"}
+                      ? `Llama3.2 (${modelConfig.downloadProgress}%)`
+                      : "Llama3.2"}
                   </option>
                 </>
               )}

@@ -165,7 +165,7 @@ export class WebviewMessageHandler {
     try {
       // Update the model in global state
       await this.context.globalState.update(
-        MODEL.DEFAULT_MODEL,
+        MODEL.DEFAULT_CHAT_MODEL,
         data.modelId
       );
 

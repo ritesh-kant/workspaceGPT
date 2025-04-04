@@ -8,20 +8,24 @@ interface WorkerData {
 
 const { modelId } = workerData as WorkerData;
 
+async function fetchAvailableModels() {
+  const modelCheckResponse = await fetch(`http://localhost:11434/api/tags`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  if (!modelCheckResponse.ok) {
+    throw new Error(`Failed to check model status: ${modelCheckResponse.statusText}`);
+  }
+
+  const modelList = await modelCheckResponse.json();
+  return modelList.models?.filter((model: { name: string }) => !model.name.includes("embed"));
+}
+
 async function checkAndDownloadModel(): Promise<void> {
   try {
     // First check if the model exists
-    const modelCheckResponse = await fetch(`http://localhost:11434/api/tags`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    if (!modelCheckResponse.ok) {
-      throw new Error(`Failed to check model status: ${modelCheckResponse.statusText}`);
-    }
-
-    const modelList = await modelCheckResponse.json();
-    const availableModels = modelList.models?.filter((model: { name: string }) => !model.name.includes("embed"));
+    const availableModels = await fetchAvailableModels();
     const modelExists = availableModels?.some((model: { name: string }) => model.name );
     
     if (modelExists) {
@@ -51,28 +55,37 @@ async function checkAndDownloadModel(): Promise<void> {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
+  
       const text = new TextDecoder().decode(value);
-      const progress = JSON.parse(text);
-
-      if (progress.status === 'downloading') {
-        const downloadedSize = (progress.completed / 1024 / 1024).toFixed(2);
-        const totalSize = (progress.total / 1024 / 1024).toFixed(2);
-        const percentage = ((progress.completed / progress.total) * 100).toFixed(1);
-
-        parentPort?.postMessage({
-          type: WORKER_STATUS.PROCESSING,
-          progress: percentage,
-          current: `${downloadedSize} MB`,
-          total: `${totalSize} MB`,
-        });
+      const lines = text.split('\n');
+      for (const line of lines) {
+        if (line.trim()) { // Ensure the line is not empty
+          const progress = JSON.parse(line);
+  
+          if (progress.status.includes("pulling") && progress.completed && progress.total) {
+            const downloadedSize = (progress.completed / 1024 / 1024).toFixed(2);
+            const totalSize = (progress.total / 1024 / 1024).toFixed(2);
+            const percentage = ((progress.completed / progress.total) * 100).toFixed(1);
+  
+            parentPort?.postMessage({
+              type: WORKER_STATUS.PROCESSING,
+              progress: percentage,
+              current: `${downloadedSize} MB`,
+              total: `${totalSize} MB`,
+              modelId: modelId
+            });
+          }
+        }
       }
     }
+
+    // Fetch updated model list after download
+    const updatedModels = await fetchAvailableModels();
 
     parentPort?.postMessage({
       type: WORKER_STATUS.COMPLETED,
       message: 'Model initialization completed successfully',
-      models: [{name: modelId}]
+      models: updatedModels
     });
   } catch (error) {
     parentPort?.postMessage({
