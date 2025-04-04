@@ -57,7 +57,7 @@ export const EXTENSION = {
 export const MODEL = {
   MODEL_PROVIDER: 'OLLAMA',
   DEFAULT_MODEL: 'llama3.2:1b',
-  DEFAULT_DIMENSIONS: 384, // Default dimension for all-MiniLM-L6-v2
+  DEFAULT_DIMENSIONS: 768, // Default dimensions for the embedding model
   DEFAULT_OLLAMA_EMBEDDING_MODEL: 'nomic-embed-text' // Default Ollama embedding model
 };
 
