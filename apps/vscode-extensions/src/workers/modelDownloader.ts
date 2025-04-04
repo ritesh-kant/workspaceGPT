@@ -21,13 +21,14 @@ async function checkAndDownloadModel(): Promise<void> {
     }
 
     const modelList = await modelCheckResponse.json();
-    const modelExists = modelList.models?.some((model: { name: string }) => model.name );
-
+    const availableModels = modelList.models?.filter((model: { name: string }) => !model.name.includes("embed"));
+    const modelExists = availableModels?.some((model: { name: string }) => model.name );
+    
     if (modelExists) {
       parentPort?.postMessage({
         type: WORKER_STATUS.COMPLETED,
         message: 'Model already exists',
-        models: modelList.models
+        models: availableModels
       });
       return;
     }

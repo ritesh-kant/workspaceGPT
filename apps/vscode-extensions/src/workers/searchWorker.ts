@@ -83,22 +83,84 @@ async function searchEmbeddings(): Promise<void> {
   }
 }
 
-// Using dynamic import for ESM compatibility
-let pipeline: any;
-let transformers: any;
-let extractor: any;
+// Variables for Ollama API
+let ollamaModel: string;
 
-// Create embedding using all-MiniLM-L6-v2 model
-async function createEmbeddingForText(text: string): Promise<number[]> {
-  const importModule = new Function('modulePath', 'return import(modulePath)');
+// Check if model exists in Ollama and download if needed
+async function checkAndDownloadModel(modelName: string): Promise<boolean> {
   try {
-    if (!extractor) {
-      transformers = await importModule('@xenova/transformers');
-      pipeline = transformers.pipeline;
-      extractor = await pipeline('feature-extraction', MODEL.DEFAULT_NAME);
+    // First check if the model exists
+    const modelCheckResponse = await fetch('http://localhost:11434/api/tags', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (!modelCheckResponse.ok) {
+      throw new Error(`Failed to check model status: ${modelCheckResponse.statusText}`);
     }
-    const output = await extractor(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data).map(Number);
+
+    const modelList = await modelCheckResponse.json();
+    const modelExists = modelList.models?.some((model: { name: string }) => model.name === modelName);
+
+    if (modelExists) {
+      console.log(`Model ${modelName} already exists`);
+      return true;
+    }
+
+    // Model doesn't exist, pull it
+    console.log(`Model ${modelName} not found, downloading...`);
+    parentPort?.postMessage({
+      type: 'processing',
+      message: `Downloading embedding model ${modelName}...`
+    });
+
+    const pullResponse = await fetch('http://localhost:11434/api/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: modelName })
+    });
+
+    if (!pullResponse.ok) {
+      throw new Error(`Failed to pull model: ${pullResponse.statusText}`);
+    }
+
+    console.log(`Model ${modelName} downloaded successfully`);
+    return true;
+  } catch (error) {
+    console.error('Error checking/downloading model:', error);
+    throw error;
+  }
+}
+
+// Create embedding using Ollama API
+async function createEmbeddingForText(text: string): Promise<number[]> {
+  try {
+    // Ensure model is available
+    if (!ollamaModel) {
+      ollamaModel = MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL;
+      await checkAndDownloadModel(ollamaModel);
+    }
+
+    const response = await fetch('http://localhost:11434/api/embeddings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: ollamaModel,
+        prompt: text
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to generate embeddings: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    
+    if (!result.embedding || !Array.isArray(result.embedding)) {
+      throw new Error('Invalid embedding response from Ollama');
+    }
+    
+    return result.embedding;
   } catch (error) {
     console.error('Error creating embedding:', error);
     throw error;

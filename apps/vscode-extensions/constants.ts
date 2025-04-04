@@ -58,7 +58,7 @@ export const EXTENSION = {
 // Model Constants
 export const MODEL = {
   DEFAULT_DIMENSIONS: 384, // Default dimension for all-MiniLM-L6-v2
-  DEFAULT_NAME: 'Xenova/all-MiniLM-L6-v2'
+  DEFAULT_OLLAMA_EMBEDDING_MODEL: 'nomic-embed-text' // Default Ollama embedding model
 };
 
 export const WORKER_STATUS = {
