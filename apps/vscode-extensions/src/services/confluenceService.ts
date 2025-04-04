@@ -40,11 +40,7 @@ export class ConfluenceService {
       this.stopSync();
 
       // Create a new worker
-      const workerPath = path.join(
-        __dirname,
-        'workers',
-        'confluenceWorker.js'
-      );
+      const workerPath = path.join(__dirname, 'workers', 'confluenceWorker.js');
       this.worker = new Worker(workerPath, {
         workerData: {
           spaceKey: config.spaceKey,
@@ -89,9 +85,9 @@ export class ConfluenceService {
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
               source: 'confluence',
-              pagesCount: message.pages.length
+              pagesCount: message.pages.length,
             });
-            
+
             // Clean up the worker
             this.stopSync();
 
@@ -117,9 +113,12 @@ export class ConfluenceService {
       this.worker.on('exit', (code) => {
         if (code !== 0) {
           console.error(`Worker stopped with exit code ${code}`);
+          // Notify the webview that sync is being stopped
           this.webviewView.webview.postMessage({
             type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
-            message: `Worker process exited with code ${code}`,
+            source: 'confluence',
+            progress: 0,
+            message: 'Stopping sync process...',
           });
         }
         this.worker = null;
@@ -136,31 +135,14 @@ export class ConfluenceService {
 
   public stopSync(): void {
     if (this.worker) {
+      console.log('Stopping Confluence sync process...');
+      // Terminate the worker
       this.worker.terminate();
       this.worker = null;
+
+      console.log('Confluence sync process stopped');
     }
   }
-
-  // private async saveToGlobalState(pages: ProcessedPage[]): Promise<void> {
-  //   try {
-  //     // Get existing confluence data or initialize empty object
-  //     const existingData = this.context.globalState.get('workspaceGPT-confluence-data') || {};
-
-  //     // Update with new pages data
-  //     const updatedData = {
-  //       ...existingData,
-  //       pages: pages,
-  //       lastSyncTime: new Date().toISOString()
-  //     };
-
-  //     // Save to global state
-  //     await this.context.globalState.update('workspaceGPT-confluence-data', updatedData);
-  //     console.log('Saved confluence data to global state');
-  //   } catch (error) {
-  //     console.error('Error saving to global state:', error);
-  //     throw error;
-  //   }
-  // }
 
   private async saveProcessedPageAsMd(page: ProcessedPage): Promise<void> {
     try {

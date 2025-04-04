@@ -129,7 +129,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('confluence', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync error: ${message.message}`,
+            statusMessage: `Sync stopped: ${message.message}`,
           });
           break;
 
@@ -163,7 +163,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('codebase', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync error: ${message.message}`,
+            statusMessage: `Sync stopped: ${message.message}`,
           });
           break;
 
@@ -239,6 +239,26 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     vscode.postMessage({
       type: MESSAGE_TYPES.START_CONFLUENCE_SYNC,
       section: 'confluence',
+      config,
+    });
+  };
+
+  const stopSync = () => {
+    updateConfig('confluence', 'isSyncing', false);
+    updateConfig('confluence', 'statusMessage', 'Stopping sync process...');
+    vscode.postMessage({
+      type: MESSAGE_TYPES.STOP_CONFLUENCE_SYNC,
+      section: 'confluence',
+      config,
+    });
+  };
+
+  const stopCodebaseSync = () => {
+    updateConfig('codebase', 'isSyncing', false);
+    updateConfig('codebase', 'statusMessage', 'Stopping scan process...');
+    vscode.postMessage({
+      type: MESSAGE_TYPES.STOP_CODEBASE_SYNC,
+      section: 'codebase',
       config,
     });
   };
@@ -415,12 +435,21 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
 
                 <div className='button-group'>
                   <button onClick={checkConnection}>Check Connection</button>
-                  <button
-                    onClick={startSync}
-                    // disabled={isConfluenceSyncing || connectionStatus !== 'success'}
-                  >
-                    Start Sync
-                  </button>
+                  {config.confluence.isSyncing ? (
+                    <button
+                      onClick={stopSync}
+                      className='stop-sync-button'
+                    >
+                      Stop Sync
+                    </button>
+                  ) : (
+                    <button
+                      onClick={startSync}
+                      // disabled={isConfluenceSyncing || connectionStatus !== 'success'}
+                    >
+                      Start Sync
+                    </button>
+                  )}
                 </div>
 
                 {config.confluence.connectionStatus !== 'unknown' && (
@@ -522,12 +551,21 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 </div>
 
                 <div className='button-group'>
-                  <button
-                    onClick={startSync}
-                    disabled={config.codebase.isSyncing}
-                  >
-                    Scan Codebase
-                  </button>
+                  {config.codebase.isSyncing ? (
+                    <button
+                      onClick={stopCodebaseSync}
+                      className='stop-sync-button'
+                    >
+                      Stop Scan
+                    </button>
+                  ) : (
+                    <button
+                      onClick={startSync}
+                      disabled={config.codebase.isSyncing}
+                    >
+                      Scan Codebase
+                    </button>
+                  )}
                 </div>
               </div>
             )}

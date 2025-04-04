@@ -77,6 +77,7 @@ async function fetchAndProcessPages() {
         type: WORKER_STATUS.ERROR,
         message: `Error processing page : ${error instanceof Error ? error.message : String(error)}`,
       });
+      
     }
   } catch (error) {
     parentPort?.postMessage({

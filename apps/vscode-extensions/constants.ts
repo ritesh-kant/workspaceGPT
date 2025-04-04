@@ -12,6 +12,7 @@ export const MESSAGE_TYPES = {
 
   CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
   START_CONFLUENCE_SYNC: 'start-confluence-sync',
+  STOP_CONFLUENCE_SYNC: 'stop-confluence-sync',
   SYNC_CONFLUENCE_IN_PROGRESS: 'sync-confluence-progress',
   SYNC_CONFLUENCE_COMPLETE: 'sync-confluence-complete',
   CONFLUENCE_CONNECTION_STATUS:'confluence-connection-status',
@@ -19,6 +20,7 @@ export const MESSAGE_TYPES = {
 
   SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
   SYNC_CODEBASE_COMPLETE: 'sync-codebase-complete',
+  STOP_CODEBASE_SYNC: 'stop-codebase-sync',
   CODEBASE_CONNECTION_STATUS:'codebase-connection-status',
   SYNC_CODEBASE_ERROR: 'sync-codebase-error',
 
