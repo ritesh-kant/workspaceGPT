@@ -262,3 +262,14 @@ input:checked + .slider:before {
   background-color: var(--vscode-errorBackground);
   border-radius: 4px;
 }
+
+.help-link {
+  margin-left: 0.5rem;
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.help-link:hover {
+  text-decoration: underline;
+}

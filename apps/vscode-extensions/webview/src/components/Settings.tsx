@@ -410,19 +410,26 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 </div>
 
                 <div className='form-group'>
-                  <label htmlFor='confluence-api-token'>API Token</label>
+                  <label htmlFor="confluence-api-token">
+                    API Token
+                    <a
+                      href="https://id.atlassian.com/manage-profile/security/api-tokens"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="help-link"
+                      title="Get your Atlassian API token"
+                    >
+                      (help)
+                    </a>
+                  </label>
                   <input
-                    id='confluence-api-token'
-                    type='password'
+                    id="confluence-api-token"
+                    type="password"
                     value={config.confluence?.apiToken}
                     onChange={(e) =>
-                      handleInputChange(
-                        'confluence',
-                        'apiToken',
-                        e.target.value
-                      )
+                      handleInputChange('confluence', 'apiToken', e.target.value)
                     }
-                    placeholder='Your Atlassian API token'
+                    placeholder="Your Atlassian API token"
                   />
                 </div>
 
