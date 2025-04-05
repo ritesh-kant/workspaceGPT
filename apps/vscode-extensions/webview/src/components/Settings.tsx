@@ -499,9 +499,13 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                       !config.codebase.isCodebaseEnabled
                     )
                   }
+                  disabled={true}
                 />
                 <span className='slider round'></span>
               </label>
+            </div>
+            <div className='status-message'>
+              🚧 Codebase integration is currently under development
             </div>
             {config.codebase.isCodebaseEnabled && (
               <div className='settings-form'>

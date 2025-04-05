@@ -84,22 +84,53 @@
 }
 
 .welcome-title {
-  font-size: 2.5rem;
-  font-weight: 500;
-  margin: 1;
+  font-size: 3rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
   background: linear-gradient(90deg, var(--vscode-textLink-foreground), var(--vscode-textLink-activeForeground));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  text-align: center;
 }
 
 .welcome-subtitle {
-  font-size: 1.2rem;
+  font-size: 1.5rem;
   color: var(--vscode-descriptionForeground);
-  margin: 0;
+  margin: 0 0 2rem;
+  text-align: center;
+  font-weight: 500;
 }
 
-.tips-container {
-  margin-top: 1rem;
+.prerequisite-container {
+  margin: 1rem auto;
+  max-width: 600px;
+  padding: 1.5rem;
+  background-color: var(--vscode-inputValidation-warningBackground);
+  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.prerequisite-message {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 1.2rem;
+  line-height: 1.5;
+}
+
+.prerequisite-icon {
+  font-size: 1.5rem;
+}
+
+.prerequisite-message a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.prerequisite-message a:hover {
+  text-decoration: underline;
 }
 
 .tips-title {

@@ -196,6 +196,12 @@ const App: React.FC = () => {
         <div className="welcome-container">
           <h1 className="welcome-title">Hello</h1>
           <p className="welcome-subtitle">How can WorkspaceGPT help?</p>
+          <div className="prerequisite-container">
+            <div className="prerequisite-message">
+              <span className="prerequisite-icon">⚠️</span>
+              <span>To use this service, you need to install <a href="https://ollama.com" target="_blank" rel="noopener noreferrer">Ollama</a> on your system.</span>
+            </div>
+          </div>
           <div className="tips-container">
             <h2 className="tips-title">Tips for getting started</h2>
             <div className="tips-list">
@@ -207,10 +213,10 @@ const App: React.FC = () => {
                 <span className="tip-icon">🤖</span>
                 <span>Chat naturally with your Confluence docs - ask questions, get insights, and explore your documentation</span>
               </div>
-              <div className="tip-item">
+              {/* <div className="tip-item">
                 <span className="tip-icon">📁</span>
                 <span>Enhance your queries by sharing files in chat - just mention them with <code>@file</code></span>
-              </div>
+              </div> */}
             </div>
           </div>
         </div>
