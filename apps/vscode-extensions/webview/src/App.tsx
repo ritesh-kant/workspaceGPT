@@ -194,35 +194,31 @@ const App: React.FC = () => {
       </div>
       {showTips && messages.length === 0 ? (
         <div className="welcome-container">
-          <h1 className="welcome-title">Hello</h1>
+          <h1 className="welcome-title">👋 Hello</h1>
           <p className="welcome-subtitle">How can WorkspaceGPT help?</p>
           <div className="prerequisite-container">
             <div className="prerequisite-message">
-              <span className="prerequisite-icon">⚠️</span>
-              <span>To use this service, you need to install <a href="https://ollama.com" target="_blank" rel="noopener noreferrer">Ollama</a> on your system.</span>
+              <span className="prerequisite-icon">⚙️</span>
+              <span>To get started, please install <a href="https://ollama.com" target="_blank" rel="noopener noreferrer">Ollama</a> on your system - it's quick and easy!</span>
             </div>
           </div>
           <div className="privacy-container">
             <div className="privacy-message">
-              <span className="privacy-icon">🔒</span>
-              <span>Your secrets are safe with us! Everything happens right here on your machine - no sneaky internet stuff. It's like having a genius friend who can't gossip!</span>
+              <span className="privacy-icon">🛡️</span>
+              <span>Your data stays secure! Everything runs locally on your machine, ensuring complete privacy and security. Think of it as your personal AI assistant that respects your confidentiality.</span>
             </div>
           </div>
           <div className="tips-container">
-            <h2 className="tips-title">Tips for getting started</h2>
+            <h2 className="tips-title">✨ Quick Tips</h2>
             <div className="tips-list">
               <div className="tip-item">
                 <span className="tip-icon">🔗</span>
-                <span>Connect your Confluence workspace in Settings to unlock your team's knowledge base</span>
+                <span>Connect Confluence in Settings to access your team's knowledge base instantly</span>
               </div>
               <div className="tip-item">
-                <span className="tip-icon">🤖</span>
-                <span>Chat naturally with your Confluence docs - ask questions, get insights, and explore your documentation</span>
+                <span className="tip-icon">💡</span>
+                <span>Ask questions naturally about your docs - get insights and explore your documentation effortlessly</span>
               </div>
-              {/* <div className="tip-item">
-                <span className="tip-icon">📁</span>
-                <span>Enhance your queries by sharing files in chat - just mention them with <code>@file</code></span>
-              </div> */}
             </div>
           </div>
         </div>
