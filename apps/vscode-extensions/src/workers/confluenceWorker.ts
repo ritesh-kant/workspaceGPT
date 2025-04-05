@@ -3,7 +3,7 @@ import type { ConfluencePage } from '@workspace-gpt/confluence-utils';
 import { parentPort, workerData } from 'worker_threads';
 import { WORKER_STATUS } from '../../constants';
 // Import path for dynamic import
-const CONFLUENCE_MODULE = '@workspace-gpt/confluence-utils';
+import {ConfluencePageFetcher, processPage, sleep } from '@workspace-gpt/confluence-utils';
 
 interface WorkerData {
   spaceKey: string;
@@ -18,16 +18,6 @@ const { spaceKey, confluenceBaseUrl, apiToken, userEmail } =
 
 async function fetchAndProcessPages() {
   try {
-    // Dynamically import the module - using Function constructor to prevent
-    // TypeScript from transforming this to require() during transpilation
-    const importModule = new Function(
-      'modulePath',
-      'return import(modulePath)'
-    );
-    const confluenceUtils = await importModule(CONFLUENCE_MODULE);
-    const ConfluencePageFetcher = confluenceUtils.ConfluencePageFetcher;
-    const processPage = confluenceUtils.processPage;
-    const sleep = confluenceUtils.sleep;
 
     // Create the page fetcher
     const extractor = new ConfluencePageFetcher(
@@ -49,7 +39,8 @@ async function fetchAndProcessPages() {
     let allPages: ConfluencePage[] = [];
     try {
       // TODO: remove (allPages.length < 40) condition
-        while (hasMore && allPages.length < 40) {
+        // while (hasMore && allPages.length < 10) {
+        while (hasMore) {
           const response = await extractor.fetchPages(start, 10);
           const { results, size, _links } = response;
           allPages = allPages.concat(results);
@@ -86,6 +77,7 @@ async function fetchAndProcessPages() {
         type: WORKER_STATUS.ERROR,
         message: `Error processing page : ${error instanceof Error ? error.message : String(error)}`,
       });
+      
     }
   } catch (error) {
     parentPort?.postMessage({

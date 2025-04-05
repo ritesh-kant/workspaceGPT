@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "(Under Development) Your AI-powered coding assistant that understands your entire workspace. Get intelligent answers, code explanations, and suggestions based on your project context.",
-  "version": "0.0.7",
+  "version": "0.0.31",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
@@ -36,7 +36,7 @@
         {
           "id": "workspacegpt-sidebar",
           "title": "WorkspaceGPT",
-          "icon": "resources/icon.png"
+          "icon": "resources/sidebar-icon.svg"
         }
       ]
     },
@@ -45,35 +45,28 @@
         {
           "type": "webview",
           "id": "workspacegpt.chatView",
-          "name": "Chat"
+          "name": "WorkspaceGPT",
+          "icon": "resources/sidebar-icon.svg",
+          "visibility": "visible"
+
         }
       ]
     },
     "configuration": {
       "title": "WorkspaceGPT",
       "properties": {
-        "workspaceGPT.apiBaseUrl": {
-          "type": "string",
-          "default": "http://localhost:8000",
-          "description": "Base URL for the RAG API"
-        },
-        "workspaceGPT.authToken": {
-          "type": "string",
-          "default": "",
-          "description": "Authorization token for API requests"
-        }
       }
     }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run build",
-    "build": "pnpm build-webview && tsup",
-    "watch": "pnpm watch-webview && tsup --watch",
+    "build": "pnpm build-webview && node esbuild.config.js",
+    "watch": "pnpm watch-webview && node esbuild.config.js --watch",
     "vscode:publish": "vsce publish --no-dependencies",
     "build-webview": "cd webview && pnpm install && pnpm run build",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "dev": "pnpm run compile && code --new-window --extensionDevelopmentPath=${PWD}",
+    "dev": "pnpm run build && code --new-window --extensionDevelopmentPath=${PWD}",
     "watch-webview": "cd webview && pnpm run dev"
   },
   "dependencies": {
@@ -88,9 +81,9 @@
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
+    "esbuild": "^0.20.1",
     "eslint": "^8.56.0",
-    "typescript": "^5.3.3",
-    "tsup": "^8.0.2"
+    "typescript": "^5.3.3"
   },
   "files": [
     "dist",

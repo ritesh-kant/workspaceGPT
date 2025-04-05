@@ -12,6 +12,7 @@ export const MESSAGE_TYPES = {
 
   CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
   START_CONFLUENCE_SYNC: 'start-confluence-sync',
+  STOP_CONFLUENCE_SYNC: 'stop-confluence-sync',
   SYNC_CONFLUENCE_IN_PROGRESS: 'sync-confluence-progress',
   SYNC_CONFLUENCE_COMPLETE: 'sync-confluence-complete',
   CONFLUENCE_CONNECTION_STATUS:'confluence-connection-status',
@@ -19,6 +20,7 @@ export const MESSAGE_TYPES = {
 
   SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
   SYNC_CODEBASE_COMPLETE: 'sync-codebase-complete',
+  STOP_CODEBASE_SYNC: 'stop-codebase-sync',
   CODEBASE_CONNECTION_STATUS:'codebase-connection-status',
   SYNC_CODEBASE_ERROR: 'sync-codebase-error',
 
@@ -44,8 +46,6 @@ export const STORAGE_KEYS = {
   CHAT: 'chat',
   SETTINGS: 'globalSettings',
   WORKSPACE_SETTINGS: 'workspaceGPT-settings',
-  MODEL_PROVIDER: 'OLLAMA',
-  DEFAULT_MODEL: 'llama3.2:1b'
 };
 
 // Extension Constants
@@ -57,8 +57,10 @@ export const EXTENSION = {
 
 // Model Constants
 export const MODEL = {
-  DEFAULT_DIMENSIONS: 384, // Default dimension for all-MiniLM-L6-v2
-  DEFAULT_NAME: 'Xenova/all-MiniLM-L6-v2'
+  MODEL_PROVIDER: 'OLLAMA',
+  DEFAULT_CHAT_MODEL: 'llama3.2:1b',
+  DEFAULT_DIMENSIONS: 768, // Default dimensions for the embedding model
+  DEFAULT_OLLAMA_EMBEDDING_MODEL: 'nomic-embed-text' // Default Ollama embedding model
 };
 
 export const WORKER_STATUS = {
@@ -67,3 +69,9 @@ export const WORKER_STATUS = {
   ERROR: 'error',
   PROCESSED: 'processed'
 };
+
+export type ModelType = 'chat' | 'embedding'
+export enum ModelTypeEnum {
+  Chat = 'chat',
+  Embedding = 'embedding'
+}

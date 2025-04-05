@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
-import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
+import { MESSAGE_TYPES } from '../constants';
+import { MODEL } from '../../../constants';
 
 export interface OllamaModel {
   name: string;
@@ -40,6 +41,7 @@ interface ModelState {
     value: ModelConfig[K]
   ) => void;
   batchUpdateConfig: (updates: Partial<ModelConfig>) => void;
+  handleModelChange: (modelId: string) => void;
 }
 
 // Create a custom storage adapter for VSCode global state
@@ -47,14 +49,14 @@ const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    return JSON.stringify(state[STORAGE_KEYS.DEFAULT_MODEL] || {});
+    return JSON.stringify(state[MODEL.DEFAULT_CHAT_MODEL] || {});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
     const currentState = vscode.getState() || {};
     vscode.setState({
       ...currentState,
-      [STORAGE_KEYS.DEFAULT_MODEL]: JSON.parse(value),
+      [MODEL.DEFAULT_CHAT_MODEL]: JSON.parse(value),
     });
     vscode.postMessage({
       type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
@@ -64,7 +66,7 @@ const vscodeStorage = {
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { [STORAGE_KEYS.DEFAULT_MODEL]: model, ...rest } = state;
+    const { [MODEL.DEFAULT_CHAT_MODEL]: model, ...rest } = state;
     vscode.setState(rest);
     vscode.postMessage({
       type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
@@ -97,6 +99,19 @@ export const useModelStore = create<ModelState>()(
             ...updates,
           },
         }));
+      },
+      handleModelChange: (modelId: string) => {
+        const vscode = VSCodeAPI();
+        set((state) => ({
+          config: {
+            ...state.config,
+            selectedModel: modelId,
+          },
+        }));
+        vscode.postMessage({
+          type: MESSAGE_TYPES.UPDATE_MODEL,
+          modelId,
+        });
       },
     }),
     {

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
+import { MESSAGE_TYPES, MODEL, ModelTypeEnum, STORAGE_KEYS } from '../../constants';
 import { ChatService } from '../services/chatService';
 import { ConfluenceService } from '../services/confluenceService';
 import { EmbeddingService } from '../services/embeddingService';
@@ -28,6 +28,12 @@ export class WebviewMessageHandler {
         break;
       case MESSAGE_TYPES.START_CONFLUENCE_SYNC:
         await this.handleStartConfluenceSync();
+        break;
+      case MESSAGE_TYPES.STOP_CONFLUENCE_SYNC:
+        await this.handleStopConfluenceSync();
+        break;
+      case MESSAGE_TYPES.STOP_CODEBASE_SYNC:
+        await this.handleStopCodebaseSync();
         break;
       case MESSAGE_TYPES.NEW_CHAT:
         await this.handleNewChat();
@@ -102,7 +108,6 @@ export class WebviewMessageHandler {
   private async handleCompleteConfluenceSync(): Promise<void> {
     try {
       // Start embedding creation after sync is complete
-      // const embeddingService = new EmbeddingService(this.webviewView, this.context);
       if (!this.embeddingService) {
         this.embeddingService = new EmbeddingService(
           this.webviewView,
@@ -166,31 +171,75 @@ export class WebviewMessageHandler {
     try {
       // Update the model in global state
       await this.context.globalState.update(
-        STORAGE_KEYS.DEFAULT_MODEL,
+        MODEL.DEFAULT_CHAT_MODEL,
         data.modelId
       );
-
-      // Notify webview that model download is starting
-      this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS,
-        progress: 0
-      });
-
-      // Initialize the model in the chat service
-      if (!this.chatService) {
-        this.chatService = new ChatService(this.webviewView, this.context);
-      }
-      await this.chatService.initializeModel(data.modelId);
-
-      // Notify webview that model download is complete
-      this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE
-      });
     } catch (error) {
       console.error('Error updating model:', error);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR,
         message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async handleStopConfluenceSync(): Promise<void> {
+    try {
+      if (!this.confluenceService) {
+        this.confluenceService = new ConfluenceService(
+          this.webviewView,
+          this.context
+        );
+      }
+      
+      // Stop the sync process
+      this.confluenceService.stopSync();
+      
+      // Update the UI to reflect that sync has been stopped
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
+        source: 'confluence',
+        message: 'Sync process stopped by user'
+      });
+      
+      // Update the global state to reflect that sync is no longer in progress
+      const config = this.context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS) as any;
+      if (config && config.state && config.state.config) {
+        config.state.config.confluence.isSyncing = false;
+        await this.context.globalState.update(STORAGE_KEYS.WORKSPACE_SETTINGS, config);
+      }
+    } catch (error) {
+      console.error('Error stopping Confluence sync:', error);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  
+  private async handleStopCodebaseSync(): Promise<void> {
+    try {
+      // For now, we'll just update the UI state since there's no dedicated codebase service yet
+      // In a real implementation, you would stop the codebase sync process here
+      
+      // Update the UI to reflect that sync has been stopped
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.SYNC_CODEBASE_COMPLETE,
+        source: 'codebase',
+        message: 'Scan process stopped by user'
+      });
+      
+      // Update the global state to reflect that sync is no longer in progress
+      const config = this.context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS) as any;
+      if (config && config.state && config.state.config) {
+        config.state.config.codebase.isSyncing = false;
+        await this.context.globalState.update(STORAGE_KEYS.WORKSPACE_SETTINGS, config);
+      }
+    } catch (error) {
+      console.error('Error stopping codebase sync:', error);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.SYNC_CODEBASE_ERROR,
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   }

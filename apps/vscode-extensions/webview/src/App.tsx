@@ -21,7 +21,7 @@ const App: React.FC = () => {
   } = useChatStore();
   
   const { showSettings, setShowSettings } = useSettingsStore();
-  const { config: modelConfig, updateConfig: updateModelConfig } = useModelStore();
+  const { config: modelConfig, batchUpdateConfig: batchUpdateModelConfig, handleModelChange } = useModelStore();
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
@@ -37,14 +37,6 @@ const App: React.FC = () => {
     setShowTips(true);
   };
 
-  const handleModelChange = (modelId: string) => {
-    updateModelConfig('selectedModel', modelId);
-    vscode.postMessage({
-      type: MESSAGE_TYPES.UPDATE_MODEL,
-      modelId
-    });
-  };
-
   useEffect(() => {
     // Handle messages from the extension
     const handleMessage = (event: MessageEvent) => {
@@ -58,28 +50,32 @@ const App: React.FC = () => {
           setIsLoading(false);
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
-          
-          updateModelConfig('isDownloading', true);
-          updateModelConfig('downloadProgress', message.progress ?? '0');
-          updateModelConfig('downloadStatus', 'downloading');
-          updateModelConfig('downloadDetails', {
-            current: message.current || '0 MB',
-            total: message.total || '0 MB'
+          batchUpdateModelConfig({
+            isDownloading: true,
+            downloadProgress: message.progress ?? '0',
+            downloadStatus: 'downloading',
+            downloadDetails: {
+              current: message.current || '0 MB',
+              total: message.total || '0 MB'
+            }
           });
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
-          updateModelConfig('isDownloading', false);
-          updateModelConfig('downloadProgress', 100);
-          updateModelConfig('downloadStatus', 'completed');
-          // Store available models if provided
-          if (message.models && Array.isArray(message.models)) {
-            updateModelConfig('availableModels', message.models);
-          }
+          batchUpdateModelConfig({
+            isDownloading: false,
+            downloadProgress: 100,
+            downloadStatus: 'completed',
+            availableModels: message.models && Array.isArray(message.models) 
+              ? message.models.filter((eachModel: { name: string }) => !eachModel.name.includes('embed'))
+              : undefined
+          });
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
-          updateModelConfig('isDownloading', false);
-          updateModelConfig('downloadStatus', 'error');
-          updateModelConfig('errorMessage', message.message);
+          batchUpdateModelConfig({
+            isDownloading: false,
+            downloadStatus: 'error',
+            errorMessage: message.message
+          });
           break;
       }
     };
@@ -141,7 +137,6 @@ const App: React.FC = () => {
   return (
     <div className="chat-container">
       <div className="chat-header">
-        <h2>WorkspaceGPT</h2>
         <div className="header-controls">
           <div className="model-selector">
             <select
@@ -156,7 +151,7 @@ const App: React.FC = () => {
                   <option key={model.model} value={model.model}>
                     {modelConfig.isDownloading && modelConfig.selectedModel === model.model
                       ? `${model.name} (${modelConfig.downloadProgress}%)`
-                      : `${model.name} (${model.details.parameter_size})`}
+                      : `${model.name} (${model?.details?.parameter_size})`}
                   </option>
                 ))
               ) : (
@@ -164,18 +159,8 @@ const App: React.FC = () => {
                 <>
                   <option value="llama3.2:1b">
                     {modelConfig.isDownloading && modelConfig.selectedModel === "llama3.2:1b"
-                      ? `TinyLlama (${modelConfig.downloadProgress}%)`
-                      : "TinyLlama 1.1B Chat"}
-                  </option>
-                  <option value="Xenova/Phi-2">
-                    {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/Phi-2"
-                      ? `Phi-2 (${modelConfig.downloadProgress}%)`
-                      : "Phi-2"}
-                  </option>
-                  <option value="Xenova/CodeLlama-7B-Instruct">
-                    {modelConfig.isDownloading && modelConfig.selectedModel === "Xenova/CodeLlama-7B-Instruct"
-                      ? `CodeLlama 7B (${modelConfig.downloadProgress}%)`
-                      : "CodeLlama 7B"}
+                      ? `Llama3.2 (${modelConfig.downloadProgress}%)`
+                      : "Llama3.2"}
                   </option>
                 </>
               )}

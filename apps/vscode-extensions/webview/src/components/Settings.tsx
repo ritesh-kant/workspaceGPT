@@ -17,11 +17,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   const { config, setConfig, updateConfig, batchUpdateConfig } =
     useSettingsStore();
 
-  const {
-    config: modelConfig,
-    updateConfig: updateModelConfig,
-    batchUpdateConfig: batchUpdateModelConfig,
-  } = useModelStore();
+  const { config: modelConfig, handleModelChange } = useModelStore();
 
   const vscode = VSCodeAPI();
 
@@ -34,7 +30,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   ) => {
     setTimeout(() => {
       batchUpdateConfig(section, {
-        [field]: value
+        [field]: value,
       });
     }, delay);
   };
@@ -53,37 +49,46 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           setConfig(message.config);
           break;
 
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
-          console.log('DOWNLOAD IN PROGRESS', message.progress);
-          batchUpdateModelConfig({
-            isDownloading: true,
-            downloadProgress: parseFloat(message.progress) || 0,
-            downloadStatus: 'downloading',
-            downloadDetails: {
-              current: message.current || '0 MB',
-              total: message.total || '0 MB',
-            },
-          });
-          break;
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
+        //   console.log('DOWNLOAD IN PROGRESS', message.progress);
+        //   batchUpdateModelConfig({
+        //     isDownloading: true,
+        //     downloadProgress: parseFloat(message.progress) || 0,
+        //     downloadStatus: 'downloading',
+        //     // avoiding embed models from being selected
+        //     selectedModel: message.modelId?.includes('embed')
+        //       ? modelConfig.selectedModel
+        //       : message.modelId,
+        //     downloadDetails: {
+        //       current: message.current || '0 MB',
+        //       total: message.total || '0 MB',
+        //     },
+        //   });
+        //   break;
 
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
-          console.log(event)
-          batchUpdateModelConfig({
-            isDownloading: false,
-            downloadProgress: 100,
-            downloadStatus: 'completed',
-            // Store available models if provided
-            ...(message.models && Array.isArray(message.models) ? { availableModels: message.models, selectedModel: message.models[0].model } : {})
-          });
-          break;
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
+        //   console.log(event);
+        //   batchUpdateModelConfig({
+        //     isDownloading: false,
+        //     downloadProgress: 100,
+        //     downloadStatus: 'completed',
+        //     // Store available models if provided
+        //     ...(message.models && Array.isArray(message.models)
+        //       ? {
+        //           availableModels: message.models,
+        //           selectedModel: message.models[0].model,
+        //         }
+        //       : {}),
+        //   });
+        //   break;
 
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
-          batchUpdateModelConfig({
-            isDownloading: false,
-            downloadStatus: 'error',
-            errorMessage: message.message,
-          });
-          break;
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
+        //   batchUpdateModelConfig({
+        //     isDownloading: false,
+        //     downloadStatus: 'error',
+        //     errorMessage: message.message,
+        //   });
+        //   break;
 
         // Confluence
         case MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS:
@@ -91,6 +96,11 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             connectionStatus: message.status ? 'success' : 'error',
             statusMessage: message.message || '',
           });
+          clearStatusMessageAfterDelay(
+            'confluence',
+            'connectionStatus',
+            'unknown'
+          );
           break;
         case MESSAGE_TYPES.SYNC_CONFLUENCE_IN_PROGRESS:
           batchUpdateConfig('confluence', {
@@ -107,16 +117,20 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             confluenceSyncProgress: 100,
             isSyncing: false,
           });
-          
+
           // Clear the 'Sync completed successfully' message after 2 seconds
-          clearStatusMessageAfterDelay('confluence', 'connectionStatus', 'unknown');
+          clearStatusMessageAfterDelay(
+            'confluence',
+            'connectionStatus',
+            'unknown'
+          );
           console.log('SYNC_CONFLUENCE_COMPLETE', message);
           break;
         case MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR:
           batchUpdateConfig('confluence', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync error: ${message.message}`,
+            statusMessage: `Sync stopped: ${message.message}`,
           });
           break;
 
@@ -138,15 +152,19 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             connectionStatus: 'success',
             statusMessage: 'Sync completed successfully',
           });
-          
+
           // Clear the 'Sync completed successfully' message after 2 seconds
-          clearStatusMessageAfterDelay('codebase', 'connectionStatus', 'unknown');
+          clearStatusMessageAfterDelay(
+            'codebase',
+            'connectionStatus',
+            'unknown'
+          );
           break;
         case MESSAGE_TYPES.SYNC_CODEBASE_ERROR:
           batchUpdateConfig('codebase', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync error: ${message.message}`,
+            statusMessage: `Sync stopped: ${message.message}`,
           });
           break;
 
@@ -165,9 +183,13 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             isIndexing: false,
             statusMessage: 'Indexing completed successfully',
           });
-          
+
           // Clear the 'Indexing completed successfully' message after 2 seconds
-          clearStatusMessageAfterDelay('confluence', 'statusMessage', 'unknown');
+          clearStatusMessageAfterDelay(
+            'confluence',
+            'connectionStatus',
+            'unknown'
+          );
           break;
 
         case MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR:
@@ -222,11 +244,23 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     });
   };
 
-  const handleModelChange = (modelId: string) => {
-    updateModelConfig('selectedModel', modelId);
+  const stopSync = () => {
+    updateConfig('confluence', 'isSyncing', false);
+    updateConfig('confluence', 'statusMessage', 'Stopping sync process...');
     vscode.postMessage({
-      type: MESSAGE_TYPES.UPDATE_MODEL,
-      modelId,
+      type: MESSAGE_TYPES.STOP_CONFLUENCE_SYNC,
+      section: 'confluence',
+      config,
+    });
+  };
+
+  const stopCodebaseSync = () => {
+    updateConfig('codebase', 'isSyncing', false);
+    updateConfig('codebase', 'statusMessage', 'Stopping scan process...');
+    vscode.postMessage({
+      type: MESSAGE_TYPES.STOP_CODEBASE_SYNC,
+      section: 'codebase',
+      config,
     });
   };
 
@@ -260,11 +294,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 onChange={(e) => handleModelChange(e.target.value)}
                 disabled={modelConfig.isDownloading}
               >
-                {modelConfig.availableModels && modelConfig.availableModels.length > 0 ? (
+                {modelConfig.availableModels &&
+                modelConfig.availableModels.length > 0 ? (
                   // Render options from available models
                   modelConfig.availableModels.map((model) => (
                     <option key={model.model} value={model.model}>
-                      {model.name} ({model.details.parameter_size})
+                      {model.name} ({model?.details?.parameter_size})
                     </option>
                   ))
                 ) : (
@@ -285,7 +320,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                     ></div>
                   </div>
                   <span className='progress-text'>
-                    Downloading: {modelConfig.downloadProgress}%
+                    Downloading ({modelConfig?.selectedModel}):{' '}
+                    {modelConfig.downloadProgress}%
                     {modelConfig.downloadDetails &&
                       ` (${modelConfig.downloadDetails.current} / ${modelConfig.downloadDetails.total})`}
                   </span>
@@ -392,12 +428,18 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
 
                 <div className='button-group'>
                   <button onClick={checkConnection}>Check Connection</button>
-                  <button
-                    onClick={startSync}
-                    // disabled={isConfluenceSyncing || connectionStatus !== 'success'}
-                  >
-                    Start Sync
-                  </button>
+                  {config.confluence.isSyncing ? (
+                    <button onClick={stopSync} className='stop-sync-button'>
+                      Stop Sync
+                    </button>
+                  ) : (
+                    <button
+                      onClick={startSync}
+                      // disabled={isConfluenceSyncing || connectionStatus !== 'success'}
+                    >
+                      Start Sync
+                    </button>
+                  )}
                 </div>
 
                 {config.confluence.connectionStatus !== 'unknown' && (
@@ -499,12 +541,21 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 </div>
 
                 <div className='button-group'>
-                  <button
-                    onClick={startSync}
-                    disabled={config.codebase.isSyncing}
-                  >
-                    Scan Codebase
-                  </button>
+                  {config.codebase.isSyncing ? (
+                    <button
+                      onClick={stopCodebaseSync}
+                      className='stop-sync-button'
+                    >
+                      Stop Scan
+                    </button>
+                  ) : (
+                    <button
+                      onClick={startSync}
+                      disabled={config.codebase.isSyncing}
+                    >
+                      Scan Codebase
+                    </button>
+                  )}
                 </div>
               </div>
             )}

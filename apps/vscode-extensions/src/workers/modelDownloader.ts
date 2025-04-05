@@ -1,33 +1,49 @@
 import { parentPort, workerData } from 'worker_threads';
-import { WORKER_STATUS } from '../../constants';
+import { ModelType, WORKER_STATUS } from '../../constants';
 
 interface WorkerData {
   modelId: string;
   globalStoragePath: string;
+  modelType: ModelType;
 }
 
-const { modelId } = workerData as WorkerData;
+const { modelId, modelType } = workerData as WorkerData;
+
+async function fetchAvailableModels() {
+  const modelCheckResponse = await fetch(`http://localhost:11434/api/tags`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!modelCheckResponse.ok) {
+    throw new Error(
+      `Failed to check model status: ${modelCheckResponse.statusText}`
+    );
+  }
+
+  const modelList = await modelCheckResponse.json();
+ 
+  return modelList.models;
+}
 
 async function checkAndDownloadModel(): Promise<void> {
   try {
     // First check if the model exists
-    const modelCheckResponse = await fetch(`http://localhost:11434/api/tags`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    if (!modelCheckResponse.ok) {
-      throw new Error(`Failed to check model status: ${modelCheckResponse.statusText}`);
+    const availableModels = await fetchAvailableModels();
+    let modelExists = availableModels?.some(
+      (model: { name: string }) => !model.name.includes('embed')
+    );
+    if (modelType === 'embedding') {
+      modelExists = availableModels?.some((model: { name: string }) =>
+        model.name.includes('embed')
+      );
     }
-
-    const modelList = await modelCheckResponse.json();
-    const modelExists = modelList.models?.some((model: { name: string }) => model.name );
-
+    // if (modelExists && false) {
     if (modelExists) {
       parentPort?.postMessage({
         type: WORKER_STATUS.COMPLETED,
         message: 'Model already exists',
-        models: modelList.models
+        models: availableModels,
       });
       return;
     }
@@ -36,7 +52,7 @@ async function checkAndDownloadModel(): Promise<void> {
     const response = await fetch(`http://localhost:11434/api/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: modelId })
+      body: JSON.stringify({ name: modelId }),
     });
 
     if (!response.ok) {
@@ -52,31 +68,51 @@ async function checkAndDownloadModel(): Promise<void> {
       if (done) break;
 
       const text = new TextDecoder().decode(value);
-      const progress = JSON.parse(text);
+      const lines = text.split('\n');
+      for (const line of lines) {
+        if (line.trim()) {
+          // Ensure the line is not empty
+          const progress = JSON.parse(line);
 
-      if (progress.status === 'downloading') {
-        const downloadedSize = (progress.completed / 1024 / 1024).toFixed(2);
-        const totalSize = (progress.total / 1024 / 1024).toFixed(2);
-        const percentage = ((progress.completed / progress.total) * 100).toFixed(1);
+          if (
+            progress.status.includes('pulling') &&
+            progress.completed &&
+            progress.total
+          ) {
+            const downloadedSize = (progress.completed / 1024 / 1024).toFixed(
+              2
+            );
+            const totalSize = (progress.total / 1024 / 1024).toFixed(2);
+            const percentage = (
+              (progress.completed / progress.total) *
+              100
+            ).toFixed(1);
 
-        parentPort?.postMessage({
-          type: WORKER_STATUS.PROCESSING,
-          progress: percentage,
-          current: `${downloadedSize} MB`,
-          total: `${totalSize} MB`,
-        });
+            parentPort?.postMessage({
+              type: WORKER_STATUS.PROCESSING,
+              progress: percentage,
+              current: `${downloadedSize} MB`,
+              total: `${totalSize} MB`,
+              modelId: modelId,
+              modelType: modelType,
+            });
+          }
+        }
       }
     }
+
+    // Fetch updated model list after download
+    const updatedModels = await fetchAvailableModels();
 
     parentPort?.postMessage({
       type: WORKER_STATUS.COMPLETED,
       message: 'Model initialization completed successfully',
-      models: [{name: modelId}]
+      models: updatedModels,
     });
   } catch (error) {
     parentPort?.postMessage({
       type: 'error',
-      message: error instanceof Error ? error.message : String(error)
+      message: error instanceof Error ? error.message : String(error),
     });
   }
 }

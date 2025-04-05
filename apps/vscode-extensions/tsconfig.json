@@ -20,8 +20,5 @@
       "@workspace-gpt/confluence-utils": ["../../packages/confluence-utils/src"]
     }
   },
-  "exclude": ["node_modules", ".vscode-test", "webview"],
-  "references": [
-    { "path": "../../packages/confluence-utils" }
-  ]
+  "exclude": ["node_modules", ".vscode-test", "webview"]
 }
