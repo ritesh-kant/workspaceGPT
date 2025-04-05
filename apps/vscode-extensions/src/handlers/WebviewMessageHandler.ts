@@ -174,23 +174,6 @@ export class WebviewMessageHandler {
         MODEL.DEFAULT_CHAT_MODEL,
         data.modelId
       );
-
-      // Notify webview that model download is starting
-      this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS,
-        progress: 0
-      });
-
-      // Initialize the model in the chat service
-      if (!this.chatService) {
-        this.chatService = new ChatService(this.webviewView, this.context);
-      }
-      await this.chatService.initializeModel(data.modelId, ModelTypeEnum.Chat);
-
-      // Notify webview that model download is complete
-      this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE
-      });
     } catch (error) {
       console.error('Error updating model:', error);
       this.webviewView.webview.postMessage({

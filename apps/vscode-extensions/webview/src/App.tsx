@@ -21,7 +21,7 @@ const App: React.FC = () => {
   } = useChatStore();
   
   const { showSettings, setShowSettings } = useSettingsStore();
-  const { config: modelConfig, updateConfig: updateModelConfig } = useModelStore();
+  const { config: modelConfig, batchUpdateConfig: batchUpdateModelConfig, handleModelChange } = useModelStore();
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
@@ -37,14 +37,6 @@ const App: React.FC = () => {
     setShowTips(true);
   };
 
-  const handleModelChange = (modelId: string) => {
-    updateModelConfig('selectedModel', modelId);
-    vscode.postMessage({
-      type: MESSAGE_TYPES.UPDATE_MODEL,
-      modelId
-    });
-  };
-
   useEffect(() => {
     // Handle messages from the extension
     const handleMessage = (event: MessageEvent) => {
@@ -58,28 +50,32 @@ const App: React.FC = () => {
           setIsLoading(false);
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
-          
-          updateModelConfig('isDownloading', true);
-          updateModelConfig('downloadProgress', message.progress ?? '0');
-          updateModelConfig('downloadStatus', 'downloading');
-          updateModelConfig('downloadDetails', {
-            current: message.current || '0 MB',
-            total: message.total || '0 MB'
+          batchUpdateModelConfig({
+            isDownloading: true,
+            downloadProgress: message.progress ?? '0',
+            downloadStatus: 'downloading',
+            downloadDetails: {
+              current: message.current || '0 MB',
+              total: message.total || '0 MB'
+            }
           });
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
-          updateModelConfig('isDownloading', false);
-          updateModelConfig('downloadProgress', 100);
-          updateModelConfig('downloadStatus', 'completed');
-          // Store available models if provided
-          if (message.models && Array.isArray(message.models)) {
-            updateModelConfig('availableModels', message.models);
-          }
+          batchUpdateModelConfig({
+            isDownloading: false,
+            downloadProgress: 100,
+            downloadStatus: 'completed',
+            availableModels: message.models && Array.isArray(message.models) 
+              ? message.models.filter((eachModel: { name: string }) => !eachModel.name.includes('embed'))
+              : undefined
+          });
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
-          updateModelConfig('isDownloading', false);
-          updateModelConfig('downloadStatus', 'error');
-          updateModelConfig('errorMessage', message.message);
+          batchUpdateModelConfig({
+            isDownloading: false,
+            downloadStatus: 'error',
+            errorMessage: message.message
+          });
           break;
       }
     };

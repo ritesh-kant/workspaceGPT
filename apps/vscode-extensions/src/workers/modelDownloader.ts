@@ -12,34 +12,38 @@ const { modelId, modelType } = workerData as WorkerData;
 async function fetchAvailableModels() {
   const modelCheckResponse = await fetch(`http://localhost:11434/api/tags`, {
     method: 'GET',
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 'Content-Type': 'application/json' },
   });
 
   if (!modelCheckResponse.ok) {
-    throw new Error(`Failed to check model status: ${modelCheckResponse.statusText}`);
+    throw new Error(
+      `Failed to check model status: ${modelCheckResponse.statusText}`
+    );
   }
 
   const modelList = await modelCheckResponse.json();
-  // If the modelType is embedding, return the list of embedding models
-  if(modelType === 'embedding') {
-    return modelList.tags?.filter((model: { name: string }) => model.name.includes('embed'));
-  }
-  // Get the list of available models other than embedder, as the embedder is a special model and not needed for the chat
-  return modelList.models?.filter((model: { name: string }) => !model.name.includes('embde'));
+ 
+  return modelList.models;
 }
 
 async function checkAndDownloadModel(): Promise<void> {
   try {
     // First check if the model exists
     const availableModels = await fetchAvailableModels();
-    const modelExists = availableModels?.some((model: { name: string }) => model.name );
-    
+    let modelExists = availableModels?.some(
+      (model: { name: string }) => !model.name.includes('embed')
+    );
+    if (modelType === 'embedding') {
+      modelExists = availableModels?.some((model: { name: string }) =>
+        model.name.includes('embed')
+      );
+    }
     // if (modelExists && false) {
     if (modelExists) {
       parentPort?.postMessage({
         type: WORKER_STATUS.COMPLETED,
         message: 'Model already exists',
-        models: availableModels
+        models: availableModels,
       });
       return;
     }
@@ -48,7 +52,7 @@ async function checkAndDownloadModel(): Promise<void> {
     const response = await fetch(`http://localhost:11434/api/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: modelId })
+      body: JSON.stringify({ name: modelId }),
     });
 
     if (!response.ok) {
@@ -62,25 +66,35 @@ async function checkAndDownloadModel(): Promise<void> {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-  
+
       const text = new TextDecoder().decode(value);
       const lines = text.split('\n');
       for (const line of lines) {
-        if (line.trim()) { // Ensure the line is not empty
+        if (line.trim()) {
+          // Ensure the line is not empty
           const progress = JSON.parse(line);
-  
-          if (progress.status.includes("pulling") && progress.completed && progress.total) {
-            const downloadedSize = (progress.completed / 1024 / 1024).toFixed(2);
+
+          if (
+            progress.status.includes('pulling') &&
+            progress.completed &&
+            progress.total
+          ) {
+            const downloadedSize = (progress.completed / 1024 / 1024).toFixed(
+              2
+            );
             const totalSize = (progress.total / 1024 / 1024).toFixed(2);
-            const percentage = ((progress.completed / progress.total) * 100).toFixed(1);
-  
+            const percentage = (
+              (progress.completed / progress.total) *
+              100
+            ).toFixed(1);
+
             parentPort?.postMessage({
               type: WORKER_STATUS.PROCESSING,
               progress: percentage,
               current: `${downloadedSize} MB`,
               total: `${totalSize} MB`,
               modelId: modelId,
-              modelType: modelType
+              modelType: modelType,
             });
           }
         }
@@ -93,12 +107,12 @@ async function checkAndDownloadModel(): Promise<void> {
     parentPort?.postMessage({
       type: WORKER_STATUS.COMPLETED,
       message: 'Model initialization completed successfully',
-      models: updatedModels
+      models: updatedModels,
     });
   } catch (error) {
     parentPort?.postMessage({
       type: 'error',
-      message: error instanceof Error ? error.message : String(error)
+      message: error instanceof Error ? error.message : String(error),
     });
   }
 }

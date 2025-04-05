@@ -41,6 +41,7 @@ interface ModelState {
     value: ModelConfig[K]
   ) => void;
   batchUpdateConfig: (updates: Partial<ModelConfig>) => void;
+  handleModelChange: (modelId: string) => void;
 }
 
 // Create a custom storage adapter for VSCode global state
@@ -98,6 +99,19 @@ export const useModelStore = create<ModelState>()(
             ...updates,
           },
         }));
+      },
+      handleModelChange: (modelId: string) => {
+        const vscode = VSCodeAPI();
+        set((state) => ({
+          config: {
+            ...state.config,
+            selectedModel: modelId,
+          },
+        }));
+        vscode.postMessage({
+          type: MESSAGE_TYPES.UPDATE_MODEL,
+          modelId,
+        });
       },
     }),
     {

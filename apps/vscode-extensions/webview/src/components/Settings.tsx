@@ -19,8 +19,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
 
   const {
     config: modelConfig,
-    updateConfig: updateModelConfig,
-    batchUpdateConfig: batchUpdateModelConfig,
+    handleModelChange,
   } = useModelStore();
 
   const vscode = VSCodeAPI();
@@ -53,46 +52,46 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           setConfig(message.config);
           break;
 
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
-          console.log('DOWNLOAD IN PROGRESS', message.progress);
-          batchUpdateModelConfig({
-            isDownloading: true,
-            downloadProgress: parseFloat(message.progress) || 0,
-            downloadStatus: 'downloading',
-            // avoiding embed models from being selected
-            selectedModel: message.modelId.incldes('embed')
-              ? modelConfig.selectedModel
-              : message.modelId, 
-            downloadDetails: {
-              current: message.current || '0 MB',
-              total: message.total || '0 MB',
-            },
-          });
-          break;
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
+        //   console.log('DOWNLOAD IN PROGRESS', message.progress);
+        //   batchUpdateModelConfig({
+        //     isDownloading: true,
+        //     downloadProgress: parseFloat(message.progress) || 0,
+        //     downloadStatus: 'downloading',
+        //     // avoiding embed models from being selected
+        //     selectedModel: message.modelId?.includes('embed')
+        //       ? modelConfig.selectedModel
+        //       : message.modelId, 
+        //     downloadDetails: {
+        //       current: message.current || '0 MB',
+        //       total: message.total || '0 MB',
+        //     },
+        //   });
+        //   break;
 
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
-          console.log(event);
-          batchUpdateModelConfig({
-            isDownloading: false,
-            downloadProgress: 100,
-            downloadStatus: 'completed',
-            // Store available models if provided
-            ...(message.models && Array.isArray(message.models)
-              ? {
-                  availableModels: message.models,
-                  selectedModel: message.models[0].model,
-                }
-              : {}),
-          });
-          break;
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
+        //   console.log(event);
+        //   batchUpdateModelConfig({
+        //     isDownloading: false,
+        //     downloadProgress: 100,
+        //     downloadStatus: 'completed',
+        //     // Store available models if provided
+        //     ...(message.models && Array.isArray(message.models)
+        //       ? {
+        //           availableModels: message.models,
+        //           selectedModel: message.models[0].model,
+        //         }
+        //       : {}),
+        //   });
+        //   break;
 
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
-          batchUpdateModelConfig({
-            isDownloading: false,
-            downloadStatus: 'error',
-            errorMessage: message.message,
-          });
-          break;
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
+        //   batchUpdateModelConfig({
+        //     isDownloading: false,
+        //     downloadStatus: 'error',
+        //     errorMessage: message.message,
+        //   });
+        //   break;
 
         // Confluence
         case MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS:
@@ -260,14 +259,6 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       type: MESSAGE_TYPES.STOP_CODEBASE_SYNC,
       section: 'codebase',
       config,
-    });
-  };
-
-  const handleModelChange = (modelId: string) => {
-    updateModelConfig('selectedModel', modelId);
-    vscode.postMessage({
-      type: MESSAGE_TYPES.UPDATE_MODEL,
-      modelId,
     });
   };
 
