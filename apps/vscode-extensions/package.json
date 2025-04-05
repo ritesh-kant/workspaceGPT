@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "(Under Development) Your AI-powered coding assistant that understands your entire workspace. Get intelligent answers, code explanations, and suggestions based on your project context.",
-  "version": "0.0.24",
+  "version": "0.0.25",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
@@ -52,16 +52,6 @@
     "configuration": {
       "title": "WorkspaceGPT",
       "properties": {
-        "workspaceGPT.apiBaseUrl": {
-          "type": "string",
-          "default": "http://localhost:8000",
-          "description": "Base URL for the RAG API"
-        },
-        "workspaceGPT.authToken": {
-          "type": "string",
-          "default": "",
-          "description": "Authorization token for API requests"
-        }
       }
     }
   },
