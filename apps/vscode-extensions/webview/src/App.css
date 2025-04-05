@@ -96,7 +96,7 @@
 .welcome-subtitle {
   font-size: 1.5rem;
   color: var(--vscode-descriptionForeground);
-  margin: 0 0 2rem;
+  margin: 0 0 1rem;
   text-align: center;
   font-weight: 500;
 }
@@ -104,7 +104,7 @@
 .prerequisite-container {
   margin: 1rem auto;
   max-width: 600px;
-  padding: 1.5rem;
+  padding: 1rem;
   background-color: var(--vscode-inputValidation-warningBackground);
   border: 1px solid var(--vscode-inputValidation-warningBorder);
   border-radius: 8px;
@@ -115,8 +115,8 @@
   display: flex;
   align-items: center;
   gap: 1rem;
-  font-size: 1.2rem;
-  line-height: 1.5;
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .prerequisite-icon {
@@ -131,6 +131,30 @@
 
 .prerequisite-message a:hover {
   text-decoration: underline;
+}
+
+.privacy-container {
+  margin: 1rem auto;
+  max-width: 600px;
+  padding: 1.5rem;
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-textLink-foreground);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.privacy-message {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 1.1rem;
+  line-height: 1.6;
+  color: var(--vscode-editor-foreground);
+}
+
+.privacy-icon {
+  font-size: 1.5rem;
+  color: var(--vscode-textLink-foreground);
 }
 
 .tips-title {

@@ -202,6 +202,12 @@ const App: React.FC = () => {
               <span>To use this service, you need to install <a href="https://ollama.com" target="_blank" rel="noopener noreferrer">Ollama</a> on your system.</span>
             </div>
           </div>
+          <div className="privacy-container">
+            <div className="privacy-message">
+              <span className="privacy-icon">🔒</span>
+              <span>Your secrets are safe with us! Everything happens right here on your machine - no sneaky internet stuff. It's like having a genius friend who can't gossip!</span>
+            </div>
+          </div>
           <div className="tips-container">
             <h2 className="tips-title">Tips for getting started</h2>
             <div className="tips-list">
