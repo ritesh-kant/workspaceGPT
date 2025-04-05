@@ -17,10 +17,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   const { config, setConfig, updateConfig, batchUpdateConfig } =
     useSettingsStore();
 
-  const {
-    config: modelConfig,
-    handleModelChange,
-  } = useModelStore();
+  const { config: modelConfig, handleModelChange } = useModelStore();
 
   const vscode = VSCodeAPI();
 
@@ -61,7 +58,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         //     // avoiding embed models from being selected
         //     selectedModel: message.modelId?.includes('embed')
         //       ? modelConfig.selectedModel
-        //       : message.modelId, 
+        //       : message.modelId,
         //     downloadDetails: {
         //       current: message.current || '0 MB',
         //       total: message.total || '0 MB',
@@ -99,6 +96,11 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             connectionStatus: message.status ? 'success' : 'error',
             statusMessage: message.message || '',
           });
+          clearStatusMessageAfterDelay(
+            'confluence',
+            'connectionStatus',
+            'unknown'
+          );
           break;
         case MESSAGE_TYPES.SYNC_CONFLUENCE_IN_PROGRESS:
           batchUpdateConfig('confluence', {
@@ -185,7 +187,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           // Clear the 'Indexing completed successfully' message after 2 seconds
           clearStatusMessageAfterDelay(
             'confluence',
-            'statusMessage',
+            'connectionStatus',
             'unknown'
           );
           break;
@@ -427,10 +429,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 <div className='button-group'>
                   <button onClick={checkConnection}>Check Connection</button>
                   {config.confluence.isSyncing ? (
-                    <button
-                      onClick={stopSync}
-                      className='stop-sync-button'
-                    >
+                    <button onClick={stopSync} className='stop-sync-button'>
                       Stop Sync
                     </button>
                   ) : (
