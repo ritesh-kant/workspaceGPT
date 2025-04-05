@@ -10,7 +10,7 @@
                 "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode-extensions",
                 "--disable-extensions"
             ],
-            "name": "workspacegpt-extension",
+            "name": "workspacegpt-vscode-extension",
             "outFiles": [
                 "${workspaceFolder}/apps/vscode-extensions/**/*.js"
             ],

@@ -3,8 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "#preinstall": "pnpm _env:setup",
-    "#postinstall": "pnpm _ollama:setup",
+    "build": "turbo run build",
     "extractor": "pnpm run app:confluence-extractor",
     "workspaceGPT": "pnpm run app:confluence-rag",
     "reset:extractor": "shx rm -rf .data",
@@ -14,8 +13,9 @@
     "check-types": "turbo run check-types",
     "app:confluence-rag": "pnpm --filter confluence-rag",
     "app:confluence-extractor": "pnpm --filter confluence-extractor",
-    "_ollama:setup": "ollama pull llama3.2",
-    "_env:setup": "shx test -f .env || shx cp .env.example .env"
+    "app:vscode-extension": "pnpm --filter workspacegpt-vscode-extension",
+    "ollama:setup": "ollama pull llama3.2",
+    "env:setup": "shx test -f .env || shx cp .env.example .env"
   },
   "devDependencies": {
     "prettier": "^3.5.0",

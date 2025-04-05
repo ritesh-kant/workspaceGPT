@@ -1,7 +1,7 @@
 # WorkspaceGPT VSCode Extension
 
 
-[![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
+[![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-vscode-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-vscode-extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Your AI-powered coding assistant that understands your entire workspace. Get intelligent answers, code explanations, and suggestions based on your project context.
