@@ -13,7 +13,7 @@
     "check-types": "turbo run check-types",
     "app:confluence-rag": "pnpm --filter confluence-rag",
     "app:confluence-extractor": "pnpm --filter confluence-extractor",
-    "app:vscode-extension": "pnpm --filter workspacegpt-vscode-extension",
+    "app:vscode-extension": "pnpm --filter workspacegpt-extension",
     "ollama:setup": "ollama pull llama3.2",
     "env:setup": "shx test -f .env || shx cp .env.example .env"
   },
