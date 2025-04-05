@@ -137,7 +137,6 @@ const App: React.FC = () => {
   return (
     <div className="chat-container">
       <div className="chat-header">
-        <h2>WorkspaceGPT</h2>
         <div className="header-controls">
           <div className="model-selector">
             <select

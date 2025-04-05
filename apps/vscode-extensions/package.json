@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "(Under Development) Your AI-powered coding assistant that understands your entire workspace. Get intelligent answers, code explanations, and suggestions based on your project context.",
-  "version": "0.0.28",
+  "version": "0.0.31",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
@@ -34,9 +34,9 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "workspacegpt",
+          "id": "workspacegpt-sidebar",
           "title": "WorkspaceGPT",
-          "icon": "resources/sidebar-icon.png"
+          "icon": "resources/sidebar-icon.svg"
         }
       ]
     },
@@ -45,7 +45,10 @@
         {
           "type": "webview",
           "id": "workspacegpt.chatView",
-          "name": "Chat"
+          "name": "WorkspaceGPT",
+          "icon": "resources/sidebar-icon.svg",
+          "visibility": "visible"
+
         }
       ]
     },

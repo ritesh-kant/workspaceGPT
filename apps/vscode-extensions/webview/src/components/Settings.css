@@ -1,5 +1,5 @@
 .settings-section {
-  background-color: #282c34;
+  background-color: var(--vscode-textBlockQuote-background);
   padding: 1rem;
   border-radius: 1rem;
 }
