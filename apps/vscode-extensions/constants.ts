@@ -17,6 +17,8 @@ export const MESSAGE_TYPES = {
   SYNC_CONFLUENCE_COMPLETE: 'sync-confluence-complete',
   CONFLUENCE_CONNECTION_STATUS:'confluence-connection-status',
   SYNC_CONFLUENCE_ERROR: 'sync-confluence-error',
+  SYNC_CONFLUENCE_STOP: 'sync-confluence-stop',
+  RESUME_CONFLUENCE_SYNC: 'resume-confluence-sync',
 
   SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
   SYNC_CODEBASE_COMPLETE: 'sync-codebase-complete',
@@ -27,6 +29,7 @@ export const MESSAGE_TYPES = {
   INDEXING_CONFLUENCE_ERROR: 'indexing-confluence-error',
   INDEXING_CONFLUENCE_IN_PROGRESS: 'indexing-confluence-progress',
   INDEXING_CONFLUENCE_COMPLETE: 'indexing-confluence-complete',
+  RESUME_INDEXING_CONFLUENCE: 'resume-indexing-confluence',
 
   MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
@@ -46,6 +49,8 @@ export const STORAGE_KEYS = {
   CHAT: 'chat',
   SETTINGS: 'globalSettings',
   WORKSPACE_SETTINGS: 'workspaceGPT-settings',
+  CONFLUENCE_SYNC_PROGRESS: 'confluence-sync-progress',
+  EMBEDDING_PROGRESS: 'embedding-progress',
 };
 
 // Extension Constants

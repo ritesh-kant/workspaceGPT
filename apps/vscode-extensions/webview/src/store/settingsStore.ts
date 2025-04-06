@@ -14,6 +14,8 @@ export interface ConfluenceConfig {
   isIndexing: boolean;
   connectionStatus: 'unknown' | 'success' | 'error';
   statusMessage: string;
+  canResume: boolean;
+  canResumeIndexing: boolean;
 }
 
 export interface CodebaseConfig {
@@ -45,7 +47,9 @@ const defaultConfig: SettingsConfig = {
     isSyncing: false,
     isIndexing: false,
     connectionStatus: 'unknown',
-    statusMessage: ''
+    statusMessage: '',
+    canResume: false,
+    canResumeIndexing: false
   },
   codebase: {
     repoPath: '',

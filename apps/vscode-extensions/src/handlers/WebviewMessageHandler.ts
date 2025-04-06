@@ -19,10 +19,13 @@ export class WebviewMessageHandler {
     private readonly webviewView: vscode.WebviewView,
     private readonly context: vscode.ExtensionContext
   ) {
-    const config: any = this.context.globalState.get('workspaceGPT-settings');
-    this.confluenceConfig = config.state.config.confluence;
 
     this.confluenceService = new ConfluenceService(
+      this.webviewView,
+      this.context
+    );
+
+    this.embeddingService = new EmbeddingService(
       this.webviewView,
       this.context
     );
@@ -42,6 +45,9 @@ export class WebviewMessageHandler {
       case MESSAGE_TYPES.START_CONFLUENCE_SYNC:
         await this.handleStartConfluenceSync();
         break;
+      case MESSAGE_TYPES.RESUME_CONFLUENCE_SYNC:
+        await this.handleResumeConfluenceSync();
+        break;
       case MESSAGE_TYPES.STOP_CONFLUENCE_SYNC:
         await this.handleStopConfluenceSync();
         break;
@@ -57,6 +63,9 @@ export class WebviewMessageHandler {
       case MESSAGE_TYPES.UPDATE_MODEL:
         await this.handleUpdateModel(data);
         break;
+      case MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE:
+        await this.handleResumeIndexingConfluence();
+        break;
     }
   }
 
@@ -68,14 +77,21 @@ export class WebviewMessageHandler {
   }
 
   private async handleClearGlobalState(): Promise<void> {
-    await this.context.globalState.update(
-      STORAGE_KEYS.WORKSPACE_SETTINGS,
-      undefined
-    );
+    try {
+      const keys = this.context.globalState.keys();
+      for (const key of keys) {
+        await this.context.globalState.update(key, undefined);
+      }
+    } catch (error) {
+      console.error('Error clearing global state:', error);
+      throw error;
+    }
   }
 
   private async handleCheckConfluenceConnection(): Promise<void> {
     try {
+      const config: any = this.context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS);
+      this.confluenceConfig = config.state.config.confluence;
       if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
         throw new Error(
           'Confluence configuration is incomplete. Please check your settings.'
@@ -101,6 +117,8 @@ export class WebviewMessageHandler {
 
   private async handleStartConfluenceSync(): Promise<void> {
     try {
+      const config: any = this.context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS);
+      this.confluenceConfig = config.state.config.confluence;
       if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
         throw new Error(
           'Confluence configuration is incomplete. Please check your settings.'
@@ -118,20 +136,88 @@ export class WebviewMessageHandler {
     }
   }
 
+  private async handleResumeConfluenceSync(): Promise<void> {
+    try {
+      const config: any = this.context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS);
+      this.confluenceConfig = config.state.config.confluence;
+      if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
+        throw new Error(
+          'Confluence configuration is incomplete. Please check your settings.'
+        );
+      }
+      
+      // Check if there's progress to resume
+      const progress = this.confluenceService?.getSyncProgress();
+      if (!progress || progress.isComplete) {
+        // If no progress or already complete, start a new sync
+        await this.handleStartConfluenceSync();
+        return;
+      }
+      
+      // Resume the sync with the existing progress
+      await this.confluenceService?.startSync(
+        this.confluenceConfig, 
+        () => this.handleCompleteConfluenceSync(),
+        true // resume parameter
+      );
+    } catch (error) {
+      console.error('Error resuming Confluence sync:', error);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private async handleCompleteConfluenceSync(): Promise<void> {
     try {
       // Start embedding creation after sync is complete
-      if (!this.embeddingService) {
-        this.embeddingService = new EmbeddingService(
-          this.webviewView,
-          this.context
-        );
-      }
-      await this.embeddingService.createEmbeddings({
+      // if (!this.embeddingService) {
+      //   this.embeddingService = new EmbeddingService(
+      //     this.webviewView,
+      //     this.context
+      //   );
+      // }
+      await this.embeddingService?.createEmbeddings({
         dimensions: MODEL.DEFAULT_DIMENSIONS,
       } as EmbeddingConfig);
     } catch (error) {
       console.error('Error in Confluence indexing:', error);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async handleResumeIndexingConfluence(): Promise<void> {
+    try {
+      // if (!this.embeddingService) {
+      //   this.embeddingService = new EmbeddingService(
+      //     this.webviewView,
+      //     this.context
+      //   );
+      // }
+      
+      // Check if there's progress to resume
+      const progress = this.embeddingService?.getEmbeddingProgress();
+      if (!progress || progress.isComplete) {
+        // If no progress or already complete, start a new indexing
+        await this.embeddingService?.createEmbeddings({
+          dimensions: MODEL.DEFAULT_DIMENSIONS,
+        } as EmbeddingConfig);
+        return;
+      }
+      
+      // Resume the indexing with the existing progress
+      await this.embeddingService?.createEmbeddings(
+        {
+          dimensions: MODEL.DEFAULT_DIMENSIONS,
+        } as EmbeddingConfig,
+        true // resume parameter
+      );
+    } catch (error) {
+      console.error('Error resuming Confluence indexing:', error);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -201,11 +287,11 @@ export class WebviewMessageHandler {
       this.confluenceService?.stopSync();
 
       // Update the UI to reflect that sync has been stopped
-      this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
-        source: 'confluence',
-        message: 'Sync process stopped by user',
-      });
+      // this.webviewView.webview.postMessage({
+      //   type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
+      //   source: 'confluence',
+      //   message: 'Sync process stopped by user',
+      // });
 
       // Update the global state to reflect that sync is no longer in progress
       const config = this.context.globalState.get(

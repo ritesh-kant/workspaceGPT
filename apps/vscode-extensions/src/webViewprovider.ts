@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { WebviewHtmlTemplate } from './templates/WebviewHtmlTemplate';
 import { ChatService } from './services/chatService';
-import { MESSAGE_TYPES, MODEL, ModelTypeEnum } from '../constants';
+import { MESSAGE_TYPES, MODEL, ModelTypeEnum, STORAGE_KEYS } from '../constants';
 
 export class WebViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -28,6 +28,9 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken
   ) {
     this._view = webviewView;
+    const config: any = this._context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS);
+    const confluenceConfig = config.state.config.confluence;
+
     this.messageHandler = new WebviewMessageHandler(webviewView, this._context);
     this.chatService = new ChatService(webviewView, this._context);
 
@@ -54,6 +57,9 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       await this.chatService.initializeModel(embeddingModelId, ModelTypeEnum.Embedding);
 
     }
+    if(confluenceConfig?.isIndexing) {
+      this.sendMessage(MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE);
+    }
   }
 
   private configureWebview(webviewView: vscode.WebviewView): void {
@@ -71,6 +77,12 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (data) => {
       await this.messageHandler?.handleMessage(data);
     });
+  }
+
+  public async sendMessage(data: any): Promise<void> {
+    if (this.messageHandler) {
+      await this.messageHandler.handleMessage(data);
+    }
   }
 
   // Method to set the model initialization status

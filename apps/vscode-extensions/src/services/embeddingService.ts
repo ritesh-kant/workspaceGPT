@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Worker } from 'worker_threads';
 import { EmbeddingConfig } from 'src/types/types';
-import { WORKER_STATUS, MESSAGE_TYPES } from '../../constants';
+import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
 
 interface SearchResult {
   text: string;
@@ -11,10 +11,18 @@ interface SearchResult {
   source: string;
 }
 
+interface EmbeddingProgress {
+  processedFiles: number;
+  totalFiles: number;
+  lastProcessedFile?: string;
+  isComplete: boolean;
+}
+
 export class EmbeddingService {
   private worker: Worker | null = null;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
+  private embeddingProgress: EmbeddingProgress | null = null;
 
   constructor(
     webviewView: vscode.WebviewView,
@@ -22,12 +30,50 @@ export class EmbeddingService {
   ) {
     this.webviewView = webviewView;
     this.context = context;
+    this.loadEmbeddingProgress();
   }
 
-  public async createEmbeddings(config: EmbeddingConfig): Promise<void> {
+  private async loadEmbeddingProgress(): Promise<void> {
+    try {
+      const progress = await this.context.globalState.get<EmbeddingProgress>(
+        STORAGE_KEYS.EMBEDDING_PROGRESS
+      );
+      this.embeddingProgress = progress || null;
+    } catch (error) {
+      console.error('Error loading embedding progress:', error);
+      this.embeddingProgress = null;
+    }
+  }
+
+  private async saveEmbeddingProgress(progress: EmbeddingProgress): Promise<void> {
+    try {
+      await this.context.globalState.update(
+        STORAGE_KEYS.EMBEDDING_PROGRESS,
+        progress
+      );
+      this.embeddingProgress = progress;
+    } catch (error) {
+      console.error('Error saving embedding progress:', error);
+    }
+  }
+
+  public async createEmbeddings(config: EmbeddingConfig, resume: boolean = false): Promise<void> {
     try {
       // Stop any existing worker
       this.stopWorker();
+
+      // Load the current progress if resuming
+      if (resume && this.embeddingProgress) {
+        console.log(`Resuming embedding from ${this.embeddingProgress.processedFiles}/${this.embeddingProgress.totalFiles} files`);
+      } else {
+        // Reset progress if not resuming
+        this.embeddingProgress = {
+          processedFiles: 0,
+          totalFiles: 0,
+          isComplete: false
+        };
+        await this.saveEmbeddingProgress(this.embeddingProgress);
+      }
 
       // Get the directory path for Confluence MD files
       const mdDirPath = path.join(
@@ -50,11 +96,14 @@ export class EmbeddingService {
           mdDirPath,
           embeddingDirPath,
           config,
+          resume: resume,
+          lastProcessedFile: this.embeddingProgress?.lastProcessedFile,
+          processedFiles: this.embeddingProgress?.processedFiles || 0
         },
       });
 
       // Handle messages from the worker
-      this.worker.on('message', (message) => {
+      this.worker.on('message', async (message) => {
         switch (message.type) {
           case WORKER_STATUS.PROCESSING:
             this.webviewView.webview.postMessage({
@@ -63,6 +112,15 @@ export class EmbeddingService {
               current: message.current,
               total: message.total,
             });
+            
+            // Update and save progress
+            this.embeddingProgress = {
+              processedFiles: message.current,
+              totalFiles: message.total,
+              lastProcessedFile: message.lastProcessedFile,
+              isComplete: false
+            };
+            await this.saveEmbeddingProgress(this.embeddingProgress);
             break;
 
           case WORKER_STATUS.ERROR:
@@ -78,6 +136,15 @@ export class EmbeddingService {
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
             });
+            
+            // Update progress as complete
+            this.embeddingProgress = {
+              processedFiles: message.total,
+              totalFiles: message.total,
+              isComplete: true
+            };
+            await this.saveEmbeddingProgress(this.embeddingProgress);
+            
             // this.stopWorker();
             break;
         }
@@ -150,6 +217,18 @@ export class EmbeddingService {
       this.worker?.terminate();
       this.worker = null;
     }
+  }
+
+  public getEmbeddingProgress(): EmbeddingProgress | null {
+    return this.embeddingProgress;
+  }
+
+  public async resetEmbeddingProgress(): Promise<void> {
+    this.embeddingProgress = null;
+    await this.context.globalState.update(
+      STORAGE_KEYS.EMBEDDING_PROGRESS,
+      undefined
+    );
   }
 
   private async ensureDirectoryExists(dirPath: string): Promise<void> {

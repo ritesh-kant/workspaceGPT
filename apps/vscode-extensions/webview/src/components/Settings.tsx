@@ -107,6 +107,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             confluenceSyncProgress: message.progress,
             connectionStatus: 'unknown',
             isSyncing: message.progress < 100,
+            canResume: true,
           });
           break;
 
@@ -116,6 +117,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             statusMessage: 'Sync completed successfully',
             confluenceSyncProgress: 100,
             isSyncing: false,
+            canResume: false,
           });
 
           // Clear the 'Sync completed successfully' message after 2 seconds
@@ -130,7 +132,16 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('confluence', {
             isSyncing: false,
             connectionStatus: 'error',
+            statusMessage: `Sync stopped: ${message.message}`,
+            canResume: true,
+          });
+          break;
+        case MESSAGE_TYPES.SYNC_CONFLUENCE_STOP:
+          batchUpdateConfig('confluence', {
+            isSyncing: false,
+            connectionStatus: 'error',
             statusMessage: `Sync stopped: Please verify your credentials and try again.`,
+            canResume: true,
           });
           break;
 
@@ -174,6 +185,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             confluenceIndexProgress: message.progress,
             connectionStatus: 'unknown',
             isIndexing: message.progress < 100,
+            canResumeIndexing: true,
           });
           break;
         case MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE:
@@ -182,6 +194,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             connectionStatus: 'success',
             isIndexing: false,
             statusMessage: 'Indexing completed successfully',
+            canResumeIndexing: false,
           });
 
           // Clear the 'Indexing completed successfully' message after 2 seconds
@@ -197,6 +210,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             isSyncing: false,
             connectionStatus: 'error',
             statusMessage: `Indexing error: ${message.message}`,
+            canResumeIndexing: true,
           });
           break;
       }
@@ -223,8 +237,10 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   };
 
   const checkConnection = () => {
-    updateConfig('confluence', 'connectionStatus', 'unknown');
-    updateConfig('confluence', 'statusMessage', 'Checking connection...');
+    batchUpdateConfig('confluence', {
+      connectionStatus: 'unknown',
+      statusMessage: 'Checking connection...',
+    });
     vscode.postMessage({
       type: MESSAGE_TYPES.CHECK_CONFLUENCE_CONNECTION,
       section: 'confluence',
@@ -233,10 +249,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   };
 
   const startSync = () => {
-    updateConfig('confluence', 'isSyncing', true);
-    updateConfig('confluence', 'confluenceSyncProgress', 0);
-    updateConfig('confluence', 'statusMessage', 'Starting sync process...');
-    updateConfig('confluence', 'connectionStatus', 'unknown');
+    batchUpdateConfig('confluence', {
+      isSyncing: true,
+      confluenceSyncProgress: 0,
+      statusMessage: 'Starting sync process...',
+      connectionStatus: 'unknown',
+    });
     vscode.postMessage({
       type: MESSAGE_TYPES.START_CONFLUENCE_SYNC,
       section: 'confluence',
@@ -244,9 +262,25 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     });
   };
 
+  const resumeSync = () => {
+    batchUpdateConfig('confluence', {
+      isSyncing: true,
+      statusMessage: 'Resuming sync process...',
+      connectionStatus: 'unknown',
+    });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.RESUME_CONFLUENCE_SYNC,
+      section: 'confluence',
+      config,
+    });
+  };
+
   const stopSync = () => {
-    updateConfig('confluence', 'isSyncing', false);
-    updateConfig('confluence', 'statusMessage', 'Stopping sync process...');
+    batchUpdateConfig('confluence', {
+      isSyncing: false,
+      statusMessage: 'Stopping sync process...',
+    });
+    clearStatusMessageAfterDelay('confluence', 'connectionStatus', 'unknown');
     vscode.postMessage({
       type: MESSAGE_TYPES.STOP_CONFLUENCE_SYNC,
       section: 'confluence',
@@ -254,9 +288,24 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     });
   };
 
+  // const resumeIndexing = () => {
+  //   batchUpdateConfig('confluence', {
+  //     isIndexing: true,
+  //     statusMessage: 'Resuming indexing process...',
+  //     connectionStatus: 'unknown',
+  //   });
+  //   vscode.postMessage({
+  //     type: MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE,
+  //     section: 'confluence',
+  //     config,
+  //   });
+  // };
+
   const stopCodebaseSync = () => {
-    updateConfig('codebase', 'isSyncing', false);
-    updateConfig('codebase', 'statusMessage', 'Stopping scan process...');
+    batchUpdateConfig('codebase', {
+      isSyncing: false,
+      statusMessage: 'Stopping scan process...',
+    });
     vscode.postMessage({
       type: MESSAGE_TYPES.STOP_CODEBASE_SYNC,
       section: 'codebase',
@@ -440,13 +489,25 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 <div className='button-group'>
                   <button onClick={checkConnection}>Check Connection</button>
                   {config.confluence.isSyncing ? (
-                    <button onClick={stopSync} className='stop-sync-button'>
+                    <button
+                      onClick={stopSync}
+                      className='stop-sync-button'
+                      disabled={config.confluence.isIndexing}
+                    >
                       Stop Sync
+                    </button>
+                  ) : config.confluence.canResume ? (
+                    <button
+                      onClick={resumeSync}
+                      className='resume-sync-button'
+                      disabled={config.confluence.isIndexing}
+                    >
+                      Resume Sync
                     </button>
                   ) : (
                     <button
                       onClick={startSync}
-                      // disabled={isConfluenceSyncing || connectionStatus !== 'success'}
+                      disabled={config.confluence.isIndexing}
                     >
                       Start Sync
                     </button>
@@ -592,7 +653,11 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
               statusMessage: 'VSCode state reset successfully',
             });
             // Clear the success message after 2 seconds
-            clearStatusMessageAfterDelay('confluence', 'connectionStatus', 'unknown');
+            clearStatusMessageAfterDelay(
+              'confluence',
+              'connectionStatus',
+              'unknown'
+            );
           }}
         >
           Reset VSCode State
