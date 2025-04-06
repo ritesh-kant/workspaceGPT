@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { VSCodeAPI } from '../vscode';
+import { VSCodeAPI, clearVSCodeState } from '../vscode';
 import './Settings.css';
 import { useSettingsStore, useModelStore } from '../store';
 import { MESSAGE_TYPES } from '../constants';
@@ -14,7 +14,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   onClose,
 }) => {
   // Use settings store instead of local state
-  const { config, setConfig, updateConfig, batchUpdateConfig } =
+  const { config, setConfig, updateConfig, batchUpdateConfig, resetStore } =
     useSettingsStore();
 
   const { config: modelConfig, handleModelChange } = useModelStore();
@@ -130,7 +130,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('confluence', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync stopped: ${message.message}`,
+            statusMessage: `Sync stopped: Please verify your credentials and try again.`,
           });
           break;
 
@@ -410,26 +410,30 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                 </div>
 
                 <div className='form-group'>
-                  <label htmlFor="confluence-api-token">
+                  <label htmlFor='confluence-api-token'>
                     API Token
                     <a
-                      href="https://id.atlassian.com/manage-profile/security/api-tokens"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="help-link"
-                      title="Get your Atlassian API token"
+                      href='https://id.atlassian.com/manage-profile/security/api-tokens'
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      className='help-link'
+                      title='Get your Atlassian API token'
                     >
                       (help)
                     </a>
                   </label>
                   <input
-                    id="confluence-api-token"
-                    type="password"
+                    id='confluence-api-token'
+                    type='password'
                     value={config.confluence?.apiToken}
                     onChange={(e) =>
-                      handleInputChange('confluence', 'apiToken', e.target.value)
+                      handleInputChange(
+                        'confluence',
+                        'apiToken',
+                        e.target.value
+                      )
                     }
-                    placeholder="Your Atlassian API token"
+                    placeholder='Your Atlassian API token'
                   />
                 </div>
 
@@ -514,6 +518,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             <div className='status-message'>
               🚧 Codebase integration is currently under development
             </div>
+
             {config.codebase.isCodebaseEnabled && (
               <div className='settings-form'>
                 <div className='form-group'>
@@ -573,6 +578,26 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           </div>
         </>
       }
+      <br />
+      <div className='settings-form'>
+        <button
+          className='secondary-button'
+          onClick={() => {
+            clearVSCodeState();
+            // Reset all store states
+            resetStore();
+            // Show feedback message
+            batchUpdateConfig('confluence', {
+              connectionStatus: 'success',
+              statusMessage: 'VSCode state reset successfully',
+            });
+            // Clear the success message after 2 seconds
+            clearStatusMessageAfterDelay('confluence', 'connectionStatus', 'unknown');
+          }}
+        >
+          Reset VSCode State
+        </button>
+      </div>
     </div>
   );
 };

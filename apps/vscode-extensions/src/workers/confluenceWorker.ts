@@ -30,7 +30,7 @@ async function fetchAndProcessPages() {
 
     // Get total pages count
     const totalSize = await extractor.getTotalPages();
-    // parentPort?.postMessage({ type: 'totalPages', count: totalSize });
+    parentPort?.postMessage({ type: 'totalPages', count: totalSize });
 
     // Fetch all pages
     let start = 0;
