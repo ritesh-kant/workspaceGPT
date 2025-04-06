@@ -4,6 +4,7 @@ import { Worker } from 'worker_threads';
 import * as fs from 'fs';
 import { promisify } from 'util';
 import { MESSAGE_TYPES, WORKER_STATUS } from '../../constants';
+import { ConfluencePageFetcher } from '@workspace-gpt/confluence-utils';
 
 interface ProcessedPage {
   filename: string;
@@ -29,6 +30,28 @@ export class ConfluenceService {
   ) {
     this.webviewView = webviewView;
     this.context = context;
+  }
+
+  async getTotalPages(config: ConfluenceConfig) {
+    try {
+      // Create the page fetcher
+      const extractor = new ConfluencePageFetcher(
+        config.spaceKey,
+        config.baseUrl,
+        config.apiToken,
+        config.userEmail,
+        config.apiToken
+      );
+
+      // Get total pages count
+      const totalSize = await extractor.getTotalPages();
+      return totalSize; // Return the total pages coun
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error('❌ Error getting total pages:', errorMessage);
+      throw error;
+    }
   }
 
   public async startSync(
