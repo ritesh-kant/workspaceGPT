@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "Your AI-powered coding assistant that understands your entire workspace. Get intelligent answers, code explanations, and suggestions based on your project context.",
-  "version": "0.0.35",
+  "version": "0.0.36",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {

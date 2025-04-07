@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import {
   MESSAGE_TYPES,
   MODEL,
+  ModelTypeEnum,
   STORAGE_KEYS,
 } from '../../constants';
 import { ChatService } from '../services/chatService';
@@ -17,6 +18,7 @@ export class WebviewMessageHandler {
 
   private confluenceConfig?: any;
   private checkOllamaInterval?: NodeJS.Timeout;
+  private isModelInitialized: boolean = false;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -41,6 +43,32 @@ export class WebviewMessageHandler {
         clearInterval(this.checkOllamaInterval);
       }
     });
+  }
+
+  public async initializeModels(): Promise<void> {
+    const isOllamaRunning = await isOllamaRunningCheck();
+    
+    if (!this.isModelInitialized && isOllamaRunning) {
+      const chatModelId = MODEL.DEFAULT_CHAT_MODEL;
+      const embeddingModelId = MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL;
+
+      // Notify UI that model is being downloaded
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS,
+        progress: 0,
+        current: '0 MB',
+        total: '0 MB',
+      });
+
+      // Start model initialization
+      if (!this.chatService) {
+        this.chatService = new ChatService(this.webviewView, this.context);
+      }
+      await this.chatService.initializeModel(chatModelId, ModelTypeEnum.Chat);
+      await this.chatService.initializeModel(embeddingModelId, ModelTypeEnum.Embedding);
+      
+      this.isModelInitialized = true;
+    }
   }
 
   public async handleMessage(data: any): Promise<void> {
@@ -362,6 +390,7 @@ export class WebviewMessageHandler {
 
   private async handleRetryOllamaCheck(): Promise<void> {
     await this.checkOllamaStatus();
+    this.initializeModels()
   }
 
   private async checkOllamaStatus(): Promise<boolean> {

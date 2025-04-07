@@ -262,6 +262,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     });
   };
 
+  const retry = () => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
+    });
+  }
+
   const resumeSync = () => {
     batchUpdateConfig('confluence', {
       isSyncing: true,
@@ -378,7 +384,17 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
               )}
               {modelConfig.downloadStatus === 'error' && (
                 <div className='error-message'>
-                  {modelConfig.errorMessage || 'Failed to download model'}
+                  Failed to download model 
+                  &nbsp;
+                  <button
+                    onClick={() =>
+                      retry()
+                    }
+                    className='retry-button'
+                    title='Retry connection'
+                  >
+                    ↻
+                  </button>
                 </div>
               )}
             </div>

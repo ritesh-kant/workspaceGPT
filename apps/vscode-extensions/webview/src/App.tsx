@@ -64,6 +64,7 @@ const App: React.FC = () => {
             isDownloading: true,
             downloadProgress: message.progress ?? '0',
             downloadStatus: 'downloading',
+            selectedModel: message.modelId,
             downloadDetails: {
               current: message.current || '0 MB',
               total: message.total || '0 MB',
