@@ -98,7 +98,8 @@ const vscodeStorage = {
       [STORAGE_KEYS.SETTINGS]: JSON.parse(value),
     });
     vscode.postMessage({
-      type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
+      type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
+      key: STORAGE_KEYS.SETTINGS,
       state: JSON.parse(value),
     });
   },

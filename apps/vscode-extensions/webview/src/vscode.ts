@@ -17,7 +17,7 @@ export function VSCodeAPI() {
   if (!vscodeApi) {
     vscodeApi = window.acquireVsCodeApi();
     // vscodeApi.setState({});
-
+    // clearVSCodeState();
   }
   return vscodeApi;
 }

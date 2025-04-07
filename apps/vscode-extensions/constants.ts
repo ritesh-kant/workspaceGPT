@@ -7,7 +7,7 @@ export const MESSAGE_TYPES = {
   UPDATE_MODEL: 'update-model',
 
   UPDATE_SETTINGS: 'update-settings',
-  SYNC_GLOBAL_STATE: 'sync-global-state',
+  UPDATE_GLOBAL_STATE: 'update-global-state',
   CLEAR_GLOBAL_STATE: 'clear-global-state',
 
   CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
@@ -49,8 +49,8 @@ export const UI_CONSTANTS = {
 // Storage Keys
 export const STORAGE_KEYS = {
   CHAT: 'chat',
-  SETTINGS: 'globalSettings',
-  WORKSPACE_SETTINGS: 'workspaceGPT-settings',
+  SETTINGS: 'settings',
+  MODEL: 'model',
   CONFLUENCE_SYNC_PROGRESS: 'confluence-sync-progress',
   EMBEDDING_PROGRESS: 'embedding-progress',
 };

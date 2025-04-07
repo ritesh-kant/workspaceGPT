@@ -25,8 +25,8 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken
   ) {
     this._view = webviewView;
-    const config: any = this._context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS);
-    const confluenceConfig = config.state.config.confluence;
+    const config: any = this._context.globalState.get(STORAGE_KEYS.SETTINGS);
+    const confluenceConfig = config?.state?.config?.confluence;
 
     this.messageHandler = new WebviewMessageHandler(webviewView, this._context);
 
