@@ -43,7 +43,7 @@ export class ChatService {
 
       // Keep track of the last progress update to avoid flooding UI
       let lastProgressUpdate = 0;
-      const PROGRESS_UPDATE_THROTTLE = 500; // ms
+      const PROGRESS_UPDATE_THROTTLE = 2000; // ms
 
       return new Promise((resolve, reject) => {
         modelWorker.on(

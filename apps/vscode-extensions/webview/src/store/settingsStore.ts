@@ -14,6 +14,8 @@ export interface ConfluenceConfig {
   isIndexing: boolean;
   connectionStatus: 'unknown' | 'success' | 'error';
   statusMessage: string;
+  canResume: boolean;
+  canResumeIndexing: boolean;
 }
 
 export interface CodebaseConfig {
@@ -33,6 +35,35 @@ export interface SettingsConfig {
   codebase: CodebaseConfig;
 }
 
+const defaultConfig: SettingsConfig = {
+  confluence: {
+    baseUrl: '',
+    spaceKey: '',
+    userEmail: '',
+    apiToken: '',
+    isConfluenceEnabled: false,
+    confluenceSyncProgress: 0,
+    confluenceIndexProgress: 0,
+    isSyncing: false,
+    isIndexing: false,
+    connectionStatus: 'unknown',
+    statusMessage: '',
+    canResume: false,
+    canResumeIndexing: false
+  },
+  codebase: {
+    repoPath: '',
+    scanFrequency: 'daily',
+    isSyncing: false,
+    isIndexing: false,
+    isCodebaseEnabled: false,
+    codebaseSyncProgress: 0,
+    codebaseIndexProgress: 0,
+    connectionStatus: 'unknown',
+    statusMessage: ''
+  },
+};
+
 interface SettingsState {
   config: SettingsConfig;
   showSettings: boolean;
@@ -47,6 +78,7 @@ interface SettingsState {
     section: T,
     updates: Partial<SettingsConfig[T]>
   ) => void;
+  resetStore: () => void;
 }
 
 // Create a custom storage adapter for VSCode global state
@@ -84,32 +116,7 @@ const vscodeStorage = {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      config: {
-        confluence: {
-          baseUrl: '',
-          spaceKey: '',
-          userEmail: '',
-          apiToken: '',
-          isConfluenceEnabled: false,
-          confluenceSyncProgress: 0,
-          confluenceIndexProgress: 0,
-          isSyncing: false,
-          isIndexing: false,
-          connectionStatus: 'unknown', // Ensure this is explicitly set
-          statusMessage: ''
-        },
-        codebase: {
-          repoPath: '',
-          scanFrequency: 'daily',
-          isSyncing: false,
-          isIndexing: false,
-          isCodebaseEnabled: false,
-          codebaseSyncProgress: 0,
-          codebaseIndexProgress: 0,
-          connectionStatus: 'unknown', // Ensure this is explicitly set
-          statusMessage: ''
-        },
-      },
+      config: defaultConfig,
       showSettings: false,
       setConfig: (config) => set({ config }),
       updateConfig: (section, field, value) => {
@@ -136,6 +143,14 @@ export const useSettingsStore = create<SettingsState>()(
           console.log(`Batch updating ${section}:`, updates);
           return { config: newConfig };
         });
+      },
+      resetStore: () => {
+        const vscode = VSCodeAPI();
+        vscode.setState({});
+        vscode.postMessage({
+          type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
+        });
+        set({ config: defaultConfig, showSettings: false });
       },
     }),
     {

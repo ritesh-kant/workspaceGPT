@@ -96,19 +96,38 @@
 }
 
 .stop-sync-button {
-  background-color: var(--vscode-errorForeground) !important;
-  color: var(--vscode-button-foreground) !important;
+  background-color: var(--vscode-errorForeground);
+  color: var(--vscode-editor-background);
 }
 
 .stop-sync-button:hover {
-  background-color: var(--vscode-errorForeground) !important;
-  opacity: 0.8;
+  background-color: var(--vscode-errorForeground);
+  opacity: 0.9;
+}
+
+.resume-sync-button {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.resume-sync-button:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.resume-indexing-button {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  margin-top: 0.5rem;
+}
+
+.resume-indexing-button:hover {
+  background-color: var(--vscode-button-hoverBackground);
 }
 
 .status-message {
-  margin-top: 1rem;
   padding: 0.5rem;
-  border-radius: 2px;
+  border-radius: 0.25rem;
+  margin-top: 0.5rem;
   font-size: 0.9rem;
 }
 
@@ -261,4 +280,15 @@ input:checked + .slider:before {
   padding: 0.5rem;
   background-color: var(--vscode-errorBackground);
   border-radius: 4px;
+}
+
+.help-link {
+  margin-left: 0.5rem;
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.help-link:hover {
+  text-decoration: underline;
 }

@@ -1,3 +1,5 @@
+import { MESSAGE_TYPES } from "./constants";
+
 declare global {
   interface Window {
     acquireVsCodeApi: () => {
@@ -24,4 +26,7 @@ export function VSCodeAPI() {
 export function clearVSCodeState() {
   const vscode = VSCodeAPI();
   vscode.setState({});
+  vscode.postMessage({
+    type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
+  });
 }

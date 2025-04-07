@@ -12,6 +12,9 @@ interface WorkerData {
   mdDirPath: string;
   embeddingDirPath: string;
   config: EmbeddingConfig;
+  resume?: boolean;
+  lastProcessedFile?: string;
+  processedFiles?: number;
 }
 
 interface Metadata {
@@ -21,7 +24,7 @@ interface Metadata {
   embedding: number[];
 }
 
-const { mdDirPath, embeddingDirPath, config } = workerData as WorkerData;
+const { mdDirPath, embeddingDirPath, config, resume, lastProcessedFile, processedFiles } = workerData as WorkerData;
 
 // Initialize markdown-it
 md = new MarkdownIt({ html: false });
@@ -38,8 +41,17 @@ async function createEmbeddings(): Promise<void> {
       fs.mkdirSync(embeddingDirPath, { recursive: true });
     }
 
+    // If resuming, find the starting point
+    let startIndex = 0;
+    if (resume && lastProcessedFile) {
+      startIndex = files.findIndex(file => file === lastProcessedFile);
+      if (startIndex !== -1) {
+        startIndex++; // Start from the next file
+      }
+    }
+
     // Process each file
-    for (let i = 0; i < files.length; i++) {
+    for (let i = startIndex; i < files.length; i++) {
       const file = files[i];
       const filePath = path.join(mdDirPath, file);
       const markdownContent = fs.readFileSync(filePath, 'utf8');
@@ -67,11 +79,13 @@ async function createEmbeddings(): Promise<void> {
       );
 
       // Report progress
+      const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
       parentPort?.postMessage({
         type: WORKER_STATUS.PROCESSING,
-        progress: (((i + 1) / total) * 100).toFixed(1),
-        current: i + 1,
+        progress: ((currentProgress / total) * 100).toFixed(1),
+        current: currentProgress,
         total,
+        lastProcessedFile: file
       });
     }
 
