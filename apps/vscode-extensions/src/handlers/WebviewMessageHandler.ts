@@ -76,6 +76,9 @@ export class WebviewMessageHandler {
       case MESSAGE_TYPES.UPDATE_GLOBAL_STATE:
         await this.updateGlobalState(data);
         break;
+      case MESSAGE_TYPES.GET_GLOBAL_STATE:
+        await this.getGlobalState(data);
+        break;
       case MESSAGE_TYPES.CLEAR_GLOBAL_STATE:
         await this.handleClearGlobalState();
         break;
@@ -117,6 +120,15 @@ export class WebviewMessageHandler {
       data.key,
       data.state
     );
+  }
+  private async getGlobalState(data: any): Promise<void> {
+    const config:any = this.context.globalState.get(data.key);
+
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.GET_GLOBAL_STATE,
+      key: data.key,
+      state: config?.state?.config,
+    });
   }
 
   private async handleClearGlobalState(): Promise<void> {

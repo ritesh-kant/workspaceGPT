@@ -411,19 +411,19 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
               <label className='toggle-switch'>
                 <input
                   type='checkbox'
-                  checked={config.confluence.isConfluenceEnabled}
+                  checked={config.confluence?.isConfluenceEnabled}
                   onChange={() =>
                     updateConfig(
                       'confluence',
                       'isConfluenceEnabled',
-                      !config.confluence.isConfluenceEnabled
+                      !config.confluence?.isConfluenceEnabled
                     )
                   }
                 />
                 <span className='slider round'></span>
               </label>
             </div>
-            {config.confluence.isConfluenceEnabled && (
+            {config.confluence?.isConfluenceEnabled && (
               <div className='settings-form'>
                 <div className='form-group'>
                   <label htmlFor='confluence-base-url'>
@@ -579,12 +579,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
               <label className='toggle-switch'>
                 <input
                   type='checkbox'
-                  checked={config.codebase.isCodebaseEnabled}
+                  checked={config.codebase?.isCodebaseEnabled}
                   onChange={() =>
                     updateConfig(
                       'codebase',
                       'isCodebaseEnabled',
-                      !config.codebase.isCodebaseEnabled
+                      !config.codebase?.isCodebaseEnabled
                     )
                   }
                   disabled={true}
@@ -596,7 +596,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
               🚧 Codebase integration is currently under development
             </div>
 
-            {config.codebase.isCodebaseEnabled && (
+            {config.codebase?.isCodebaseEnabled && (
               <div className='settings-form'>
                 <div className='form-group'>
                   <label htmlFor='codebase-repo-path'>Repository Path</label>

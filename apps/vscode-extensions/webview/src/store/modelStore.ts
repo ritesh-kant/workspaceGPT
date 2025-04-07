@@ -75,15 +75,17 @@ const vscodeStorage = {
   },
 };
 
+export const modelDefaultConfig: ModelConfig = {
+  selectedModel: 'llama3.2:1b',
+  isDownloading: false,
+  downloadProgress: 0,
+  downloadStatus: 'idle',
+};
+
 export const useModelStore = create<ModelState>()(
   persist(
     (set) => ({
-      config: {
-        selectedModel: 'llama3.2:1b',
-        isDownloading: false,
-        downloadProgress: 0,
-        downloadStatus: 'idle',
-      },
+      config: modelDefaultConfig,
       setConfig: (config) => set({ config }),
       updateConfig: (field, value) => {
         set((state) => ({

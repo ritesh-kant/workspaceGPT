@@ -35,7 +35,7 @@ export interface SettingsConfig {
   codebase: CodebaseConfig;
 }
 
-const defaultConfig: SettingsConfig = {
+export const settingsDefaultConfig: SettingsConfig = {
   confluence: {
     baseUrl: '',
     spaceKey: '',
@@ -87,8 +87,12 @@ import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
 const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
-    const state = vscode.getState() || {};
-    return JSON.stringify(state[STORAGE_KEYS.SETTINGS] || {});
+    // Request the latest settings from global state
+    vscode.postMessage({
+      type: MESSAGE_TYPES.GET_GLOBAL_STATE,
+      key: STORAGE_KEYS.SETTINGS,
+    });
+    return JSON.stringify({});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
@@ -117,7 +121,7 @@ const vscodeStorage = {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      config: defaultConfig,
+      config: settingsDefaultConfig,
       showSettings: false,
       setConfig: (config) => set({ config }),
       updateConfig: (section, field, value) => {
@@ -151,7 +155,7 @@ export const useSettingsStore = create<SettingsState>()(
         vscode.postMessage({
           type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
         });
-        set({ config: defaultConfig, showSettings: false });
+        set({ config: settingsDefaultConfig, showSettings: false });
       },
     }),
     {

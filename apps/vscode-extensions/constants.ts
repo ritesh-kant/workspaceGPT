@@ -9,6 +9,7 @@ export const MESSAGE_TYPES = {
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',
   CLEAR_GLOBAL_STATE: 'clear-global-state',
+  GET_GLOBAL_STATE: 'get-global-state',
 
   CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
   START_CONFLUENCE_SYNC: 'start-confluence-sync',
