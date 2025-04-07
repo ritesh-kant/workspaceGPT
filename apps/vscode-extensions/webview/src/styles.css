@@ -1,0 +1,56 @@
+.banner-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background-color: var(--vscode-editor-background);
+  padding: 16px;
+  z-index: 1000;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.banner-content {
+  text-align: center;
+}
+
+.banner-content h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--vscode-editor-foreground);
+}
+
+.banner-content p {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.banner-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.banner-actions a,
+.banner-actions button {
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.banner-actions a {
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  text-decoration: none;
+}
+
+.banner-actions button {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+}
+
+.banner-actions button:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}

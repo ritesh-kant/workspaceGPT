@@ -35,7 +35,9 @@ export const MESSAGE_TYPES = {
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
   MODEL_DOWNLOAD_ERROR: 'model-download-error',
 
-};
+  OLLAMA_STATUS: 'ollama-status',
+  RETRY_OLLAMA_CHECK: 'retry-ollama-check',
+} as const;
 
 // UI Constants
 export const UI_CONSTANTS = {

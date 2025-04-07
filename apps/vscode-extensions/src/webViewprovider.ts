@@ -3,6 +3,7 @@ import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { WebviewHtmlTemplate } from './templates/WebviewHtmlTemplate';
 import { ChatService } from './services/chatService';
 import { MESSAGE_TYPES, MODEL, ModelTypeEnum, STORAGE_KEYS } from '../constants';
+import { isOllamaRunningCheck } from './utils/ollamaCheck';
 
 export class WebViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -38,8 +39,11 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     this.setWebviewHtml(webviewView);
     this.setupMessageHandler(webviewView);
 
+    // Check Ollama status initially
+    const isOllamaRunning = await isOllamaRunningCheck();
+
     // If the model hasn't been initialized yet in the background, do it now
-    if (!this.isModelInitialized) {
+    if (!this.isModelInitialized && isOllamaRunning) {
       // Initialize the models immediately
       const chatModelId = MODEL.DEFAULT_CHAT_MODEL;
       const embeddingModelId = MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL;

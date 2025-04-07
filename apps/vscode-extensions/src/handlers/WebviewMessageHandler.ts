@@ -8,6 +8,7 @@ import { ChatService } from '../services/chatService';
 import { ConfluenceService } from '../services/confluenceService';
 import { EmbeddingService } from '../services/embeddingService';
 import { EmbeddingConfig } from '../types/types';
+import { isOllamaRunningCheck } from '../utils/ollamaCheck';
 
 export class WebviewMessageHandler {
   private chatService?: ChatService;
@@ -15,11 +16,12 @@ export class WebviewMessageHandler {
   private embeddingService?: EmbeddingService;
 
   private confluenceConfig?: any;
+  private checkOllamaInterval?: NodeJS.Timeout;
+
   constructor(
     private readonly webviewView: vscode.WebviewView,
     private readonly context: vscode.ExtensionContext
   ) {
-
     this.confluenceService = new ConfluenceService(
       this.webviewView,
       this.context
@@ -29,6 +31,16 @@ export class WebviewMessageHandler {
       this.webviewView,
       this.context
     );
+
+    // Initialize Ollama status check
+    this.initializeOllamaCheck();
+
+    // Clean up interval when webview is disposed
+    this.webviewView.onDidDispose(() => {
+      if (this.checkOllamaInterval) {
+        clearInterval(this.checkOllamaInterval);
+      }
+    });
   }
 
   public async handleMessage(data: any): Promise<void> {
@@ -65,6 +77,9 @@ export class WebviewMessageHandler {
         break;
       case MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE:
         await this.handleResumeIndexingConfluence();
+        break;
+      case MESSAGE_TYPES.RETRY_OLLAMA_CHECK:
+        await this.handleRetryOllamaCheck();
         break;
     }
   }
@@ -343,5 +358,25 @@ export class WebviewMessageHandler {
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private async handleRetryOllamaCheck(): Promise<void> {
+    await this.checkOllamaStatus();
+  }
+
+  private async checkOllamaStatus(): Promise<boolean> {
+    const isRunning = await isOllamaRunningCheck();
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.OLLAMA_STATUS,
+      isRunning
+    });
+    return isRunning;
+  }
+
+  private async initializeOllamaCheck(): Promise<void> {
+    // Initial check
+    await this.checkOllamaStatus();
+    // Set up periodic check
+    this.checkOllamaInterval = setInterval(() => this.checkOllamaStatus(), 30000); // Check every 30 seconds
   }
 }
