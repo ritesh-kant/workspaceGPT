@@ -1,5 +1,10 @@
 # WorkspaceGPT VSCode Extension
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/1.png" alt="Screenshot 1" width="27%" style="margin-right: 2%" />
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/2.png" alt="Screenshot 2" width="27%" style="margin-right: 2%" />
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/3.png" alt="Screenshot 3" width="27%" />
+</p>
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
