@@ -188,6 +188,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             connectionStatus: 'unknown',
             isIndexing: message.progress < 100,
             canResumeIndexing: true,
+            isSyncing: false,
+            canResume: false,
           });
           break;
         case MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE:
@@ -197,6 +199,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             isIndexing: false,
             statusMessage: 'Indexing completed successfully',
             canResumeIndexing: false,
+            isSyncing: false,
+            canResume: false,
           });
 
           // Clear the 'Indexing completed successfully' message after 2 seconds
