@@ -14,12 +14,21 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   onClose,
 }) => {
   // Use settings store instead of local state
-  const { config, setConfig, updateConfig, batchUpdateConfig, resetStore: resetSettingStore } =
-    useSettingsStore();
+  const {
+    config,
+    setConfig,
+    updateConfig,
+    batchUpdateConfig,
+    resetStore: resetSettingStore,
+  } = useSettingsStore();
 
-  const { config: modelConfig, handleModelChange, resetStore: resetModelStore } = useModelStore();
+  const {
+    config: modelConfig,
+    handleModelChange,
+    resetStore: resetModelStore,
+  } = useModelStore();
 
-  const {resetStore: resetChatStore} = useChatStore();
+  const { resetStore: resetChatStore } = useChatStore();
 
   const vscode = VSCodeAPI();
 
@@ -120,6 +129,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             confluenceSyncProgress: 100,
             isSyncing: false,
             canResume: false,
+            isSyncCompleted: true,
           });
 
           // Clear the 'Sync completed successfully' message after 2 seconds
@@ -134,7 +144,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('confluence', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync stopped: ${message.message}`,
+            statusMessage: `Sync error: Please verify your credentials and try again.`,
             canResume: true,
           });
           break;
@@ -142,7 +152,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('confluence', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync stopped: Please verify your credentials and try again.`,
+            statusMessage: `Sync stopped`,
             canResume: true,
           });
           break;
@@ -201,6 +211,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             canResumeIndexing: false,
             isSyncing: false,
             canResume: false,
+            isIndexingCompleted: true,
           });
 
           // Clear the 'Indexing completed successfully' message after 2 seconds
@@ -272,7 +283,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     vscode.postMessage({
       type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
     });
-  }
+  };
 
   const resumeSync = () => {
     batchUpdateConfig('confluence', {
@@ -390,12 +401,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
               )}
               {modelConfig.downloadStatus === 'error' && (
                 <div className='error-message'>
-                  Failed to download model 
-                  &nbsp;
+                  Failed to download model &nbsp;
                   <button
-                    onClick={() =>
-                      retry()
-                    }
+                    onClick={() => retry()}
                     className='retry-button'
                     title='Retry connection'
                   >
@@ -525,6 +533,13 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                       disabled={config.confluence.isIndexing}
                     >
                       Resume Sync
+                    </button>
+                  ) : config.confluence.isIndexingCompleted ? (
+                    <button
+                      onClick={startSync}
+                      disabled={config.confluence.isIndexing}
+                    >
+                      Start Re-Sync
                     </button>
                   ) : (
                     <button

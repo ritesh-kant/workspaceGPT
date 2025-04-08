@@ -362,8 +362,7 @@ export class WebviewMessageHandler {
     } catch (error) {
       console.error('Error stopping Confluence sync:', error);
       this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
-        message: error instanceof Error ? error.message : String(error),
+        type: MESSAGE_TYPES.SYNC_CONFLUENCE_STOP,
       });
     }
   }

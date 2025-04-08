@@ -205,7 +205,7 @@ export class ConfluenceService {
           console.error(`Worker stopped with exit code ${code}`);
           // Notify the webview that sync is being stopped
           this.webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
+            type: MESSAGE_TYPES.SYNC_CONFLUENCE_STOP,
             source: 'confluence',
             progress: 0,
             message: 'Stopping sync process...',
