@@ -14,10 +14,10 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   onClose,
 }) => {
   // Use settings store instead of local state
-  const { config, setConfig, updateConfig, batchUpdateConfig, resetStore } =
+  const { config, setConfig, updateConfig, batchUpdateConfig, resetStore: resetSettingStore } =
     useSettingsStore();
 
-  const { config: modelConfig, handleModelChange } = useModelStore();
+  const { config: modelConfig, handleModelChange, resetStore: resetModelStore } = useModelStore();
 
   const vscode = VSCodeAPI();
 
@@ -662,7 +662,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           onClick={() => {
             clearVSCodeState();
             // Reset all store states
-            resetStore();
+            resetSettingStore();
+            resetModelStore();
             // Show feedback message
             batchUpdateConfig('confluence', {
               connectionStatus: 'success',

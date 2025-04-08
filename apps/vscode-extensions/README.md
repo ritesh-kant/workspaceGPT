@@ -30,6 +30,10 @@ Everything in WorkspaceGPT runs **locally** on your system. No data is sent to t
 - [Ollama](https://ollama.com) installed and running locally
 - Node.js (v18 or higher)
 
+### 🧠 Default Model
+
+By default, WorkspaceGPT uses a lightweight model: `llama3.2:1b`. If you're looking for more accurate and context-rich responses, you can switch to a more capable model that fits your system — such as `llama3.2:4b`, `gemma3:4b`, or `mistral`.
+
 ### Installation
 
 1. Open Visual Studio Code
