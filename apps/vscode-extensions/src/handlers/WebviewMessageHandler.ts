@@ -73,8 +73,11 @@ export class WebviewMessageHandler {
 
   public async handleMessage(data: any): Promise<void> {
     switch (data.type) {
-      case MESSAGE_TYPES.SYNC_GLOBAL_STATE:
-        await this.handleSyncGlobalState(data);
+      case MESSAGE_TYPES.UPDATE_GLOBAL_STATE:
+        await this.updateGlobalState(data);
+        break;
+      case MESSAGE_TYPES.GET_GLOBAL_STATE:
+        await this.getGlobalState(data);
         break;
       case MESSAGE_TYPES.CLEAR_GLOBAL_STATE:
         await this.handleClearGlobalState();
@@ -112,11 +115,20 @@ export class WebviewMessageHandler {
     }
   }
 
-  private async handleSyncGlobalState(data: any): Promise<void> {
+  private async updateGlobalState(data: any): Promise<void> {
     await this.context.globalState.update(
-      STORAGE_KEYS.WORKSPACE_SETTINGS,
+      data.key,
       data.state
     );
+  }
+  private async getGlobalState(data: any): Promise<void> {
+    const config:any = this.context.globalState.get(data.key);
+
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.GET_GLOBAL_STATE,
+      key: data.key,
+      state: config?.state?.config,
+    });
   }
 
   private async handleClearGlobalState(): Promise<void> {
@@ -133,7 +145,7 @@ export class WebviewMessageHandler {
 
   private async handleCheckConfluenceConnection(): Promise<void> {
     try {
-      const config: any = this.context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS);
+      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       this.confluenceConfig = config.state.config.confluence;
       if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
         throw new Error(
@@ -160,7 +172,7 @@ export class WebviewMessageHandler {
 
   private async handleStartConfluenceSync(): Promise<void> {
     try {
-      const config: any = this.context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS);
+      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       this.confluenceConfig = config.state.config.confluence;
       if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
         throw new Error(
@@ -181,7 +193,7 @@ export class WebviewMessageHandler {
 
   private async handleResumeConfluenceSync(): Promise<void> {
     try {
-      const config: any = this.context.globalState.get(STORAGE_KEYS.WORKSPACE_SETTINGS);
+      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       this.confluenceConfig = config.state.config.confluence;
       if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
         throw new Error(
@@ -338,12 +350,12 @@ export class WebviewMessageHandler {
 
       // Update the global state to reflect that sync is no longer in progress
       const config = this.context.globalState.get(
-        STORAGE_KEYS.WORKSPACE_SETTINGS
+        STORAGE_KEYS.SETTINGS
       ) as any;
       if (config && config.state && config.state.config) {
         config.state.config.confluence.isSyncing = false;
         await this.context.globalState.update(
-          STORAGE_KEYS.WORKSPACE_SETTINGS,
+          STORAGE_KEYS.SETTINGS,
           config
         );
       }
@@ -370,12 +382,12 @@ export class WebviewMessageHandler {
 
       // Update the global state to reflect that sync is no longer in progress
       const config = this.context.globalState.get(
-        STORAGE_KEYS.WORKSPACE_SETTINGS
+        STORAGE_KEYS.SETTINGS
       ) as any;
       if (config && config.state && config.state.config) {
         config.state.config.codebase.isSyncing = false;
         await this.context.globalState.update(
-          STORAGE_KEYS.WORKSPACE_SETTINGS,
+          STORAGE_KEYS.SETTINGS,
           config
         );
       }

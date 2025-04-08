@@ -4,7 +4,9 @@ import ChatMessage from './components/ChatMessage';
 import SettingsButton from './components/Settings';
 import { VSCodeAPI } from './vscode';
 import { useChatStore, useSettingsStore, useModelStore } from './store';
-import { MESSAGE_TYPES } from './constants';
+import { MESSAGE_TYPES, STORAGE_KEYS } from './constants';
+import { settingsDefaultConfig } from './store/settingsStore';
+import { modelDefaultConfig} from './store/modelStore';
 
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
@@ -20,7 +22,7 @@ const App: React.FC = () => {
     setShowTips,
   } = useChatStore();
 
-  const { showSettings, setShowSettings } = useSettingsStore();
+  const { showSettings, setShowSettings, setConfig } = useSettingsStore();
   const {
     config: modelConfig,
     batchUpdateConfig: batchUpdateModelConfig,
@@ -94,6 +96,14 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.OLLAMA_STATUS:
           setIsOllamaRunning(message.isRunning);
+          break;
+        case MESSAGE_TYPES.GET_GLOBAL_STATE:
+          if (message.key === STORAGE_KEYS.SETTINGS) {
+            setConfig(message.state || settingsDefaultConfig);
+          }
+          if(message.key === STORAGE_KEYS.MODEL) {
+           setConfig(message.state || modelDefaultConfig);
+          }
           break;
       }
     };

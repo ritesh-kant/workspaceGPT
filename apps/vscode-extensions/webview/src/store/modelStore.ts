@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { MODEL } from '../../../constants';
+import { MODEL, STORAGE_KEYS } from '../../../constants';
 
 export interface OllamaModel {
   name: string;
@@ -59,7 +59,8 @@ const vscodeStorage = {
       [MODEL.DEFAULT_CHAT_MODEL]: JSON.parse(value),
     });
     vscode.postMessage({
-      type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
+      type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
+      key: STORAGE_KEYS.MODEL,
       state: JSON.parse(value),
     });
   },
@@ -74,15 +75,17 @@ const vscodeStorage = {
   },
 };
 
+export const modelDefaultConfig: ModelConfig = {
+  selectedModel: 'llama3.2:1b',
+  isDownloading: false,
+  downloadProgress: 0,
+  downloadStatus: 'idle',
+};
+
 export const useModelStore = create<ModelState>()(
   persist(
     (set) => ({
-      config: {
-        selectedModel: 'llama3.2:1b',
-        isDownloading: false,
-        downloadProgress: 0,
-        downloadStatus: 'idle',
-      },
+      config: modelDefaultConfig,
       setConfig: (config) => set({ config }),
       updateConfig: (field, value) => {
         set((state) => ({
