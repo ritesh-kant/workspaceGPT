@@ -4,11 +4,12 @@ import ReactMarkdown from 'react-markdown';
 interface ChatMessageProps {
   content: string;
   isUser: boolean;
+  isError?: boolean;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser, isError }) => {
   return (
-    <div className={`message ${isUser ? 'user-message' : 'bot-message'}`}>
+    <div className={`message ${isError ? 'error-message' : isUser ? 'user-message' : 'bot-message'}`}>
       {isUser ? (
         <div className="message-content">{content}</div>
       ) : (

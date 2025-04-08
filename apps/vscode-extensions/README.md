@@ -1,5 +1,10 @@
 # WorkspaceGPT VSCode Extension
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/1.png" alt="Screenshot 1" width="27%" style="margin-right: 2%" />
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/2.png" alt="Screenshot 2" width="27%" style="margin-right: 2%" />
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/3.png" alt="Screenshot 3" width="27%" />
+</p>
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -24,6 +29,10 @@ Everything in WorkspaceGPT runs **locally** on your system. No data is sent to t
 
 - [Ollama](https://ollama.com) installed and running locally
 - Node.js (v18 or higher)
+
+### 🧠 Default Model
+
+By default, WorkspaceGPT uses a lightweight model: `llama3.2:1b`. If you're looking for more accurate and context-rich responses, you can switch to a more capable model that fits your system — such as `llama3.2:4b`, `gemma3:4b`, or `mistral`.
 
 ### Installation
 

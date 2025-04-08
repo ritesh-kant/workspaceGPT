@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { MODEL, STORAGE_KEYS } from '../../../constants';
+import { STORAGE_KEYS } from '../../../constants';
 
 export interface OllamaModel {
   name: string;
@@ -42,21 +42,26 @@ interface ModelState {
   ) => void;
   batchUpdateConfig: (updates: Partial<ModelConfig>) => void;
   handleModelChange: (modelId: string) => void;
+  resetStore: () => void;
 }
 
 // Create a custom storage adapter for VSCode global state
 const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
-    const state = vscode.getState() || {};
-    return JSON.stringify(state[MODEL.DEFAULT_CHAT_MODEL] || {});
+    // Request the latest settings from global state
+    vscode.postMessage({
+      type: MESSAGE_TYPES.GET_GLOBAL_STATE,
+      key: STORAGE_KEYS.MODEL,
+    });
+    return JSON.stringify({});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
     const currentState = vscode.getState() || {};
     vscode.setState({
       ...currentState,
-      [MODEL.DEFAULT_CHAT_MODEL]: JSON.parse(value),
+      [STORAGE_KEYS.CHAT]: JSON.parse(value),
     });
     vscode.postMessage({
       type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
@@ -67,7 +72,7 @@ const vscodeStorage = {
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { [MODEL.DEFAULT_CHAT_MODEL]: model, ...rest } = state;
+    const { [STORAGE_KEYS.CHAT]: model, ...rest } = state;
     vscode.setState(rest);
     vscode.postMessage({
       type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
@@ -104,17 +109,20 @@ export const useModelStore = create<ModelState>()(
         }));
       },
       handleModelChange: (modelId: string) => {
-        const vscode = VSCodeAPI();
         set((state) => ({
           config: {
             ...state.config,
             selectedModel: modelId,
           },
         }));
+      },
+      resetStore: () => {
+        const vscode = VSCodeAPI();
+        vscode.setState({});
         vscode.postMessage({
-          type: MESSAGE_TYPES.UPDATE_MODEL,
-          modelId,
+          type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
         });
+        set({ config: modelDefaultConfig });
       },
     }),
     {

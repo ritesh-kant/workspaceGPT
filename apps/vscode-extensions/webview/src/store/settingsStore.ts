@@ -12,6 +12,8 @@ export interface ConfluenceConfig {
   confluenceIndexProgress: number;
   isSyncing: boolean;
   isIndexing: boolean;
+  isSyncCompleted: boolean;
+  isIndexingCompleted: boolean;
   connectionStatus: 'unknown' | 'success' | 'error';
   statusMessage: string;
   canResume: boolean;
@@ -49,7 +51,9 @@ export const settingsDefaultConfig: SettingsConfig = {
     connectionStatus: 'unknown',
     statusMessage: '',
     canResume: false,
-    canResumeIndexing: false
+    canResumeIndexing: false,
+    isSyncCompleted: false,
+    isIndexingCompleted: false
   },
   codebase: {
     repoPath: '',
