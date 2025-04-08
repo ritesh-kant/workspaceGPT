@@ -30,6 +30,7 @@ const App: React.FC = () => {
   } = useModelStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const modelSelectorRef = useRef<HTMLSelectElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
   const [isOllamaRunning, setIsOllamaRunning] = useState(true);
@@ -94,6 +95,14 @@ const App: React.FC = () => {
             errorMessage: message.message,
           });
           break;
+        case MESSAGE_TYPES.ERROR_CHAT:
+          addMessage({
+            content: 'Error occurred. Please start a new chat.',
+            isUser: false,
+            isError: true
+          });
+          setIsLoading(false);
+          break;
         case MESSAGE_TYPES.OLLAMA_STATUS:
           setIsOllamaRunning(message.isRunning);
           break;
@@ -146,10 +155,13 @@ const App: React.FC = () => {
     setIsLoading(true);
     setShowTips(false);
 
+    // Get the selected model directly from the dropdown
+    const selectedModel = modelSelectorRef.current?.value || modelConfig.selectedModel;
+
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
       message: inputValue,
-      modelId: modelConfig.selectedModel, // Include the selected model ID in the message event
+      modelId: selectedModel
     });
   };
 
@@ -194,6 +206,7 @@ const App: React.FC = () => {
             <div className='header-controls'>
               <div className='model-selector'>
                 <select
+                  ref={modelSelectorRef}
                   value={modelConfig.selectedModel}
                   onChange={(e) => handleModelChange(e.target.value)}
                   disabled={modelConfig.isDownloading}
@@ -308,6 +321,7 @@ const App: React.FC = () => {
                 key={index}
                 content={message.content}
                 isUser={message.isUser}
+                isError={message.isError}
               />
             ))}
             {isLoading && (

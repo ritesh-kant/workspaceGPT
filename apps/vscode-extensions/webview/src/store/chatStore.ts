@@ -7,6 +7,7 @@ import { MESSAGE_TYPES } from '../constants';
 interface Message {
   content: string;
   isUser: boolean;
+  isError?: boolean;
 }
 
 interface ChatState {

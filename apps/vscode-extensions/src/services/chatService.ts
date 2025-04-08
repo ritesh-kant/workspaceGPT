@@ -161,7 +161,7 @@ export class ChatService {
     } catch (error) {
       console.error('Error in chat:', error);
       this.webviewView.webview.postMessage({
-        type: 'error',
+        type: MESSAGE_TYPES.ERROR_CHAT,
         message: error instanceof Error ? error.message : String(error),
       });
     }

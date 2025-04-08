@@ -288,10 +288,41 @@
 
 /* Message styles */
 .message {
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  max-width: 85%;
+  padding: 1rem;
+  margin: 0.5rem 0;
+  border-radius: 8px;
+  max-width: 100%;
   word-wrap: break-word;
+}
+
+.error-message {
+  background-color: var(--vscode-inputValidation-errorBackground) !important;
+  border: 1px solid var(--vscode-inputValidation-errorBorder) !important;
+  color: var(--vscode-inputValidation-errorForeground) !important;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  margin: 0.5rem 0;
+  border-radius: 8px;
+  animation: shake 0.5s ease-in-out;
+  max-width: 100%;
+}
+
+.error-message::before {
+  content: "⚠️";
+  font-size: 1.2rem;
+  margin-right: 0.5rem;
+}
+
+.error-message .message-content {
+  color: var(--vscode-inputValidation-errorForeground) !important;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
 }
 
 .user-message {

@@ -5,6 +5,7 @@ export const MESSAGE_TYPES = {
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
   UPDATE_MODEL: 'update-model',
+  ERROR_CHAT: 'error-chat',
 
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',
