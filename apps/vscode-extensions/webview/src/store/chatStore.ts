@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 import { STORAGE_KEYS } from '../constants';
+import { MESSAGE_TYPES } from '../constants';
 
 interface Message {
   content: string;
@@ -19,6 +20,7 @@ interface ChatState {
   setInputValue: (value: string) => void;
   setIsLoading: (isLoading: boolean) => void;
   setShowTips: (showTips: boolean) => void;
+  resetStore: () => void;
 }
 
 // Create a custom storage adapter for VSCode
@@ -41,19 +43,31 @@ const vscodeStorage = {
   },
 };
 
+export const chatDefaultState = {
+  messages: [],
+  inputValue: '',
+  isLoading: false,
+  showTips: true,
+};
+
 export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
-      messages: [],
-      inputValue: '',
-      isLoading: false,
-      showTips: true,
+      ...chatDefaultState,
       setMessages: (messages) => set({ messages }),
       addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
       clearMessages: () => set({ messages: [] }),
       setInputValue: (inputValue) => set({ inputValue }),
       setIsLoading: (isLoading) => set({ isLoading }),
       setShowTips: (showTips) => set({ showTips }),
+      resetStore: () => {
+        const vscode = VSCodeAPI();
+        vscode.setState({});
+        vscode.postMessage({
+          type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
+        });
+        set(chatDefaultState);
+      },
     }),
     {
       name: 'workspaceGPT-chat-storage',

@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { VSCodeAPI, clearVSCodeState } from '../vscode';
 import './Settings.css';
-import { useSettingsStore, useModelStore } from '../store';
+import { useSettingsStore, useModelStore, useChatStore } from '../store';
 import { MESSAGE_TYPES } from '../constants';
 
 interface SettingsButtonProps {
@@ -18,6 +18,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     useSettingsStore();
 
   const { config: modelConfig, handleModelChange, resetStore: resetModelStore } = useModelStore();
+
+  const {resetStore: resetChatStore} = useChatStore();
 
   const vscode = VSCodeAPI();
 
@@ -664,6 +666,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             // Reset all store states
             resetSettingStore();
             resetModelStore();
+            resetChatStore();
             // Show feedback message
             batchUpdateConfig('confluence', {
               connectionStatus: 'success',
