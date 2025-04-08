@@ -6,7 +6,7 @@ import { VSCodeAPI } from './vscode';
 import { useChatStore, useSettingsStore, useModelStore } from './store';
 import { MESSAGE_TYPES, STORAGE_KEYS } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
-import { modelDefaultConfig} from './store/modelStore';
+import { modelDefaultConfig } from './store/modelStore';
 
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
@@ -22,15 +22,16 @@ const App: React.FC = () => {
     setShowTips,
   } = useChatStore();
 
-  const { showSettings, setShowSettings, setConfig } = useSettingsStore();
+  const { showSettings, setShowSettings, setConfig: setSettingsConfig } = useSettingsStore();
   const {
     config: modelConfig,
     batchUpdateConfig: batchUpdateModelConfig,
+    setConfig: setModelConfig,
     handleModelChange,
+
   } = useModelStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const modelSelectorRef = useRef<HTMLSelectElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
   const [isOllamaRunning, setIsOllamaRunning] = useState(true);
@@ -48,7 +49,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // Handle messages from the extension
-    
+
     vscode.postMessage({
       type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
     });
@@ -67,7 +68,6 @@ const App: React.FC = () => {
             isDownloading: true,
             downloadProgress: message.progress ?? '0',
             downloadStatus: 'downloading',
-            selectedModel: message.modelId,
             downloadDetails: {
               current: message.current || '0 MB',
               total: message.total || '0 MB',
@@ -75,17 +75,18 @@ const App: React.FC = () => {
           });
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
+          let availableModels;
+          if (message.models && Array.isArray(message.models)) {
+            availableModels = message.models.filter(
+              (eachModel: { name: string }) => !eachModel.name.includes('embed')
+            );
+          }
+
           batchUpdateModelConfig({
             isDownloading: false,
             downloadProgress: 100,
             downloadStatus: 'completed',
-            availableModels:
-              message.models && Array.isArray(message.models)
-                ? message.models.filter(
-                    (eachModel: { name: string }) =>
-                      !eachModel.name.includes('embed')
-                  )
-                : undefined,
+            availableModels,
           });
           break;
         case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
@@ -99,7 +100,7 @@ const App: React.FC = () => {
           addMessage({
             content: 'Error occurred. Please start a new chat.',
             isUser: false,
-            isError: true
+            isError: true,
           });
           setIsLoading(false);
           break;
@@ -108,10 +109,10 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
-            setConfig(message.state || settingsDefaultConfig);
+            setSettingsConfig(message.state || settingsDefaultConfig);
           }
-          if(message.key === STORAGE_KEYS.MODEL) {
-           setConfig(message.state || modelDefaultConfig);
+          if (message.key === STORAGE_KEYS.MODEL) {
+            setModelConfig(message.state || modelDefaultConfig);
           }
           break;
       }
@@ -156,12 +157,11 @@ const App: React.FC = () => {
     setShowTips(false);
 
     // Get the selected model directly from the dropdown
-    const selectedModel = modelSelectorRef.current?.value || modelConfig.selectedModel;
 
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
       message: inputValue,
-      modelId: selectedModel
+      modelId: modelConfig.selectedModel,
     });
   };
 
@@ -182,7 +182,14 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className='app-container' style={{ '--banner-height': !isOllamaRunning ? '30px' : '0' } as React.CSSProperties}>
+    <div
+      className='app-container'
+      style={
+        {
+          '--banner-height': !isOllamaRunning ? '30px' : '0',
+        } as React.CSSProperties
+      }
+    >
       {!isOllamaRunning && (
         <div className='banner-container'>
           <div className='banner-content'>
@@ -206,7 +213,6 @@ const App: React.FC = () => {
             <div className='header-controls'>
               <div className='model-selector'>
                 <select
-                  ref={modelSelectorRef}
                   value={modelConfig.selectedModel}
                   onChange={(e) => handleModelChange(e.target.value)}
                   disabled={modelConfig.isDownloading}
