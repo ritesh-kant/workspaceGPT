@@ -1,8 +1,8 @@
 {
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
-  "description": "Your AI-powered coding assistant that understands your entire workspace. Get intelligent answers, code explanations, and suggestions based on your project context.",
-  "version": "0.0.37",
+  "description": "WorkspaceGPT is a fully local, privacy-first AI assistant for your development environment. Ask questions about your codebase or integrated Confluence documents — all without sending any data to external servers.",
+  "version": "0.0.38",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
