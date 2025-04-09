@@ -28,7 +28,6 @@ Everything in WorkspaceGPT runs **locally** on your system. No data is sent to t
 ### Prerequisites
 
 - [Ollama](https://ollama.com) installed and running locally
-- Node.js (v18 or higher)
 
 ### 🧠 Default Model
 
@@ -56,7 +55,7 @@ If you ever need to reset WorkspaceGPT to its default state, simply go to:
 
 `Settings > Reset VSCode State`
 
-## 🧑‍💻 Development
+## 🧑‍💻 For Opensource contribution or to run the project locally
 
 Clone the repo and start hacking!
 
