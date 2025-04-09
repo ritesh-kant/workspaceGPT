@@ -11,6 +11,7 @@ export interface ConfluencePageBody {
 }
 
 export interface ConfluencePage {
+  id: string;
   title: string;
   body: ConfluencePageBody;
   _links: ConfluencePageLink;

@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Worker } from 'worker_threads';
 import { EmbeddingConfig } from 'src/types/types';
-import { WORKER_STATUS, MESSAGE_TYPES } from '../../constants';
+import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
 
 interface SearchResult {
   text: string;
@@ -11,63 +11,140 @@ interface SearchResult {
   source: string;
 }
 
+interface EmbeddingProgress {
+  processedFiles: number;
+  totalFiles: number;
+  lastProcessedFile?: string;
+  isComplete: boolean;
+}
+
 export class EmbeddingService {
   private worker: Worker | null = null;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
+  private embeddingProgress: EmbeddingProgress | null = null;
 
-  constructor(webviewView: vscode.WebviewView, context: vscode.ExtensionContext) {
+  constructor(
+    webviewView: vscode.WebviewView,
+    context: vscode.ExtensionContext
+  ) {
     this.webviewView = webviewView;
     this.context = context;
+    this.loadEmbeddingProgress();
   }
 
-  public async createEmbeddings(config: EmbeddingConfig): Promise<void> {
+  private async loadEmbeddingProgress(): Promise<void> {
+    try {
+      const progress = await this.context.globalState.get<EmbeddingProgress>(
+        STORAGE_KEYS.EMBEDDING_PROGRESS
+      );
+      this.embeddingProgress = progress || null;
+    } catch (error) {
+      console.error('Error loading embedding progress:', error);
+      this.embeddingProgress = null;
+    }
+  }
+
+  private async saveEmbeddingProgress(progress: EmbeddingProgress): Promise<void> {
+    try {
+      await this.context.globalState.update(
+        STORAGE_KEYS.EMBEDDING_PROGRESS,
+        progress
+      );
+      this.embeddingProgress = progress;
+    } catch (error) {
+      console.error('Error saving embedding progress:', error);
+    }
+  }
+
+  public async createEmbeddings(config: EmbeddingConfig, resume: boolean = false): Promise<void> {
     try {
       // Stop any existing worker
       this.stopWorker();
 
+      // Load the current progress if resuming
+      if (resume && this.embeddingProgress) {
+        console.log(`Resuming embedding from ${this.embeddingProgress.processedFiles}/${this.embeddingProgress.totalFiles} files`);
+      } else {
+        // Reset progress if not resuming
+        this.embeddingProgress = {
+          processedFiles: 0,
+          totalFiles: 0,
+          isComplete: false
+        };
+        await this.saveEmbeddingProgress(this.embeddingProgress);
+      }
+
       // Get the directory path for Confluence MD files
-      const mdDirPath = path.join(this.context.globalStorageUri.fsPath, 'confluence', 'mds');
-      const embeddingDirPath = path.join(this.context.globalStorageUri.fsPath, 'embeddings');
+      const mdDirPath = path.join(
+        this.context.globalStorageUri.fsPath,
+        'confluence',
+        'mds'
+      );
+      const embeddingDirPath = path.join(
+        this.context.globalStorageUri.fsPath,
+        'embeddings'
+      );
 
       // Ensure embedding directory exists
       await this.ensureDirectoryExists(embeddingDirPath);
 
       // Create a new worker
-      const workerPath = path.join(__dirname, '..', 'workers', 'embeddingWorker.js');
+      const workerPath = path.join(__dirname, 'workers', 'embeddingWorker.js');
       this.worker = new Worker(workerPath, {
         workerData: {
           mdDirPath,
           embeddingDirPath,
-          config
-        }
+          config,
+          resume: resume,
+          lastProcessedFile: this.embeddingProgress?.lastProcessedFile,
+          processedFiles: this.embeddingProgress?.processedFiles || 0
+        },
       });
 
       // Handle messages from the worker
-      this.worker.on('message', (message) => {
+      this.worker.on('message', async (message) => {
         switch (message.type) {
           case WORKER_STATUS.PROCESSING:
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS,
               progress: message.progress,
               current: message.current,
-              total: message.total
+              total: message.total,
             });
+            
+            // Update and save progress
+            this.embeddingProgress = {
+              processedFiles: message.current,
+              totalFiles: message.total,
+              lastProcessedFile: message.lastProcessedFile,
+              isComplete: false
+            };
+            await this.saveEmbeddingProgress(this.embeddingProgress);
             break;
 
           case WORKER_STATUS.ERROR:
             console.error(`Worker error: ${message.message}`);
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-              message: message.message
+              message: message.message,
             });
             break;
 
           case WORKER_STATUS.COMPLETED:
             console.log('Embedding creation complete');
             this.webviewView.webview.postMessage({
-              type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE
+              type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
             });
+            
+            // Update progress as complete
+            this.embeddingProgress = {
+              processedFiles: message.total,
+              totalFiles: message.total,
+              isComplete: true
+            };
+            await this.saveEmbeddingProgress(this.embeddingProgress);
+            
             // this.stopWorker();
             break;
         }
@@ -78,7 +155,7 @@ export class EmbeddingService {
         console.error('Worker error:', error);
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-          message: error.message
+          message: error.message,
         });
         this.worker = null;
       });
@@ -89,17 +166,16 @@ export class EmbeddingService {
           console.error(`Worker stopped with exit code ${code}`);
           this.webviewView.webview.postMessage({
             type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-            message: `Worker process exited with code ${code}`
+            message: `Worker process exited with code ${code}`,
           });
         }
         this.worker = null;
       });
-
     } catch (error) {
       console.error('Error starting worker:', error);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
       });
       this.stopWorker();
     }
@@ -112,8 +188,11 @@ export class EmbeddingService {
       const searchWorker = new Worker(workerPath, {
         workerData: {
           query,
-          embeddingDirPath: path.join(this.context.globalStorageUri.fsPath, 'embeddings')
-        }
+          embeddingDirPath: path.join(
+            this.context.globalStorageUri.fsPath,
+            'embeddings'
+          ),
+        },
       });
 
       return new Promise((resolve, reject) => {
@@ -127,7 +206,6 @@ export class EmbeddingService {
           searchWorker.terminate();
         });
       });
-
     } catch (error) {
       console.error('Error in embedding search:', error);
       throw error;
@@ -139,6 +217,18 @@ export class EmbeddingService {
       this.worker?.terminate();
       this.worker = null;
     }
+  }
+
+  public getEmbeddingProgress(): EmbeddingProgress | null {
+    return this.embeddingProgress;
+  }
+
+  public async resetEmbeddingProgress(): Promise<void> {
+    this.embeddingProgress = null;
+    await this.context.globalState.update(
+      STORAGE_KEYS.EMBEDDING_PROGRESS,
+      undefined
+    );
   }
 
   private async ensureDirectoryExists(dirPath: string): Promise<void> {

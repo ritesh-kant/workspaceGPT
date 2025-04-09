@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
-import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
+import { MESSAGE_TYPES } from '../constants';
+import { STORAGE_KEYS } from '../../../constants';
 
 export interface OllamaModel {
   name: string;
@@ -40,31 +41,38 @@ interface ModelState {
     value: ModelConfig[K]
   ) => void;
   batchUpdateConfig: (updates: Partial<ModelConfig>) => void;
+  handleModelChange: (modelId: string) => void;
+  resetStore: () => void;
 }
 
 // Create a custom storage adapter for VSCode global state
 const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
-    const state = vscode.getState() || {};
-    return JSON.stringify(state[STORAGE_KEYS.DEFAULT_MODEL] || {});
+    // Request the latest settings from global state
+    vscode.postMessage({
+      type: MESSAGE_TYPES.GET_GLOBAL_STATE,
+      key: STORAGE_KEYS.MODEL,
+    });
+    return JSON.stringify({});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
     const currentState = vscode.getState() || {};
     vscode.setState({
       ...currentState,
-      [STORAGE_KEYS.DEFAULT_MODEL]: JSON.parse(value),
+      [STORAGE_KEYS.CHAT]: JSON.parse(value),
     });
     vscode.postMessage({
-      type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
+      type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
+      key: STORAGE_KEYS.MODEL,
       state: JSON.parse(value),
     });
   },
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { [STORAGE_KEYS.DEFAULT_MODEL]: model, ...rest } = state;
+    const { [STORAGE_KEYS.CHAT]: model, ...rest } = state;
     vscode.setState(rest);
     vscode.postMessage({
       type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
@@ -72,15 +80,17 @@ const vscodeStorage = {
   },
 };
 
+export const modelDefaultConfig: ModelConfig = {
+  selectedModel: 'llama3.2:1b',
+  isDownloading: false,
+  downloadProgress: 0,
+  downloadStatus: 'idle',
+};
+
 export const useModelStore = create<ModelState>()(
   persist(
     (set) => ({
-      config: {
-        selectedModel: 'llama3.2:1b',
-        isDownloading: false,
-        downloadProgress: 0,
-        downloadStatus: 'idle',
-      },
+      config: modelDefaultConfig,
       setConfig: (config) => set({ config }),
       updateConfig: (field, value) => {
         set((state) => ({
@@ -97,6 +107,22 @@ export const useModelStore = create<ModelState>()(
             ...updates,
           },
         }));
+      },
+      handleModelChange: (modelId: string) => {
+        set((state) => ({
+          config: {
+            ...state.config,
+            selectedModel: modelId,
+          },
+        }));
+      },
+      resetStore: () => {
+        const vscode = VSCodeAPI();
+        vscode.setState({});
+        vscode.postMessage({
+          type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
+        });
+        set({ config: modelDefaultConfig });
       },
     }),
     {

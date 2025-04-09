@@ -12,8 +12,12 @@ export interface ConfluenceConfig {
   confluenceIndexProgress: number;
   isSyncing: boolean;
   isIndexing: boolean;
+  isSyncCompleted: boolean;
+  isIndexingCompleted: boolean;
   connectionStatus: 'unknown' | 'success' | 'error';
   statusMessage: string;
+  canResume: boolean;
+  canResumeIndexing: boolean;
 }
 
 export interface CodebaseConfig {
@@ -33,6 +37,37 @@ export interface SettingsConfig {
   codebase: CodebaseConfig;
 }
 
+export const settingsDefaultConfig: SettingsConfig = {
+  confluence: {
+    baseUrl: '',
+    spaceKey: '',
+    userEmail: '',
+    apiToken: '',
+    isConfluenceEnabled: false,
+    confluenceSyncProgress: 0,
+    confluenceIndexProgress: 0,
+    isSyncing: false,
+    isIndexing: false,
+    connectionStatus: 'unknown',
+    statusMessage: '',
+    canResume: false,
+    canResumeIndexing: false,
+    isSyncCompleted: false,
+    isIndexingCompleted: false
+  },
+  codebase: {
+    repoPath: '',
+    scanFrequency: 'daily',
+    isSyncing: false,
+    isIndexing: false,
+    isCodebaseEnabled: false,
+    codebaseSyncProgress: 0,
+    codebaseIndexProgress: 0,
+    connectionStatus: 'unknown',
+    statusMessage: ''
+  },
+};
+
 interface SettingsState {
   config: SettingsConfig;
   showSettings: boolean;
@@ -47,6 +82,7 @@ interface SettingsState {
     section: T,
     updates: Partial<SettingsConfig[T]>
   ) => void;
+  resetStore: () => void;
 }
 
 // Create a custom storage adapter for VSCode global state
@@ -55,8 +91,12 @@ import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
 const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
-    const state = vscode.getState() || {};
-    return JSON.stringify(state[STORAGE_KEYS.SETTINGS] || {});
+    // Request the latest settings from global state
+    vscode.postMessage({
+      type: MESSAGE_TYPES.GET_GLOBAL_STATE,
+      key: STORAGE_KEYS.SETTINGS,
+    });
+    return JSON.stringify({});
   },
   setItem: (_name: string, value: string) => {
     const vscode = VSCodeAPI();
@@ -66,7 +106,8 @@ const vscodeStorage = {
       [STORAGE_KEYS.SETTINGS]: JSON.parse(value),
     });
     vscode.postMessage({
-      type: MESSAGE_TYPES.SYNC_GLOBAL_STATE,
+      type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
+      key: STORAGE_KEYS.SETTINGS,
       state: JSON.parse(value),
     });
   },
@@ -84,32 +125,7 @@ const vscodeStorage = {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      config: {
-        confluence: {
-          baseUrl: '',
-          spaceKey: '',
-          userEmail: '',
-          apiToken: '',
-          isConfluenceEnabled: false,
-          confluenceSyncProgress: 0,
-          confluenceIndexProgress: 0,
-          isSyncing: false,
-          isIndexing: false,
-          connectionStatus: 'unknown', // Ensure this is explicitly set
-          statusMessage: ''
-        },
-        codebase: {
-          repoPath: '',
-          scanFrequency: 'daily',
-          isSyncing: false,
-          isIndexing: false,
-          isCodebaseEnabled: false,
-          codebaseSyncProgress: 0,
-          codebaseIndexProgress: 0,
-          connectionStatus: 'unknown', // Ensure this is explicitly set
-          statusMessage: ''
-        },
-      },
+      config: settingsDefaultConfig,
       showSettings: false,
       setConfig: (config) => set({ config }),
       updateConfig: (section, field, value) => {
@@ -136,6 +152,14 @@ export const useSettingsStore = create<SettingsState>()(
           console.log(`Batch updating ${section}:`, updates);
           return { config: newConfig };
         });
+      },
+      resetStore: () => {
+        const vscode = VSCodeAPI();
+        vscode.setState({});
+        vscode.postMessage({
+          type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
+        });
+        set({ config: settingsDefaultConfig, showSettings: false });
       },
     }),
     {

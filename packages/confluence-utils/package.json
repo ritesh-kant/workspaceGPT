@@ -1,13 +1,13 @@
 {
   "name": "@workspace-gpt/confluence-utils",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --sourcemap --splitting=false --tree-shaking=true && tsc --emitDeclarationOnly",
-    "dev": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --sourcemap --splitting=false --tree-shaking=true --watch"
+    "build": "tsup",
+    "dev": "tsup --watch"
   },
   "dependencies": {
     "axios": "^1.7.9",
@@ -20,6 +20,6 @@
   "devDependencies": {
     "typescript": "^5.0.0",
     "@types/node": "^20.0.0",
-    "esbuild": "^0.20.1"
+    "tsup": "^8.0.2"
   }
 }

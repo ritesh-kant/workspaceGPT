@@ -1,7 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
-import { HierarchicalNSW } from 'hnswlib-node';
 import { MODEL } from '../../constants';
 
 interface WorkerData {
@@ -15,35 +14,59 @@ interface SearchResult {
   source: string;
 }
 
+interface Metadata {
+  id: number;
+  filename: string;
+  text: string;
+  embedding: number[];
+}
+
 const { query, embeddingDirPath } = workerData as WorkerData;
+
+// Calculate cosine similarity between two vectors
+function cosineSimilarity(a: number[], b: number[]): number {
+  const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
+  const normA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+  const normB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+  return dotProduct / (normA * normB);
+}
 
 async function searchEmbeddings(): Promise<void> {
   try {
-    // Load the index
-    const indexPath = path.join(embeddingDirPath, 'index.bin');
+    // Check if embeddings exist
+    const indexPath = path.join(embeddingDirPath, 'index.json');
     if (!fs.existsSync(indexPath)) {
       throw new Error('Embedding index not found');
     }
 
-    // Initialize HNSW index
-    const index = new HierarchicalNSW('cosine', 384); // Using default dimension for all-MiniLM-L6-v2
-    index.readIndex(indexPath);
-
     // Create embedding for query
     const queryEmbedding = await createEmbeddingForText(query);
 
-    // Search for similar embeddings
-    const k = 3; // Number of nearest neighbors to retrieve
-    const { neighbors, distances } = index.searchKnn(queryEmbedding, k);
+    // Load all embeddings and calculate similarities
+    const indexData = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    const similarities: Array<{ id: number; score: number }> = [];
+
+    for (let i = 0; i < indexData.total; i++) {
+      const metadataPath = path.join(embeddingDirPath, `${i}.json`);
+      const metadata: Metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      const similarity = cosineSimilarity(queryEmbedding, metadata.embedding);
+      similarities.push({ id: i, score: similarity });
+    }
+
+    // Sort by similarity score and get top k results
+    const k = 3;
+    const topResults = similarities
+      .sort((a, b) => b.score - a.score)
+      .slice(0, k);
 
     // Load metadata and prepare results
     const results = await Promise.all(
-      neighbors.map(async (id: number, i: number) => {
+      topResults.map(async ({ id, score }) => {
         const metadataPath = path.join(embeddingDirPath, `${id}.json`);
-        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+        const metadata: Metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
         return {
           text: metadata.text,
-          score: 1 - distances[i], // Convert distance to similarity score
+          score: score,
           source: metadata.filename
         } as SearchResult;
       })
@@ -60,22 +83,29 @@ async function searchEmbeddings(): Promise<void> {
   }
 }
 
-// Using dynamic import for ESM compatibility
-let pipeline: any;
-let transformers: any;
-let extractor: any;
-
-// Create embedding using all-MiniLM-L6-v2 model
+// Create embedding using Ollama API
 async function createEmbeddingForText(text: string): Promise<number[]> {
-  const importModule = new Function('modulePath', 'return import(modulePath)');
   try {
-    if (!extractor) {
-      transformers = await importModule('@xenova/transformers');
-      pipeline = transformers.pipeline;
-      extractor = await pipeline('feature-extraction', MODEL.DEFAULT_NAME);
+    const response = await fetch('http://localhost:11434/api/embeddings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL,
+        prompt: text
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to generate embeddings: ${response.statusText}`);
     }
-    const output = await extractor(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data).map(Number);
+
+    const result = await response.json();
+    
+    if (!result.embedding || !Array.isArray(result.embedding)) {
+      throw new Error('Invalid embedding response from Ollama');
+    }
+    
+    return result.embedding;
   } catch (error) {
     console.error('Error creating embedding:', error);
     throw error;

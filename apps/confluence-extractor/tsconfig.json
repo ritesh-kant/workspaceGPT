@@ -18,8 +18,5 @@
     "incremental": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"],
-  "references": [
-    { "path": "../../packages/confluence-utils" }
-  ]
+  "exclude": ["node_modules", "dist"]
 }

@@ -5,32 +5,41 @@ export const MESSAGE_TYPES = {
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
   UPDATE_MODEL: 'update-model',
+  ERROR_CHAT: 'error-chat',
 
   UPDATE_SETTINGS: 'update-settings',
-  SYNC_GLOBAL_STATE: 'sync-global-state',
+  UPDATE_GLOBAL_STATE: 'update-global-state',
   CLEAR_GLOBAL_STATE: 'clear-global-state',
+  GET_GLOBAL_STATE: 'get-global-state',
 
   CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
   START_CONFLUENCE_SYNC: 'start-confluence-sync',
+  STOP_CONFLUENCE_SYNC: 'stop-confluence-sync',
   SYNC_CONFLUENCE_IN_PROGRESS: 'sync-confluence-progress',
   SYNC_CONFLUENCE_COMPLETE: 'sync-confluence-complete',
   CONFLUENCE_CONNECTION_STATUS:'confluence-connection-status',
   SYNC_CONFLUENCE_ERROR: 'sync-confluence-error',
+  SYNC_CONFLUENCE_STOP: 'sync-confluence-stop',
+  RESUME_CONFLUENCE_SYNC: 'resume-confluence-sync',
 
   SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
   SYNC_CODEBASE_COMPLETE: 'sync-codebase-complete',
+  STOP_CODEBASE_SYNC: 'stop-codebase-sync',
   CODEBASE_CONNECTION_STATUS:'codebase-connection-status',
   SYNC_CODEBASE_ERROR: 'sync-codebase-error',
 
   INDEXING_CONFLUENCE_ERROR: 'indexing-confluence-error',
   INDEXING_CONFLUENCE_IN_PROGRESS: 'indexing-confluence-progress',
   INDEXING_CONFLUENCE_COMPLETE: 'indexing-confluence-complete',
+  RESUME_INDEXING_CONFLUENCE: 'resume-indexing-confluence',
 
   MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
   MODEL_DOWNLOAD_ERROR: 'model-download-error',
 
-};
+  OLLAMA_STATUS: 'ollama-status',
+  RETRY_OLLAMA_CHECK: 'retry-ollama-check',
+} as const;
 
 // UI Constants
 export const UI_CONSTANTS = {
@@ -42,10 +51,10 @@ export const UI_CONSTANTS = {
 // Storage Keys
 export const STORAGE_KEYS = {
   CHAT: 'chat',
-  SETTINGS: 'globalSettings',
-  WORKSPACE_SETTINGS: 'workspaceGPT-settings',
-  MODEL_PROVIDER: 'OLLAMA',
-  DEFAULT_MODEL: 'llama3.2:1b'
+  SETTINGS: 'settings',
+  MODEL: 'model',
+  CONFLUENCE_SYNC_PROGRESS: 'confluence-sync-progress',
+  EMBEDDING_PROGRESS: 'embedding-progress',
 };
 
 // Extension Constants
@@ -57,8 +66,10 @@ export const EXTENSION = {
 
 // Model Constants
 export const MODEL = {
-  DEFAULT_DIMENSIONS: 384, // Default dimension for all-MiniLM-L6-v2
-  DEFAULT_NAME: 'Xenova/all-MiniLM-L6-v2'
+  MODEL_PROVIDER: 'OLLAMA',
+  DEFAULT_CHAT_MODEL: 'llama3.2:1b',
+  DEFAULT_DIMENSIONS: 768, // Default dimensions for the embedding model
+  DEFAULT_OLLAMA_EMBEDDING_MODEL: 'nomic-embed-text' // Default Ollama embedding model
 };
 
 export const WORKER_STATUS = {
@@ -67,3 +78,9 @@ export const WORKER_STATUS = {
   ERROR: 'error',
   PROCESSED: 'processed'
 };
+
+export type ModelType = 'chat' | 'embedding'
+export enum ModelTypeEnum {
+  Chat = 'chat',
+  Embedding = 'embedding'
+}

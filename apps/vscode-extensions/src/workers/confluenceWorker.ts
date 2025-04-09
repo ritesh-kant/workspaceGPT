@@ -3,32 +3,35 @@ import type { ConfluencePage } from '@workspace-gpt/confluence-utils';
 import { parentPort, workerData } from 'worker_threads';
 import { WORKER_STATUS } from '../../constants';
 // Import path for dynamic import
-const CONFLUENCE_MODULE = '@workspace-gpt/confluence-utils';
+import {
+  ConfluencePageFetcher,
+  processPage,
+  sleep,
+} from '@workspace-gpt/confluence-utils';
 
 interface WorkerData {
   spaceKey: string;
   confluenceBaseUrl: string;
   apiToken: string;
   userEmail: string;
+  resume?: boolean;
+  lastProcessedPageId?: string;
+  processedPages?: number;
 }
 
 // Receive data from main thread
-const { spaceKey, confluenceBaseUrl, apiToken, userEmail } =
-  workerData as WorkerData;
+const {
+  spaceKey,
+  confluenceBaseUrl,
+  apiToken,
+  userEmail,
+  resume,
+  lastProcessedPageId,
+  processedPages,
+} = workerData as WorkerData;
 
 async function fetchAndProcessPages() {
   try {
-    // Dynamically import the module - using Function constructor to prevent
-    // TypeScript from transforming this to require() during transpilation
-    const importModule = new Function(
-      'modulePath',
-      'return import(modulePath)'
-    );
-    const confluenceUtils = await importModule(CONFLUENCE_MODULE);
-    const ConfluencePageFetcher = confluenceUtils.ConfluencePageFetcher;
-    const processPage = confluenceUtils.processPage;
-    const sleep = confluenceUtils.sleep;
-
     // Create the page fetcher
     const extractor = new ConfluencePageFetcher(
       spaceKey,
@@ -40,47 +43,73 @@ async function fetchAndProcessPages() {
 
     // Get total pages count
     const totalSize = await extractor.getTotalPages();
-    // parentPort?.postMessage({ type: 'totalPages', count: totalSize });
+    parentPort?.postMessage({ type: 'totalPages', count: totalSize });
 
     // Fetch all pages
-    let start = 0;
-    let processedCount = 0;
+    let start = resume && processedPages ? processedPages : 0;
+    let processedCount = resume && processedPages ? processedPages : 0;
     let hasMore = true;
     let allPages: ConfluencePage[] = [];
+    let foundLastProcessedPage = !resume || !lastProcessedPageId;
+
     try {
-      // TODO: remove (allPages.length < 40) condition
-        while (hasMore && allPages.length < 40) {
-          const response = await extractor.fetchPages(start, 10);
-          const { results, size, _links } = response;
-          allPages = allPages.concat(results);
+      // while (hasMore && allPages.length < 30) {
+        while (hasMore) {
+        const response = await extractor.fetchPages(start, 10);
+        const { results, size, _links } = response;
 
-          processedCount = await processPageBatch(
-            results,
-            processedCount,
-            totalSize,
-            processPage
+        // If resuming, skip pages until we find the last processed page
+        if (resume && lastProcessedPageId && !foundLastProcessedPage) {
+          const lastProcessedIndex = results.findIndex(
+            (page) => page.id === lastProcessedPageId
           );
-
-          if (!_links.next) {
-            hasMore = false;
+          if (lastProcessedIndex !== -1) {
+            // Skip the last processed page and all previous pages
+            results.splice(0, lastProcessedIndex + 1);
+            foundLastProcessedPage = true;
           } else {
+            // If we haven't found the last processed page yet, skip this batch
             start += size;
-            await sleep(1000);
+            if (!_links.next) {
+              hasMore = false;
+            }
+            continue;
           }
-
-          const progress = ((processedCount / totalSize) * 100).toFixed(1);
-          console.log(
-            `📊 Progress: ${progress}% (${processedCount}/${totalSize} pages)`
-          );
-          parentPort?.postMessage({
-            type: WORKER_STATUS.PROCESSING,
-            progress,
-            current: processedCount,
-            total: totalSize,
-          });
         }
 
-      parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED, pages: allPages });
+        allPages = allPages.concat(results);
+
+        processedCount = await processPageBatch(
+          results,
+          processedCount,
+          totalSize,
+          processPage
+        );
+
+        if (!_links.next) {
+          hasMore = false;
+        } else {
+          start += size;
+          await sleep(1000);
+        }
+
+        const progress = ((processedCount / totalSize) * 100).toFixed(1);
+        console.log(
+          `📊 Progress: ${progress}% (${processedCount}/${totalSize} pages)`
+        );
+        parentPort?.postMessage({
+          type: WORKER_STATUS.PROCESSING,
+          progress,
+          current: processedCount,
+          total: totalSize,
+          lastProcessedPageId: results[results.length - 1]?.id,
+        });
+      }
+
+      parentPort?.postMessage({
+        type: WORKER_STATUS.COMPLETED,
+        pages: allPages,
+      });
     } catch (error) {
       parentPort?.postMessage({
         type: WORKER_STATUS.ERROR,
@@ -117,9 +146,9 @@ async function processPageBatch(
         // Send each processed page back to the manager for saving
         parentPort?.postMessage({
           type: WORKER_STATUS.PROCESSED,
-          page: processedPage
+          page: processedPage,
         });
-        
+
         updatedCount++;
         console.log(
           `✅ Processed and sent page ${updatedCount}/${totalSize}: ${processedPage.filename}`

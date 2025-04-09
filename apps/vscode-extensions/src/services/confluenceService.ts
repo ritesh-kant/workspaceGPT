@@ -3,7 +3,8 @@ import * as vscode from 'vscode';
 import { Worker } from 'worker_threads';
 import * as fs from 'fs';
 import { promisify } from 'util';
-import { MESSAGE_TYPES, WORKER_STATUS } from '../../constants';
+import { MESSAGE_TYPES, WORKER_STATUS, STORAGE_KEYS } from '../../constants';
+import { ConfluencePageFetcher } from '@workspace-gpt/confluence-utils';
 
 interface ProcessedPage {
   filename: string;
@@ -18,10 +19,18 @@ interface ConfluenceConfig {
   apiToken: string;
 }
 
+interface SyncProgress {
+  processedPages: number;
+  totalPages: number;
+  lastProcessedPageId?: string;
+  isComplete: boolean;
+}
+
 export class ConfluenceService {
   private worker: Worker | null = null;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
+  private syncProgress: SyncProgress | null = null;
 
   constructor(
     webviewView: vscode.WebviewView,
@@ -29,29 +38,88 @@ export class ConfluenceService {
   ) {
     this.webviewView = webviewView;
     this.context = context;
+    this.loadSyncProgress();
+  }
+
+  private async loadSyncProgress(): Promise<void> {
+    try {
+      const progress = await this.context.globalState.get<SyncProgress>(
+        STORAGE_KEYS.CONFLUENCE_SYNC_PROGRESS
+      );
+      this.syncProgress = progress || null;
+    } catch (error) {
+      console.error('Error loading sync progress:', error);
+      this.syncProgress = null;
+    }
+  }
+
+  private async saveSyncProgress(progress: SyncProgress): Promise<void> {
+    try {
+      await this.context.globalState.update(
+        STORAGE_KEYS.CONFLUENCE_SYNC_PROGRESS,
+        progress
+      );
+      this.syncProgress = progress;
+    } catch (error) {
+      console.error('Error saving sync progress:', error);
+    }
+  }
+
+  async getTotalPages(config: ConfluenceConfig) {
+    try {
+      // Create the page fetcher
+      const extractor = new ConfluencePageFetcher(
+        config.spaceKey,
+        config.baseUrl,
+        config.apiToken,
+        config.userEmail,
+        config.apiToken
+      );
+
+      // Get total pages count
+      const totalSize = await extractor.getTotalPages();
+      return totalSize; // Return the total pages coun
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error('❌ Error getting total pages:', errorMessage);
+      throw error;
+    }
   }
 
   public async startSync(
     config: ConfluenceConfig,
-    onComplete?: () => Promise<void>
+    onComplete?: () => Promise<void>,
+    resume: boolean = false
   ): Promise<void> {
     try {
       // Stop any existing worker
       this.stopSync();
 
+      // Load the current progress if resuming
+      if (resume && this.syncProgress) {
+        console.log(`Resuming sync from ${this.syncProgress.processedPages}/${this.syncProgress.totalPages} pages`);
+      } else {
+        // Reset progress if not resuming
+        this.syncProgress = {
+          processedPages: 0,
+          totalPages: 0,
+          isComplete: false
+        };
+        await this.saveSyncProgress(this.syncProgress);
+      }
+
       // Create a new worker
-      const workerPath = path.join(
-        __dirname,
-        '..',
-        'workers',
-        'confluenceWorker.js'
-      );
+      const workerPath = path.join(__dirname, 'workers', 'confluenceWorker.js');
       this.worker = new Worker(workerPath, {
         workerData: {
           spaceKey: config.spaceKey,
           confluenceBaseUrl: config.baseUrl,
           apiToken: config.apiToken,
           userEmail: config.userEmail,
+          resume: resume,
+          lastProcessedPageId: this.syncProgress?.lastProcessedPageId,
+          processedPages: this.syncProgress?.processedPages || 0
         },
       });
 
@@ -67,6 +135,15 @@ export class ConfluenceService {
               current: message.current,
               total: message.total,
             });
+            
+            // Update and save progress
+            this.syncProgress = {
+              processedPages: message.current,
+              totalPages: message.total,
+              lastProcessedPageId: message.lastProcessedPageId,
+              isComplete: false
+            };
+            await this.saveSyncProgress(this.syncProgress);
             break;
 
           case WORKER_STATUS.PROCESSED:
@@ -90,9 +167,17 @@ export class ConfluenceService {
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
               source: 'confluence',
-              pagesCount: message.pages.length
+              pagesCount: message.pages.length,
             });
-            
+
+            // Update progress as complete
+            this.syncProgress = {
+              processedPages: message.pages.length,
+              totalPages: message.pages.length,
+              isComplete: true
+            };
+            await this.saveSyncProgress(this.syncProgress);
+
             // Clean up the worker
             this.stopSync();
 
@@ -118,9 +203,12 @@ export class ConfluenceService {
       this.worker.on('exit', (code) => {
         if (code !== 0) {
           console.error(`Worker stopped with exit code ${code}`);
+          // Notify the webview that sync is being stopped
           this.webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
-            message: `Worker process exited with code ${code}`,
+            type: MESSAGE_TYPES.SYNC_CONFLUENCE_STOP,
+            source: 'confluence',
+            progress: 0,
+            message: 'Stopping sync process...',
           });
         }
         this.worker = null;
@@ -137,31 +225,26 @@ export class ConfluenceService {
 
   public stopSync(): void {
     if (this.worker) {
+      console.log('Stopping Confluence sync process...');
+      // Terminate the worker
       this.worker.terminate();
       this.worker = null;
+
+      console.log('Confluence sync process stopped');
     }
   }
 
-  // private async saveToGlobalState(pages: ProcessedPage[]): Promise<void> {
-  //   try {
-  //     // Get existing confluence data or initialize empty object
-  //     const existingData = this.context.globalState.get('workspaceGPT-confluence-data') || {};
+  public getSyncProgress(): SyncProgress | null {
+    return this.syncProgress;
+  }
 
-  //     // Update with new pages data
-  //     const updatedData = {
-  //       ...existingData,
-  //       pages: pages,
-  //       lastSyncTime: new Date().toISOString()
-  //     };
-
-  //     // Save to global state
-  //     await this.context.globalState.update('workspaceGPT-confluence-data', updatedData);
-  //     console.log('Saved confluence data to global state');
-  //   } catch (error) {
-  //     console.error('Error saving to global state:', error);
-  //     throw error;
-  //   }
-  // }
+  public async resetSyncProgress(): Promise<void> {
+    this.syncProgress = null;
+    await this.context.globalState.update(
+      STORAGE_KEYS.CONFLUENCE_SYNC_PROGRESS,
+      undefined
+    );
+  }
 
   private async saveProcessedPageAsMd(page: ProcessedPage): Promise<void> {
     try {
