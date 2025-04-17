@@ -14,6 +14,11 @@ export default defineConfig({
         chunkFileNames: 'assets/[name].js',
         assetFileNames: 'assets/[name].[ext]'
       }
+    },
+    terserOptions: {
+      compress: {
+        drop_console: true
+      }
     }
   },
   base: './' // This is important for VS Code webviews
