@@ -5,7 +5,7 @@
   height: 100vh;
   padding: 0;
   box-sizing: border-box;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   /* background-color: var(--vscode-editor-background); */
   color: var(--vscode-editor-foreground);
   position: relative;
@@ -31,7 +31,7 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  padding: 0.5rem 0.75rem;
+  /* padding: 0.5rem 0.75rem; */
   border-bottom: 1px solid var(--vscode-editor-lineHighlightBorder);
   width: 100%;
   box-sizing: border-box;
@@ -39,7 +39,7 @@
 
 .chat-header h2 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 500;
   color: var(--vscode-foreground);
 }
@@ -95,7 +95,7 @@
   display: flex;
   flex-direction: column;
   max-width: 800px;
-  padding: 1rem;
+  padding: 0.5rem;
   animation: fadeIn 0.5s ease-out;
 }
 
@@ -105,9 +105,9 @@
 }
 
 .welcome-title {
-  font-size: 2rem;
+  font-size: 1.7rem;
   font-weight: 700;
-  margin: 0 0 1rem;
+  margin: 0 0 0.8rem;
   background: linear-gradient(135deg, var(--vscode-textLink-foreground), var(--vscode-textLink-activeForeground));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -116,7 +116,7 @@
 }
 
 .welcome-subtitle {
-  font-size: 1.2rem;
+  font-size: 1rem;
   color: var(--vscode-descriptionForeground);
   margin: 0;
   text-align: center;
@@ -143,13 +143,13 @@
 .prerequisite-message {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  font-size: 1rem;
-  line-height: 1.5;
+  gap: 0.8rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
 }
 
 .prerequisite-icon {
-  font-size: 1.75rem;
+  font-size: 1.5rem;
 }
 
 .privacy-container {
@@ -175,26 +175,26 @@
 .privacy-message {
   display: flex;
   align-items: flex-start;
-  gap: 1.25rem;
-  font-size: 1rem;
-  line-height: 1.6;
+  gap: 1rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
   color: var(--vscode-editor-foreground);
 }
 
 .privacy-icon {
-  font-size: 2rem;
+  font-size: 1.7rem;
   color: var(--vscode-textLink-foreground);
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
 }
 
 .tips-container {
-  margin-top: 1rem;
+  margin-top: 0.5rem;
 }
 
 .tips-title {
-  font-size: 1.3rem;
+  font-size: 1.1rem;
   font-weight: 600;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.2rem;
   color: var(--vscode-editor-foreground);
   text-align: center;
 }
@@ -227,7 +227,7 @@
 }
 
 .tip-icon {
-  font-size: 1.5rem;
+  font-size: 1.3rem;
   color: var(--vscode-textLink-foreground);
 }
 
@@ -265,7 +265,7 @@
 }
 
 .tip-icon {
-  font-size: 1.2rem;
+  font-size: 1rem;
 }
 
 .tip-item code {
@@ -273,26 +273,27 @@
   padding: 0.2em 0.4em;
   border-radius: 4px;
   font-family: var(--vscode-editor-font-family);
-  font-size: 0.9em;
+  font-size: 0.8em;
 }
 
 /* Messages container styles */
 .messages-container {
   flex: 1;
   overflow-y: auto;
-  padding: 2.5rem 0.75rem 0.75rem;
+  padding: 2rem 0.75rem 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.6rem;
 }
 
 /* Message styles */
 .message {
-  padding: 1rem;
-  margin: 0.5rem 0;
+  padding: 0.8rem;
+  margin: 0.4rem 0;
   border-radius: 8px;
   max-width: 100%;
   word-wrap: break-word;
+  font-size: 0.8rem;
 }
 
 .error-message {
@@ -383,10 +384,11 @@ button:hover:not(:disabled) {
 
 /* Loading indicator styles */
 .loading-indicator {
-  align-self: center;
+  padding: 0.8rem;
+  text-align: center;
   color: var(--vscode-descriptionForeground);
-  margin: 0.5rem 0;
   font-style: italic;
+  font-size: 0.8rem;
 }
 
 
@@ -421,7 +423,7 @@ button:hover:not(:disabled) {
   background-color: var(--vscode-textBlockQuote-background);
   padding: 0.2em 0.4em;
   border-radius: 3px;
-  font-size: 0.9em;
+  font-size: 0.8em;
 }
 
 .markdown-content pre {
@@ -478,7 +480,7 @@ button:hover:not(:disabled) {
 .model-selector select {
   width: 100%;
   padding: 4px 8px;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   border: 1px solid var(--vscode-input-border);
   border-radius: 4px;
   background-color: var(--vscode-input-background);
@@ -535,7 +537,7 @@ button:hover:not(:disabled) {
   justify-content: space-between;
   gap: 8px;
   color: var(--vscode-inputValidation-errorForeground);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
 }
 
 .warning-icon {
@@ -588,7 +590,7 @@ button:hover:not(:disabled) {
   background-color: var(--vscode-textBlockQuote-background);
   padding: 0.2em 0.4em;
   border-radius: 3px;
-  font-size: 0.9em;
+  font-size: 0.8em;
 }
 
 .markdown-content pre {
@@ -645,7 +647,7 @@ button:hover:not(:disabled) {
 .model-selector select {
   width: 100%;
   padding: 4px 8px;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   border: 1px solid var(--vscode-input-border);
   border-radius: 4px;
   background-color: var(--vscode-input-background);

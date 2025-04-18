@@ -29,7 +29,7 @@
   background: none;
   border: none;
   color: var(--vscode-icon-foreground);
-  font-size: 1.5rem;
+  font-size: 1.3rem;
   cursor: pointer;
   padding: 0;
   line-height: 1;
@@ -52,7 +52,7 @@
 }
 
 .form-group label {
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: var(--vscode-foreground);
 }
 
@@ -62,7 +62,7 @@
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
   border-radius: 2px;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
 }
 
 .form-group input:focus {
@@ -83,7 +83,7 @@
   border: none;
   border-radius: 2px;
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
 }
 
 .button-group button:hover {
