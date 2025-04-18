@@ -94,7 +94,8 @@ Have questions or issues?
 
 1. Check the [documentation](docs/)
 2. Open an issue on GitHub
-3. Reach out to the maintainers
+3. Email us at contact@workspacegpt.in
+4. Reach out to the maintainers
 
 ## 🙏 Acknowledgments
 
