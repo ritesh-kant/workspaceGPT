@@ -63,6 +63,8 @@
     "build": "pnpm build-webview && node esbuild.config.js",
     "watch": "pnpm watch-webview && node esbuild.config.js --watch",
     "vscode:publish": "vsce publish --no-dependencies",
+    "vscode:publish-pre-release": "vsce publish --no-dependencies --pre-release",
+    "vscode:test": "vsce package --no-dependencies && code --install-extension workspacegpt-extension-${npm_package_version}.vsix",
     "build-webview": "cd webview && pnpm install && pnpm run build",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
@@ -87,5 +89,6 @@
     "dist",
     "webview/dist",
     "resources"
-  ]
+  ],
+  "preview": false
 }
