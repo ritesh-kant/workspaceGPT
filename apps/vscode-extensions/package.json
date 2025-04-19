@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "WorkspaceGPT is a fully local, privacy-first AI assistant for your development environment. Ask questions about your codebase or integrated Confluence documents — all without sending any data to external servers.",
-  "version": "0.0.47",
+  "version": "0.0.48",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
@@ -10,7 +10,7 @@
     "url": "https://github.com/ritesh-kant/workspaceGPT"
   },
   "engines": {
-    "vscode": "^1.57.0"
+    "vscode": "^1.87.0"
   },
   "categories": [
     "Other"
@@ -113,7 +113,7 @@
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
     "@types/node": "18.x",
-    "@types/vscode": "^1.57.0",
+    "@types/vscode": "^1.87.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
     "esbuild": "^0.20.1",
