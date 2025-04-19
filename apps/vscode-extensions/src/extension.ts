@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { WebViewProvider } from './webViewprovider';
-import { EXTENSION, STORAGE_KEYS, MESSAGE_TYPES, MODEL } from '../constants';
-import { ChatService } from './services/chatService';
+import { EXTENSION, MESSAGE_TYPES } from '../constants';
 
 export async function activate(context: vscode.ExtensionContext) {
   // Register WebViewProvider
