@@ -7,10 +7,14 @@ export class WebviewHtmlTemplate {
 
   public getHtml(webview: vscode.Webview): string {
     try {
-      return this.getReactHtml(webview) || this.getFallbackHtml();
+      const html = this.getReactHtml(webview);
+      if (!html) {
+        throw new Error('React build not available');
+      }
+      return html;
     } catch (error) {
       console.error('Error loading webview HTML:', error);
-      return this.getFallbackHtml();
+      throw error;
     }
   }
 
@@ -63,134 +67,5 @@ export class WebviewHtmlTemplate {
     return html;
   }
 
-  private getFallbackHtml(): string {
-    return ` <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>WorkspaceGPT Chat</title>
-                <style>
-                    body {
-                        padding: 4px;
-                        color: var(--vscode-foreground);
-                        font-family: var(--vscode-font-family);
-                    }
-                    #chat-container {
-                        display: flex;
-                        flex-direction: column;
-                        height: calc(100vh - 20px);
-                    }
-                    #messages {
-                        flex-grow: 1;
-                        overflow-y: auto;
-                        margin-bottom: 10px;
-                        padding: 10px;
-                        background: var(--vscode-input-background);
-                        border: 1px solid var(--vscode-input-border);
-                        border-radius: 4px;
-                    }
-                    .message {
-                        margin-bottom: 10px;
-                        padding: 8px;
-                        border-radius: 4px;
-                    }
-                    .user-message {
-                        background: var(--vscode-button-background);
-                        color: var(--vscode-button-foreground);
-                    }
-                    .bot-message {
-                        background: var(--vscode-editor-background);
-                        border: 1px solid var(--vscode-input-border);
-                    }
-                    #input-container {
-                        display: flex;
-                        gap: 10px;
-                    }
-                    #message-input {
-                        flex-grow: 1;
-                        padding: 8px;
-                        background: var(--vscode-input-background);
-                        color: var(--vscode-input-foreground);
-                        border: 1px solid var(--vscode-input-border);
-                        border-radius: 4px;
-                    }
-                    #send-button {
-                        padding: 8px 16px;
-                        background: var(--vscode-button-background);
-                        color: var(--vscode-button-foreground);
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                    }
-                    #send-button:hover {
-                        background: var(--vscode-button-hoverBackground);
-                    }
-                    .loading {
-                        display: none;
-                        margin: 10px 0;
-                        color: var(--vscode-descriptionForeground);
-                    }
-                </style>
-            </head>
-            <body>
-                <div id="chat-container">
-                    <div id="messages"></div>
-                    <div class="loading">html Processing...</div>
-                    <div id="input-container">
-                        <input type="text" id="message-input" placeholder="Type your message...">
-                        <button id="send-button">Send</button>
-                    </div>
-                </div>
-                <script>
-                    const vscode = acquireVsCodeApi();
-                    const messagesContainer = document.getElementById('messages');
-                    const messageInput = document.getElementById('message-input');
-                    const sendButton = document.getElementById('send-button');
-                    const loadingIndicator = document.querySelector('.loading');
 
-                    function appendMessage(content, isUser) {
-                        const messageDiv = document.createElement('div');
-                        messageDiv.className = "message " + (isUser ? 'user-message' : 'bot-message');
-                        messageDiv.textContent = content;
-                        messagesContainer.appendChild(messageDiv);
-                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                    }
-
-                    function sendMessage() {
-                        const message = messageInput.value.trim();
-                        if (message) {
-                            appendMessage(message, true);
-                            loadingIndicator.style.display = 'block';
-                            vscode.postMessage({
-                                type: 'sendMessage',
-                                message: message
-                            });
-                            messageInput.value = '';
-                        }
-                    }
-
-                    sendButton.addEventListener('click', sendMessage);
-                    messageInput.addEventListener('keypress', (e) => {
-                        if (e.key === 'Enter') {
-                            sendMessage();
-                        }
-                    });
-
-                    window.addEventListener('message', event => {
-                        const message = event.data;
-                        loadingIndicator.style.display = 'none';
-                        switch (message.type) {
-                            case 'response':
-                                appendMessage(message.message, false);
-                                break;
-                            case 'error':
-                                appendMessage("Error: " + message.message, false);
-                                break;
-                        }
-                    });
-                </script>
-            </body>
-            </html>`;
-  }
 }

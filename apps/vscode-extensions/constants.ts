@@ -4,6 +4,7 @@ export const MESSAGE_TYPES = {
   RECEIVE_MESSAGE: 'receive-message',
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
+  SHOW_SETTINGS: 'show-settings',
   UPDATE_MODEL: 'update-model',
   ERROR_CHAT: 'error-chat',
 
@@ -61,6 +62,8 @@ export const STORAGE_KEYS = {
 export const EXTENSION = {
   VIEW_TYPE: 'workspacegpt.chatView',
   COMMAND_ASK: 'workspacegpt.ask',
+  COMMAND_NEW_CHAT: 'workspacegpt.newChat',
+  COMMAND_SETTINGS: 'workspacegpt.settings',
   VIEW_CONTAINER: 'workspacegpt-sidebar'
 };
 

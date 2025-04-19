@@ -36,17 +36,6 @@ const App: React.FC = () => {
 
   const [isOllamaRunning, setIsOllamaRunning] = useState(true);
 
-  const handleNewChat = () => {
-    setIsLoading(true);
-    vscode.postMessage({
-      type: MESSAGE_TYPES.NEW_CHAT,
-    });
-    clearMessages();
-    setInputValue('');
-    setIsLoading(false);
-    setShowTips(true);
-  };
-
   useEffect(() => {
     // Handle messages from the extension
 
@@ -106,6 +95,18 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.OLLAMA_STATUS:
           setIsOllamaRunning(message.isRunning);
+          break;
+        case MESSAGE_TYPES.SHOW_SETTINGS:
+          setShowSettings(true);
+          break;
+        case MESSAGE_TYPES.NEW_CHAT:
+          // Clear messages and reset the chat state
+          setIsLoading(true);
+          clearMessages();
+          setInputValue('');
+          setIsLoading(false);
+          setShowTips(true);
+          hideSettings();
           break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
@@ -171,13 +172,8 @@ const App: React.FC = () => {
     }
   };
 
-  // Add a handler for showing settings
-  const handleShowSettings = () => {
-    setShowSettings(true);
-  };
-
   // Add a handler for hiding settings
-  const handleCloseSettings = () => {
+  const hideSettings = () => {
     setShowSettings(false);
   };
 
@@ -249,22 +245,6 @@ const App: React.FC = () => {
                     />
                   </div>
                 )}
-              </div>
-              <div className='header-buttons'>
-                <button
-                  className='settings-button'
-                  onClick={handleShowSettings}
-                  title='Settings'
-                  aria-label='Settings'
-                >
-                  <span className='settings-icon'>⚙️</span>
-                </button>
-                <button
-                  className='new-chat-button'
-                  onClick={handleNewChat}
-                  title='Start a new chat'
-                  aria-label='Start new chat'
-                />
               </div>
             </div>
           </div>
@@ -366,7 +346,7 @@ const App: React.FC = () => {
         </div>
         <SettingsButton
           isVisible={showSettings}
-          onClose={handleCloseSettings}
+          onBack={hideSettings}
         />
       </div>
     </div>

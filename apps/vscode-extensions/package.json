@@ -10,7 +10,7 @@
     "url": "https://github.com/ritesh-kant/workspaceGPT"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.57.0"
   },
   "categories": [
     "Other"
@@ -22,6 +22,22 @@
       {
         "command": "workspacegpt.ask",
         "title": "Ask WorkspaceGPT"
+      },
+      {
+        "command": "workspacegpt.newChat",
+        "title": "New Chat",
+        "icon": {
+          "light": "resources/plus-dark.svg",
+          "dark": "resources/plus-light.svg"
+        }
+      },
+      {
+        "command": "workspacegpt.settings",
+          "title": "Settings",
+          "icon": {
+            "light": "resources/settings-dark.svg",
+            "dark": "resources/settings-light.svg"
+          }
       }
     ],
     "keybindings": [
@@ -48,7 +64,26 @@
           "name": "WorkspaceGPT",
           "icon": "resources/sidebar-icon.svg",
           "visibility": "visible"
-
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "workspacegpt.chatView",
+        "contents": "Welcome to WorkspaceGPT"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "workspacegpt.newChat",
+          "when": "view == workspacegpt.chatView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "workspacegpt.settings",
+          "when": "view == workspacegpt.chatView",
+          "group": "navigation@1"
         }
       ]
     },
@@ -78,7 +113,7 @@
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
     "@types/node": "18.x",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.57.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
     "esbuild": "^0.20.1",

@@ -47,7 +47,7 @@ export class WebviewMessageHandler {
 
   public async initializeModels(): Promise<void> {
     const isOllamaRunning = await isOllamaRunningCheck();
-    
+
     if (!this.isModelInitialized && isOllamaRunning) {
       const chatModelId = MODEL.DEFAULT_CHAT_MODEL;
       const embeddingModelId = MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL;
@@ -66,7 +66,7 @@ export class WebviewMessageHandler {
       }
       await this.chatService.initializeModel(chatModelId, ModelTypeEnum.Chat);
       await this.chatService.initializeModel(embeddingModelId, ModelTypeEnum.Embedding);
-      
+
       this.isModelInitialized = true;
     }
   }
@@ -99,6 +99,9 @@ export class WebviewMessageHandler {
         break;
       case MESSAGE_TYPES.NEW_CHAT:
         await this.handleNewChat();
+        break;
+      case MESSAGE_TYPES.SHOW_SETTINGS:
+        await this.handleShowSettings();
         break;
       case MESSAGE_TYPES.SEND_MESSAGE:
         await this.handleSendMessage(data);
@@ -200,7 +203,7 @@ export class WebviewMessageHandler {
           'Confluence configuration is incomplete. Please check your settings.'
         );
       }
-      
+
       // Check if there's progress to resume
       const progress = this.confluenceService?.getSyncProgress();
       if (!progress || progress.isComplete) {
@@ -208,10 +211,10 @@ export class WebviewMessageHandler {
         await this.handleStartConfluenceSync();
         return;
       }
-      
+
       // Resume the sync with the existing progress
       await this.confluenceService?.startSync(
-        this.confluenceConfig, 
+        this.confluenceConfig,
         () => this.handleCompleteConfluenceSync(),
         true // resume parameter
       );
@@ -253,7 +256,7 @@ export class WebviewMessageHandler {
       //     this.context
       //   );
       // }
-      
+
       // Check if there's progress to resume
       const progress = this.embeddingService?.getEmbeddingProgress();
       if (!progress || progress.isComplete) {
@@ -263,7 +266,7 @@ export class WebviewMessageHandler {
         } as EmbeddingConfig);
         return;
       }
-      
+
       // Resume the indexing with the existing progress
       await this.embeddingService?.createEmbeddings(
         {
@@ -288,6 +291,17 @@ export class WebviewMessageHandler {
       await this.chatService.newChat();
     } catch (error) {
       this.handleError('Error starting new chat:', error);
+    }
+  }
+
+  private async handleShowSettings(): Promise<void> {
+    try {
+      // Send a message to the webview to show the settings panel
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.SHOW_SETTINGS
+      });
+    } catch (error) {
+      this.handleError('Error showing settings:', error);
     }
   }
 

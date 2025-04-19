@@ -6,12 +6,12 @@ import { MESSAGE_TYPES } from '../constants';
 
 interface SettingsButtonProps {
   isVisible: boolean;
-  onClose: () => void;
+  onBack: () => void;
 }
 
 const SettingsButton: React.FC<SettingsButtonProps> = ({
   isVisible,
-  onClose,
+  onBack,
 }) => {
   // Use settings store instead of local state
   const {
@@ -341,14 +341,16 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   return (
     <div className='settings-panel'>
       <div className='settings-header'>
-        <h2>Settings</h2>
-        <button
-          className='close-button'
-          onClick={onClose}
-          aria-label='Close settings'
-        >
-          ×
-        </button>
+        <div className='header-with-back'>
+          <button
+            className='back-button'
+            onClick={onBack}
+            aria-label='Go back'
+          >
+            ←
+          </button>
+          <h3>Settings</h3>
+        </div>
       </div>
 
       <div className='settings-section'>

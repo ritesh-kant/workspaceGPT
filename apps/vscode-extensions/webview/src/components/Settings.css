@@ -25,14 +25,26 @@
   border-bottom: 1px solid var(--vscode-panel-border);
 }
 
-.close-button {
+.header-with-back {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.back-button {
   background: none;
   border: none;
   color: var(--vscode-icon-foreground);
-  font-size: 1.3rem;
+  font-size: 1.2rem;
   cursor: pointer;
-  padding: 0;
+  padding: 0.2rem 0.5rem;
   line-height: 1;
+  border-radius: 4px;
+}
+
+.back-button:hover {
+  color: var(--vscode-foreground);
+  background-color: var(--vscode-button-hoverBackground);
 }
 
 .close-button:hover {

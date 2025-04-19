@@ -124,7 +124,7 @@ export class ChatService {
 
     // Notify webview
     this.webviewView.webview.postMessage({
-      type: 'newChatCreated',
+      type: MESSAGE_TYPES.NEW_CHAT,
     });
   }
 
@@ -202,12 +202,12 @@ export class ChatService {
         'workers',
         'modelWorker.js'
       );
-      
+
       // Format chat history for the prompt
       const formattedChatHistory = this.chatHistory
         .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
         .join('\n\n');
-        
+
       const modelWorker = new Worker(workerPath, {
         workerData: {
           prompt: message,
