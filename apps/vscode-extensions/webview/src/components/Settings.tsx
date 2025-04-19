@@ -701,7 +701,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             );
           }}
         >
-          Reset VSCode State
+          Reset WorkspaceGPT
         </button>
       </div>
     </div>
