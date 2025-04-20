@@ -107,7 +107,7 @@
 .welcome-title {
   font-size: 1.7rem;
   font-weight: 700;
-  margin: 0 0 0.8rem;
+  margin: 1rem;
   background: linear-gradient(135deg, var(--vscode-textLink-foreground), var(--vscode-textLink-activeForeground));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
