@@ -30,12 +30,17 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
 
     this.messageHandler = new WebviewMessageHandler(webviewView, this._context);
 
+    // Configure close button in the tab
+    webviewView.description = "Close";
+    webviewView.title = "WorkspaceGPT";
+    webviewView.onDidDispose(() => {
+      this._view = undefined;
+    });
+
     this.configureWebview(webviewView);
     this.setWebviewHtml(webviewView);
     this.setupMessageHandler(webviewView);
 
-    // Initialize models
-    // await this.messageHandler.initializeModels();
     if(confluenceConfig?.isIndexing) {
       this.sendMessage(MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE);
     }

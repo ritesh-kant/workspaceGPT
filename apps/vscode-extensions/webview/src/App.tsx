@@ -36,17 +36,6 @@ const App: React.FC = () => {
 
   const [isOllamaRunning, setIsOllamaRunning] = useState(true);
 
-  const handleNewChat = () => {
-    setIsLoading(true);
-    vscode.postMessage({
-      type: MESSAGE_TYPES.NEW_CHAT,
-    });
-    clearMessages();
-    setInputValue('');
-    setIsLoading(false);
-    setShowTips(true);
-  };
-
   useEffect(() => {
     // Handle messages from the extension
 
@@ -106,6 +95,18 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.OLLAMA_STATUS:
           setIsOllamaRunning(message.isRunning);
+          break;
+        case MESSAGE_TYPES.SHOW_SETTINGS:
+          setShowSettings(true);
+          break;
+        case MESSAGE_TYPES.NEW_CHAT:
+          // Clear messages and reset the chat state
+          setIsLoading(true);
+          clearMessages();
+          setInputValue('');
+          setIsLoading(false);
+          setShowTips(true);
+          hideSettings();
           break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
@@ -171,13 +172,8 @@ const App: React.FC = () => {
     }
   };
 
-  // Add a handler for showing settings
-  const handleShowSettings = () => {
-    setShowSettings(true);
-  };
-
   // Add a handler for hiding settings
-  const handleCloseSettings = () => {
+  const hideSettings = () => {
     setShowSettings(false);
   };
 
@@ -208,67 +204,7 @@ const App: React.FC = () => {
         </div>
       )}
       <div className='chat-container'>
-        {isOllamaRunning && (
-          <div className='chat-header'>
-            <div className='header-controls'>
-              <div className='model-selector'>
-                <select
-                  value={modelConfig.selectedModel}
-                  onChange={(e) => handleModelChange(e.target.value)}
-                  disabled={modelConfig.isDownloading}
-                  className={modelConfig.isDownloading ? 'loading' : ''}
-                >
-                  {modelConfig.availableModels &&
-                  modelConfig.availableModels.length > 0 ? (
-                    // Render options from available models
-                    modelConfig.availableModels.map((model) => (
-                      <option key={model.model} value={model.model}>
-                        {modelConfig.isDownloading &&
-                        modelConfig.selectedModel === model.model
-                          ? `${model.name} (${modelConfig.downloadProgress}%)`
-                          : `${model.name} (${model?.details?.parameter_size})`}
-                      </option>
-                    ))
-                  ) : (
-                    // Fallback options if no models are available
-                    <>
-                      <option value='llama3.2:1b'>
-                        {modelConfig.isDownloading &&
-                        modelConfig.selectedModel === 'llama3.2:1b'
-                          ? `Llama3.2 (${modelConfig.downloadProgress}%)`
-                          : 'Llama3.2'}
-                      </option>
-                    </>
-                  )}
-                </select>
-                {modelConfig.isDownloading && (
-                  <div className='model-progress'>
-                    <div
-                      className='progress-bar'
-                      style={{ width: `${modelConfig.downloadProgress}%` }}
-                    />
-                  </div>
-                )}
-              </div>
-              <div className='header-buttons'>
-                <button
-                  className='settings-button'
-                  onClick={handleShowSettings}
-                  title='Settings'
-                  aria-label='Settings'
-                >
-                  <span className='settings-icon'>⚙️</span>
-                </button>
-                <button
-                  className='new-chat-button'
-                  onClick={handleNewChat}
-                  title='Start a new chat'
-                  aria-label='Start new chat'
-                />
-              </div>
-            </div>
-          </div>
-        )}
+
         {showTips && messages.length === 0 ? (
           <div className='welcome-container'>
             <h1 className='welcome-title'>👋 Hello</h1>
@@ -331,42 +267,85 @@ const App: React.FC = () => {
               />
             ))}
             {isLoading && (
-              <div className='loading-indicator'>Processing...</div>
+              <div className='loading-indicator'>Thinking...</div>
             )}
             <div ref={messagesEndRef} />
           </div>
         )}
         <div className='input-container'>
-          <input
-            type='text'
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              !isOllamaRunning
-                ? 'Ollama service is not running'
-                : modelConfig.isDownloading
-                  ? 'Please wait for model download to complete...'
-                  : 'Ask WorkspaceGPT...'
-            }
-            disabled={
-              isLoading || modelConfig.isDownloading || !isOllamaRunning
-            }
-          />
-          <button
-            onClick={handleSendMessage}
-            disabled={
-              isLoading || !inputValue.trim() || modelConfig.isDownloading
-            }
-            className='send-button'
-            aria-label='Send message'
-          >
-            ➤
-          </button>
+          <div className='input-wrapper'>
+            <input
+              type='text'
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                !isOllamaRunning
+                  ? 'Ollama service is not running'
+                  : modelConfig.isDownloading
+                    ? 'Please wait for model download to complete...'
+                    : 'Ask WorkspaceGPT...'
+              }
+              disabled={
+                isLoading || modelConfig.isDownloading || !isOllamaRunning
+              }
+            />
+            <div className='input-controls'>
+              <div className='model-selector-bottom'>
+                <select
+                  value={modelConfig.selectedModel}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  disabled={modelConfig.isDownloading}
+                  className={modelConfig.isDownloading ? 'loading' : ''}
+                >
+                  {modelConfig.availableModels &&
+                  modelConfig.availableModels.length > 0 ? (
+                    // Render options from available models
+                    modelConfig.availableModels.map((model) => (
+                      <option key={model.model} value={model.model}>
+                        {modelConfig.isDownloading &&
+                        modelConfig.selectedModel === model.model
+                        ? `${model.name} (${modelConfig.downloadProgress}%)`
+                        : `${model.name} (${model?.details?.parameter_size})`}
+                      </option>
+                    ))
+                  ) : (
+                    // Fallback options if no models are available
+                    <>
+                      <option value='llama3.2:1b'>
+                        {modelConfig.isDownloading &&
+                        modelConfig.selectedModel === 'llama3.2:1b'
+                        ? `Llama3.2 (${modelConfig.downloadProgress}%)`
+                        : 'Llama3.2'}
+                      </option>
+                    </>
+                  )}
+                </select>
+                {modelConfig.isDownloading && (
+                  <div className='model-progress'>
+                    <div
+                      className='progress-bar'
+                      style={{ width: `${modelConfig.downloadProgress}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleSendMessage}
+                disabled={
+                  isLoading || !inputValue.trim() || modelConfig.isDownloading
+                }
+                className='send-button'
+                aria-label='Send message'
+              >
+                ➤
+              </button>
+            </div>
+          </div>
         </div>
         <SettingsButton
           isVisible={showSettings}
-          onClose={handleCloseSettings}
+          onBack={hideSettings}
         />
       </div>
     </div>

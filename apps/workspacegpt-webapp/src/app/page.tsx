@@ -225,13 +225,21 @@ export default function Home() {
               <h2 className="text-2xl font-bold">WorkspaceGPT</h2>
               <p className="mt-2">Talk to your code and your Confluence docs. Locally, privately, and intelligently.</p>
             </div>
-            <div>
-              <h3 className="text-lg font-semibold mb-3">Support</h3>
-              <ul className="space-y-2">
-                <li><a href="#" className="hover:underline">Documentation</a></li>
-                <li><a href="https://github.com/ritesh-kant/workspaceGPT/issues" className="hover:underline">GitHub Issues</a></li>
-                <li><a href="mailto:contact@workspacegpt.in" className="hover:underline">Email Support</a></li>
-              </ul>
+            <div className="flex flex-col md:flex-row gap-12">
+              <div>
+                <h3 className="text-lg font-semibold mb-3">Support</h3>
+                <ul className="space-y-2">
+                  <li><a href="#" className="hover:underline">Documentation</a></li>
+                  <li><a href="https://github.com/ritesh-kant/workspaceGPT/issues" className="hover:underline">GitHub Issues</a></li>
+                  <li><a href="mailto:contact@workspacegpt.in" className="hover:underline">Email Support</a></li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold mb-3">Resources</h3>
+                <ul className="space-y-2">
+                  <li><a href="https://devnotes.tech/tag/workspacegpt/" target="_blank" rel="noopener noreferrer" className="hover:underline">Blog</a></li>
+                </ul>
+              </div>
             </div>
           </div>
           <div className="mt-8 pt-8 border-t border-gray-700 text-center">

@@ -107,7 +107,7 @@
 .welcome-title {
   font-size: 1.7rem;
   font-weight: 700;
-  margin: 0 0 0.8rem;
+  margin: 1rem;
   background: linear-gradient(135deg, var(--vscode-textLink-foreground), var(--vscode-textLink-activeForeground));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -155,8 +155,8 @@
 .privacy-container {
   max-width: 600px;
   padding: 1rem;
-  background: linear-gradient(145deg, 
-    var(--vscode-editor-background), 
+  background: linear-gradient(145deg,
+    var(--vscode-editor-background),
     color-mix(in srgb, var(--vscode-editor-background) 95%, var(--vscode-textLink-foreground))
   );
   border: 1px solid var(--vscode-textLink-foreground);
@@ -342,10 +342,27 @@
 /* Input container styles */
 .input-container {
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
   padding: 0.75rem;
-  border-top: 1px solid var(--vscode-editor-lineHighlightBorder);
-  background-color: var(--vscode-editor-background);
+  margin: 0.25rem;
+  border-radius: 1rem;
+  border: 1px solid var(--vscode-chart-line);
+  background-color: var(--vscode-input-background);
+}
+
+.input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.input-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  width: 100%;
 }
 
 /* Input field styles */
@@ -371,6 +388,18 @@ button {
   border: none;
   border-radius: 4px;
   cursor: pointer;
+}
+
+.send-button {
+  height: 24px;
+  width: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  background-color: transparent;
+  color: var(--vscode-icon-foreground);
 }
 
 button:disabled {
@@ -639,12 +668,12 @@ button:hover:not(:disabled) {
   gap: 1rem;
 }
 
-.model-selector {
+.model-selector, .model-selector-bottom {
   position: relative;
   min-width: 180px;
 }
 
-.model-selector select {
+.model-selector select, .model-selector-bottom select {
   width: 100%;
   padding: 4px 8px;
   font-size: 0.8rem;
@@ -657,7 +686,7 @@ button:hover:not(:disabled) {
   padding-right: 24px;
 }
 
-.model-selector select.loading {
+.model-selector select.loading, .model-selector-bottom select.loading {
   opacity: 0.7;
   cursor: not-allowed;
 }
@@ -671,6 +700,48 @@ button:hover:not(:disabled) {
   pointer-events: none;
   font-size: 0.8rem;
   color: var(--vscode-input-foreground);
+}
+
+.model-selector-bottom::after {
+  content: '▼';
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-size: 0.6rem;
+  color: #cccccc;
+}
+
+/* Specific styles for the bottom model selector */
+.model-selector-bottom {
+  width: auto;
+  min-width: 110px;
+  max-width: 140px;
+  margin-right: 2px;
+}
+
+.model-selector-bottom select {
+  height: 24px;
+  border-radius: 4px;
+  background-color: var(--vscode-input-background);
+  color: #cccccc;
+  font-size: 0.7rem;
+  padding-left: 20px;
+  padding-right: 14px;
+  border: 1px solid var(--vscode-badge-background);
+}
+
+.model-selector-bottom::before {
+  content: 'AI';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.65rem;
+  color: #cccccc;
+  pointer-events: none;
+  font-weight: 500;
 }
 
 .model-progress {
