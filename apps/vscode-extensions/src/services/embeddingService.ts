@@ -90,7 +90,7 @@ export class EmbeddingService {
       await this.ensureDirectoryExists(embeddingDirPath);
 
       // Create a new worker
-      const workerPath = path.join(__dirname, 'workers', 'embeddingWorker.js');
+      const workerPath = path.join(__dirname, 'workers', 'confluence', 'embeddingWorker.js');
       this.worker = new Worker(workerPath, {
         workerData: {
           mdDirPath,
@@ -184,7 +184,7 @@ export class EmbeddingService {
   public async searchEmbeddings(query: string): Promise<SearchResult[]> {
     try {
       // Create a new worker for search
-      const workerPath = path.join(__dirname, 'workers', 'searchWorker.js');
+      const workerPath = path.join(__dirname, 'workers', 'confluence','searchWorker.js');
       const searchWorker = new Worker(workerPath, {
         workerData: {
           query,

@@ -1,17 +1,31 @@
 const esbuild = require('esbuild');
 const path = require('path');
+const fs = require('fs');
 
 const isWatch = process.argv.includes('--watch');
+
+// Function to get all files from a directory recursively
+function getAllFiles(dir, fileList = []) {
+  const files = fs.readdirSync(dir);
+  files.forEach(file => {
+    const filePath = path.join(dir, file);
+    if (fs.statSync(filePath).isDirectory()) {
+      fileList = getAllFiles(filePath, fileList);
+    } else if (file.endsWith('.ts')) {
+      fileList.push(filePath);
+    }
+  });
+  return fileList;
+}
+
+// Get all worker files
+const workerFiles = getAllFiles(path.join(__dirname, 'src/workers'));
 
 /** @type {import('esbuild').BuildOptions} */
 const baseConfig = {
   entryPoints: [
     'src/extension.ts',
-    'src/workers/modelWorker.ts',
-    'src/workers/searchWorker.ts',
-    'src/workers/embeddingWorker.ts',
-    'src/workers/confluenceWorker.ts',
-    'src/workers/modelDownloader.ts'
+    ...workerFiles
   ],
   bundle: true,
   platform: 'node',

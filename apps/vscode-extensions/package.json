@@ -33,11 +33,11 @@
       },
       {
         "command": "workspacegpt.settings",
-          "title": "Settings",
-          "icon": {
-            "light": "resources/settings-dark.svg",
-            "dark": "resources/settings-light.svg"
-          }
+        "title": "Settings",
+        "icon": {
+          "light": "resources/settings-dark.svg",
+          "dark": "resources/settings-light.svg"
+        }
       }
     ],
     "keybindings": [
@@ -89,8 +89,7 @@
     },
     "configuration": {
       "title": "WorkspaceGPT",
-      "properties": {
-      }
+      "properties": {}
     }
   },
   "scripts": {
@@ -108,9 +107,12 @@
   },
   "dependencies": {
     "@workspace-gpt/confluence-utils": "workspace:*",
+    "@xenova/transformers": "^2.17.2",
+    "glob": "^11.0.2",
     "markdown-it": "^14.1.0"
   },
   "devDependencies": {
+    "@types/glob": "^8.1.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "18.x",
     "@types/vscode": "^1.87.0",

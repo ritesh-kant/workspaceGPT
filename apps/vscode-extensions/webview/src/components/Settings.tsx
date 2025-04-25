@@ -162,11 +162,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('codebase', {
             codebaseSyncProgress: message.progress,
             connectionStatus: 'unknown',
+            isSyncing: message.progress < 100,
+            canResume: true,
           });
-
-          if (message.progress >= 100) {
-            updateConfig('codebase', 'isSyncing', false);
-          }
           break;
         case MESSAGE_TYPES.SYNC_CODEBASE_COMPLETE:
           batchUpdateConfig('codebase', {
@@ -174,6 +172,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             codebaseSyncProgress: 100,
             connectionStatus: 'success',
             statusMessage: 'Sync completed successfully',
+            canResume: false,
+            isSyncCompleted: true,
           });
 
           // Clear the 'Sync completed successfully' message after 2 seconds
@@ -187,8 +187,69 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('codebase', {
             isSyncing: false,
             connectionStatus: 'error',
-            statusMessage: `Sync stopped: ${message.message}`,
+            statusMessage: `Sync error: ${message.message}`,
+            canResume: true,
           });
+          break;
+        case MESSAGE_TYPES.CODEBASE_CONNECTION_STATUS:
+          batchUpdateConfig('codebase', {
+            connectionStatus: message.status ? 'success' : 'error',
+            statusMessage: message.message || '',
+          });
+          clearStatusMessageAfterDelay(
+            'codebase',
+            'connectionStatus',
+            'unknown'
+          );
+          break;
+
+        // Codebase Indexing
+        case MESSAGE_TYPES.INDEXING_CODEBASE_IN_PROGRESS:
+          batchUpdateConfig('codebase', {
+            codebaseIndexProgress: message.progress,
+            connectionStatus: 'unknown',
+            isIndexing: message.progress < 100,
+            canResumeIndexing: true,
+            isSyncing: false,
+            canResume: false,
+          });
+          break;
+        case MESSAGE_TYPES.INDEXING_CODEBASE_COMPLETE:
+          batchUpdateConfig('codebase', {
+            codebaseIndexProgress: 100,
+            connectionStatus: 'success',
+            isIndexing: false,
+            statusMessage: 'Indexing completed successfully',
+            canResumeIndexing: false,
+            isSyncing: false,
+            canResume: false,
+            isIndexingCompleted: true,
+          });
+
+          // Clear the 'Indexing completed successfully' message after 2 seconds
+          clearStatusMessageAfterDelay(
+            'codebase',
+            'connectionStatus',
+            'unknown'
+          );
+          break;
+        case MESSAGE_TYPES.INDEXING_CODEBASE_ERROR:
+          batchUpdateConfig('codebase', {
+            isSyncing: false,
+            connectionStatus: 'error',
+            statusMessage: `Indexing error: ${message.message}`,
+            canResumeIndexing: true,
+          });
+          break;
+
+        // Handle workspace path response
+        case MESSAGE_TYPES.WORKSPACE_PATH:
+          if (message.path) {
+            batchUpdateConfig('codebase', {
+              repoPath: message.path
+            });
+            console.log('Workspace path set to:', message.path);
+          }
           break;
 
         // Indexing
@@ -265,7 +326,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     });
   };
 
-  const startSync = () => {
+  const startConfluenceSync = () => {
     batchUpdateConfig('confluence', {
       isSyncing: true,
       confluenceSyncProgress: 0,
@@ -275,6 +336,23 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     vscode.postMessage({
       type: MESSAGE_TYPES.START_CONFLUENCE_SYNC,
       section: 'confluence',
+      config,
+    });
+  };
+  const startCodeBaseSync = () => {
+    batchUpdateConfig('codebase', {
+      isSyncing: true,
+      codebaseIndexProgress: 0,
+      statusMessage: 'Starting sync process...',
+      connectionStatus: 'unknown',
+      includePatterns: '**/*.{js,ts,jsx,tsx,py,java,c,cpp,h,hpp}',
+      excludePatterns: '**/node_modules/**,**/dist/**,**/.git/**',
+      maxFileSizeKb: 500,
+    });
+
+    vscode.postMessage({
+      type: MESSAGE_TYPES.START_CODEBASE_SYNC,
+      section: 'codebase',
       config,
     });
   };
@@ -294,6 +372,32 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     vscode.postMessage({
       type: MESSAGE_TYPES.RESUME_CONFLUENCE_SYNC,
       section: 'confluence',
+      config,
+    });
+  };
+
+  const resumeCodebaseSync = () => {
+    batchUpdateConfig('codebase', {
+      isSyncing: true,
+      statusMessage: 'Resuming codebase sync process...',
+      connectionStatus: 'unknown',
+    });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.RESUME_CODEBASE_SYNC,
+      section: 'codebase',
+      config,
+    });
+  };
+
+  const resumeCodebaseIndexing = () => {
+    batchUpdateConfig('codebase', {
+      isIndexing: true,
+      statusMessage: 'Resuming codebase indexing process...',
+      connectionStatus: 'unknown',
+    });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.RESUME_INDEXING_CODEBASE,
+      section: 'codebase',
       config,
     });
   };
@@ -538,14 +642,14 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                     </button>
                   ) : config.confluence.isIndexingCompleted ? (
                     <button
-                      onClick={startSync}
+                      onClick={startConfluenceSync}
                       disabled={config.confluence.isIndexing}
                     >
                       Start Re-Sync
                     </button>
                   ) : (
                     <button
-                      onClick={startSync}
+                      onClick={startConfluenceSync}
                       disabled={config.confluence.isIndexing}
                     >
                       Start Sync
@@ -610,13 +714,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                       !config.codebase?.isCodebaseEnabled
                     )
                   }
-                  disabled={true}
                 />
                 <span className='slider round'></span>
               </label>
-            </div>
-            <div className='status-message'>
-              🚧 Codebase integration is currently under development
             </div>
 
             {config.codebase?.isCodebaseEnabled && (
@@ -631,6 +731,47 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                       handleInputChange('codebase', 'repoPath', e.target.value)
                     }
                     placeholder='/path/to/your/repository'
+                  />
+                </div>
+
+                <div className='form-group'>
+                  <label htmlFor='codebase-include-patterns'>Include Patterns</label>
+                  <input
+                    id='codebase-include-patterns'
+                    type='text'
+                    value={config.codebase?.includePatterns}
+                    onChange={(e) =>
+                      handleInputChange('codebase', 'includePatterns', e.target.value)
+                    }
+                    placeholder='**/*.{js,ts,jsx,tsx,py,java,c,cpp,h,hpp}'
+                  />
+                  <small className='help-text'>Comma-separated glob patterns</small>
+                </div>
+
+                <div className='form-group'>
+                  <label htmlFor='codebase-exclude-patterns'>Exclude Patterns</label>
+                  <input
+                    id='codebase-exclude-patterns'
+                    type='text'
+                    value={config.codebase?.excludePatterns}
+                    onChange={(e) =>
+                      handleInputChange('codebase', 'excludePatterns', e.target.value)
+                    }
+                    placeholder='**/node_modules/**,**/dist/**,**/.git/**'
+                  />
+                  <small className='help-text'>Comma-separated glob patterns</small>
+                </div>
+
+                <div className='form-group'>
+                  <label htmlFor='codebase-max-file-size'>Max File Size (KB)</label>
+                  <input
+                    id='codebase-max-file-size'
+                    type='number'
+                    value={config.codebase?.maxFileSizeKb}
+                    onChange={(e) =>
+                      handleInputChange('codebase', 'maxFileSizeKb', e.target.value)
+                    }
+                    placeholder='500'
                   />
                 </div>
 
@@ -661,18 +802,88 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
                     <button
                       onClick={stopCodebaseSync}
                       className='stop-sync-button'
+                      disabled={config.codebase.isIndexing}
                     >
-                      Stop Scan
+                      Stop Sync
+                    </button>
+                  ) : config.codebase.canResume ? (
+                    <button
+                      onClick={resumeCodebaseSync}
+                      className='resume-sync-button'
+                      disabled={config.codebase.isIndexing}
+                    >
+                      Resume Sync
+                    </button>
+                  ) : config.codebase.isSyncCompleted ? (
+                    <button
+                      onClick={startCodeBaseSync}
+                      disabled={config.codebase.isIndexing}
+                    >
+                      Start Re-Sync
                     </button>
                   ) : (
                     <button
-                      onClick={startSync}
-                      disabled={config.codebase.isSyncing}
+                      onClick={startCodeBaseSync}
+                      disabled={config.codebase.isIndexing}
                     >
-                      Scan Codebase
+                      Start Sync
                     </button>
                   )}
                 </div>
+
+                {config.codebase.connectionStatus !== 'unknown' && (
+                  <div
+                    className={`status-message ${config.codebase.connectionStatus}`}
+                  >
+                    {config.codebase.statusMessage}
+                  </div>
+                )}
+
+                {config.codebase.isSyncing && (
+                  <div className='sync-progress'>
+                    <div className='progress-label'>
+                      Syncing: {config.codebase.codebaseSyncProgress}%
+                    </div>
+                    <div className='progress-bar'>
+                      <div
+                        className='progress-fill'
+                        style={{
+                          width: `${config.codebase.codebaseSyncProgress}%`,
+                        }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+
+                {config.codebase.isIndexing && (
+                  <div className='sync-progress'>
+                    <div className='progress-label'>
+                      Indexing: {config.codebase.codebaseIndexProgress}%
+                    </div>
+                    <div className='progress-bar'>
+                      <div
+                        className='progress-fill'
+                        style={{
+                          width: `${config.codebase.codebaseIndexProgress}%`,
+                        }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Show resume indexing button if indexing was interrupted */}
+                {!config.codebase.isSyncing &&
+                 !config.codebase.isIndexing &&
+                 config.codebase.canResumeIndexing && (
+                  <div className='button-group'>
+                    <button
+                      onClick={resumeCodebaseIndexing}
+                      className='resume-sync-button'
+                    >
+                      Resume Indexing
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -23,6 +23,9 @@ export interface ConfluenceConfig {
 export interface CodebaseConfig {
   repoPath: string;
   scanFrequency: string;
+  includePatterns: string;
+  excludePatterns: string;
+  maxFileSizeKb: number;
   isSyncing: boolean;
   isIndexing: boolean;
   isCodebaseEnabled: boolean;
@@ -30,6 +33,10 @@ export interface CodebaseConfig {
   codebaseIndexProgress: number;
   connectionStatus: 'unknown' | 'success' | 'error';
   statusMessage: string;
+  canResume: boolean;
+  canResumeIndexing: boolean;
+  isSyncCompleted: boolean;
+  isIndexingCompleted: boolean;
 }
 
 export interface SettingsConfig {
@@ -58,13 +65,20 @@ export const settingsDefaultConfig: SettingsConfig = {
   codebase: {
     repoPath: '',
     scanFrequency: 'daily',
+    includePatterns: '**/*.{js,ts,jsx,tsx,py,java,c,cpp,h,hpp}',
+    excludePatterns: '**/node_modules/**,**/dist/**,**/.git/**',
+    maxFileSizeKb: 500,
     isSyncing: false,
     isIndexing: false,
     isCodebaseEnabled: false,
     codebaseSyncProgress: 0,
     codebaseIndexProgress: 0,
     connectionStatus: 'unknown',
-    statusMessage: ''
+    statusMessage: '',
+    canResume: false,
+    canResumeIndexing: false,
+    isSyncCompleted: false,
+    isIndexingCompleted: false
   },
 };
 
@@ -160,6 +174,9 @@ export const useSettingsStore = create<SettingsState>()(
           type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
         });
         set({ config: settingsDefaultConfig, showSettings: false });
+        vscode.postMessage({
+          type: MESSAGE_TYPES.GET_WORKSPACE_PATH,
+        });
       },
     }),
     {

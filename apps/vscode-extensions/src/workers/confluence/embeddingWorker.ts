@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
-import { MODEL, WORKER_STATUS } from '../../constants';
+import { MODEL, WORKER_STATUS } from '../../../constants';
 
 let md: MarkdownIt;
 let ollamaModel: string;

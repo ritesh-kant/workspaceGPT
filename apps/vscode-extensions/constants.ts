@@ -23,6 +23,8 @@ export const MESSAGE_TYPES = {
   SYNC_CONFLUENCE_STOP: 'sync-confluence-stop',
   RESUME_CONFLUENCE_SYNC: 'resume-confluence-sync',
 
+  START_CODEBASE_SYNC: 'start-codebase-sync',
+  RESUME_CODEBASE_SYNC: 'resume-codebase-sync',
   SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
   SYNC_CODEBASE_COMPLETE: 'sync-codebase-complete',
   STOP_CODEBASE_SYNC: 'stop-codebase-sync',
@@ -34,12 +36,20 @@ export const MESSAGE_TYPES = {
   INDEXING_CONFLUENCE_COMPLETE: 'indexing-confluence-complete',
   RESUME_INDEXING_CONFLUENCE: 'resume-indexing-confluence',
 
+  INDEXING_CODEBASE_ERROR: 'indexing-codebase-error',
+  INDEXING_CODEBASE_IN_PROGRESS: 'indexing-codebase-progress',
+  INDEXING_CODEBASE_COMPLETE: 'indexing-codebase-complete',
+  RESUME_INDEXING_CODEBASE: 'resume-indexing-codebase',
+
   MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
   MODEL_DOWNLOAD_ERROR: 'model-download-error',
 
   OLLAMA_STATUS: 'ollama-status',
   RETRY_OLLAMA_CHECK: 'retry-ollama-check',
+
+  GET_WORKSPACE_PATH: 'get-workspace-path',
+  WORKSPACE_PATH: 'workspace-path',
 } as const;
 
 // UI Constants
@@ -56,6 +66,7 @@ export const STORAGE_KEYS = {
   MODEL: 'model',
   CONFLUENCE_SYNC_PROGRESS: 'confluence-sync-progress',
   EMBEDDING_PROGRESS: 'embedding-progress',
+  CODEBASE_SYNC_PROGRESS: 'codebase-sync-progress',
 };
 
 // Extension Constants

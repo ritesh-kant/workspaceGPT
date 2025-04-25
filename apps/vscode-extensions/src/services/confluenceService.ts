@@ -110,7 +110,7 @@ export class ConfluenceService {
       }
 
       // Create a new worker
-      const workerPath = path.join(__dirname, 'workers', 'confluenceWorker.js');
+      const workerPath = path.join(__dirname, 'workers','confluence', 'confluenceWorker.js');
       this.worker = new Worker(workerPath, {
         workerData: {
           spaceKey: config.spaceKey,

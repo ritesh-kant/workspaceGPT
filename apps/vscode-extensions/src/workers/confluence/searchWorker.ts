@@ -1,7 +1,7 @@
 import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
-import { MODEL } from '../../constants';
+import { MODEL } from '../../../constants';
 
 interface WorkerData {
   query: string;
