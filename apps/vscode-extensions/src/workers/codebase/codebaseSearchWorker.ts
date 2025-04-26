@@ -5,7 +5,7 @@ import * as path from 'path';
 // Define worker data interface
 interface WorkerData {
   query: string;
-  embeddingDirPath: string;
+  embeddingDirPath: string[] | string;
 }
 
 // Define embedding result interface
@@ -26,20 +26,42 @@ const importModule = new Function('modulePath', 'return import(modulePath)');
 // Extract worker data
 const { query, embeddingDirPath } = workerData as WorkerData;
 
-// Function to load all embeddings
-async function loadEmbeddings(): Promise<EmbeddingResult[]> {
+// Function to load all embeddings from a single directory
+async function loadEmbeddingsFromDir(dirPath: string): Promise<EmbeddingResult[]> {
   try {
-    const files = await readdir(embeddingDirPath);
+    const files = await readdir(dirPath);
     const embeddingFiles = files.filter(file => file.endsWith('.embedding.json'));
     
     const embeddings: EmbeddingResult[] = [];
     for (const file of embeddingFiles) {
-      const content = await readFile(path.join(embeddingDirPath, file), 'utf8');
+      const content = await readFile(path.join(dirPath, file), 'utf8');
       const data = JSON.parse(content) as EmbeddingResult;
       embeddings.push(data);
     }
     
     return embeddings;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Error loading embeddings from ${dirPath}:`, errorMessage);
+    return [];
+  }
+}
+
+// Function to load all embeddings from all directories
+async function loadEmbeddings(): Promise<EmbeddingResult[]> {
+  try {
+    // Handle both string and array formats for backward compatibility
+    const dirPaths = Array.isArray(embeddingDirPath) ? embeddingDirPath : [embeddingDirPath];
+    
+    let allEmbeddings: EmbeddingResult[] = [];
+    
+    // Load embeddings from each directory
+    for (const dirPath of dirPaths) {
+      const embeddings = await loadEmbeddingsFromDir(dirPath);
+      allEmbeddings = [...allEmbeddings, ...embeddings];
+    }
+    
+    return allEmbeddings;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error loading embeddings:', errorMessage);

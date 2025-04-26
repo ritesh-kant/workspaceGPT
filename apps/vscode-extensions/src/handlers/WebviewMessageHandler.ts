@@ -250,13 +250,6 @@ export class WebviewMessageHandler {
 
   private async handleCompleteConfluenceSync(): Promise<void> {
     try {
-      // Start embedding creation after sync is complete
-      // if (!this.embeddingService) {
-      //   this.embeddingService = new EmbeddingService(
-      //     this.webviewView,
-      //     this.context
-      //   );
-      // }
       await this.embeddingService?.createEmbeddings({
         dimensions: MODEL.DEFAULT_DIMENSIONS,
       } as EmbeddingConfig);
@@ -424,13 +417,15 @@ export class WebviewMessageHandler {
     try {
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       this.codebaseConfig = config.state.config.codebase;
-      if (!this.isCodebaseConfigValid(this.codebaseConfig) || !this.codebaseConfig) {
+      const repoName = this.codebaseConfig?.repoPath.split('/').slice(-1)[0]
+
+      if (!this.isCodebaseConfigValid(this.codebaseConfig) || !this.codebaseConfig || !repoName) {
         throw new Error(
           'Codebase configuration is incomplete. Please check your settings.'
         );
       }
       await this.codebaseService?.startSync(this.codebaseConfig, () =>
-        this.handleCompleteCodebaseSync()
+        this.handleCompleteCodebaseSync(repoName)
       );
     } catch (error) {
       console.error('Error in Codebase sync:', error);
@@ -445,7 +440,9 @@ export class WebviewMessageHandler {
     try {
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       this.codebaseConfig = config.state.config.codebase;
-      if (!this.isCodebaseConfigValid(this.codebaseConfig) || !this.codebaseConfig) {
+      const repoName = this.codebaseConfig?.repoPath.split('/').slice(-1)[0]
+
+      if (!this.isCodebaseConfigValid(this.codebaseConfig) || !this.codebaseConfig || !repoName) {
         throw new Error(
           'Codebase configuration is incomplete. Please check your settings.'
         );
@@ -462,7 +459,7 @@ export class WebviewMessageHandler {
       // Resume the sync with the existing progress
       await this.codebaseService?.startSync(
         this.codebaseConfig,
-        () => this.handleCompleteCodebaseSync(),
+        () => this.handleCompleteCodebaseSync(repoName),
         true // resume parameter
       );
     } catch (error) {
@@ -474,10 +471,10 @@ export class WebviewMessageHandler {
     }
   }
 
-  private async handleCompleteCodebaseSync(): Promise<void> {
+  private async handleCompleteCodebaseSync(repoName: string): Promise<void> {
     try {
       // Call the createEmbeddings method in CodebaseService to handle the embedding process
-      await this.codebaseService?.createEmbeddings(false);
+      await this.codebaseService?.createEmbeddings(false, repoName);
     } catch (error) {
       console.error('Error in Codebase embedding:', error);
       this.webviewView.webview.postMessage({

@@ -104,6 +104,8 @@ export class CodebaseService {
     try {
       // Stop any existing worker
       this.stopSync();
+      const repoName = config?.repoPath.split('/').slice(-1)[0]
+
 
       // Load the current progress if resuming
       if (resume && this.syncProgress) {
@@ -121,6 +123,7 @@ export class CodebaseService {
       // Create output directories
       const codebaseDirPath = path.join(
         this.context.globalStorageUri.fsPath,
+        repoName,
         'codebase',
         'files'
       );
@@ -166,7 +169,7 @@ export class CodebaseService {
 
           case WORKER_STATUS.PROCESSED:
             // Save individual processed file
-            await this.saveProcessedFile(message.file);
+            await this.saveProcessedFile(message.file, repoName);
             break;
 
           case WORKER_STATUS.ERROR:
@@ -238,11 +241,12 @@ export class CodebaseService {
     }
   }
 
-  private async saveProcessedFile(file: ProcessedFile): Promise<void> {
+  private async saveProcessedFile(file: ProcessedFile, repoName: string): Promise<void> {
     try {
       // Save the file content to the output directory
       const outputFilePath = path.join(
         this.context.globalStorageUri.fsPath,
+        repoName,
         'codebase',
         'files',
         `${path.basename(file.filename)}.json`
@@ -280,11 +284,12 @@ export class CodebaseService {
     );
   }
 
-  public async createEmbeddings(resume: boolean = false): Promise<void> {
+  public async createEmbeddings(resume: boolean = false, repoName: string): Promise<void> {
     try {
       // Create codebase embeddings directory
       const embeddingDirPath = path.join(
         this.context.globalStorageUri.fsPath,
+        repoName,
         'codebase',
         'embeddings'
       );
@@ -296,6 +301,7 @@ export class CodebaseService {
         workerData: {
           codebaseDirPath: path.join(
             this.context.globalStorageUri.fsPath,
+            repoName,
             'codebase',
             'files'
           ),
@@ -346,16 +352,15 @@ export class CodebaseService {
 
   public async searchCodebase(query: string): Promise<any[]> {
     try {
+      // Find all embedding directories in globalStorageUri
+      const embeddingDirPaths = await this.findAllEmbeddingDirectories();
+      
       // Create a new worker for search
       const workerPath = path.join(__dirname, 'workers','codebase', 'codebaseSearchWorker.js');
       const searchWorker = new Worker(workerPath, {
         workerData: {
           query,
-          embeddingDirPath: path.join(
-            this.context.globalStorageUri.fsPath,
-            'codebase',
-            'embeddings'
-          ),
+          embeddingDirPath: embeddingDirPaths,
         },
       });
 
@@ -384,6 +389,44 @@ export class CodebaseService {
     } catch (error) {
       console.error('Error creating directory:', error);
       throw error;
+    }
+  }
+
+  private async findAllEmbeddingDirectories(): Promise<string[]> {
+    try {
+      const baseDir = this.context.globalStorageUri.fsPath;
+      const entries = await fs.promises.readdir(baseDir, { withFileTypes: true });
+      
+      const embeddingDirPaths: string[] = [];
+      
+      // Check each directory in the base directory
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const potentialEmbeddingDir = path.join(baseDir, entry.name, 'codebase', 'embeddings');
+          
+          try {
+            // Check if the potential embedding directory exists
+            await fs.promises.access(potentialEmbeddingDir);
+            embeddingDirPaths.push(potentialEmbeddingDir);
+          } catch (error) {
+            // Directory doesn't exist, skip it
+            continue;
+          }
+        }
+      }
+      
+      // If no embedding directories found, return the default path
+      if (embeddingDirPaths.length === 0) {
+        const defaultPath = path.join(baseDir, 'codebase', 'embeddings');
+        await this.ensureDirectoryExists(defaultPath);
+        embeddingDirPaths.push(defaultPath);
+      }
+      
+      return embeddingDirPaths;
+    } catch (error) {
+      console.error('Error finding embedding directories:', error);
+      // Return default path in case of error
+      return [path.join(this.context.globalStorageUri.fsPath, 'codebase', 'embeddings')];
     }
   }
 }
