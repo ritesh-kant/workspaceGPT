@@ -13,6 +13,7 @@ interface EmbeddingResult {
   filename: string;
   filePath: string;
   embedding: number[];
+  text: string;
 }
 
 // Define search result interface
@@ -118,7 +119,7 @@ async function searchEmbeddings(): Promise<void> {
     const results: SearchResult[] = embeddings.map(item => {
       const similarity = cosineSimilarity(queryEmbeddingArray, item.embedding as number[]);
       return {
-        text: item.filename,
+        text: item.text,
         score: similarity,
         source: item.filePath,
       };
