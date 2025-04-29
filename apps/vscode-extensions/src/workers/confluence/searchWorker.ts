@@ -1,7 +1,7 @@
 import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
-import { MODEL } from '../../constants';
+import { MODEL } from '../../../constants';
 
 interface WorkerData {
   query: string;
@@ -19,6 +19,7 @@ interface Metadata {
   filename: string;
   text: string;
   embedding: number[];
+  url: string;
 }
 
 const { query, embeddingDirPath } = workerData as WorkerData;
@@ -67,7 +68,7 @@ async function searchEmbeddings(): Promise<void> {
         return {
           text: metadata.text,
           score: score,
-          source: metadata.filename
+          source: metadata.url
         } as SearchResult;
       })
     );

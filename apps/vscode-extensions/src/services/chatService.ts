@@ -3,14 +3,22 @@ import { EmbeddingService } from './embeddingService';
 import path from 'path';
 import { Worker } from 'worker_threads';
 import { WORKER_STATUS, MESSAGE_TYPES, MODEL, ModelType } from '../../constants';
+import { CodebaseService } from './codebaseService';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
+interface SearchResult {
+  text: string;
+  score: number;
+  source: string;
+}
+
 export class ChatService {
   private embeddingService: EmbeddingService;
+  private codebaseService: CodebaseService;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private chatHistory: ChatMessage[] = [];
@@ -23,6 +31,7 @@ export class ChatService {
     this.webviewView = webviewView;
     this.context = context;
     this.embeddingService = new EmbeddingService(webviewView, context);
+    this.codebaseService = new CodebaseService(webviewView, context);
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
   }
 
@@ -31,6 +40,7 @@ export class ChatService {
       const workerPath = path.join(
         __dirname,
         'workers',
+        'model',
         'modelDownloader.js'
       );
       const modelWorker = new Worker(workerPath, {
@@ -136,14 +146,19 @@ export class ChatService {
         content: message,
       });
 
-      // Search embeddings
-      const searchResults =
-        await this.embeddingService.searchEmbeddings(message);
+      // Search both Confluence and codebase embeddings
+      const [confluenceResults, codebaseResults] = await Promise.all([
+        this.embeddingService.searchEmbeddings(message),
+        this.codebaseService.searchCodebase(message)
+      ]);
 
-      // Generate response using TinyLlama model
+      // Combine search results
+      const combinedResults = this.combineSearchResults(confluenceResults, codebaseResults);
+
+      // Generate response using model
       const modelResponse = await this.generateModelResponse(
         message,
-        searchResults,
+        combinedResults,
         modelId
       );
 
@@ -167,8 +182,33 @@ export class ChatService {
     }
   }
 
+  private combineSearchResults(
+    confluenceResults: SearchResult[],
+    codebaseResults: SearchResult[]
+  ): SearchResult[] {
+    // Add source type to differentiate between Confluence and codebase results
+    const taggedConfluenceResults = confluenceResults.map(result => ({
+      ...result,
+      source: `Confluence: ${result.source}`
+    }));
+
+    const taggedCodebaseResults = codebaseResults.map(result => ({
+      ...result,
+      source: `Codebase: ${result.source}`
+    }));
+
+    // Combine both result sets
+    const combined = [...taggedConfluenceResults, ...taggedCodebaseResults];
+    
+    // Sort by score (descending)
+    combined.sort((a, b) => b.score - a.score);
+    
+    // Return top results (limit to 10 for relevance)
+    return combined.slice(0, 10);
+  }
+
   private formatSearchResults(
-    results: { text: string; score: number; source: string }[]
+    results: SearchResult[]
   ): string {
     if (!results.length) {
       return 'No relevant information found.';
@@ -192,7 +232,7 @@ export class ChatService {
 
   private async generateModelResponse(
     message: string,
-    searchResults: Array<{ text: string; score: number; source: string }>,
+    searchResults: SearchResult[],
     modelId: string
   ): Promise<string> {
     try {
@@ -200,6 +240,7 @@ export class ChatService {
       const workerPath = path.join(
         __dirname,
         'workers',
+        'model',
         'modelWorker.js'
       );
 

@@ -38,7 +38,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     // Handle messages from the extension
-
+    console.log('App mounted =====');
+    vscode.postMessage({
+      type: MESSAGE_TYPES.GET_WORKSPACE_PATH,
+    });
     vscode.postMessage({
       type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
     });

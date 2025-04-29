@@ -1,7 +1,7 @@
 // Import only types to avoid direct imports of ES Module
 import type { ConfluencePage } from '@workspace-gpt/confluence-utils';
 import { parentPort, workerData } from 'worker_threads';
-import { WORKER_STATUS } from '../../constants';
+import { WORKER_STATUS } from '../../../constants';
 // Import path for dynamic import
 import {
   ConfluencePageFetcher,

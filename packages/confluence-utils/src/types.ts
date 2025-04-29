@@ -1,5 +1,6 @@
 export interface ConfluencePageLink {
   webui: string;
+  self: string;
 }
 
 export interface ConfluencePageStorage {

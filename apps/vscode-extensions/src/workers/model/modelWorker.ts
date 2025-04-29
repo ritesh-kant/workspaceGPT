@@ -1,5 +1,5 @@
 import { parentPort, workerData } from 'worker_threads';
-import { createStructuredPrompt } from './promptTemplates';
+import { createStructuredPrompt } from '../../utils/promptTemplates';
 
 interface WorkerData {
   prompt: string;

@@ -1,5 +1,5 @@
 import { parentPort, workerData } from 'worker_threads';
-import { ModelType, WORKER_STATUS } from '../../constants';
+import { ModelType, WORKER_STATUS } from '../../../constants';
 
 interface WorkerData {
   modelId: string;

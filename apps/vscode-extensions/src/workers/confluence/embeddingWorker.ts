@@ -3,7 +3,52 @@ import fs from 'fs';
 import path from 'path';
 import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
-import { MODEL, WORKER_STATUS } from '../../constants';
+import { MODEL, WORKER_STATUS } from '../../../constants';
+
+/**
+ * Extracts frontmatter metadata from markdown content
+ * @param markdownContent The raw markdown content
+ * @returns Object containing cleaned content and extracted frontmatter
+ */
+function extractFrontmatter(markdownContent: string): { content: string; frontmatter?: Record<string, any> } {
+  // Check if content has frontmatter (starts with ---)
+  if (!markdownContent || !markdownContent.trim().startsWith('---')) {
+    return { content: markdownContent || '' };
+  }
+
+  try {
+    // Find the second --- that closes the frontmatter block
+    const secondDashIndex = markdownContent.indexOf('---', 3);
+    if (secondDashIndex === -1) {
+      return { content: markdownContent };
+    }
+
+    // Extract the frontmatter content
+    const frontmatterRaw = markdownContent.substring(3, secondDashIndex).trim();
+    const content = markdownContent.substring(secondDashIndex + 3).trim();
+    
+    // Parse the frontmatter as key-value pairs
+    const frontmatter: Record<string, any> = {};
+    frontmatterRaw.split('\n').forEach(line => {
+      const trimmedLine = line.trim();
+      if (trimmedLine && !trimmedLine.startsWith('#')) {
+        const colonIndex = trimmedLine.indexOf(':');
+        if (colonIndex !== -1) {
+          const key = trimmedLine.substring(0, colonIndex).trim();
+          const value = trimmedLine.substring(colonIndex + 1).trim();
+          if (key && value) {
+            frontmatter[key] = value;
+          }
+        }
+      }
+    });
+
+    return { content, frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined };
+  } catch (error) {
+    console.error('Error parsing frontmatter:', error);
+    return { content: markdownContent };
+  }
+}
 
 let md: MarkdownIt;
 let ollamaModel: string;
@@ -22,6 +67,8 @@ interface Metadata {
   filename: string;
   text: string;
   embedding: number[];
+  url?: string;
+  frontmatter?: Record<string, any>;
 }
 
 const { mdDirPath, embeddingDirPath, config, resume, lastProcessedFile, processedFiles } = workerData as WorkerData;
@@ -55,9 +102,18 @@ async function createEmbeddings(): Promise<void> {
       const file = files[i];
       const filePath = path.join(mdDirPath, file);
       const markdownContent = fs.readFileSync(filePath, 'utf8');
+      
+      // Extract frontmatter metadata if present
+      const { content: cleanContent, frontmatter } = extractFrontmatter(markdownContent);
+      
+      // Log metadata if found
+      if (frontmatter && Object.keys(frontmatter).length > 0) {
+        console.log(`Extracted metadata from ${file}:`, frontmatter);
+      }
+      
       // Convert markdown to structured plain text
       const content = md
-        .render(markdownContent)
+        .render(cleanContent)
         .replace(/<[^>]*>/g, '')
         .trim();
 
@@ -69,7 +125,8 @@ async function createEmbeddings(): Promise<void> {
         id: i,
         filename: file,
         text: content,
-        embedding: embedding
+        embedding: embedding,
+        url: frontmatter?.url,
       };
 
       // Save metadata
@@ -94,7 +151,9 @@ async function createEmbeddings(): Promise<void> {
       path.join(embeddingDirPath, 'index.json'),
       JSON.stringify({
         total: total,
-        dimensions: config.dimensions
+        dimensions: config.dimensions,
+        includesMetadata: true,
+        metadataFields: ['url', 'frontmatter']
       })
     );
 
