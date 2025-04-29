@@ -19,6 +19,7 @@ interface Metadata {
   filename: string;
   text: string;
   embedding: number[];
+  url: string;
 }
 
 const { query, embeddingDirPath } = workerData as WorkerData;
@@ -67,7 +68,7 @@ async function searchEmbeddings(): Promise<void> {
         return {
           text: metadata.text,
           score: score,
-          source: metadata.filename
+          source: metadata.url
         } as SearchResult;
       })
     );

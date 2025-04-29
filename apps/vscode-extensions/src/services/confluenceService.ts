@@ -98,19 +98,26 @@ export class ConfluenceService {
 
       // Load the current progress if resuming
       if (resume && this.syncProgress) {
-        console.log(`Resuming sync from ${this.syncProgress.processedPages}/${this.syncProgress.totalPages} pages`);
+        console.log(
+          `Resuming sync from ${this.syncProgress.processedPages}/${this.syncProgress.totalPages} pages`
+        );
       } else {
         // Reset progress if not resuming
         this.syncProgress = {
           processedPages: 0,
           totalPages: 0,
-          isComplete: false
+          isComplete: false,
         };
         await this.saveSyncProgress(this.syncProgress);
       }
 
       // Create a new worker
-      const workerPath = path.join(__dirname, 'workers','confluence', 'confluenceWorker.js');
+      const workerPath = path.join(
+        __dirname,
+        'workers',
+        'confluence',
+        'confluenceWorker.js'
+      );
       this.worker = new Worker(workerPath, {
         workerData: {
           spaceKey: config.spaceKey,
@@ -119,7 +126,7 @@ export class ConfluenceService {
           userEmail: config.userEmail,
           resume: resume,
           lastProcessedPageId: this.syncProgress?.lastProcessedPageId,
-          processedPages: this.syncProgress?.processedPages || 0
+          processedPages: this.syncProgress?.processedPages || 0,
         },
       });
 
@@ -135,13 +142,13 @@ export class ConfluenceService {
               current: message.current,
               total: message.total,
             });
-            
+
             // Update and save progress
             this.syncProgress = {
               processedPages: message.current,
               totalPages: message.total,
               lastProcessedPageId: message.lastProcessedPageId,
-              isComplete: false
+              isComplete: false,
             };
             await this.saveSyncProgress(this.syncProgress);
             break;
@@ -174,7 +181,7 @@ export class ConfluenceService {
             this.syncProgress = {
               processedPages: message.pages.length,
               totalPages: message.pages.length,
-              isComplete: true
+              isComplete: true,
             };
             await this.saveSyncProgress(this.syncProgress);
 
@@ -261,11 +268,22 @@ export class ConfluenceService {
       // Create the file path for the MD file
       const mdFilePath = path.join(mdDirPath, `${page.filename}.md`);
 
+      // Add frontmatter with metadata if pageUrl exists
+      let contentWithMetadata = page.text;
+      if (page.pageUrl) {
+        contentWithMetadata = `---
+        url: ${page.pageUrl}
+        ---
+        ${page.text}`;
+      }
+
       // Write the content to the file
       const writeFile = promisify(fs.writeFile);
-      await writeFile(mdFilePath, page.text, 'utf8');
+      await writeFile(mdFilePath, contentWithMetadata, 'utf8');
 
-      console.log(`Saved MD file: ${page.filename}.md`);
+      console.log(
+        `Saved MD file: ${page.filename}.md${page.pageUrl ? ' with metadata' : ''}`
+      );
     } catch (error) {
       console.error('Error saving MD file:', error);
       throw error;

@@ -53,7 +53,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     // Listen for configuration and sync updates from extension
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      console.log('handleMessage', event);
+      // console.log('handleMessage', event);
 
       switch (message.type) {
         case 'SettingsButtonConfig':
@@ -346,7 +346,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       statusMessage: 'Starting sync process...',
       connectionStatus: 'unknown',
       includePatterns: '**/*.{js,ts,jsx,tsx,py,java,c,cpp,h,hpp}',
-      excludePatterns: '**/node_modules/**,**/dist/**,**/.git/**',
+      excludePatterns: '**/node_modules/**,**/dist/**,**/.git/**,**/.venv/**,**/venv/**,**/build/**,**/target/**,**/.*/**',
       maxFileSizeKb: 500,
     });
 
