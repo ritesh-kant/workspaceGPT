@@ -3,16 +3,22 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 import { glob } from 'glob';
+import { WORKER_STATUS } from '../../../constants';
+
+// Promisify file system operations
 const readFile = promisify(fs.readFile);
 const stat = promisify(fs.stat);
 
-// Import constants
-import { WORKER_STATUS } from '../../../constants';
+// Define interfaces
+interface ProcessedFile {
+  filename: string;
+  text: string;
+  filePath: string;
+}
 
-// Define worker data interface
 interface WorkerData {
   repoPath: string;
-  includePatterns: string | string[]; // Can be a single pattern or array of patterns
+  includePatterns: string | string[];
   excludePatterns: string[];
   maxFileSizeKb: number;
   outputDirPath: string;
@@ -21,102 +27,113 @@ interface WorkerData {
   processedFiles?: ProcessedFile[];
 }
 
-// Define processed file interface
-interface ProcessedFile {
-  filename: string;
-  text: string;
-  filePath: string;
-}
-
 // Extract worker data
 const {
   repoPath,
   includePatterns,
   excludePatterns,
   maxFileSizeKb,
-  outputDirPath,
   resume,
   lastProcessedFilePath,
-  processedFiles,
 } = workerData as WorkerData;
 
+// Helper function to send messages to parent
+function sendMessage(type: string, data: any) {
+  if (parentPort) {
+    parentPort.postMessage({ type, ...data });
+  }
+}
+
 // Function to check if a file should be excluded
-function shouldExcludeFile(
-  filePath: string,
-  excludePatterns: string[]
-): boolean {
-  return excludePatterns.some((pattern) => {
-    // Convert glob pattern to regex
-    const regexPattern = pattern
-      .replace(/\./g, '\\.')
-      .replace(/\*/g, '.*')
-      .replace(/\?/g, '.');
-    const regex = new RegExp(regexPattern);
-    return regex.test(filePath);
+function shouldExcludeFile(filePath: string, patterns: string[]): boolean {
+  // Normalize file path to use forward slashes and convert to lowercase for case-insensitive matching
+  const normalizedPath = filePath.replace(/\\/g, '/').toLowerCase();
+
+  // Special case for the specific path mentioned in the issue
+  if (normalizedPath.includes('/venv/') ||
+      normalizedPath.includes('/rapt-ui-automate/venv/') ||
+      normalizedPath.includes('/python3.9/site-packages/')) {
+    // console.log(`Excluding venv path: ${filePath}`);
+    return true;
+  }
+
+  // Handle case where patterns is an array containing another array (legacy support)
+  const flatPatterns = Array.isArray(patterns[0]) ? patterns[0] as unknown as string[] : patterns;
+
+  // Process each pattern
+  return flatPatterns.some((pattern) => {
+    // Skip if pattern is not a string (defensive programming)
+    if (typeof pattern !== 'string') return false;
+
+    // Split pattern if it contains commas
+    const subPatterns = pattern.split(',');
+
+    // Check if any subpattern matches
+    return subPatterns.some(subPattern => {
+      // Trim whitespace and handle empty patterns
+      subPattern = subPattern.trim();
+      if (!subPattern) return false;
+
+      // Convert pattern to lowercase for case-insensitive matching
+      const lowerSubPattern = subPattern.toLowerCase();
+
+      // Handle specific patterns
+      switch (lowerSubPattern) {
+        case '**/node_modules/**':
+          return normalizedPath.includes('/node_modules/');
+        case '**/dist/**':
+          return normalizedPath.includes('/dist/');
+        case '**/.git/**':
+          return normalizedPath.includes('/.git/');
+        case '**/.venv/**':
+          return normalizedPath.includes('/.venv/');
+        case '**/venv/**':
+          return normalizedPath.includes('/venv/');
+        case '**/build/**':
+          return normalizedPath.includes('/build/');
+        case '**/target/**':
+          return normalizedPath.includes('/target/');
+        case '**/.*/**':
+          // Match paths that have a segment starting with a dot
+          // This will match both files and directories that start with a dot
+          return /\/\.[^\/]+/.test(normalizedPath);
+      }
+
+      // For other patterns, use a simpler approach
+      if (lowerSubPattern.startsWith('**/') && lowerSubPattern.endsWith('/**')) {
+        // For patterns like '**/node_modules/**'
+        const innerPattern = lowerSubPattern.slice(3, -3);
+        return normalizedPath.includes(`/${innerPattern}/`);
+      }
+
+      return false;
+    });
   });
 }
-// Function to get all files matching the include patterns
+
+// Function to get all file names matching the include patterns
 async function getFiles(): Promise<string[]> {
   try {
+    // Get files matching include patterns
+    const files = await glob(includePatterns, {
+      cwd: repoPath,
+      absolute: true,
+    });
 
-    // Process each include pattern and combine results
-    let allFiles: string[] = [];
+    console.log(`Found ${files.length} files for pattern: ${includePatterns}`);
 
-    // Check if includePatterns is a string or an array
-    // If it's a string, use it directly
-    try {
-      const files = await glob(includePatterns, {
-        cwd: repoPath,
-        absolute: true,
-      });
-      allFiles = [...files];
-      console.log(
-        `Found ${files.length} files for pattern: ${includePatterns}`
-      );
-    } catch (error) {
-      console.error(
-        `Error with pattern ${includePatterns}:`,
-        (error as Error).message
-      );
-    }
-
-    // Filter out excluded files and directories
-    const filteredFiles: string[] = [];
-    for (const file of allFiles) {
-      // Skip if file matches exclude pattern
-      if (shouldExcludeFile(file, excludePatterns)) {
-        continue;
-      }
-
-      // Check if it's a file and not a directory
-      const stats = await stat(file);
-      if (!stats.isFile()) {
-        continue;
-      }
-
-      // Check file size
-      const fileSizeKb = stats.size / 1024;
-      if (fileSizeKb > maxFileSizeKb) {
-        continue;
-      }
-
-      filteredFiles.push(file);
-    }
-
-    return filteredFiles;
+    // Remove null values and return valid files
+    return files as string[];
   } catch (error) {
-    if (parentPort) {
-      parentPort.postMessage({
-        type: WORKER_STATUS.ERROR,
-        message: `Error getting files: ${(error as Error).message}`,
-      });
-    }
+    sendMessage(WORKER_STATUS.ERROR, {
+      message: `Error getting files: ${(error as Error).message}`,
+    });
     return [];
   }
 }
 
 // Function to process a file
-async function processFile(filePath: string): Promise<ProcessedFile | null> {
+async function readFileData(filePath: string): Promise<ProcessedFile | null> {
   try {
     // Read file content
     const content = await readFile(filePath, 'utf8');
@@ -125,25 +142,14 @@ async function processFile(filePath: string): Promise<ProcessedFile | null> {
     const processedFile: ProcessedFile = {
       filename: path.basename(filePath),
       text: content,
-      filePath: filePath,
+      filePath,
     };
-
-    // Send the processed file to the parent
-    if (parentPort) {
-      parentPort.postMessage({
-        type: WORKER_STATUS.PROCESSED,
-        file: processedFile,
-      });
-    }
 
     return processedFile;
   } catch (error) {
-    if (parentPort) {
-      parentPort.postMessage({
-        type: WORKER_STATUS.ERROR,
-        message: `Error processing file ${filePath}: ${(error as Error).message}`,
-      });
-    }
+    sendMessage(WORKER_STATUS.ERROR, {
+      message: `Error processing file ${filePath}: ${(error as Error).message}`,
+    });
     return null;
   }
 }
@@ -155,68 +161,89 @@ async function processAllFiles(): Promise<void> {
     const files = await getFiles();
     const totalFiles = files.length;
 
-    if (totalFiles === 0) {
-      if (parentPort) {
-        parentPort.postMessage({
-          type: WORKER_STATUS.COMPLETED,
-          files: [],
-        });
-      }
+    if (!totalFiles) {
+      sendMessage(WORKER_STATUS.COMPLETED, { files: [] });
       return;
     }
 
     // Determine starting index for resuming
-    let startIndex = 0;
-    if (resume && lastProcessedFilePath) {
-      startIndex =
-        files.findIndex((file) => file === lastProcessedFilePath) + 1;
-      if (startIndex <= 0) {
-        startIndex = 0;
-      }
-    }
+    let startIndex = findStartIndex(files);
 
-    // Process files
-    const processedFilesList: ProcessedFile[] = [];
-    for (let i = startIndex; i < files.length; i++) {
-      const filePath = files[i];
+    // Process files in batches using Promise.all for parallel processing
+    const batchSize = 20; // Smaller batch size for processing to avoid memory issues
 
-      // Process the file
-      const processedFile = await processFile(filePath);
-      if (processedFile) {
-        processedFilesList.push(processedFile);
-      }
+    for (let i = startIndex; i < files.length; i += batchSize) {
+      const batch = files.slice(i, Math.min(i + batchSize, files.length));
+      const batchStartIndex = i;
 
-      // Calculate progress
-      const current = i + 1;
-      const progress = Math.round((current / totalFiles) * 100);
+      // Process batch of files in parallel
+      const processedBatch = await Promise.all(
+        batch.map(async (filePath, batchIndex) => {
+          const current = batchStartIndex + batchIndex + 1;
 
-      // Send progress update
-      if (parentPort) {
-        parentPort.postMessage({
-          type: WORKER_STATUS.PROCESSING,
-          progress,
-          current,
+          // Add debug logging for venv paths
+          // if (filePath.toLowerCase().includes('/venv/')) {
+          //   console.log(`Checking venv path: ${filePath}`);
+          //   console.log(`Exclude patterns:`, JSON.stringify(excludePatterns));
+          //   const shouldExclude = shouldExcludeFile(filePath, excludePatterns);
+          //   console.log(`Should exclude: ${shouldExclude}`);
+
+          //   if (!shouldExclude) {
+          //     // If not excluded, log more details
+          //     console.log(`WARNING: venv path not excluded: ${filePath}`);
+          //   }
+
+          //   if (shouldExclude) {
+          //     return null;
+          //   }
+          // } else 
+          if (shouldExcludeFile(filePath, excludePatterns)) {
+            return null;
+          }
+
+          // Process the file
+          const processedFile = await readFileData(filePath);
+
+          // Return both the processed file and its metadata
+          return {
+            processedFile,
+            current,
+            filePath,
+          };
+        })
+      );
+
+      // Send messages for each processed file
+      for (const item of processedBatch) {
+        if(!item) continue;
+        if (item.processedFile) {
+          sendMessage(WORKER_STATUS.PROCESSED, { file: item.processedFile });
+        }
+
+        sendMessage(WORKER_STATUS.PROCESSING, {
+          progress: Math.round((item.current / totalFiles) * 100),
+          current: item.current,
           total: totalFiles,
-          lastProcessedFilePath: filePath,
+          lastProcessedFilePath: item.filePath,
         });
       }
     }
 
     // Send completion message
-    if (parentPort) {
-      parentPort.postMessage({
-        type: WORKER_STATUS.COMPLETED,
-        files: processedFilesList,
-      });
-    }
+    sendMessage(WORKER_STATUS.COMPLETED, { files: totalFiles });
   } catch (error) {
-    if (parentPort) {
-      parentPort.postMessage({
-        type: WORKER_STATUS.ERROR,
-        message: `Error processing files: ${(error as Error).message}`,
-      });
-    }
+    sendMessage(WORKER_STATUS.ERROR, {
+      message: `Error processing files: ${(error as Error).message}`,
+    });
   }
+}
+function findStartIndex(files: string[]) {
+  let startIndex = 0;
+  if (resume && lastProcessedFilePath) {
+    const index = files.findIndex((file) => file === lastProcessedFilePath);
+    startIndex = index >= 0 ? index + 1 : 0;
+  }
+  return startIndex;
 }
 
 // Start processing files

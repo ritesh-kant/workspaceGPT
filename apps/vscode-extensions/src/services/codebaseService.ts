@@ -2,8 +2,14 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Worker } from 'worker_threads';
+import { fork, ChildProcess } from 'child_process';
 import { EmbeddingConfig } from '../types/types';
-import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS, MODEL } from '../../constants';
+import {
+  WORKER_STATUS,
+  MESSAGE_TYPES,
+  STORAGE_KEYS,
+  MODEL,
+} from '../../constants';
 
 interface ProcessedFile {
   filename: string;
@@ -27,6 +33,7 @@ interface SyncProgress {
 
 export class CodebaseService {
   private worker: Worker | null = null;
+  private embeddingProcess: ChildProcess | null = null;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private syncProgress: SyncProgress | null = null;
@@ -67,13 +74,18 @@ export class CodebaseService {
   async getTotalFiles(config: CodebaseConfig): Promise<number> {
     try {
       // Create a worker to count files
-      const workerPath = path.join(__dirname, 'workers', 'codebase','codebaseCountWorker.js');
+      const workerPath = path.join(
+        __dirname,
+        'workers',
+        'codebase',
+        'codebaseCountWorker.js'
+      );
       const countWorker = new Worker(workerPath, {
         workerData: {
           repoPath: config.repoPath,
           includePatterns: config.includePatterns,
           excludePatterns: [config.excludePatterns],
-          maxFileSizeKb: config.maxFileSizeKb
+          maxFileSizeKb: config.maxFileSizeKb,
         },
       });
 
@@ -104,18 +116,19 @@ export class CodebaseService {
     try {
       // Stop any existing worker
       this.stopSync();
-      const repoName = config?.repoPath.split('/').slice(-1)[0]
-
+      const repoName = config?.repoPath.split('/').slice(-1)[0];
 
       // Load the current progress if resuming
       if (resume && this.syncProgress) {
-        console.log(`Resuming codebase sync from ${this.syncProgress.processedFiles}/${this.syncProgress.totalFiles} files`);
+        console.log(
+          `Resuming codebase sync from ${this.syncProgress.processedFiles}/${this.syncProgress.totalFiles} files`
+        );
       } else {
         // Reset progress if not resuming
         this.syncProgress = {
           processedFiles: 0,
           totalFiles: 0,
-          isComplete: false
+          isComplete: false,
         };
         await this.saveSyncProgress(this.syncProgress);
       }
@@ -130,7 +143,12 @@ export class CodebaseService {
       await this.ensureDirectoryExists(codebaseDirPath);
 
       // Create a new worker
-      const workerPath = path.join(__dirname, 'workers','codebase', 'codebaseWorker.js');
+      const workerPath = path.join(
+        __dirname,
+        'workers',
+        'codebase',
+        'codebaseWorker.js'
+      );
       this.worker = new Worker(workerPath, {
         workerData: {
           repoPath: config.repoPath,
@@ -140,7 +158,7 @@ export class CodebaseService {
           outputDirPath: codebaseDirPath,
           resume: resume,
           lastProcessedFilePath: this.syncProgress?.lastProcessedFilePath,
-          processedFiles: this.syncProgress?.processedFiles || 0
+          processedFiles: this.syncProgress?.processedFiles || 0,
         },
       });
 
@@ -156,13 +174,13 @@ export class CodebaseService {
               current: message.current,
               total: message.total,
             });
-            
+
             // Update and save progress
             this.syncProgress = {
               processedFiles: message.current,
               totalFiles: message.total,
               lastProcessedFilePath: message.lastProcessedFilePath,
-              isComplete: false
+              isComplete: false,
             };
             await this.saveSyncProgress(this.syncProgress);
             break;
@@ -193,9 +211,9 @@ export class CodebaseService {
 
             // Update progress as complete
             this.syncProgress = {
-              processedFiles: message.files.length,
-              totalFiles: message.files.length,
-              isComplete: true
+              processedFiles: message.files,
+              totalFiles: message.files,
+              isComplete: true,
             };
             await this.saveSyncProgress(this.syncProgress);
 
@@ -241,23 +259,38 @@ export class CodebaseService {
     }
   }
 
-  private async saveProcessedFile(file: ProcessedFile, repoName: string): Promise<void> {
+  // save processed file to local storage
+  private async saveProcessedFile(
+    file: ProcessedFile,
+    repoName: string
+  ): Promise<void> {
     try {
+      // Create a unique filename based on the file path to avoid collisions
+      // Replace path separators with underscores to create a safe filename
+      const safeFilePath = file.filePath
+        .replace(new RegExp(`^${repoName}/`), '') // Remove repo name prefix if present
+        .replace(/\//g, '_'); // Replace slashes with underscores
+
       // Save the file content to the output directory
       const outputFilePath = path.join(
         this.context.globalStorageUri.fsPath,
         repoName,
         'codebase',
         'files',
-        `${path.basename(file.filename)}.json`
+        `${safeFilePath}.json`
       );
-      
+
+      // Ensure the directory exists
+      await fs.promises.mkdir(path.dirname(outputFilePath), {
+        recursive: true,
+      });
+
       await fs.promises.writeFile(
         outputFilePath,
         JSON.stringify({
           filename: file.filename,
           text: file.text,
-          filePath: file.filePath
+          filePath: file.filePath,
         })
       );
     } catch (error) {
@@ -269,6 +302,14 @@ export class CodebaseService {
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
+    }
+    this.stopEmbeddingProcess();
+  }
+
+  private stopEmbeddingProcess(): void {
+    if (this.embeddingProcess) {
+      this.embeddingProcess.kill();
+      this.embeddingProcess = null;
     }
   }
 
@@ -284,8 +325,14 @@ export class CodebaseService {
     );
   }
 
-  public async createEmbeddings(resume: boolean = false, repoName: string): Promise<void> {
+  public async createEmbeddings(
+    resume: boolean = false,
+    repoName: string
+  ): Promise<void> {
     try {
+      // Terminate any existing embedding process
+      this.stopEmbeddingProcess();
+
       // Create codebase embeddings directory
       const embeddingDirPath = path.join(
         this.context.globalStorageUri.fsPath,
@@ -295,47 +342,85 @@ export class CodebaseService {
       );
       await this.ensureDirectoryExists(embeddingDirPath);
 
-      // Start the embedding worker
-      const workerPath = path.join(__dirname, 'workers','codebase', 'codebaseEmbeddingWorker.js');
-      const worker = new Worker(workerPath, {
-        workerData: {
-          codebaseDirPath: path.join(
-            this.context.globalStorageUri.fsPath,
-            repoName,
-            'codebase',
-            'files'
-          ),
-          embeddingDirPath,
-          config: {
-            dimensions: MODEL.DEFAULT_DIMENSIONS,
-          },
-          resume: resume
+      // Start the embedding process using child_process.fork
+      const workerPath = path.join(
+        __dirname,
+        'workers',
+        'codebase',
+        'codebaseEmbeddingWorker.js'
+      );
+      this.embeddingProcess = fork(workerPath, [], {
+        // Pass data as environment variables or as message
+        env: {
+          ...process.env,
+          NODE_NO_WARNINGS: '1', // Suppress warnings
         },
+        // Increase memory limit for the child process and enable debugging
+        execArgv: ['--max-old-space-size=8192', '--inspect'],
+        // Configure stdio to capture and display logs
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+      });
+      const outputChannel = vscode.window.createOutputChannel(
+        'WorkspaceGPT Embeddings'
+      );
+      outputChannel.show(true); // Auto-open Output tab
+
+      this.embeddingProcess.stdout?.on('data', (data) => {
+        outputChannel.appendLine(`[embedding stdout] ${data.toString()}`);
       });
 
-      // Handle worker messages
-      worker.on('message', (message) => {
-        if (message.type === WORKER_STATUS.COMPLETED) {
-          this.webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.SYNC_CODEBASE_COMPLETE,
-            source: 'codebase',
-            message: 'Codebase embedding complete',
-          });
-        } else if (message.type === WORKER_STATUS.ERROR) {
-          this.webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.SYNC_CODEBASE_ERROR,
-            message: message.message,
-          });
-        } else if (message.type === WORKER_STATUS.PROCESSING) {
-          this.webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.SYNC_CODEBASE_IN_PROGRESS,
-            message: message.message,
-            progress: message.progress,
-          });
+      this.embeddingProcess.stderr?.on('data', (data) => {
+        outputChannel.appendLine(`[embedding stderr] ${data.toString()}`);
+      });
+      // Log when the child process is started
+      console.log(
+        'Started embedding child process with PID:',
+        this.embeddingProcess.pid
+      );
+
+      // Send initialization data to the child process
+      this.embeddingProcess.send({
+        codebaseDirPath: path.join(
+          this.context.globalStorageUri.fsPath,
+          repoName,
+          'codebase',
+          'files'
+        ),
+        embeddingDirPath,
+        config: {
+          dimensions: MODEL.DEFAULT_DIMENSIONS,
+        },
+        resume: resume,
+      });
+
+      // Handle process messages
+      this.embeddingProcess.on(
+        'message',
+        (message: { type: string; message: string; progress: string }) => {
+          if (message.type === WORKER_STATUS.COMPLETED) {
+            this.webviewView.webview.postMessage({
+              type: MESSAGE_TYPES.SYNC_CODEBASE_COMPLETE,
+              source: 'codebase',
+              message: 'Codebase embedding complete',
+            });
+            this.stopEmbeddingProcess();
+          } else if (message.type === WORKER_STATUS.ERROR) {
+            this.webviewView.webview.postMessage({
+              type: MESSAGE_TYPES.SYNC_CODEBASE_ERROR,
+              message: message.message,
+            });
+          } else if (message.type === WORKER_STATUS.PROCESSING) {
+            this.webviewView.webview.postMessage({
+              type: MESSAGE_TYPES.SYNC_CODEBASE_IN_PROGRESS,
+              message: message.message,
+              progress: message.progress,
+            });
+          }
         }
-      });
+      );
 
-      worker.on('error', (error) => {
+      // Handle process errors
+      this.embeddingProcess.on('error', (error) => {
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.SYNC_CODEBASE_ERROR,
           message: error.message,
@@ -354,9 +439,14 @@ export class CodebaseService {
     try {
       // Find all embedding directories in globalStorageUri
       const embeddingDirPaths = await this.findAllEmbeddingDirectories();
-      
+
       // Create a new worker for search
-      const workerPath = path.join(__dirname, 'workers','codebase', 'codebaseSearchWorker.js');
+      const workerPath = path.join(
+        __dirname,
+        'workers',
+        'codebase',
+        'codebaseSearchWorker.js'
+      );
       const searchWorker = new Worker(workerPath, {
         workerData: {
           query,
@@ -395,15 +485,22 @@ export class CodebaseService {
   private async findAllEmbeddingDirectories(): Promise<string[]> {
     try {
       const baseDir = this.context.globalStorageUri.fsPath;
-      const entries = await fs.promises.readdir(baseDir, { withFileTypes: true });
-      
+      const entries = await fs.promises.readdir(baseDir, {
+        withFileTypes: true,
+      });
+
       const embeddingDirPaths: string[] = [];
-      
+
       // Check each directory in the base directory
       for (const entry of entries) {
         if (entry.isDirectory()) {
-          const potentialEmbeddingDir = path.join(baseDir, entry.name, 'codebase', 'embeddings');
-          
+          const potentialEmbeddingDir = path.join(
+            baseDir,
+            entry.name,
+            'codebase',
+            'embeddings'
+          );
+
           try {
             // Check if the potential embedding directory exists
             await fs.promises.access(potentialEmbeddingDir);
@@ -414,19 +511,25 @@ export class CodebaseService {
           }
         }
       }
-      
+
       // If no embedding directories found, return the default path
       if (embeddingDirPaths.length === 0) {
         const defaultPath = path.join(baseDir, 'codebase', 'embeddings');
         await this.ensureDirectoryExists(defaultPath);
         embeddingDirPaths.push(defaultPath);
       }
-      
+
       return embeddingDirPaths;
     } catch (error) {
       console.error('Error finding embedding directories:', error);
       // Return default path in case of error
-      return [path.join(this.context.globalStorageUri.fsPath, 'codebase', 'embeddings')];
+      return [
+        path.join(
+          this.context.globalStorageUri.fsPath,
+          'codebase',
+          'embeddings'
+        ),
+      ];
     }
   }
 }
