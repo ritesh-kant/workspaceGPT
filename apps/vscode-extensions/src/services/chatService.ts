@@ -138,7 +138,7 @@ export class ChatService {
     });
   }
 
-  public async sendMessage(message: string, modelId: string): Promise<void> {
+  public async sendMessage(message: string, modelId: string, apiKey: string, provider: string): Promise<void> {
     try {
       // Add user message to history
       this.chatHistory.push({

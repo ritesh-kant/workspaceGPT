@@ -2,47 +2,50 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { STORAGE_KEYS } from '../../../constants';
+import { MODEL, MODEL_PROVIDERS, STORAGE_KEYS } from '../../../constants';
 
-export interface OllamaModel {
-  name: string;
-  model: string;
-  modified_at: string;
-  size: number;
-  digest: string;
-  details: {
-    parent_model: string;
-    format: string;
-    family: string;
-    families: string[];
-    parameter_size: string;
-    quantization_level: string;
-  };
+export interface AvailableModel {
+  id: string;
 }
 
 export interface ModelConfig {
   selectedModel: string;
+  provider: string;
+  apiKey?: string;
   isDownloading: boolean;
   downloadProgress: number;
   downloadStatus: 'idle' | 'downloading' | 'completed' | 'error';
   errorMessage?: string;
-  downloadDetails?: {
-    current: string;
-    total: string;
-  };
-  availableModels?: OllamaModel[];
+  availableModels?: AvailableModel[];
+  isLoadingModels?: boolean;
+}
+
+export interface SelectedProviderType {
+  provider: string;
+  providerIndex: number;
 }
 
 interface ModelState {
-  config: ModelConfig;
-  setConfig: (config: ModelConfig) => void;
-  updateConfig: <K extends keyof ModelConfig>(
-    field: K,
-    value: ModelConfig[K]
-  ) => void;
-  batchUpdateConfig: (updates: Partial<ModelConfig>) => void;
-  handleModelChange: (modelId: string) => void;
-  resetStore: () => void;
+  modelProviders: ModelConfig[];
+  selectedModelProvider: SelectedProviderType;
+  actions: {
+    updateSelectedModelProvider: (
+      selectedModelProvider: SelectedProviderType
+    ) => void; // Add this line
+    updateModelProvider: <K extends keyof ModelConfig>(
+      providerIndex: number, // Assuming we need to specify which provider to update
+      field: K,
+      value: ModelConfig[K]
+    ) => void;
+    batchUpdateModelProvider: (
+      providerIndex: number,
+      updates: Partial<ModelConfig>
+    ) => void; // Assuming we need to specify which provider to update
+
+    handleModelChange: (providerIndex: number, modelId: string) => void; // Assuming we need to specify which provider to update
+    handleProviderChange: (providerIndex: number, provider: string) => void; // Assuming we need to specify which provider to update
+    resetStore: () => void;
+  };
 }
 
 // Create a custom storage adapter for VSCode global state
@@ -61,8 +64,13 @@ const vscodeStorage = {
     const currentState = vscode.getState() || {};
     vscode.setState({
       ...currentState,
-      [STORAGE_KEYS.CHAT]: JSON.parse(value),
+      [STORAGE_KEYS.MODEL]: JSON.parse(value),
     });
+    console.log(
+      '===========updateing global state with model data',
+      value,
+      '============'
+    );
     vscode.postMessage({
       type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
       key: STORAGE_KEYS.MODEL,
@@ -72,7 +80,7 @@ const vscodeStorage = {
   removeItem: () => {
     const vscode = VSCodeAPI();
     const state = vscode.getState() || {};
-    const { [STORAGE_KEYS.CHAT]: model, ...rest } = state;
+    const { [STORAGE_KEYS.MODEL]: model, ...rest } = state;
     vscode.setState(rest);
     vscode.postMessage({
       type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
@@ -80,49 +88,77 @@ const vscodeStorage = {
   },
 };
 
-export const modelDefaultConfig: ModelConfig = {
-  selectedModel: 'llama3.2:1b',
-  isDownloading: false,
-  downloadProgress: 0,
-  downloadStatus: 'idle',
-};
+export const modelDefaultConfig: ModelConfig[] = MODEL_PROVIDERS.map(
+  (provider) => ({
+    provider: provider.MODEL_PROVIDER,
+    selectedModel: provider.DEFAULT_CHAT_MODEL,
+    apiKey: 'DUMMY_API_KEY' + provider.MODEL_PROVIDER,
+    isDownloading: false,
+    downloadProgress: 0,
+    downloadStatus: 'idle',
+    isLoadingModels: false,
+    availableModels: [],
+  })
+);
 
-export const useModelStore = create<ModelState>()(
+const useModelStore = create<ModelState>()(
   persist(
     (set) => ({
-      config: modelDefaultConfig,
-      setConfig: (config) => set({ config }),
-      updateConfig: (field, value) => {
-        set((state) => ({
-          config: {
-            ...state.config,
-            [field]: value,
-          },
-        }));
-      },
-      batchUpdateConfig: (updates) => {
-        set((state) => ({
-          config: {
-            ...state.config,
-            ...updates,
-          },
-        }));
-      },
-      handleModelChange: (modelId: string) => {
-        set((state) => ({
-          config: {
-            ...state.config,
-            selectedModel: modelId,
-          },
-        }));
-      },
-      resetStore: () => {
-        const vscode = VSCodeAPI();
-        vscode.setState({});
-        vscode.postMessage({
-          type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
-        });
-        set({ config: modelDefaultConfig });
+      modelProviders: modelDefaultConfig, // Initialize with the array
+      selectedModelProvider: { provider: MODEL.OLLAMA, providerIndex: 0 }, // Initialize as an object
+      actions: {
+        updateSelectedModelProvider: (
+          selectedModelProvider: SelectedProviderType
+        ) => set({ selectedModelProvider }), // Update to take SelectedProviderType
+        updateModelProvider: (providerIndex, field, value) => {
+          console.log('updating field', field, value);
+          set((state) => ({
+            modelProviders: state.modelProviders.map((config, index) =>
+              index === providerIndex ? { ...config, [field]: value } : config
+            ),
+          }));
+        },
+        batchUpdateModelProvider: (providerIndex, updates) => {
+          set((state) => ({
+            modelProviders: state.modelProviders.map((config, index) =>
+              index === providerIndex ? { ...config, ...updates } : config
+            ),
+          }));
+        },
+        handleModelChange: (providerIndex, modelId: string) => {
+          set((state) => ({
+            modelProviders: state.modelProviders.map((config, index) =>
+              index === providerIndex
+                ? { ...config, selectedModel: modelId }
+                : config
+            ),
+          }));
+        },
+        handleProviderChange: (providerIndex, provider: string) => {
+          console.log(
+            'setting new provider for index',
+            providerIndex,
+            provider
+          );
+          set((state) => ({
+            modelProviders: state.modelProviders.map((config, index) =>
+              index === providerIndex
+                ? {
+                    ...config,
+                    provider,
+                  }
+                : config
+            ),
+          }));
+        },
+        resetStore: () => {
+          const vscode = VSCodeAPI();
+          vscode.setState({});
+          vscode.postMessage({
+            type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
+          });
+          set({ modelProviders: modelDefaultConfig }); // Use the array here
+        },
       },
     }),
     {
@@ -131,3 +167,17 @@ export const useModelStore = create<ModelState>()(
     }
   )
 );
+
+// custom hooks for model store
+
+export const setModelState = (newState: ModelState) => {
+  useModelStore.setState((state) => ({...newState, actions: state.actions}));
+};
+
+export const useModelProviders = () =>
+  useModelStore((state) => state.modelProviders);
+
+export const useSelectedModelProvider = () =>
+  useModelStore((state) => state.selectedModelProvider);
+
+export const useModelActions = () => useModelStore((state) => state.actions);

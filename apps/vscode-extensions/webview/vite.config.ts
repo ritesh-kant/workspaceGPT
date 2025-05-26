@@ -6,6 +6,8 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: 'dist',
+    sourcemap: "inline",
+    minify: false,
     assetsDir: 'assets',
     rollupOptions: {
       input: path.resolve(__dirname, 'index.html'),

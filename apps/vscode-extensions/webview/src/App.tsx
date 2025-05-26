@@ -3,10 +3,16 @@ import './App.css';
 import ChatMessage from './components/ChatMessage';
 import SettingsButton from './components/Settings';
 import { VSCodeAPI } from './vscode';
-import { useChatStore, useSettingsStore, useModelStore } from './store';
+import {
+  setModelState,
+  useChatStore,
+  useModelActions,
+  useModelProviders,
+  useSelectedModelProvider,
+  useSettingsStore,
+} from './store';
 import { MESSAGE_TYPES, STORAGE_KEYS } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
-import { modelDefaultConfig } from './store/modelStore';
 
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
@@ -22,14 +28,20 @@ const App: React.FC = () => {
     setShowTips,
   } = useChatStore();
 
-  const { showSettings, setShowSettings, setConfig: setSettingsConfig } = useSettingsStore();
   const {
-    config: modelConfig,
-    batchUpdateConfig: batchUpdateModelConfig,
-    setConfig: setModelConfig,
-    handleModelChange,
+    showSettings,
+    setShowSettings,
+    setConfig: setSettingsConfig,
+  } = useSettingsStore();
+  
+  const modelProviders = useModelProviders();
 
-  } = useModelStore();
+  const selectedModelProvider = useSelectedModelProvider();
+
+  const { handleModelChange } = useModelActions();
+
+  const providerIndex = selectedModelProvider.providerIndex;
+  const modelConfig = modelProviders[providerIndex];
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
@@ -55,39 +67,35 @@ const App: React.FC = () => {
           });
           setIsLoading(false);
           break;
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
-          batchUpdateModelConfig({
-            isDownloading: true,
-            downloadProgress: message.progress ?? '0',
-            downloadStatus: 'downloading',
-            downloadDetails: {
-              current: message.current || '0 MB',
-              total: message.total || '0 MB',
-            },
-          });
-          break;
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
-          let availableModels;
-          if (message.models && Array.isArray(message.models)) {
-            availableModels = message.models.filter(
-              (eachModel: { name: string }) => !eachModel.name.includes('embed')
-            );
-          }
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
+        //   batchUpdateModelProvider(providerIndex, {
+        //     isDownloading: true,
+        //     downloadProgress: message.progress ?? '0',
+        //     downloadStatus: 'downloading',
+        //   });
+        //   break;
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
+        //   let availableModels;
+        //   if (message.models && Array.isArray(message.models)) {
+        //     availableModels = message.models.filter(
+        //       (eachModel: { id: string }) => !eachModel.id.includes('embed')
+        //     );
+        //   }
 
-          batchUpdateModelConfig({
-            isDownloading: false,
-            downloadProgress: 100,
-            downloadStatus: 'completed',
-            availableModels,
-          });
-          break;
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
-          batchUpdateModelConfig({
-            isDownloading: false,
-            downloadStatus: 'error',
-            errorMessage: message.message,
-          });
-          break;
+        //   batchUpdateModelProvider(providerIndex, {
+        //     isDownloading: false,
+        //     downloadProgress: 100,
+        //     downloadStatus: 'completed',
+        //     availableModels,
+        //   });
+        //   break;
+        // case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
+        //   batchUpdateModelProvider(providerIndex, {
+        //     isDownloading: false,
+        //     downloadStatus: 'error',
+        //     errorMessage: message.message,
+        //   });
+        //   break;
         case MESSAGE_TYPES.ERROR_CHAT:
           addMessage({
             content: 'Error occurred. Please start a new chat.',
@@ -111,12 +119,15 @@ const App: React.FC = () => {
           setShowTips(true);
           hideSettings();
           break;
-        case MESSAGE_TYPES.GET_GLOBAL_STATE:
+        case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
-            setSettingsConfig(message.state || settingsDefaultConfig);
+            setSettingsConfig(message.state?.config || settingsDefaultConfig);
           }
           if (message.key === STORAGE_KEYS.MODEL) {
-            setModelConfig(message.state || modelDefaultConfig);
+            // setModelConfig(message.state || modelDefaultConfig);
+            setModelState(message.state || modelConfig);
+            console.log('modelConfig', message.state || modelConfig);
+
           }
           break;
       }
@@ -141,7 +152,7 @@ const App: React.FC = () => {
     if (inputValue.trim() === '') return;
 
     // Check if model is currently downloading
-    if (modelConfig.isDownloading) {
+    if (modelConfig?.isDownloading) {
       // Show notification to wait for model download to complete
       addMessage({
         content:
@@ -165,7 +176,9 @@ const App: React.FC = () => {
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
       message: inputValue,
-      modelId: modelConfig.selectedModel,
+      modelId: modelConfig?.selectedModel,
+      provider: selectedModelProvider.provider, // Use the provider string from the selectedModelProvider object
+      apiKey: modelConfig?.apiKey,
     });
   };
 
@@ -207,7 +220,6 @@ const App: React.FC = () => {
         </div>
       )}
       <div className='chat-container'>
-
         {showTips && messages.length === 0 ? (
           <div className='welcome-container'>
             <h1 className='welcome-title'>👋 Hello</h1>
@@ -269,9 +281,7 @@ const App: React.FC = () => {
                 isError={message.isError}
               />
             ))}
-            {isLoading && (
-              <div className='loading-indicator'>Thinking...</div>
-            )}
+            {isLoading && <div className='loading-indicator'>Thinking...</div>}
             <div ref={messagesEndRef} />
           </div>
         )}
@@ -285,46 +295,48 @@ const App: React.FC = () => {
               placeholder={
                 !isOllamaRunning
                   ? 'Ollama service is not running'
-                  : modelConfig.isDownloading
+                  : modelConfig?.isDownloading
                     ? 'Please wait for model download to complete...'
                     : 'Ask WorkspaceGPT...'
               }
               disabled={
-                isLoading || modelConfig.isDownloading || !isOllamaRunning
+                isLoading || modelConfig?.isDownloading || !isOllamaRunning
               }
             />
             <div className='input-controls'>
               <div className='model-selector-bottom'>
                 <select
-                  value={modelConfig.selectedModel}
-                  onChange={(e) => handleModelChange(e.target.value)}
-                  disabled={modelConfig.isDownloading}
-                  className={modelConfig.isDownloading ? 'loading' : ''}
+                  value={modelConfig?.selectedModel}
+                  onChange={(e) =>
+                    handleModelChange(providerIndex, e.target.value)
+                  }
+                  disabled={modelConfig?.isDownloading}
+                  className={modelConfig?.isDownloading ? 'loading' : ''}
                 >
-                  {modelConfig.availableModels &&
+                  {modelConfig?.availableModels &&
                   modelConfig.availableModels.length > 0 ? (
                     // Render options from available models
                     modelConfig.availableModels.map((model) => (
-                      <option key={model.model} value={model.model}>
-                        {modelConfig.isDownloading &&
-                        modelConfig.selectedModel === model.model
-                        ? `${model.name} (${modelConfig.downloadProgress}%)`
-                        : `${model.name} (${model?.details?.parameter_size})`}
+                      <option key={model.id} value={model.id}>
+                        {modelConfig?.isDownloading &&
+                        modelConfig?.selectedModel === model.id
+                          ? `${model.id} (${modelConfig.downloadProgress}%)`
+                          : `${model.id}`}
                       </option>
                     ))
                   ) : (
                     // Fallback options if no models are available
                     <>
                       <option value='llama3.2:1b'>
-                        {modelConfig.isDownloading &&
-                        modelConfig.selectedModel === 'llama3.2:1b'
-                        ? `Llama3.2 (${modelConfig.downloadProgress}%)`
-                        : 'Llama3.2'}
+                        {modelConfig?.isDownloading &&
+                        modelConfig?.selectedModel === 'llama3.2:1b'
+                          ? `Llama3.2 (${modelConfig.downloadProgress}%)`
+                          : 'Llama3.2'}
                       </option>
                     </>
                   )}
                 </select>
-                {modelConfig.isDownloading && (
+                {modelConfig?.isDownloading && (
                   <div className='model-progress'>
                     <div
                       className='progress-bar'
@@ -336,7 +348,7 @@ const App: React.FC = () => {
               <button
                 onClick={handleSendMessage}
                 disabled={
-                  isLoading || !inputValue.trim() || modelConfig.isDownloading
+                  isLoading || !inputValue.trim() || modelConfig?.isDownloading
                 }
                 className='send-button'
                 aria-label='Send message'
@@ -346,10 +358,7 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
-        <SettingsButton
-          isVisible={showSettings}
-          onBack={hideSettings}
-        />
+        <SettingsButton isVisible={showSettings} onBack={hideSettings} />
       </div>
     </div>
   );

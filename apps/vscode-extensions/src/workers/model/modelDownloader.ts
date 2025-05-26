@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
-import { ModelType, WORKER_STATUS } from '../../../constants';
+import { MODEL, ModelType, MODEL_PROVIDERS, WORKER_STATUS } from '../../../constants';
+import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
 
 interface WorkerData {
   modelId: string;
@@ -9,33 +10,18 @@ interface WorkerData {
 
 const { modelId, modelType } = workerData as WorkerData;
 
-async function fetchAvailableModels() {
-  const modelCheckResponse = await fetch(`http://localhost:11434/api/tags`, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  if (!modelCheckResponse.ok) {
-    throw new Error(
-      `Failed to check model status: ${modelCheckResponse.statusText}`
-    );
-  }
-
-  const modelList = await modelCheckResponse.json();
- 
-  return modelList.models;
-}
-
 async function checkAndDownloadModel(): Promise<void> {
   try {
+    const provider = MODEL_PROVIDERS.find((e)=> e.MODEL_PROVIDER === MODEL.OLLAMA);
+    const baseURL = provider?.BASE_URL ?? "";
     // First check if the model exists
-    const availableModels = await fetchAvailableModels();
+    const availableModels = await fetchAvailableModels(baseURL, "DUMMY_API_KEY");
     let modelExists = availableModels?.some(
-      (model: { name: string }) => !model.name.includes('embed')
+      (model) => !model.id.includes('embed')
     );
     if (modelType === 'embedding') {
-      modelExists = availableModels?.some((model: { name: string }) =>
-        model.name.includes('embed')
+      modelExists = availableModels?.some((model) =>
+        model.id.includes('embed')
       );
     }
     // if (modelExists && false) {
@@ -102,7 +88,7 @@ async function checkAndDownloadModel(): Promise<void> {
     }
 
     // Fetch updated model list after download
-    const updatedModels = await fetchAvailableModels();
+    const updatedModels = await fetchAvailableModels(baseURL, "DUMMY_API_KEY");
 
     parentPort?.postMessage({
       type: WORKER_STATUS.COMPLETED,

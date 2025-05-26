@@ -6,6 +6,7 @@ import {
   MESSAGE_TYPES,
   MODEL,
   ModelTypeEnum,
+  MODEL_PROVIDERS,
   STORAGE_KEYS,
   WORKER_STATUS,
 } from '../../constants';
@@ -15,6 +16,7 @@ import { EmbeddingService } from '../services/embeddingService';
 import { CodebaseService } from '../services/codebaseService';
 import { EmbeddingConfig, CodebaseConfig } from '../types/types';
 import { isOllamaRunningCheck } from '../utils/ollamaCheck';
+import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
 
 export class WebviewMessageHandler {
   private chatService?: ChatService;
@@ -41,10 +43,7 @@ export class WebviewMessageHandler {
       this.context
     );
 
-    this.codebaseService = new CodebaseService(
-      this.webviewView,
-      this.context
-    );
+    this.codebaseService = new CodebaseService(this.webviewView, this.context);
 
     // Initialize Ollama status check
     this.initializeOllamaCheck();
@@ -77,7 +76,10 @@ export class WebviewMessageHandler {
         this.chatService = new ChatService(this.webviewView, this.context);
       }
       await this.chatService.initializeModel(chatModelId, ModelTypeEnum.Chat);
-      await this.chatService.initializeModel(embeddingModelId, ModelTypeEnum.Embedding);
+      await this.chatService.initializeModel(
+        embeddingModelId,
+        ModelTypeEnum.Embedding
+      );
 
       this.isModelInitialized = true;
     }
@@ -136,22 +138,22 @@ export class WebviewMessageHandler {
       case MESSAGE_TYPES.GET_WORKSPACE_PATH:
         await this.handleGetWorkspacePath();
         break;
+      case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS:
+        await this.handleFetchAvailableModels(data);
+        break;
     }
   }
 
   private async updateGlobalState(data: any): Promise<void> {
-    await this.context.globalState.update(
-      data.key,
-      data.state
-    );
+    await this.context.globalState.update(data.key, data.state);
   }
   private async getGlobalState(data: any): Promise<void> {
-    const config:any = this.context.globalState.get(data.key);
+    const config: any = this.context.globalState.get(data.key);
 
     this.webviewView.webview.postMessage({
-      type: MESSAGE_TYPES.GET_GLOBAL_STATE,
+      type: MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE,
       key: data.key,
-      state: config?.state?.config,
+      state: config?.state,
     });
   }
 
@@ -312,7 +314,7 @@ export class WebviewMessageHandler {
     try {
       // Send a message to the webview to show the settings panel
       this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.SHOW_SETTINGS
+        type: MESSAGE_TYPES.SHOW_SETTINGS,
       });
     } catch (error) {
       this.handleError('Error showing settings:', error);
@@ -324,7 +326,11 @@ export class WebviewMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context);
       }
-      await this.chatService.sendMessage(data.message, data.modelId);
+      // Extract the message, model ID, and API key (if present) from the data
+      const { message, modelId, apiKey, provider } = data;
+
+      // Send the message to the chat service with API key if available
+      await this.chatService.sendMessage(message, modelId, apiKey, provider);
     } catch (error) {
       this.handleError('Error:', error);
     }
@@ -349,10 +355,7 @@ export class WebviewMessageHandler {
   }
 
   private isCodebaseConfigValid(config: any): boolean {
-    return !!(
-      config &&
-      config.repoPath
-    );
+    return !!(config && config.repoPath);
   }
 
   private async ensureDirectoryExists(dirPath: string): Promise<void> {
@@ -395,15 +398,10 @@ export class WebviewMessageHandler {
       // });
 
       // Update the global state to reflect that sync is no longer in progress
-      const config = this.context.globalState.get(
-        STORAGE_KEYS.SETTINGS
-      ) as any;
+      const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       if (config && config.state && config.state.config) {
         config.state.config.confluence.isSyncing = false;
-        await this.context.globalState.update(
-          STORAGE_KEYS.SETTINGS,
-          config
-        );
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
     } catch (error) {
       console.error('Error stopping Confluence sync:', error);
@@ -417,9 +415,13 @@ export class WebviewMessageHandler {
     try {
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       this.codebaseConfig = config.state.config.codebase;
-      const repoName = this.codebaseConfig?.repoPath.split('/').slice(-1)[0]
+      const repoName = this.codebaseConfig?.repoPath.split('/').slice(-1)[0];
 
-      if (!this.isCodebaseConfigValid(this.codebaseConfig) || !this.codebaseConfig || !repoName) {
+      if (
+        !this.isCodebaseConfigValid(this.codebaseConfig) ||
+        !this.codebaseConfig ||
+        !repoName
+      ) {
         throw new Error(
           'Codebase configuration is incomplete. Please check your settings.'
         );
@@ -440,9 +442,13 @@ export class WebviewMessageHandler {
     try {
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       this.codebaseConfig = config.state.config.codebase;
-      const repoName = this.codebaseConfig?.repoPath.split('/').slice(-1)[0]
+      const repoName = this.codebaseConfig?.repoPath.split('/').slice(-1)[0];
 
-      if (!this.isCodebaseConfigValid(this.codebaseConfig) || !this.codebaseConfig || !repoName) {
+      if (
+        !this.isCodebaseConfigValid(this.codebaseConfig) ||
+        !this.codebaseConfig ||
+        !repoName
+      ) {
         throw new Error(
           'Codebase configuration is incomplete. Please check your settings.'
         );
@@ -497,15 +503,10 @@ export class WebviewMessageHandler {
       // });
 
       // Update the global state to reflect that sync is no longer in progress
-      const config = this.context.globalState.get(
-        STORAGE_KEYS.SETTINGS
-      ) as any;
+      const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       if (config && config.state && config.state.config) {
         config.state.config.codebase.isSyncing = false;
-        await this.context.globalState.update(
-          STORAGE_KEYS.SETTINGS,
-          config
-        );
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
     } catch (error) {
       console.error('Error stopping codebase sync:', error);
@@ -518,14 +519,14 @@ export class WebviewMessageHandler {
 
   private async handleRetryOllamaCheck(): Promise<void> {
     await this.checkOllamaStatus();
-    this.initializeModels()
+    this.initializeModels();
   }
 
   private async checkOllamaStatus(): Promise<boolean> {
     const isRunning = await isOllamaRunningCheck();
     this.webviewView.webview.postMessage({
       type: MESSAGE_TYPES.OLLAMA_STATUS,
-      isRunning
+      isRunning,
     });
     return isRunning;
   }
@@ -542,11 +543,13 @@ export class WebviewMessageHandler {
         // Send the workspace path to the webview
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.WORKSPACE_PATH,
-          path: workspacePath
+          path: workspacePath,
         });
 
         // Also update the config in global state
-        const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+        const config = this.context.globalState.get(
+          STORAGE_KEYS.SETTINGS
+        ) as any;
         if (config && config.state && config.state.config) {
           config.state.config.codebase.repoPath = workspacePath;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
@@ -556,7 +559,7 @@ export class WebviewMessageHandler {
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.WORKSPACE_PATH,
           path: '',
-          error: 'No workspace is open'
+          error: 'No workspace is open',
         });
       }
     } catch (error) {
@@ -564,7 +567,7 @@ export class WebviewMessageHandler {
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.WORKSPACE_PATH,
         path: '',
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -573,6 +576,31 @@ export class WebviewMessageHandler {
     // Initial check
     await this.checkOllamaStatus();
     // Set up periodic check
-    this.checkOllamaInterval = setInterval(() => this.checkOllamaStatus(), 30000); // Check every 30 seconds
+    this.checkOllamaInterval = setInterval(
+      () => this.checkOllamaStatus(),
+      30000
+    ); // Check every 30 seconds
+  }
+
+  private async handleFetchAvailableModels(data: any) {
+    // Fetch the list of available models
+    const baseURL = MODEL_PROVIDERS.find(
+      (p) => p.MODEL_PROVIDER === data.provider
+    )?.BASE_URL;
+    const apiKey = data.apiKey;
+    if (!baseURL || !apiKey) return;
+    try {
+      const models = await fetchAvailableModels(baseURL, data.apiKey);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_RESPONSE,
+        models: models,
+      });
+    } catch (error) {
+      console.error('Error fetching available models:', error);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
