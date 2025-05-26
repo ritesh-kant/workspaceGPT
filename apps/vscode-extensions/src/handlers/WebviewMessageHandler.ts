@@ -61,7 +61,7 @@ export class WebviewMessageHandler {
 
     if (!this.isModelInitialized && isOllamaRunning) {
       const chatModelId = MODEL.DEFAULT_CHAT_MODEL;
-      const embeddingModelId = MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL;
+      const embeddingModelId = MODEL.DEFAULT_TEXT_EMBEDDING_MODEL;
 
       // Notify UI that model is being downloaded
       this.webviewView.webview.postMessage({
@@ -253,7 +253,7 @@ export class WebviewMessageHandler {
   private async handleCompleteConfluenceSync(): Promise<void> {
     try {
       await this.embeddingService?.createEmbeddings({
-        dimensions: MODEL.DEFAULT_DIMENSIONS,
+        dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
       } as EmbeddingConfig);
     } catch (error) {
       console.error('Error in Confluence indexing:', error);
@@ -278,7 +278,7 @@ export class WebviewMessageHandler {
       if (!progress || progress.isComplete) {
         // If no progress or already complete, start a new indexing
         await this.embeddingService?.createEmbeddings({
-          dimensions: MODEL.DEFAULT_DIMENSIONS,
+          dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
         } as EmbeddingConfig);
         return;
       }
@@ -286,7 +286,7 @@ export class WebviewMessageHandler {
       // Resume the indexing with the existing progress
       await this.embeddingService?.createEmbeddings(
         {
-          dimensions: MODEL.DEFAULT_DIMENSIONS,
+          dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
         } as EmbeddingConfig,
         true // resume parameter
       );

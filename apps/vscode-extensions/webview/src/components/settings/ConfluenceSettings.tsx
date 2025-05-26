@@ -130,7 +130,7 @@ const ConfluenceSettings: React.FC = () => {
       isSyncing: true,
       confluenceSyncProgress: 0,
       statusMessage: 'Starting sync process...',
-      connectionStatus: 'unknown',
+      connectionStatus: 'success',
     });
     handleConfluenceActions.startSync(vscode, config);
   };
@@ -139,7 +139,7 @@ const ConfluenceSettings: React.FC = () => {
     batchUpdateConfig('confluence', {
       isSyncing: true,
       statusMessage: 'Resuming sync process...',
-      connectionStatus: 'unknown',
+      connectionStatus: 'success',
     });
     handleConfluenceActions.resumeSync(vscode, config);
   };
@@ -148,6 +148,7 @@ const ConfluenceSettings: React.FC = () => {
     batchUpdateConfig('confluence', {
       isSyncing: false,
       statusMessage: 'Stopping sync process...',
+      connectionStatus: 'error',
     });
     handleConfluenceActions.stopSync(vscode, config);
   };

@@ -177,7 +177,7 @@ async function createEmbeddingForText(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL,
+        model: MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
         prompt: text
       })
     });

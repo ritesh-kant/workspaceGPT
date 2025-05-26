@@ -388,7 +388,7 @@ export class CodebaseService {
         ),
         embeddingDirPath,
         config: {
-          dimensions: MODEL.DEFAULT_DIMENSIONS,
+          dimensions: MODEL.DEFAULT_CODE_EMBEDDING_DIMENSIONS,
         },
         resume: resume,
       });
