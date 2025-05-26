@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { clearVSCodeState, VSCodeAPI } from '../vscode';
+import { clearVSCodeState } from '../vscode';
 import './Settings.css';
 import { useSettingsStore, useChatStore, useModelActions } from '../store';
 import { MESSAGE_TYPES } from '../constants';
@@ -22,11 +22,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   const { resetStore: resetModelStore } = useModelActions();
   const { resetStore: resetChatStore } = useChatStore();
 
-  const vscode = VSCodeAPI();
 
   useEffect(() => {
-    // Request current configuration when component mounts
-    vscode.postMessage({ type: 'getSettingsButtonConfig' });
 
     // Listen for configuration and sync updates from extension
     const handleMessage = (event: MessageEvent) => {

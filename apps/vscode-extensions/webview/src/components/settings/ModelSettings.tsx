@@ -47,6 +47,9 @@ const ModelSettings: React.FC = () => {
   );
 
   useEffect(() => {
+    // Fetch available models for the selected provider whenever component mounts or selectedProvider changes
+    fetchAvailableModels(selectedModelProvider.provider, modelConfig.apiKey);
+
     // Listen for model configuration and sync updates from extension
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
@@ -160,7 +163,7 @@ const ModelSettings: React.FC = () => {
             <input
               id='api-key'
               type='password'
-              value={modelConfig?.apiKey}
+              value={modelConfig?.apiKey ?? ''}
               onChange={(e) => {
                 const newApiKey = e.target.value;
                 // Update the API key immediately in the UI
@@ -183,53 +186,61 @@ const ModelSettings: React.FC = () => {
           </div>
         )}
 
-        {!apiKeyError && (
-          <div className='form-group'>
-            <label htmlFor='model-select'>Select Model</label>
-            <select
-              id='model-select'
-              className='select-larger'
-              value={modelConfig?.selectedModel}
-              onChange={(e) => handleModelChange(providerIndex, e.target.value)}
-              disabled={modelConfig?.isDownloading}
-            >
-              {modelConfig?.availableModels &&
-                // Render options from available models
-                modelConfig.availableModels.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.id}
-                  </option>
-                ))}
-            </select>
-            {modelConfig?.isDownloading && (
-              <div className='model-download-status'>
-                <div className='progress-bar'>
-                  <div
-                    className='progress-fill'
-                    style={{
-                      width: `${modelConfig.downloadProgress}%`,
-                    }}
-                  ></div>
+        {showSelectModelValidator()  && (
+            <div className='form-group'>
+              <label htmlFor='model-select'>Select Model</label>
+              <select
+                id='model-select'
+                className='select-larger'
+                value={modelConfig?.selectedModel}
+                onChange={(e) =>
+                  handleModelChange(providerIndex, e.target.value)
+                }
+                disabled={modelConfig?.isDownloading}
+              >
+                {modelConfig?.availableModels &&
+                  // Render options from available models
+                  modelConfig.availableModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.id}
+                    </option>
+                  ))}
+              </select>
+              {modelConfig?.isDownloading && (
+                <div className='model-download-status'>
+                  <div className='progress-bar'>
+                    <div
+                      className='progress-fill'
+                      style={{
+                        width: `${modelConfig.downloadProgress}%`,
+                      }}
+                    ></div>
+                  </div>
                 </div>
-              </div>
-            )}
-            {modelConfig?.downloadStatus === 'error' && (
-              <div className='error-message'>
-                Failed to download model &nbsp;
-                <button
-                  onClick={() => retry()}
-                  className='retry-button'
-                  title='Retry connection'
-                >
-                  ↻
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+              {modelConfig?.downloadStatus === 'error' && (
+                <div className='error-message'>
+                  Failed to download model &nbsp;
+                  <button
+                    onClick={() => retry()}
+                    className='retry-button'
+                    title='Retry connection'
+                  >
+                    ↻
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
       </div>
     </div>
   );
+
+  function showSelectModelValidator() {
+    return !apiKeyError &&
+      modelConfig?.apiKey &&
+      (modelConfig?.availableModels?.length ?? 0) > 0;
+  }
 };
 
 export default ModelSettings;

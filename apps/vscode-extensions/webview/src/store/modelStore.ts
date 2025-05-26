@@ -92,7 +92,7 @@ export const modelDefaultConfig: ModelConfig[] = MODEL_PROVIDERS.map(
   (provider) => ({
     provider: provider.MODEL_PROVIDER,
     selectedModel: provider.DEFAULT_CHAT_MODEL,
-    apiKey: 'DUMMY_API_KEY' + provider.MODEL_PROVIDER,
+    apiKey: provider.API_KEY,
     isDownloading: false,
     downloadProgress: 0,
     downloadStatus: 'idle',
@@ -171,7 +171,7 @@ const useModelStore = create<ModelState>()(
 // custom hooks for model store
 
 export const setModelState = (newState: ModelState) => {
-  useModelStore.setState((state) => ({...newState, actions: state.actions}));
+  useModelStore.setState((state) => ({ ...newState, actions: state.actions }));
 };
 
 export const useModelProviders = () =>
