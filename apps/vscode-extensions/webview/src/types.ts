@@ -5,7 +5,7 @@ export interface SettingsButtonProps {
 
 export interface StatusMessage {
   section: 'confluence' | 'codebase';
-  field: 'statusMessage' | 'connectionStatus';
+  field: 'statusMessage' | 'messageType';
   value: string | 'unknown';
   delay?: number;
 }
@@ -22,7 +22,7 @@ export interface ConfluenceConfig {
   isIndexing: boolean;
   isSyncCompleted: boolean;
   isIndexingCompleted: boolean;
-  connectionStatus: 'unknown' | 'success' | 'error';
+  messageType: 'success' | 'error';
   statusMessage: string;
   canResume: boolean;
   canResumeIndexing: boolean;
@@ -39,7 +39,7 @@ export interface CodebaseConfig {
   isCodebaseEnabled: boolean;
   codebaseSyncProgress: number;
   codebaseIndexProgress: number;
-  connectionStatus: 'unknown' | 'success' | 'error';
+  messageType: 'success' | 'error';
   statusMessage: string;
   canResume: boolean;
   canResumeIndexing: boolean;

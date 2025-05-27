@@ -24,7 +24,7 @@ const ConfluenceSettings: React.FC = () => {
       switch (message.type) {
         case MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS:
           batchUpdateConfig('confluence', {
-            connectionStatus: message.status ? 'success' : 'error',
+            messageType: message.status ? 'success' : 'error',
             statusMessage: message.message || '',
           });
           clearStatusMessageAfterDelay('confluence', 'statusMessage');
@@ -33,7 +33,7 @@ const ConfluenceSettings: React.FC = () => {
         case MESSAGE_TYPES.SYNC_CONFLUENCE_IN_PROGRESS:
           batchUpdateConfig('confluence', {
             confluenceSyncProgress: message.progress,
-            connectionStatus: 'unknown',
+            messageType: 'success',
             isSyncing: message.progress < 100,
             canResume: true,
           });
@@ -41,7 +41,7 @@ const ConfluenceSettings: React.FC = () => {
 
         case MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE:
           batchUpdateConfig('confluence', {
-            connectionStatus: 'success',
+            messageType: 'success',
             statusMessage: 'Sync completed successfully',
             confluenceSyncProgress: 100,
             isSyncing: false,
@@ -54,7 +54,7 @@ const ConfluenceSettings: React.FC = () => {
         case MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR:
           batchUpdateConfig('confluence', {
             isSyncing: false,
-            connectionStatus: 'error',
+            messageType: 'error',
             statusMessage: `Sync error: Please verify your credentials and try again.`,
             canResume: true,
           });
@@ -63,7 +63,7 @@ const ConfluenceSettings: React.FC = () => {
         case MESSAGE_TYPES.SYNC_CONFLUENCE_STOP:
           batchUpdateConfig('confluence', {
             isSyncing: false,
-            connectionStatus: 'error',
+            messageType: 'error',
             statusMessage: `Sync stopped`,
             canResume: true,
           });
@@ -73,7 +73,7 @@ const ConfluenceSettings: React.FC = () => {
         case MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS:
           batchUpdateConfig('confluence', {
             confluenceIndexProgress: message.progress,
-            connectionStatus: 'unknown',
+            messageType: 'success',
             isIndexing: message.progress < 100,
             canResumeIndexing: true,
             isSyncing: false,
@@ -84,7 +84,7 @@ const ConfluenceSettings: React.FC = () => {
         case MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE:
           batchUpdateConfig('confluence', {
             confluenceIndexProgress: 100,
-            connectionStatus: 'success',
+            messageType: 'success',
             isIndexing: false,
             statusMessage: 'Indexing completed successfully',
             canResumeIndexing: false,
@@ -94,7 +94,7 @@ const ConfluenceSettings: React.FC = () => {
           });
           clearStatusMessageAfterDelay(
             'confluence',
-            'connectionStatus',
+            'messageType',
             'unknown'
           );
           break;
@@ -102,7 +102,7 @@ const ConfluenceSettings: React.FC = () => {
         case MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR:
           batchUpdateConfig('confluence', {
             isSyncing: false,
-            connectionStatus: 'error',
+            messageType: 'error',
             statusMessage: `Indexing error: ${message.message}`,
             canResumeIndexing: true,
           });
@@ -119,7 +119,7 @@ const ConfluenceSettings: React.FC = () => {
 
   const checkConnection = () => {
     batchUpdateConfig('confluence', {
-      connectionStatus: 'unknown',
+      messageType: 'success',
       statusMessage: 'Checking connection...',
     });
     handleConfluenceActions.checkConnection(vscode, config);
@@ -130,7 +130,7 @@ const ConfluenceSettings: React.FC = () => {
       isSyncing: true,
       confluenceSyncProgress: 0,
       statusMessage: 'Starting sync process...',
-      connectionStatus: 'success',
+      messageType: 'success',
     });
     handleConfluenceActions.startSync(vscode, config);
   };
@@ -139,7 +139,7 @@ const ConfluenceSettings: React.FC = () => {
     batchUpdateConfig('confluence', {
       isSyncing: true,
       statusMessage: 'Resuming sync process...',
-      connectionStatus: 'success',
+      messageType: 'success',
     });
     handleConfluenceActions.resumeSync(vscode, config);
   };
@@ -148,7 +148,7 @@ const ConfluenceSettings: React.FC = () => {
     batchUpdateConfig('confluence', {
       isSyncing: false,
       statusMessage: 'Stopping sync process...',
-      connectionStatus: 'error',
+      messageType: 'error',
     });
     handleConfluenceActions.stopSync(vscode, config);
   };
@@ -255,40 +255,38 @@ const ConfluenceSettings: React.FC = () => {
           </div>
 
           {/* Progress bars and status messages */}
-          {(confluenceConfig.isSyncing || confluenceConfig.isIndexing) && (
-            <div className='progress-container'>
-              {confluenceConfig.isSyncing && (
-                <div className='progress-bar'>
-                  <div
-                    className='progress-fill'
-                    style={{
-                      width: `${confluenceConfig.confluenceSyncProgress}%`,
-                    }}
-                  />
-                  <span className='progress-text'>
-                    Sync Progress: {confluenceConfig.confluenceSyncProgress}%
-                  </span>
-                </div>
-              )}
-              {confluenceConfig.isIndexing && (
-                <div className='progress-bar'>
-                  <div
-                    className='progress-fill'
-                    style={{
-                      width: `${confluenceConfig.confluenceIndexProgress}%`,
-                    }}
-                  />
-                  <span className='progress-text'>
-                    Index Progress: {confluenceConfig.confluenceIndexProgress}%
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
+          <div className='progress-container'>
+            {confluenceConfig.isSyncing && (
+              <div className='progress-bar'>
+                <div
+                  className='progress-fill'
+                  style={{
+                    width: `${confluenceConfig.confluenceSyncProgress}%`,
+                  }}
+                />
+                <span className='progress-text'>
+                  Sync Progress: {confluenceConfig.confluenceSyncProgress}%
+                </span>
+              </div>
+            )}
+            {confluenceConfig.isIndexing && (
+              <div className='progress-bar'>
+                <div
+                  className='progress-fill'
+                  style={{
+                    width: `${confluenceConfig.confluenceIndexProgress}%`,
+                  }}
+                />
+                <span className='progress-text'>
+                  Index Progress: {confluenceConfig.confluenceIndexProgress}%
+                </span>
+              </div>
+            )}
+          </div>
 
           {confluenceConfig.statusMessage && (
             <div
-              className={`status-message ${confluenceConfig.connectionStatus === 'success' ? 'success' : 'error'}`}
+              className={`status-message ${confluenceConfig.messageType === 'success' ? 'success' : 'error'}`}
             >
               {confluenceConfig.statusMessage}
             </div>

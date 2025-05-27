@@ -37,7 +37,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         case MESSAGE_TYPES.SYNC_CODEBASE_IN_PROGRESS:
           batchUpdateConfig('codebase', {
             codebaseSyncProgress: message.progress,
-            connectionStatus: 'unknown',
+            messageType: 'success',
             isSyncing: message.progress < 100,
             canResume: true,
           });
@@ -47,14 +47,14 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           batchUpdateConfig('codebase', {
             isSyncing: false,
             codebaseSyncProgress: 100,
-            connectionStatus: 'success',
+            messageType: 'success',
             statusMessage: 'Sync completed successfully',
             canResume: false,
             isSyncCompleted: true,
           });
           clearStatusMessageAfterDelay(
             'codebase',
-            'connectionStatus',
+            'messageType',
             'unknown'
           );
           break;
@@ -62,7 +62,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         case MESSAGE_TYPES.SYNC_CODEBASE_ERROR:
           batchUpdateConfig('codebase', {
             isSyncing: false,
-            connectionStatus: 'error',
+            messageType: 'error',
             statusMessage: `Sync error: ${message.message}`,
             canResume: true,
           });
@@ -70,12 +70,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
 
         case MESSAGE_TYPES.CODEBASE_CONNECTION_STATUS:
           batchUpdateConfig('codebase', {
-            connectionStatus: message.status ? 'success' : 'error',
+            messageType: message.status ? 'success' : 'error',
             statusMessage: message.message || '',
           });
           clearStatusMessageAfterDelay(
             'codebase',
-            'connectionStatus',
+            'messageType',
             'unknown'
           );
           break;
@@ -84,7 +84,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         case MESSAGE_TYPES.INDEXING_CODEBASE_IN_PROGRESS:
           batchUpdateConfig('codebase', {
             codebaseIndexProgress: message.progress,
-            connectionStatus: 'unknown',
+            messageType: 'success',
             isIndexing: message.progress < 100,
             canResumeIndexing: true,
             isSyncing: false,
@@ -95,7 +95,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         case MESSAGE_TYPES.INDEXING_CODEBASE_COMPLETE:
           batchUpdateConfig('codebase', {
             codebaseIndexProgress: 100,
-            connectionStatus: 'success',
+            messageType: 'success',
             isIndexing: false,
             statusMessage: 'Indexing completed successfully',
             canResumeIndexing: false,
@@ -105,7 +105,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           });
           clearStatusMessageAfterDelay(
             'codebase',
-            'connectionStatus',
+            'messageType',
             'unknown'
           );
           break;
@@ -113,7 +113,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         case MESSAGE_TYPES.INDEXING_CODEBASE_ERROR:
           batchUpdateConfig('codebase', {
             isSyncing: false,
-            connectionStatus: 'error',
+            messageType: 'error',
             statusMessage: `Indexing error: ${message.message}`,
             canResumeIndexing: true,
           });
@@ -126,45 +126,6 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
               repoPath: message.path,
             });
           }
-          break;
-
-        // Indexing
-        case MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS:
-          batchUpdateConfig('confluence', {
-            confluenceIndexProgress: message.progress,
-            connectionStatus: 'unknown',
-            isIndexing: message.progress < 100,
-            canResumeIndexing: true,
-            isSyncing: false,
-            canResume: false,
-          });
-          break;
-
-        case MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE:
-          batchUpdateConfig('confluence', {
-            confluenceIndexProgress: 100,
-            connectionStatus: 'success',
-            isIndexing: false,
-            statusMessage: 'Indexing completed successfully',
-            canResumeIndexing: false,
-            isSyncing: false,
-            canResume: false,
-            isIndexingCompleted: true,
-          });
-          clearStatusMessageAfterDelay(
-            'confluence',
-            'connectionStatus',
-            'unknown'
-          );
-          break;
-
-        case MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR:
-          batchUpdateConfig('confluence', {
-            isSyncing: false,
-            connectionStatus: 'error',
-            statusMessage: `Indexing error: ${message.message}`,
-            canResumeIndexing: true,
-          });
           break;
       }
     };
@@ -181,7 +142,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     resetChatStore();
     // Show feedback message
     batchUpdateConfig('confluence', {
-      connectionStatus: 'success',
+      messageType: 'success',
       statusMessage: 'VSCode state reset successfully',
     });
     // Clear the success message after 2 seconds

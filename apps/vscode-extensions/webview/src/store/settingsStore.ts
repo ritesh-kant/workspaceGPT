@@ -19,7 +19,7 @@ export const settingsDefaultConfig: SettingsConfig = {
     confluenceIndexProgress: 0,
     isSyncing: false,
     isIndexing: false,
-    connectionStatus: 'unknown',
+    messageType: 'success',
     statusMessage: '',
     canResume: false,
     canResumeIndexing: false,
@@ -37,7 +37,7 @@ export const settingsDefaultConfig: SettingsConfig = {
     isCodebaseEnabled: false,
     codebaseSyncProgress: 0,
     codebaseIndexProgress: 0,
-    connectionStatus: 'unknown',
+    messageType: 'success',
     statusMessage: '',
     canResume: false,
     canResumeIndexing: false,
@@ -128,7 +128,6 @@ export const useSettingsStore = create<SettingsState>()(
             ...newConfig[section],
             ...updates
           };
-          console.log(`Batch updating ${section}:`, updates);
           return { config: newConfig };
         });
       },

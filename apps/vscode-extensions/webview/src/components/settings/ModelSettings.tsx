@@ -22,8 +22,6 @@ const ModelSettings: React.FC = () => {
     updateModelProvider,
   } = useModelActions();
 
-  console.log('=====modelConfig: modelProviders', modelProviders);
-  console.log('=====modelConfig: selectedProvider', selectedModelProvider);
   const modelConfig = modelProviders[selectedModelProvider.providerIndex];
   const providerIndex = selectedModelProvider.providerIndex;
 

@@ -1,4 +1,3 @@
-import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
 import { MODEL } from '../../../constants';
@@ -22,7 +21,24 @@ interface Metadata {
   url: string;
 }
 
-const { query, embeddingDirPath } = workerData as WorkerData;
+// Parse command line arguments
+const args = process.argv.slice(2);
+if (args.length === 0) {
+  console.error('No arguments provided');
+  process.exit(1);
+}
+
+const workerDataStr = args[0];
+let workerData: WorkerData;
+
+try {
+  workerData = JSON.parse(workerDataStr);
+} catch (error) {
+  console.error('Failed to parse worker data:', error);
+  process.exit(1);
+}
+
+const { query, embeddingDirPath } = workerData;
 
 // Calculate cosine similarity between two vectors
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -73,14 +89,16 @@ async function searchEmbeddings(): Promise<void> {
       })
     );
 
-    // Send results back to main thread
-    parentPort?.postMessage(results);
+    // Send results back to parent process
+    console.log(JSON.stringify(results));
+    process.exit(0);
 
   } catch (error) {
-    parentPort?.postMessage({
+    console.error(JSON.stringify({
       type: 'error',
       message: error instanceof Error ? error.message : String(error)
-    });
+    }));
+    process.exit(1);
   }
 }
 

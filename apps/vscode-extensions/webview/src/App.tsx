@@ -33,12 +33,19 @@ const App: React.FC = () => {
     setShowSettings,
     setConfig: setSettingsConfig,
   } = useSettingsStore();
-  
+
   const modelProviders = useModelProviders();
 
   const selectedModelProvider = useSelectedModelProvider();
 
   const { handleModelChange } = useModelActions();
+
+  const [activeModels, setActiveModels] = useState<
+    {
+      key: string;
+      value: string;
+    }[]
+  >([]);
 
   const providerIndex = selectedModelProvider.providerIndex;
   const modelConfig = modelProviders[providerIndex];
@@ -67,35 +74,6 @@ const App: React.FC = () => {
           });
           setIsLoading(false);
           break;
-        // case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
-        //   batchUpdateModelProvider(providerIndex, {
-        //     isDownloading: true,
-        //     downloadProgress: message.progress ?? '0',
-        //     downloadStatus: 'downloading',
-        //   });
-        //   break;
-        // case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
-        //   let availableModels;
-        //   if (message.models && Array.isArray(message.models)) {
-        //     availableModels = message.models.filter(
-        //       (eachModel: { id: string }) => !eachModel.id.includes('embed')
-        //     );
-        //   }
-
-        //   batchUpdateModelProvider(providerIndex, {
-        //     isDownloading: false,
-        //     downloadProgress: 100,
-        //     downloadStatus: 'completed',
-        //     availableModels,
-        //   });
-        //   break;
-        // case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
-        //   batchUpdateModelProvider(providerIndex, {
-        //     isDownloading: false,
-        //     downloadStatus: 'error',
-        //     errorMessage: message.message,
-        //   });
-        //   break;
         case MESSAGE_TYPES.ERROR_CHAT:
           addMessage({
             content: 'Error occurred. Please start a new chat.',
@@ -127,7 +105,6 @@ const App: React.FC = () => {
             // setModelConfig(message.state || modelDefaultConfig);
             setModelState(message.state || modelConfig);
             console.log('modelConfig', message.state || modelConfig);
-
           }
           break;
       }
@@ -136,6 +113,18 @@ const App: React.FC = () => {
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
+
+  useEffect(() => {
+    const activeModelProviders = modelProviders.filter(
+      (provider) => provider?.availableModels?.length && provider.selectedModel
+    );
+    const activeModels: Array<{ key: string; value: string }> =
+      activeModelProviders.map((provider) => ({
+        key: provider.selectedModel,
+        value: provider.selectedModel,
+      }));
+    setActiveModels(activeModels);
+  }, [modelProviders]);
 
   const handleRetryOllama = () => {
     vscode.postMessage({
@@ -313,15 +302,12 @@ const App: React.FC = () => {
                   disabled={modelConfig?.isDownloading}
                   className={modelConfig?.isDownloading ? 'loading' : ''}
                 >
-                  {modelConfig?.availableModels &&
-                  modelConfig.availableModels.length > 0 ? (
+                  {activeModels &&
+                  activeModels.length > 0 ? (
                     // Render options from available models
-                    modelConfig.availableModels.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {modelConfig?.isDownloading &&
-                        modelConfig?.selectedModel === model.id
-                          ? `${model.id} (${modelConfig.downloadProgress}%)`
-                          : `${model.id}`}
+                    activeModels.map((model) => (
+                      <option key={model.key} value={model.key}>
+                        {model.value}
                       </option>
                     ))
                   ) : (

@@ -4,7 +4,7 @@ import { useSettingsStore } from '../../store';
 
 export const clearStatusMessageAfterDelay = (
   section: 'confluence' | 'codebase',
-  field: 'statusMessage' | 'connectionStatus',
+  field: 'statusMessage' | 'messageType',
   value?: string | 'unknown',
   delay: number = 2000
 ) => {

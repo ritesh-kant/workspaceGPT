@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { Worker } from 'worker_threads';
+import { fork, ChildProcess } from 'child_process';
 import { EmbeddingConfig } from 'src/types/types';
 import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
 
@@ -19,7 +19,7 @@ interface EmbeddingProgress {
 }
 
 export class EmbeddingService {
-  private worker: Worker | null = null;
+  private embeddingProcess: ChildProcess | null = null;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private embeddingProgress: EmbeddingProgress | null = null;
@@ -59,8 +59,8 @@ export class EmbeddingService {
 
   public async createEmbeddings(config: EmbeddingConfig, resume: boolean = false): Promise<void> {
     try {
-      // Stop any existing worker
-      this.stopWorker();
+      // Stop any existing process
+      this.stopEmbeddingProcess();
 
       // Load the current progress if resuming
       if (resume && this.embeddingProgress) {
@@ -89,21 +89,24 @@ export class EmbeddingService {
       // Ensure embedding directory exists
       await this.ensureDirectoryExists(embeddingDirPath);
 
-      // Create a new worker
-      const workerPath = path.join(__dirname, 'workers', 'confluence', 'embeddingWorker.js');
-      this.worker = new Worker(workerPath, {
-        workerData: {
-          mdDirPath,
-          embeddingDirPath,
-          config,
-          resume: resume,
-          lastProcessedFile: this.embeddingProgress?.lastProcessedFile,
-          processedFiles: this.embeddingProgress?.processedFiles || 0
-        },
+      // Create a new child process
+      const processPath = path.join(__dirname, 'workers', 'confluence', 'confluenceEmbeddingProcess.js');
+      const workerData = {
+        mdDirPath,
+        embeddingDirPath,
+        config,
+        resume: resume,
+        lastProcessedFile: this.embeddingProgress?.lastProcessedFile,
+        processedFiles: this.embeddingProgress?.processedFiles || 0
+      };
+      this.embeddingProcess = fork(processPath, [JSON.stringify(workerData)], { 
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+        execArgv: process.execArgv.filter(arg => !arg.includes('--inspect')) // Remove any existing inspect arguments
       });
 
-      // Handle messages from the worker
-      this.worker.on('message', async (message) => {
+      // Handle messages from the process
+      this.embeddingProcess.on('message', async (data) => {
+        const message = JSON.parse(data.toString());
         switch (message.type) {
           case WORKER_STATUS.PROCESSING:
             this.webviewView.webview.postMessage({
@@ -145,65 +148,101 @@ export class EmbeddingService {
             };
             await this.saveEmbeddingProgress(this.embeddingProgress);
             
-            // this.stopWorker();
+            // this.stopEmbeddingProcess();
             break;
         }
       });
 
-      // Handle worker errors
-      this.worker.on('error', (error) => {
-        console.error('Worker error:', error);
+      this.embeddingProcess.on("error", (data) => {
+        console.error(`Embedding process stderr: ${data}`);
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
+          message: data.toString(),
+        });
+      });
+
+      // Handle process exit
+      // this.embeddingProcess.on('exit', (code) => {
+      //   if (code && code !== 0) {
+      //     console.error(`Embedding process exited with code ${code}`);
+      //     this.webviewView.webview.postMessage({
+      //       type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
+      //       message: `Embedding process exited with code ${code}`,
+      //     });
+      //   }
+      //   this.embeddingProcess = null;
+      // });
+
+      this.embeddingProcess.on('error', (error) => {
+        console.error('Embedding process error:', error);
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
           message: error.message,
         });
-        this.worker = null;
-      });
-
-      // Handle worker exit
-      this.worker.on('exit', (code) => {
-        if (code !== 0) {
-          console.error(`Worker stopped with exit code ${code}`);
-          this.webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
-            message: `Worker process exited with code ${code}`,
-          });
-        }
-        this.worker = null;
+        this.embeddingProcess = null;
       });
     } catch (error) {
-      console.error('Error starting worker:', error);
+      console.error('Error starting embedding process:', error);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
-      this.stopWorker();
+      this.stopEmbeddingProcess();
     }
   }
 
   public async searchEmbeddings(query: string): Promise<SearchResult[]> {
     try {
-      // Create a new worker for search
-      const workerPath = path.join(__dirname, 'workers', 'confluence','searchWorker.js');
-      const searchWorker = new Worker(workerPath, {
-        workerData: {
-          query,
-          embeddingDirPath: path.join(
-            this.context.globalStorageUri.fsPath,
-            'embeddings'
-          ),
-        },
+      // Create a new child process for search
+      const processPath = path.join(__dirname, 'workers', 'confluence', 'searchProcess.js');
+      const workerData = {
+        query,
+        embeddingDirPath: path.join(
+          this.context.globalStorageUri.fsPath,
+          'embeddings'
+        ),
+      };
+      const searchProcess = fork(processPath, [JSON.stringify(workerData)], { 
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+        execArgv: process.execArgv.filter(arg => !arg.includes('--inspect')) // Remove any existing inspect arguments
       });
 
       return new Promise((resolve, reject) => {
-        searchWorker.on('message', (results: SearchResult[]) => {
-          resolve(results);
-          searchWorker.terminate();
+        let resultsData = '';
+        searchProcess.on('message', (data) => {
+          resultsData += data.toString();
         });
 
-        searchWorker.on('error', (error) => {
+        searchProcess.on("error", (data) => {
+          console.error(`Search process stderr: ${data}`);
+          try {
+            const errorObj = JSON.parse(data.toString());
+            reject(new Error(errorObj.message || 'Search process error'));
+          } catch (e) {
+            reject(new Error(data.toString()));
+          }
+          searchProcess.kill();
+        });
+
+        searchProcess.on('exit', (code) => {
+          if (code === 0) {
+            try {
+              const results = JSON.parse(resultsData);
+              resolve(results);
+            } catch (e) {
+              reject(new Error('Failed to parse search results.'));
+            }
+          } else {
+            // Error already handled by stderr or 'error' event
+            if (!resultsData) { // if no specific error message from stderr
+                 reject(new Error(`Search process exited with code ${code}`));
+            }
+          }
+        });
+
+        searchProcess.on('error', (error) => {
           reject(error);
-          searchWorker.terminate();
+          searchProcess.kill();
         });
       });
     } catch (error) {
@@ -212,10 +251,10 @@ export class EmbeddingService {
     }
   }
 
-  private stopWorker(): void {
-    if (this.worker) {
-      this.worker?.terminate();
-      this.worker = null;
+  private stopEmbeddingProcess(): void {
+    if (this.embeddingProcess) {
+      this.embeddingProcess.kill();
+      this.embeddingProcess = null;
     }
   }
 

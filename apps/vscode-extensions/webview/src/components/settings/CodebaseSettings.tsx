@@ -26,7 +26,7 @@ const CodebaseSettings: React.FC = () => {
         case MESSAGE_TYPES.SYNC_CODEBASE_IN_PROGRESS:
           batchUpdateConfig('codebase', {
             codebaseSyncProgress: message.progress,
-            connectionStatus: 'unknown',
+            messageType: 'success',
             isSyncing: message.progress < 100,
             canResume: true,
           });
@@ -36,7 +36,7 @@ const CodebaseSettings: React.FC = () => {
           batchUpdateConfig('codebase', {
             isSyncing: false,
             codebaseSyncProgress: 100,
-            connectionStatus: 'success',
+            messageType: 'success',
             statusMessage: 'Sync completed successfully',
             canResume: false,
             isSyncCompleted: true,
@@ -50,7 +50,7 @@ const CodebaseSettings: React.FC = () => {
         case MESSAGE_TYPES.SYNC_CODEBASE_ERROR:
           batchUpdateConfig('codebase', {
             isSyncing: false,
-            connectionStatus: 'error',
+            messageType: 'error',
             statusMessage: `Sync error: ${message.message}`,
             canResume: true,
           });
@@ -58,7 +58,7 @@ const CodebaseSettings: React.FC = () => {
 
         case MESSAGE_TYPES.CODEBASE_CONNECTION_STATUS:
           batchUpdateConfig('codebase', {
-            connectionStatus: message.status ? 'success' : 'error',
+            messageType: message.status ? 'success' : 'error',
             statusMessage: message.message || '',
           });
           clearStatusMessageAfterDelay(
@@ -71,7 +71,7 @@ const CodebaseSettings: React.FC = () => {
         case MESSAGE_TYPES.INDEXING_CODEBASE_IN_PROGRESS:
           batchUpdateConfig('codebase', {
             codebaseIndexProgress: message.progress,
-            connectionStatus: 'unknown',
+            messageType: 'success',
             isIndexing: message.progress < 100,
             canResumeIndexing: true,
             isSyncing: false,
@@ -82,7 +82,7 @@ const CodebaseSettings: React.FC = () => {
         case MESSAGE_TYPES.INDEXING_CODEBASE_COMPLETE:
           batchUpdateConfig('codebase', {
             codebaseIndexProgress: 100,
-            connectionStatus: 'success',
+            messageType: 'success',
             isIndexing: false,
             statusMessage: 'Indexing completed successfully',
             canResumeIndexing: false,
@@ -99,7 +99,7 @@ const CodebaseSettings: React.FC = () => {
         case MESSAGE_TYPES.INDEXING_CODEBASE_ERROR:
           batchUpdateConfig('codebase', {
             isSyncing: false,
-            connectionStatus: 'error',
+            messageType: 'error',
             statusMessage: `Indexing error: ${message.message}`,
             canResumeIndexing: true,
           });
@@ -130,7 +130,7 @@ const CodebaseSettings: React.FC = () => {
       isSyncing: true,
       codebaseIndexProgress: 0,
       statusMessage: 'Starting sync process...',
-      connectionStatus: 'unknown',
+      messageType: 'success',
       includePatterns: '**/*.{js,ts,jsx,tsx,py,java,c,cpp,h,hpp}',
       excludePatterns:
         '**/node_modules/**,**/dist/**,**/.git/**,**/.venv/**,**/venv/**,**/build/**,**/target/**,**/.*/**',
@@ -143,7 +143,7 @@ const CodebaseSettings: React.FC = () => {
     batchUpdateConfig('codebase', {
       isSyncing: true,
       statusMessage: 'Resuming codebase sync process...',
-      connectionStatus: 'unknown',
+      messageType: 'success',
     });
     handleCodebaseActions.resumeSync(vscode, config);
   };
@@ -152,7 +152,7 @@ const CodebaseSettings: React.FC = () => {
     batchUpdateConfig('codebase', {
       isIndexing: true,
       statusMessage: 'Resuming codebase indexing process...',
-      connectionStatus: 'unknown',
+      messageType: 'success',
     });
     handleCodebaseActions.resumeIndexing(vscode, config);
   };
@@ -296,9 +296,9 @@ const CodebaseSettings: React.FC = () => {
           )}
         </div>
 
-        {codebaseConfig.connectionStatus !== 'unknown' && (
+        {codebaseConfig.messageType && (
           <div
-            className={`status-message ${codebaseConfig.connectionStatus}`}
+            className={`status-message ${codebaseConfig.messageType}`}
           >
             {codebaseConfig.statusMessage}
           </div>

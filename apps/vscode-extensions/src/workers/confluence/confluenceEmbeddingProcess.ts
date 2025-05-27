@@ -1,9 +1,52 @@
-import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
 import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
 import { MODEL, WORKER_STATUS } from '../../../constants';
+import { initializeEmbeddingModel } from 'src/utils/initializeEmbeddingModel';
+
+let md: MarkdownIt;
+let extractor: any;
+
+interface WorkerData {
+  mdDirPath: string;
+  embeddingDirPath: string;
+  config: EmbeddingConfig;
+  resume?: boolean;
+  lastProcessedFile?: string;
+  processedFiles?: number;
+}
+
+interface Metadata {
+  id: number;
+  filename: string;
+  text: string;
+  embedding: number[];
+  url?: string;
+  frontmatter?: Record<string, any>;
+}
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+if (args.length === 0) {
+  console.error('No arguments provided');
+  process.exit(1);
+}
+
+const workerDataStr = args[0];
+let workerData: WorkerData;
+
+try {
+  workerData = JSON.parse(workerDataStr);
+} catch (error) {
+  console.error('Failed to parse worker data:', error);
+  process.exit(1);
+}
+
+const { mdDirPath, embeddingDirPath, config, resume, lastProcessedFile, processedFiles } = workerData;
+
+// Initialize markdown-it
+md = new MarkdownIt({ html: false });
 
 /**
  * Extracts frontmatter metadata from markdown content
@@ -26,7 +69,7 @@ function extractFrontmatter(markdownContent: string): { content: string; frontma
     // Extract the frontmatter content
     const frontmatterRaw = markdownContent.substring(3, secondDashIndex).trim();
     const content = markdownContent.substring(secondDashIndex + 3).trim();
-    
+
     // Parse the frontmatter as key-value pairs
     const frontmatter: Record<string, any> = {};
     frontmatterRaw.split('\n').forEach(line => {
@@ -50,34 +93,29 @@ function extractFrontmatter(markdownContent: string): { content: string; frontma
   }
 }
 
-let md: MarkdownIt;
-let ollamaModel: string;
-
-interface WorkerData {
-  mdDirPath: string;
-  embeddingDirPath: string;
-  config: EmbeddingConfig;
-  resume?: boolean;
-  lastProcessedFile?: string;
-  processedFiles?: number;
+// Function to send messages back to parent process
+function sendMessage(message: any) {
+  process.stdout.write(JSON.stringify(message) + '\n');
 }
-
-interface Metadata {
-  id: number;
-  filename: string;
-  text: string;
-  embedding: number[];
-  url?: string;
-  frontmatter?: Record<string, any>;
-}
-
-const { mdDirPath, embeddingDirPath, config, resume, lastProcessedFile, processedFiles } = workerData as WorkerData;
-
-// Initialize markdown-it
-md = new MarkdownIt({ html: false });
 
 async function createEmbeddings(): Promise<void> {
   try {
+    // Initialize embedding model first
+    console.log('Confluence: Initializing embedding model...');
+    extractor = await initializeEmbeddingModel(
+      MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
+      embeddingDirPath,
+      (progress: any) => {
+        console.log('Model download progress:', progress);
+        sendMessage({
+          type: WORKER_STATUS.PROCESSING,
+          progress: progress.progress || 0,
+          message: progress.message || 'Initializing model...'
+        });
+      }
+    );
+    console.log('Confluence: Model initialization complete');
+
     const files = fs
       .readdirSync(mdDirPath)
       .filter((file) => file.endsWith('.md'));
@@ -102,15 +140,15 @@ async function createEmbeddings(): Promise<void> {
       const file = files[i];
       const filePath = path.join(mdDirPath, file);
       const markdownContent = fs.readFileSync(filePath, 'utf8');
-      
+
       // Extract frontmatter metadata if present
       const { content: cleanContent, frontmatter } = extractFrontmatter(markdownContent);
-      
+
       // Log metadata if found
       if (frontmatter && Object.keys(frontmatter).length > 0) {
         console.log(`Extracted metadata from ${file}:`, frontmatter);
       }
-      
+
       // Convert markdown to structured plain text
       const content = md
         .render(cleanContent)
@@ -137,7 +175,7 @@ async function createEmbeddings(): Promise<void> {
 
       // Report progress
       const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
-      parentPort?.postMessage({
+      sendMessage({
         type: WORKER_STATUS.PROCESSING,
         progress: ((currentProgress / total) * 100).toFixed(1),
         current: currentProgress,
@@ -158,41 +196,37 @@ async function createEmbeddings(): Promise<void> {
     );
 
     // Complete
-    parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED });
+    sendMessage({ type: WORKER_STATUS.COMPLETED, total: total });
     console.log('Embeddings created successfully!');
+    process.exit(0);
   } catch (error) {
-    parentPort?.postMessage({
+    sendMessage({
       type: WORKER_STATUS.ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
+    process.exit(1);
   }
 }
 
-// Create embedding using Ollama API
+// Create embedding using transformer model
 async function createEmbeddingForText(
   text: string,
 ): Promise<number[]> {
   try {
-    const response = await fetch('http://localhost:11434/api/embeddings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
-        prompt: text
-      })
-    });
+    console.log(`Generating embedding for text of length ${text.length}...`);
 
-    if (!response.ok) {
-      throw new Error(`Failed to generate embeddings: ${response.statusText}`);
+    if (!extractor) {
+      throw new Error('Embedding model not initialized');
     }
 
-    const result = await response.json();
-    
-    if (!result.embedding || !Array.isArray(result.embedding)) {
-      throw new Error('Invalid embedding response from Ollama');
-    }
-    
-    return result.embedding;
+    const startTime = Date.now();
+    const output = await extractor(text, { pooling: 'mean', normalize: true });
+    const duration = Date.now() - startTime;
+
+    console.log(`Embedding generation completed in ${duration}ms`);
+    console.log(`Generated embedding with ${output.data.length} dimensions`);
+
+    return Array.from(output.data);
   } catch (error) {
     console.error('Error creating embedding:', error);
     throw error;
