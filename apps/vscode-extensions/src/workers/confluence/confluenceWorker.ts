@@ -53,8 +53,8 @@ async function fetchAndProcessPages() {
     let foundLastProcessedPage = !resume || !lastProcessedPageId;
 
     try {
-      while (hasMore && allPages.length < 30) {
-        // while (hasMore) {
+      // while (hasMore && allPages.length < 30) {
+      while (hasMore) {
         const response = await extractor.fetchPages(start, 10);
         const { results, size, _links } = response;
 
