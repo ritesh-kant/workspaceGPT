@@ -2,48 +2,28 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { MODEL, MODEL_PROVIDERS, STORAGE_KEYS } from '../../../constants';
-
-export interface AvailableModel {
-  id: string;
-}
-
-export interface ModelConfig {
-  selectedModel: string;
-  provider: string;
-  apiKey?: string;
-  isDownloading: boolean;
-  downloadProgress: number;
-  downloadStatus: 'idle' | 'downloading' | 'completed' | 'error';
-  errorMessage?: string;
-  availableModels?: AvailableModel[];
-  isLoadingModels?: boolean;
-}
-
-export interface SelectedProviderType {
-  provider: string;
-  providerIndex: number;
-}
+import { MODEL_PROVIDERS, STORAGE_KEYS } from '../../../constants';
+import { ModelConfig } from '../types';
 
 interface ModelState {
   modelProviders: ModelConfig[];
-  selectedModelProvider: SelectedProviderType;
+  selectedModelProvider: ModelConfig;
   actions: {
     updateSelectedModelProvider: (
-      selectedModelProvider: SelectedProviderType
+      selectedModelProvider: ModelConfig
     ) => void; // Add this line
     updateModelProvider: <K extends keyof ModelConfig>(
-      providerIndex: number, // Assuming we need to specify which provider to update
+      providerId: string, 
       field: K,
       value: ModelConfig[K]
     ) => void;
     batchUpdateModelProvider: (
       providerIndex: number,
       updates: Partial<ModelConfig>
-    ) => void; // Assuming we need to specify which provider to update
+    ) => void; 
 
-    handleModelChange: (providerIndex: number, modelId: string) => void; // Assuming we need to specify which provider to update
-    handleProviderChange: (providerIndex: number, provider: string) => void; // Assuming we need to specify which provider to update
+    handleModelChange: (modelId: string, providerId: string) => void; // Assuming we need to specify which provider to update
+    handleProviderChange: (providerId: string) => void; // Assuming we need to specify which provider to update
     resetStore: () => void;
   };
 }
@@ -66,11 +46,7 @@ const vscodeStorage = {
       ...currentState,
       [STORAGE_KEYS.MODEL]: JSON.parse(value),
     });
-    console.log(
-      '===========updateing global state with model data',
-      value,
-      '============'
-    );
+
     vscode.postMessage({
       type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
       key: STORAGE_KEYS.MODEL,
@@ -101,20 +77,20 @@ export const modelDefaultConfig: ModelConfig[] = MODEL_PROVIDERS.map(
   })
 );
 
-const useModelStore = create<ModelState>()(
+export const useModelStore = create<ModelState>()(
   persist(
     (set) => ({
       modelProviders: modelDefaultConfig, // Initialize with the array
-      selectedModelProvider: { provider: MODEL.OLLAMA, providerIndex: 0 }, // Initialize as an object
+      selectedModelProvider: modelDefaultConfig[0], // Initialize as an object
       actions: {
         updateSelectedModelProvider: (
-          selectedModelProvider: SelectedProviderType
-        ) => set({ selectedModelProvider }), // Update to take SelectedProviderType
-        updateModelProvider: (providerIndex, field, value) => {
+          selectedModelProvider: ModelConfig
+        ) => set({ selectedModelProvider }), // Update to take ModelConfig
+        updateModelProvider: (providerId, field, value) => {
           console.log('updating field', field, value);
           set((state) => ({
-            modelProviders: state.modelProviders.map((config, index) =>
-              index === providerIndex ? { ...config, [field]: value } : config
+            modelProviders: state.modelProviders.map((config) =>
+              config.provider === providerId ? { ...config, [field]: value } : config
             ),
           }));
         },
@@ -125,27 +101,32 @@ const useModelStore = create<ModelState>()(
             ),
           }));
         },
-        handleModelChange: (providerIndex, modelId: string) => {
-          set((state) => ({
-            modelProviders: state.modelProviders.map((config, index) =>
-              index === providerIndex
+        handleModelChange: (modelId: string, providerId: string) => {
+          set((state) => {
+            const updatedModelProviders = state.modelProviders.map((config) =>
+              config.provider === providerId
                 ? { ...config, selectedModel: modelId }
                 : config
-            ),
-          }));
+            );
+
+            const newSelectedProviderConfig = updatedModelProviders.find(
+              (config) => config.provider === providerId
+            );
+
+            return {
+              modelProviders: updatedModelProviders,
+              selectedModelProvider: newSelectedProviderConfig || state.selectedModelProvider,
+            };
+          });
         },
-        handleProviderChange: (providerIndex, provider: string) => {
-          console.log(
-            'setting new provider for index',
-            providerIndex,
-            provider
-          );
+        handleProviderChange: ( providerId: string) => {
+       
           set((state) => ({
-            modelProviders: state.modelProviders.map((config, index) =>
-              index === providerIndex
+            modelProviders: state.modelProviders.map((config) =>
+              config.provider === providerId
                 ? {
                     ...config,
-                    provider,
+                    provider:providerId,
                   }
                 : config
             ),
@@ -157,7 +138,10 @@ const useModelStore = create<ModelState>()(
           vscode.postMessage({
             type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
           });
-          set({ modelProviders: modelDefaultConfig }); // Use the array here
+          set({ 
+            modelProviders: modelDefaultConfig,
+            selectedModelProvider: modelDefaultConfig[0] 
+          }); 
         },
       },
     }),

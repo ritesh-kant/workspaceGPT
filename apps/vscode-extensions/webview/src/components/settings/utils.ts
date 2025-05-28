@@ -1,6 +1,12 @@
 import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES } from '../../constants';
-import { useSettingsStore } from '../../store';
+import {
+  useModelStore,
+  useSettingsStore,
+} from '../../store';
+import { ModelConfig } from '../../types';
+
+const vscode = VSCodeAPI();
 
 export const clearStatusMessageAfterDelay = (
   section: 'confluence' | 'codebase',
@@ -9,13 +15,12 @@ export const clearStatusMessageAfterDelay = (
   delay: number = 2000
 ) => {
   setTimeout(() => {
-    const batchUpdateConfig = useSettingsStore.getState().batchUpdateConfig
+    const batchUpdateConfig = useSettingsStore.getState().batchUpdateConfig;
     batchUpdateConfig(section, {
       [field]: value,
     });
   }, delay);
 };
-
 
 export const handleConfluenceActions = {
   checkConnection: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
@@ -101,3 +106,34 @@ export const handleInputChange = (
   };
   setConfig(updatedConfig);
 };
+
+// Modified to accept providerName and apiKey
+export const fetchAvailableModels = (
+  providerName: string,
+  apiKeyToUse?: string
+) => {
+  vscode.postMessage({
+    type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS,
+    provider: providerName,
+    apiKey: apiKeyToUse,
+  });
+};
+export function changeProviderHandler(provider: string) {
+  const modelProviders = useModelStore.getState().modelProviders;
+  const selectedModelProvider = modelProviders.find((p) => p.provider === provider);
+
+  const { updateSelectedModelProvider, handleProviderChange } =
+    useModelStore.getState().actions;
+
+  const newModelProvider: ModelConfig = modelProviders.find(
+    (p) => p.provider === provider
+  )!;
+
+  updateSelectedModelProvider(newModelProvider);
+
+  handleProviderChange(newModelProvider.provider);
+  if(!selectedModelProvider?.apiKey){
+    return
+  }
+  fetchAvailableModels(provider, selectedModelProvider.apiKey);
+}

@@ -1,29 +1,20 @@
 import React, { useState } from 'react';
 import { useEffect, useCallback } from 'react';
-import {
-  useModelActions,
-  useModelProviders,
-  useSelectedModelProvider,
-} from '../../store';
+import { useModelActions, useSelectedModelProvider } from '../../store';
 import { MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { VSCodeAPI } from '../../vscode';
+import { changeProviderHandler, fetchAvailableModels } from './utils';
 
 const ModelSettings: React.FC = () => {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
-
-  const modelProviders = useModelProviders();
 
   const selectedModelProvider = useSelectedModelProvider();
 
   const {
     updateSelectedModelProvider,
     handleModelChange,
-    handleProviderChange,
     updateModelProvider,
   } = useModelActions();
-
-  const modelConfig = modelProviders[selectedModelProvider.providerIndex];
-  const providerIndex = selectedModelProvider.providerIndex;
 
   const vscode = VSCodeAPI();
 
@@ -46,7 +37,10 @@ const ModelSettings: React.FC = () => {
 
   useEffect(() => {
     // Fetch available models for the selected provider whenever component mounts or selectedProvider changes
-    fetchAvailableModels(selectedModelProvider.provider, modelConfig.apiKey);
+    fetchAvailableModels(
+      selectedModelProvider.provider,
+      selectedModelProvider.apiKey
+    );
 
     // Listen for model configuration and sync updates from extension
     const handleMessage = (event: MessageEvent) => {
@@ -55,18 +49,28 @@ const ModelSettings: React.FC = () => {
       switch (message.type) {
         case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_RESPONSE:
           updateModelProvider(
-            selectedModelProvider.providerIndex,
+            selectedModelProvider.provider,
             'availableModels',
             message.models
           );
+          // Ensure selectedModelProvider state is also updated
+          updateSelectedModelProvider({
+            ...selectedModelProvider,
+            availableModels: message.models,
+          });
           setApiKeyError(null);
           break;
         case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_ERROR:
           updateModelProvider(
-            selectedModelProvider.providerIndex,
+            selectedModelProvider.provider,
             'availableModels',
-            message.models
+            message.models // Assuming message.models is an empty array on error
           );
+          // Ensure selectedModelProvider state is also updated
+          updateSelectedModelProvider({
+            ...selectedModelProvider,
+            availableModels: message.models, // Or [] if message.models could be undefined
+          });
           setApiKeyError(message.message);
           break;
       }
@@ -82,15 +86,6 @@ const ModelSettings: React.FC = () => {
     });
   };
 
-  // Modified to accept providerName and apiKey
-  const fetchAvailableModels = (providerName: string, apiKeyToUse?: string) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS,
-      provider: providerName,
-      apiKey: apiKeyToUse,
-    });
-  };
-
   return (
     <div className='settings-section'>
       <div className='section-header'>
@@ -103,41 +98,7 @@ const ModelSettings: React.FC = () => {
             id='provider-select'
             className='select-larger'
             value={selectedModelProvider.provider}
-            onChange={(e) => {
-              const newProviderName = e.target.value;
-
-              const newProviderIndex = MODEL_PROVIDERS.findIndex(
-                (p) => p.MODEL_PROVIDER === newProviderName
-              );
-
-              // Update the global selectedModelProvider state
-              updateSelectedModelProvider({
-                provider: newProviderName,
-                providerIndex: newProviderIndex,
-              });
-              // This console.log will show the *old* value of selectedModelProvider due to async state updates
-              console.log(
-                'Selected provider (old value): ',
-                selectedModelProvider
-              );
-
-              // Call handleProviderChange with the newProviderIndex to update the specific modelConfig
-              handleProviderChange(newProviderIndex, newProviderName);
-
-              // Fetch available models for the NEW provider using its API key
-              // Note: modelProviders from the store might not be instantly updated if handleProviderChange is also async.
-              // Assuming modelProviders[newProviderIndex] gives the current config for that slot.
-              const apiKeyForNewProvider =
-                modelProviders[newProviderIndex]?.apiKey;
-
-              fetchAvailableModels(newProviderName, apiKeyForNewProvider);
-
-              // Ensure local modelConfig's availableModels and selectedModel are cleared for the UI
-              // batchUpdateModelProvider(newProviderIndex, {
-              //   availableModels: [],
-              //   selectedModel: undefined,
-              // });
-            }}
+            onChange={(e) => changeProviderHandler(e.target.value)}
           >
             {MODEL_PROVIDERS.map((provider) => (
               <option
@@ -161,15 +122,19 @@ const ModelSettings: React.FC = () => {
             <input
               id='api-key'
               type='password'
-              value={modelConfig?.apiKey ?? ''}
+              value={selectedModelProvider?.apiKey ?? ''}
               onChange={(e) => {
                 const newApiKey = e.target.value;
                 // Update the API key immediately in the UI
                 updateModelProvider(
-                  selectedModelProvider.providerIndex,
+                  selectedModelProvider.provider,
                   'apiKey',
                   newApiKey
                 );
+                updateSelectedModelProvider({
+                  ...selectedModelProvider,
+                  apiKey: newApiKey,
+                });
                 // Debounce the API call
                 debouncedFetchModels(newApiKey);
               }}
@@ -184,60 +149,65 @@ const ModelSettings: React.FC = () => {
           </div>
         )}
 
-        {showSelectModelValidator()  && (
-            <div className='form-group'>
-              <label htmlFor='model-select'>Select Model</label>
-              <select
-                id='model-select'
-                className='select-larger'
-                value={modelConfig?.selectedModel}
-                onChange={(e) =>
-                  handleModelChange(providerIndex, e.target.value)
-                }
-                disabled={modelConfig?.isDownloading}
-              >
-                {modelConfig?.availableModels &&
-                  // Render options from available models
-                  modelConfig.availableModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.id}
-                    </option>
-                  ))}
-              </select>
-              {modelConfig?.isDownloading && (
-                <div className='model-download-status'>
-                  <div className='progress-bar'>
-                    <div
-                      className='progress-fill'
-                      style={{
-                        width: `${modelConfig.downloadProgress}%`,
-                      }}
-                    ></div>
-                  </div>
+        {showSelectModelValidator() && (
+          <div className='form-group'>
+            <label htmlFor='model-select'>Select Model</label>
+            <select
+              id='model-select'
+              className='select-larger'
+              value={selectedModelProvider?.selectedModel}
+              onChange={(e) =>
+                handleModelChange(
+                  e.target.value,
+                  selectedModelProvider.provider,
+                )
+              }
+              disabled={selectedModelProvider?.isDownloading}
+            >
+              {selectedModelProvider?.availableModels &&
+                // Render options from available models
+                selectedModelProvider.availableModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.id}
+                  </option>
+                ))}
+            </select>
+            {selectedModelProvider?.isDownloading && (
+              <div className='model-download-status'>
+                <div className='progress-bar'>
+                  <div
+                    className='progress-fill'
+                    style={{
+                      width: `${selectedModelProvider.downloadProgress}%`,
+                    }}
+                  ></div>
                 </div>
-              )}
-              {modelConfig?.downloadStatus === 'error' && (
-                <div className='error-message'>
-                  Failed to download model &nbsp;
-                  <button
-                    onClick={() => retry()}
-                    className='retry-button'
-                    title='Retry connection'
-                  >
-                    ↻
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+            {selectedModelProvider?.downloadStatus === 'error' && (
+              <div className='error-message'>
+                Failed to download model &nbsp;
+                <button
+                  onClick={() => retry()}
+                  className='retry-button'
+                  title='Retry connection'
+                >
+                  ↻
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 
   function showSelectModelValidator() {
-    return !apiKeyError &&
-      modelConfig?.apiKey &&
-      (modelConfig?.availableModels?.length ?? 0) > 0;
+    return (
+      !apiKeyError &&
+      selectedModelProvider?.apiKey &&
+      (selectedModelProvider?.availableModels?.length ?? 0) > 0
+    );
   }
 };
 

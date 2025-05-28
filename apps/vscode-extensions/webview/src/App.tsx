@@ -42,13 +42,10 @@ const App: React.FC = () => {
 
   const [activeModels, setActiveModels] = useState<
     {
-      key: string;
-      value: string;
+      provider: string;
+      model: string;
     }[]
   >([]);
-
-  const providerIndex = selectedModelProvider.providerIndex;
-  const modelConfig = modelProviders[providerIndex];
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
@@ -102,9 +99,12 @@ const App: React.FC = () => {
             setSettingsConfig(message.state?.config || settingsDefaultConfig);
           }
           if (message.key === STORAGE_KEYS.MODEL) {
-            // setModelConfig(message.state || modelDefaultConfig);
-            setModelState(message.state || modelConfig);
-            console.log('modelConfig', message.state || modelConfig);
+            // setselectedModelProvider(message.state || modelDefaultConfig);
+            setModelState(message.state || selectedModelProvider);
+            console.log(
+              'selectedModelProvider',
+              message.state || selectedModelProvider
+            );
           }
           break;
       }
@@ -118,11 +118,13 @@ const App: React.FC = () => {
     const activeModelProviders = modelProviders.filter(
       (provider) => provider?.availableModels?.length && provider.selectedModel
     );
-    const activeModels: Array<{ key: string; value: string }> =
-      activeModelProviders.map((provider) => ({
-        key: provider.selectedModel,
-        value: provider.selectedModel,
-      }));
+    const activeModels: Array<{
+      provider: string;
+      model: string;
+    }> = activeModelProviders.map((provider) => ({
+      provider: provider.provider,
+      model: provider.selectedModel,
+    }));
     setActiveModels(activeModels);
   }, [modelProviders]);
 
@@ -141,7 +143,7 @@ const App: React.FC = () => {
     if (inputValue.trim() === '') return;
 
     // Check if model is currently downloading
-    if (modelConfig?.isDownloading) {
+    if (selectedModelProvider?.isDownloading) {
       // Show notification to wait for model download to complete
       addMessage({
         content:
@@ -165,9 +167,9 @@ const App: React.FC = () => {
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
       message: inputValue,
-      modelId: modelConfig?.selectedModel,
+      modelId: selectedModelProvider?.selectedModel,
       provider: selectedModelProvider.provider, // Use the provider string from the selectedModelProvider object
-      apiKey: modelConfig?.apiKey,
+      apiKey: selectedModelProvider?.apiKey,
     });
   };
 
@@ -284,49 +286,60 @@ const App: React.FC = () => {
               placeholder={
                 !isOllamaRunning
                   ? 'Ollama service is not running'
-                  : modelConfig?.isDownloading
+                  : selectedModelProvider?.isDownloading
                     ? 'Please wait for model download to complete...'
                     : 'Ask WorkspaceGPT...'
               }
               disabled={
-                isLoading || modelConfig?.isDownloading || !isOllamaRunning
+                isLoading ||
+                selectedModelProvider?.isDownloading ||
+                !isOllamaRunning
               }
             />
             <div className='input-controls'>
               <div className='model-selector-bottom'>
                 <select
-                  value={modelConfig?.selectedModel}
-                  onChange={(e) =>
-                    handleModelChange(providerIndex, e.target.value)
+                  value={selectedModelProvider?.provider}
+                  onChange={(e) => {
+                    const providerConfig = activeModels.find(
+                      (model) => model.provider === e.target.value
+                    );
+                    handleModelChange(
+                      providerConfig?.model!,
+                      providerConfig?.provider!
+                    );
+                  }}
+                  disabled={selectedModelProvider?.isDownloading}
+                  className={
+                    selectedModelProvider?.isDownloading ? 'loading' : ''
                   }
-                  disabled={modelConfig?.isDownloading}
-                  className={modelConfig?.isDownloading ? 'loading' : ''}
                 >
-                  {activeModels &&
-                  activeModels.length > 0 ? (
+                  {activeModels && activeModels.length > 0 ? (
                     // Render options from available models
                     activeModels.map((model) => (
-                      <option key={model.key} value={model.key}>
-                        {model.value}
+                      <option key={model.provider} value={model.provider}>
+                        {model.provider} ({model.model})
                       </option>
                     ))
                   ) : (
                     // Fallback options if no models are available
                     <>
                       <option value='llama3.2:1b'>
-                        {modelConfig?.isDownloading &&
-                        modelConfig?.selectedModel === 'llama3.2:1b'
-                          ? `Llama3.2 (${modelConfig.downloadProgress}%)`
+                        {selectedModelProvider?.isDownloading &&
+                        selectedModelProvider?.selectedModel === 'llama3.2:1b'
+                          ? `Llama3.2 (${selectedModelProvider.downloadProgress}%)`
                           : 'Llama3.2'}
                       </option>
                     </>
                   )}
                 </select>
-                {modelConfig?.isDownloading && (
+                {selectedModelProvider?.isDownloading && (
                   <div className='model-progress'>
                     <div
                       className='progress-bar'
-                      style={{ width: `${modelConfig.downloadProgress}%` }}
+                      style={{
+                        width: `${selectedModelProvider.downloadProgress}%`,
+                      }}
                     />
                   </div>
                 )}
@@ -334,7 +347,9 @@ const App: React.FC = () => {
               <button
                 onClick={handleSendMessage}
                 disabled={
-                  isLoading || !inputValue.trim() || modelConfig?.isDownloading
+                  isLoading ||
+                  !inputValue.trim() ||
+                  selectedModelProvider?.isDownloading
                 }
                 className='send-button'
                 aria-label='Send message'

@@ -46,3 +46,18 @@ export interface CodebaseConfig {
   isSyncCompleted: boolean;
   isIndexingCompleted: boolean;
 }
+export interface AvailableModel {
+  id: string;
+}
+
+export interface ModelConfig {
+  selectedModel: string;
+  provider: string;
+  apiKey?: string;
+  isDownloading: boolean;
+  downloadProgress: number;
+  downloadStatus: 'idle' | 'downloading' | 'completed' | 'error';
+  errorMessage?: string;
+  availableModels?: AvailableModel[];
+  isLoadingModels?: boolean;
+}

@@ -149,7 +149,8 @@ export class ChatService {
       // Search both Confluence and codebase embeddings
       const [confluenceResults, codebaseResults] = await Promise.all([
         this.embeddingService.searchEmbeddings(message),
-        this.codebaseService.searchCodebase(message)
+        []
+        // this.codebaseService.searchCodebase(message)
       ]);
 
       // Combine search results
@@ -159,7 +160,9 @@ export class ChatService {
       const modelResponse = await this.generateModelResponse(
         message,
         combinedResults,
-        modelId
+        modelId,
+        provider,
+        apiKey
       );
 
       // Add assistant response to history
@@ -199,10 +202,10 @@ export class ChatService {
 
     // Combine both result sets
     const combined = [...taggedConfluenceResults, ...taggedCodebaseResults];
-    
+
     // Sort by score (descending)
     combined.sort((a, b) => b.score - a.score);
-    
+
     // Return top results (limit to 10 for relevance)
     return combined.slice(0, 10);
   }
@@ -233,7 +236,9 @@ export class ChatService {
   private async generateModelResponse(
     message: string,
     searchResults: SearchResult[],
-    modelId: string
+    modelId: string,
+    provider: string,
+    apiKey: string
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -254,7 +259,9 @@ export class ChatService {
           prompt: message,
           searchResults,
           modelId: modelId ?? this.currentModel,
-          chatHistory: formattedChatHistory
+          chatHistory: formattedChatHistory,
+          provider: provider,
+          apiKey: apiKey
         },
       });
 

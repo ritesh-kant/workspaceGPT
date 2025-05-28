@@ -87,11 +87,11 @@ export const MODEL = {
   OLLAMA: 'Ollama',
   DEFAULT_CHAT_MODEL: 'llama3.2:1b',
 
-  DEFAULT_TEXT_EMBEDDING_DIMENSIONS: 768, // Default dimensions for the embedding model
-  DEFAULT_TEXT_EMBEDDING_MODEL: 'nomic-ai/nomic-embed-text-v1.5', // Default Ollama embedding model
+  DEFAULT_TEXT_EMBEDDING_DIMENSIONS: 384, // Default dimensions for the embedding model
+  DEFAULT_TEXT_EMBEDDING_MODEL: 'Xenova/all-MiniLM-L6-v2', // Default Xenova embedding model
 
   DEFAULT_CODE_EMBEDDING_DIMENSIONS: 768, // Default dimensions for the embedding model
-  DEFAULT_CODE_EMBEDDING_MODEL: 'jinaai/jina-embeddings-v2-base-code', 
+  DEFAULT_CODE_EMBEDDING_MODEL: 'jinaai/jina-embeddings-v2-base-code',
 };
 export const MODEL_PROVIDERS = [
   {
@@ -100,6 +100,12 @@ export const MODEL_PROVIDERS = [
     API_KEY: 'DUMMY_API_KEY',
     BASE_URL: 'http://localhost:11434/v1',
     DEFAULT_TEXT_EMBEDDING_DIMENSIONS: 768, // Default dimensions for the embedding model
+  },
+  {
+    MODEL_PROVIDER: 'OpenAI',
+    requireApiKey: true,
+    BASE_URL: 'https://api.openai.com/v1',
+    DEFAULT_CHAT_MODEL: 'gpt-3.5-turbo',
   },
   {
     MODEL_PROVIDER: 'Gemini',
@@ -122,8 +128,8 @@ export const MODEL_PROVIDERS = [
   {
     MODEL_PROVIDER: 'OpenRouter',
     requireApiKey: true,
-    BASE_URL: 'http://localhost:11434/api/tags',
-    DEFAULT_CHAT_MODEL: 'deepseek-r1-distill-llama-70b',
+    BASE_URL: 'https://openrouter.ai/api/v1',
+    DEFAULT_CHAT_MODEL: 'deepseek/deepseek-r1-distill-llama-70b',
   },
 ];
 

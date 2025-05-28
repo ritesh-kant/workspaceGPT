@@ -101,12 +101,12 @@ function sendMessage(message: any) {
 async function createEmbeddings(): Promise<void> {
   try {
     // Initialize embedding model first
-    console.log('Confluence: Initializing embedding model...');
+    // console.log('Confluence: Initializing embedding model...');
     extractor = await initializeEmbeddingModel(
       MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
       embeddingDirPath,
       (progress: any) => {
-        console.log('Model download progress:', progress);
+        // console.log('Model download progress:', progress);
         sendMessage({
           type: WORKER_STATUS.PROCESSING,
           progress: progress.progress || 0,
@@ -114,7 +114,7 @@ async function createEmbeddings(): Promise<void> {
         });
       }
     );
-    console.log('Confluence: Model initialization complete');
+    // console.log('Confluence: Model initialization complete');
 
     const files = fs
       .readdirSync(mdDirPath)
@@ -146,7 +146,7 @@ async function createEmbeddings(): Promise<void> {
 
       // Log metadata if found
       if (frontmatter && Object.keys(frontmatter).length > 0) {
-        console.log(`Extracted metadata from ${file}:`, frontmatter);
+        // console.log(`Extracted metadata from ${file}:`, frontmatter);
       }
 
       // Convert markdown to structured plain text
@@ -155,7 +155,7 @@ async function createEmbeddings(): Promise<void> {
         .replace(/<[^>]*>/g, '')
         .trim();
 
-      // Create embedding for the content using all-MiniLM-L6-v2
+      // Create embedding for the content using Xenova/all-MiniLM-L6-v2
       const embedding = await createEmbeddingForText(content);
 
       // Store metadata with embedding
@@ -197,7 +197,7 @@ async function createEmbeddings(): Promise<void> {
 
     // Complete
     sendMessage({ type: WORKER_STATUS.COMPLETED, total: total });
-    console.log('Embeddings created successfully!');
+    // console.log('Embeddings created successfully!');
     process.exit(0);
   } catch (error) {
     sendMessage({
@@ -213,7 +213,7 @@ async function createEmbeddingForText(
   text: string,
 ): Promise<number[]> {
   try {
-    console.log(`Generating embedding for text of length ${text.length}...`);
+    // console.log(`Generating embedding for text of length ${text.length}...`);
 
     if (!extractor) {
       throw new Error('Embedding model not initialized');
@@ -223,8 +223,8 @@ async function createEmbeddingForText(
     const output = await extractor(text, { pooling: 'mean', normalize: true });
     const duration = Date.now() - startTime;
 
-    console.log(`Embedding generation completed in ${duration}ms`);
-    console.log(`Generated embedding with ${output.data.length} dimensions`);
+    // console.log(`Embedding generation completed in ${duration}ms`);
+    // console.log(`Generated embedding with ${output.data.length} dimensions`);
 
     return Array.from(output.data);
   } catch (error) {

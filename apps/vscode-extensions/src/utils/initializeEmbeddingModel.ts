@@ -18,7 +18,6 @@ export async function initializeEmbeddingModel(embeddingModel: string, embedding
           cache_dir: path.join(embeddingDirPath, '.cache', 'transformers'),
           progress_callback: (progress: any) => {
             if (progress.status === 'progress') {
-              console.log(`Confluence: Downloading model: ${progress.progress}`);
               const progressPercent = Math.round(progress.progress);
               progressCallback({
                 type: progress.status,

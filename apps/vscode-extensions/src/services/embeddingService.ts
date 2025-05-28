@@ -99,7 +99,7 @@ export class EmbeddingService {
         lastProcessedFile: this.embeddingProgress?.lastProcessedFile,
         processedFiles: this.embeddingProgress?.processedFiles || 0
       };
-      this.embeddingProcess = fork(processPath, [JSON.stringify(workerData)], { 
+      this.embeddingProcess = fork(processPath, [JSON.stringify(workerData)], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
         execArgv: process.execArgv.filter(arg => !arg.includes('--inspect')) // Remove any existing inspect arguments
       });
@@ -115,7 +115,7 @@ export class EmbeddingService {
               current: message.current,
               total: message.total,
             });
-            
+
             // Update and save progress
             this.embeddingProgress = {
               processedFiles: message.current,
@@ -139,7 +139,7 @@ export class EmbeddingService {
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
             });
-            
+
             // Update progress as complete
             this.embeddingProgress = {
               processedFiles: message.total,
@@ -147,7 +147,7 @@ export class EmbeddingService {
               isComplete: true
             };
             await this.saveEmbeddingProgress(this.embeddingProgress);
-            
+
             // this.stopEmbeddingProcess();
             break;
         }
@@ -202,45 +202,65 @@ export class EmbeddingService {
           'embeddings'
         ),
       };
-      const searchProcess = fork(processPath, [JSON.stringify(workerData)], { 
+      const searchProcess = fork(processPath, [JSON.stringify(workerData)], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
         execArgv: process.execArgv.filter(arg => !arg.includes('--inspect')) // Remove any existing inspect arguments
       });
 
       return new Promise((resolve, reject) => {
         let resultsData = '';
+        let errorData = '';
+
+        // Capture stdout
+        searchProcess.stdout?.on('data', (data) => {
+          const output = data.toString();
+          console.log('Search process stdout:', output);
+          resultsData += output;
+        });
+
+        // Capture stderr
+        searchProcess.stderr?.on('data', (data) => {
+          const error = data.toString();
+          console.error('Search process stderr:', error);
+          errorData += error;
+        });
+
         searchProcess.on('message', (data) => {
+          console.log('Search process message:', data);
           resultsData += data.toString();
         });
 
-        searchProcess.on("error", (data) => {
-          console.error(`Search process stderr: ${data}`);
-          try {
-            const errorObj = JSON.parse(data.toString());
-            reject(new Error(errorObj.message || 'Search process error'));
-          } catch (e) {
-            reject(new Error(data.toString()));
-          }
-          searchProcess.kill();
-        });
-
         searchProcess.on('exit', (code) => {
+          console.log(`Search process exited with code: ${code}`);
+          console.log('Results data:', resultsData);
+          console.log('Error data:', errorData);
+
           if (code === 0) {
             try {
-              const results = JSON.parse(resultsData);
+              if(resultsData.trim() === "") {
+                resolve([])
+                return;
+              }
+              // Try to parse the last line as JSON (the actual results)
+              
+              const lines = resultsData.trim().split('\n');
+             
+              const lastLine = lines[lines.length - 1];
+              const results = JSON.parse(lastLine);
               resolve(results);
             } catch (e) {
+              console.error('Failed to parse search results:', e);
+              console.error('Raw results data:', resultsData);
               reject(new Error('Failed to parse search results.'));
             }
           } else {
-            // Error already handled by stderr or 'error' event
-            if (!resultsData) { // if no specific error message from stderr
-                 reject(new Error(`Search process exited with code ${code}`));
-            }
+            const errorMessage = errorData || `Search process exited with code ${code}`;
+            reject(new Error(errorMessage));
           }
         });
 
         searchProcess.on('error', (error) => {
+          console.error('Search process error:', error);
           reject(error);
           searchProcess.kill();
         });

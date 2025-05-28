@@ -1,6 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { MODEL } from '../../../constants';
+import { initializeEmbeddingModel } from 'src/utils/initializeEmbeddingModel';
+
+let extractor: any;
 
 interface WorkerData {
   query: string;
@@ -53,21 +56,43 @@ async function searchEmbeddings(): Promise<void> {
     // Check if embeddings exist
     const indexPath = path.join(embeddingDirPath, 'index.json');
     if (!fs.existsSync(indexPath)) {
-      throw new Error('Embedding index not found');
+      throw new Error(`Embedding index not found at: ${indexPath}`);
     }
+
+    // Load index data
+    const indexData = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+
+    // Initialize embedding model
+    // console.log('Initializing embedding model...');
+    extractor = await initializeEmbeddingModel(
+      MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
+      embeddingDirPath,
+      (progress: any) => {
+        // console.log('Model download progress:', progress);
+      }
+    );
+    // console.log('Model initialization complete');
 
     // Create embedding for query
     const queryEmbedding = await createEmbeddingForText(query);
 
     // Load all embeddings and calculate similarities
-    const indexData = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
     const similarities: Array<{ id: number; score: number }> = [];
 
     for (let i = 0; i < indexData.total; i++) {
       const metadataPath = path.join(embeddingDirPath, `${i}.json`);
-      const metadata: Metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-      const similarity = cosineSimilarity(queryEmbedding, metadata.embedding);
-      similarities.push({ id: i, score: similarity });
+
+      if (!fs.existsSync(metadataPath)) {
+        continue;
+      }
+
+      try {
+        const metadata: Metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+        const similarity = cosineSimilarity(queryEmbedding, metadata.embedding);
+        similarities.push({ id: i, score: similarity });
+      } catch (fileError) {
+        continue;
+      }
     }
 
     // Sort by similarity score and get top k results
@@ -90,7 +115,7 @@ async function searchEmbeddings(): Promise<void> {
     );
 
     // Send results back to parent process
-    console.log(JSON.stringify(results));
+    // console.log(JSON.stringify(results));
     process.exit(0);
 
   } catch (error) {
@@ -102,29 +127,23 @@ async function searchEmbeddings(): Promise<void> {
   }
 }
 
-// Create embedding using Ollama API
+// Create embedding using Xenova/Transformers
 async function createEmbeddingForText(text: string): Promise<number[]> {
   try {
-    const response = await fetch('http://localhost:11434/api/embeddings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
-        prompt: text
-      })
-    });
+    // console.log(`Generating embedding for text of length ${text.length}...`);
 
-    if (!response.ok) {
-      throw new Error(`Failed to generate embeddings: ${response.statusText}`);
+    if (!extractor) {
+      throw new Error('Embedding model not initialized');
     }
 
-    const result = await response.json();
-    
-    if (!result.embedding || !Array.isArray(result.embedding)) {
-      throw new Error('Invalid embedding response from Ollama');
-    }
-    
-    return result.embedding;
+    const startTime = Date.now();
+    const output = await extractor(text, { pooling: 'mean', normalize: true });
+    const duration = Date.now() - startTime;
+
+    // console.log(`Embedding generation completed in ${duration}ms`);
+    // console.log(`Generated embedding with ${output.data.length} dimensions`);
+
+    return Array.from(output.data);
   } catch (error) {
     console.error('Error creating embedding:', error);
     throw error;
