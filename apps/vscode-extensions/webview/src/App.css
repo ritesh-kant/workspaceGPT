@@ -67,7 +67,7 @@
 }
 
 .new-chat-button::before {
-  content: "+";
+  content: '+';
   display: block;
   width: 16px;
   height: 16px;
@@ -100,15 +100,25 @@
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .welcome-title {
   font-size: 1.7rem;
   font-weight: 700;
   margin: 1rem;
-  background: linear-gradient(135deg, var(--vscode-textLink-foreground), var(--vscode-textLink-activeForeground));
+  background: linear-gradient(
+    135deg,
+    var(--vscode-textLink-foreground),
+    var(--vscode-textLink-activeForeground)
+  );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   text-align: center;
@@ -155,9 +165,14 @@
 .privacy-container {
   max-width: 600px;
   padding: 1rem;
-  background: linear-gradient(145deg,
+  background: linear-gradient(
+    145deg,
     var(--vscode-editor-background),
-    color-mix(in srgb, var(--vscode-editor-background) 95%, var(--vscode-textLink-foreground))
+    color-mix(
+      in srgb,
+      var(--vscode-editor-background) 95%,
+      var(--vscode-textLink-foreground)
+    )
   );
   border: 1px solid var(--vscode-textLink-foreground);
   border-radius: 16px;
@@ -211,9 +226,14 @@
   align-items: flex-start;
   gap: 1rem;
   padding: 1.25rem;
-  background: linear-gradient(145deg,
+  background: linear-gradient(
+    145deg,
     var(--vscode-editor-background),
-    color-mix(in srgb, var(--vscode-editor-background) 97%, var(--vscode-textLink-foreground))
+    color-mix(
+      in srgb,
+      var(--vscode-editor-background) 97%,
+      var(--vscode-textLink-foreground)
+    )
   );
   border: 1px solid var(--vscode-editor-lineHighlightBorder);
   border-radius: 12px;
@@ -311,7 +331,7 @@
 }
 
 .error-message::before {
-  content: "⚠️";
+  content: '⚠️';
   font-size: 1.2rem;
   margin-right: 0.5rem;
 }
@@ -321,9 +341,16 @@
 }
 
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-5px); }
-  75% { transform: translateX(5px); }
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
 }
 
 .user-message {
@@ -355,6 +382,9 @@
   flex-direction: column;
   gap: 0.5rem;
   width: 100%;
+}
+.input-wrapper input {
+  border: none;
 }
 
 .input-controls {
@@ -419,7 +449,6 @@ button:hover:not(:disabled) {
   font-style: italic;
   font-size: 0.8rem;
 }
-
 
 .markdown-content {
   font-family: var(--vscode-font-family);
@@ -552,8 +581,6 @@ button:hover:not(:disabled) {
   transition: width 0.3s ease;
 }
 
-
-
 .banner-content {
   max-width: 800px;
   margin: 0 auto;
@@ -668,12 +695,14 @@ button:hover:not(:disabled) {
   gap: 1rem;
 }
 
-.model-selector, .model-selector-bottom {
+.model-selector,
+.model-selector-bottom {
   position: relative;
   min-width: 180px;
 }
 
-.model-selector select, .model-selector-bottom select {
+.model-selector select,
+.model-selector-bottom select {
   width: 100%;
   padding: 4px 8px;
   font-size: 0.8rem;
@@ -686,7 +715,8 @@ button:hover:not(:disabled) {
   padding-right: 24px;
 }
 
-.model-selector select.loading, .model-selector-bottom select.loading {
+.model-selector select.loading,
+.model-selector-bottom select.loading {
   opacity: 0.7;
   cursor: not-allowed;
 }
