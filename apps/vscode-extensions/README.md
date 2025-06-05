@@ -11,9 +11,13 @@
 
 **WorkspaceGPT** is your AI-powered, RAG-based coding assistant designed specifically for your local development environment. It allows you to ask workspace-related questions and get precise answers — all from the comfort of your VSCode editor.
 
-## 🔐 100% Local & Private
+## 🔐 Flexible Privacy Options
 
-Everything in WorkspaceGPT runs **locally** on your system. No data is sent to third-party servers. Your code and your documents remain **fully private and secure**. You don’t need to worry about confidentiality — we don’t share or transmit anything outside your machine.
+WorkspaceGPT gives you control over your data privacy:
+
+- **100% Local Operation**: With Ollama provider, everything runs locally on your system with no data sent to third-party servers
+- **Cloud Provider Options**: For enhanced capabilities, you can choose to use cloud-based providers like OpenAI, Gemini, Groq, Requestly, or OpenRouter
+- **You Choose**: Select the privacy level that works for your needs while maintaining security
 
 ## 🧠 Features
 
@@ -27,11 +31,18 @@ Everything in WorkspaceGPT runs **locally** on your system. No data is sent to t
 
 ### Prerequisites
 
-- [Ollama](https://ollama.com) installed and running locally
+No specific prerequisites required! WorkspaceGPT now supports multiple AI providers:
+
+1. **Ollama** - For 100% local operation
+2. **OpenAI** - For powerful cloud-based models
+3. **Gemini** - Google's advanced AI models
+4. **Groq** - High-performance inference
+5. **Requestly** - Custom API integration
+6. **OpenRouter** - For access to multiple models
 
 ### 🧠 Default Model
 
-By default, WorkspaceGPT uses a lightweight model: `llama3.2:1b`. If you're looking for more accurate and context-rich responses, you can switch to a more capable model that fits your system — such as `llama3.2:4b`, `gemma3:4b`, or `mistral`.
+By default, WorkspaceGPT uses a lightweight model: `llama3.2:1b` when using Ollama. If you're looking for more accurate and context-rich responses, you can switch to a more capable model that fits your system — such as `llama3.2:4b`, `gemma3:4b`, or `mistral`, or choose one of our cloud provider options.
 
 ### Installation
 
@@ -42,12 +53,13 @@ By default, WorkspaceGPT uses a lightweight model: `llama3.2:1b`. If you're look
 
 ## 🛠 Setup Guide
 
-1. Make sure Ollama is running on your system
-2. Open the **WorkspaceGPT** sidebar in VSCode
-3. Go to `Settings > Confluence Integration`
-4. Enter your Confluence details
-5. Click **"Check Connection"** to verify access and fetch the total number of pages
-6. Click **"Start Sync"** to begin syncing your Confluence content (this may take time depending on the number of pages)
+1. Open the **WorkspaceGPT** sidebar in VSCode
+2. Select your preferred AI provider from the settings menu
+3. Configure your selected provider (API keys for cloud providers or connection settings for Ollama)
+4. For Confluence integration, go to `Settings > Confluence Integration`
+5. Enter your Confluence details
+6. Click **"Check Connection"** to verify access and fetch the total number of pages
+7. Click **"Start Sync"** to begin syncing your Confluence content (this may take time depending on the number of pages)
 
 ### 🔁 Reset WorkspaceGPT
 
