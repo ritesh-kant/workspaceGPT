@@ -215,22 +215,6 @@ const App: React.FC = () => {
           <div className='welcome-container'>
             <h1 className='welcome-title'>👋 Hello</h1>
             <p className='welcome-subtitle'>How can WorkspaceGPT help?</p>
-            <div className='prerequisite-container'>
-              <div className='prerequisite-message'>
-                <span className='prerequisite-icon'>⚙️</span>
-                <span>
-                  To get started, please install{' '}
-                  <a
-                    href='https://ollama.com'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                  >
-                    Ollama
-                  </a>{' '}
-                  on your system - it's quick and easy!
-                </span>
-              </div>
-            </div>
             <div className='privacy-container'>
               <div className='privacy-message'>
                 <span className='privacy-icon'>🛡️</span>

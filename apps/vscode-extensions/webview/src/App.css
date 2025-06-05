@@ -124,34 +124,6 @@
   letter-spacing: -0.01em;
 }
 
-.prerequisite-container {
-  margin: 1rem auto;
-  max-width: 600px;
-  padding: 1rem;
-  background-color: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transform: translateY(0);
-  transition: transform 0.2s ease;
-}
-
-.prerequisite-container:hover {
-  transform: translateY(-2px);
-}
-
-.prerequisite-message {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  font-size: 0.85rem;
-  line-height: 1.4;
-}
-
-.prerequisite-icon {
-  font-size: 1.5rem;
-}
-
 .privacy-container {
   max-width: 600px;
   padding: 1rem;
@@ -164,7 +136,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   transform: translateY(0);
   transition: all 0.3s ease;
-  margin: 0rem auto;
+  margin: 1rem auto;
 }
 
 .privacy-container:hover {
@@ -229,16 +201,6 @@
 .tip-icon {
   font-size: 1.3rem;
   color: var(--vscode-textLink-foreground);
-}
-
-.prerequisite-message a {
-  color: var(--vscode-textLink-foreground);
-  text-decoration: underline;
-  font-weight: 600;
-}
-
-.prerequisite-message a:hover {
-  text-decoration: underline;
 }
 
 .tips-title {
