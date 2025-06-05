@@ -232,37 +232,37 @@ const App: React.FC = () => {
             />
             <div className='input-controls'>
               <div className='model-selector-bottom'>
-                {activeModels?.length > 0 ? (
-                  <select
-                    value={selectedModelProvider?.provider}
-                    onChange={(e) => {
-                      const providerConfig = activeModels.find(
-                        (model) => model.provider === e.target.value
-                      );
-                      handleModelChange(
-                        providerConfig?.model!,
-                        providerConfig?.provider!
-                      );
-                    }}
-                    disabled={selectedModelProvider?.isDownloading}
-                    className={
-                      selectedModelProvider?.isDownloading ? 'loading' : ''
+                <select
+                  value={selectedModelProvider?.provider}
+                  onChange={(e) => {
+                    if (e.target.value === 'selectModel') {
+                      setShowSettings(true);
+                      return;
                     }
-                  >
-                    {activeModels.map((model) => (
-                      <option key={model.provider} value={model.provider}>
-                        {model.provider} ({model.model})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <button
-                    onClick={() => setShowSettings(true)}
-                    title='Open Settings'
-                  >
-                    Select Model
-                  </button>
-                )}
+                    const providerConfig = activeModels.find(
+                      (model) => model.provider === e.target.value
+                    );
+                    handleModelChange(
+                      providerConfig?.model!,
+                      providerConfig?.provider!
+                    );
+                  }}
+                  disabled={selectedModelProvider?.isDownloading}
+                  className={
+                    selectedModelProvider?.isDownloading ? 'loading' : ''
+                  }
+                >
+                  {activeModels?.map((model) => (
+                    <option key={model.provider} value={model.provider}>
+                      {model.provider} ({model.model})
+                    </option>
+                  ))}
+                  {!activeModels?.length && (
+                    <option value='none'>Select Model</option>
+                  )}
+                  <hr />
+                  <option value='selectModel'>Edit...</option>
+                </select>
               </div>
               <button
                 onClick={handleSendMessage}
