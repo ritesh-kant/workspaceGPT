@@ -38,15 +38,6 @@ const baseConfig = {
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development')
   },
-  plugins: [{
-    name: 'dynamic-import',
-    setup(build) {
-      // Handle dynamic imports
-      build.onResolve({ filter: /^@xenova\/transformers/ }, args => {
-        return { external: true, path: args.path }
-      })
-    }
-  }]
 };
 
 if (isWatch) {
