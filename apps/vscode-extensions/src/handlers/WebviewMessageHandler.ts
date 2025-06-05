@@ -1,21 +1,16 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import * as fs from 'fs';
-import { Worker } from 'worker_threads';
 import {
   MESSAGE_TYPES,
   MODEL,
-  ModelTypeEnum,
   MODEL_PROVIDERS,
   STORAGE_KEYS,
-  WORKER_STATUS,
 } from '../../constants';
 import { ChatService } from '../services/chatService';
 import { ConfluenceService } from '../services/confluenceService';
 import { EmbeddingService } from '../services/confluenceEmbeddingService';
 import { CodebaseService } from '../services/codebaseService';
 import { EmbeddingConfig, CodebaseConfig } from '../types/types';
-import { isOllamaRunningCheck } from '../utils/ollamaCheck';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
 
 export class WebviewMessageHandler {
@@ -26,8 +21,6 @@ export class WebviewMessageHandler {
 
   private confluenceConfig?: any;
   private codebaseConfig?: CodebaseConfig;
-  private checkOllamaInterval?: NodeJS.Timeout;
-  private isModelInitialized: boolean = false;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -45,44 +38,6 @@ export class WebviewMessageHandler {
 
     this.codebaseService = new CodebaseService(this.webviewView, this.context);
 
-    // Initialize Ollama status check
-    this.initializeOllamaCheck();
-
-    // Clean up interval when webview is disposed
-    this.webviewView.onDidDispose(() => {
-      if (this.checkOllamaInterval) {
-        clearInterval(this.checkOllamaInterval);
-      }
-    });
-  }
-
-  public async initializeModels(): Promise<void> {
-    const isOllamaRunning = await isOllamaRunningCheck();
-
-    if (!this.isModelInitialized && isOllamaRunning) {
-      const chatModelId = MODEL.DEFAULT_CHAT_MODEL;
-      const embeddingModelId = MODEL.DEFAULT_TEXT_EMBEDDING_MODEL;
-
-      // Notify UI that model is being downloaded
-      this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS,
-        progress: 0,
-        current: '0 MB',
-        total: '0 MB',
-      });
-
-      // Start model initialization
-      if (!this.chatService) {
-        this.chatService = new ChatService(this.webviewView, this.context);
-      }
-      await this.chatService.initializeModel(chatModelId, ModelTypeEnum.Chat);
-      await this.chatService.initializeModel(
-        embeddingModelId,
-        ModelTypeEnum.Embedding
-      );
-
-      this.isModelInitialized = true;
-    }
   }
 
   public async handleMessage(data: any): Promise<void> {
@@ -132,9 +87,7 @@ export class WebviewMessageHandler {
       case MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE:
         await this.handleResumeIndexingConfluence();
         break;
-      case MESSAGE_TYPES.RETRY_OLLAMA_CHECK:
-        await this.handleRetryOllamaCheck();
-        break;
+
       case MESSAGE_TYPES.GET_WORKSPACE_PATH:
         await this.handleGetWorkspacePath();
         break;
@@ -517,20 +470,6 @@ export class WebviewMessageHandler {
     }
   }
 
-  private async handleRetryOllamaCheck(): Promise<void> {
-    await this.checkOllamaStatus();
-    this.initializeModels();
-  }
-
-  private async checkOllamaStatus(): Promise<boolean> {
-    const isRunning = await isOllamaRunningCheck();
-    this.webviewView.webview.postMessage({
-      type: MESSAGE_TYPES.OLLAMA_STATUS,
-      isRunning,
-    });
-    return isRunning;
-  }
-
   private async handleGetWorkspacePath(): Promise<void> {
     try {
       // Get the workspace folders
@@ -570,16 +509,6 @@ export class WebviewMessageHandler {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }
-
-  private async initializeOllamaCheck(): Promise<void> {
-    // Initial check
-    await this.checkOllamaStatus();
-    // Set up periodic check
-    this.checkOllamaInterval = setInterval(
-      () => this.checkOllamaStatus(),
-      30000
-    ); // Check every 30 seconds
   }
 
   private async handleFetchAvailableModels(data: any) {

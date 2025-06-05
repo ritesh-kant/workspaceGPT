@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useEffect, useCallback } from 'react';
 import { useModelActions, useSelectedModelProvider } from '../../store';
 import { MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
-import { VSCodeAPI } from '../../vscode';
 import { changeProviderHandler, fetchAvailableModels } from './utils';
 
 const ModelSettings: React.FC = () => {
@@ -16,7 +15,6 @@ const ModelSettings: React.FC = () => {
     updateModelProvider,
   } = useModelActions();
 
-  const vscode = VSCodeAPI();
 
   // Debounce function implementation
   const debounce = (func: Function, wait: number) => {
@@ -80,12 +78,6 @@ const ModelSettings: React.FC = () => {
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [selectedModelProvider]);
-
-  const retry = () => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
-    });
-  };
 
   return (
     <div className='settings-section'>
@@ -183,18 +175,6 @@ const ModelSettings: React.FC = () => {
                     }}
                   ></div>
                 </div>
-              </div>
-            )}
-            {selectedModelProvider?.downloadStatus === 'error' && (
-              <div className='error-message'>
-                Failed to download model &nbsp;
-                <button
-                  onClick={() => retry()}
-                  className='retry-button'
-                  title='Retry connection'
-                >
-                  ↻
-                </button>
               </div>
             )}
           </div>

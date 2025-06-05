@@ -50,17 +50,11 @@ const App: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
-  const [isOllamaRunning, setIsOllamaRunning] = useState(true);
-
   useEffect(() => {
-    // Handle messages from the extension
-    console.log('App mounted =====');
     vscode.postMessage({
       type: MESSAGE_TYPES.GET_WORKSPACE_PATH,
     });
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
-    });
+
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
       switch (message.type) {
@@ -79,9 +73,6 @@ const App: React.FC = () => {
           });
           setIsLoading(false);
           break;
-        case MESSAGE_TYPES.OLLAMA_STATUS:
-          setIsOllamaRunning(message.isRunning);
-          break;
         case MESSAGE_TYPES.SHOW_SETTINGS:
           setShowSettings(true);
           break;
@@ -99,7 +90,6 @@ const App: React.FC = () => {
             setSettingsConfig(message.state?.config || settingsDefaultConfig);
           }
           if (message.key === STORAGE_KEYS.MODEL) {
-            // setselectedModelProvider(message.state || modelDefaultConfig);
             setModelState(message.state || selectedModelProvider);
             console.log(
               'selectedModelProvider',
@@ -128,12 +118,6 @@ const App: React.FC = () => {
     setActiveModels(activeModels);
   }, [modelProviders]);
 
-  const handleRetryOllama = () => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
-    });
-  };
-
   useEffect(() => {
     // Scroll to bottom when messages change
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -143,11 +127,10 @@ const App: React.FC = () => {
     if (inputValue.trim() === '') return;
 
     // Check if model is currently downloading
-    if (selectedModelProvider?.isDownloading) {
+    if (!selectedModelProvider?.selectedModel) {
       // Show notification to wait for model download to complete
       addMessage({
-        content:
-          'Please wait for the model download to complete before sending messages.',
+        content: 'Please select the model from settings to use the model',
         isUser: false,
       });
       return;
@@ -185,31 +168,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div
-      className='app-container'
-      style={
-        {
-          '--banner-height': !isOllamaRunning ? '30px' : '0',
-        } as React.CSSProperties
-      }
-    >
-      {!isOllamaRunning && (
-        <div className='banner-container'>
-          <div className='banner-content'>
-            <div className='banner-message'>
-              <span className='warning-icon'>⚠️</span>
-              <span>Ollama Service Not Running</span>
-              <button
-                onClick={handleRetryOllama}
-                className='retry-button'
-                title='Retry connection'
-              >
-                ↻
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+    <div className='app-container'>
       <div className='chat-container'>
         {showTips && messages.length === 0 ? (
           <div className='welcome-container'>
@@ -220,9 +179,7 @@ const App: React.FC = () => {
                 <span className='privacy-icon'>🛡️</span>
                 <span>
                   Your data stays secure! Everything runs locally on your
-                  machine, ensuring complete privacy and security. Think of it
-                  as your personal AI assistant that respects your
-                  confidentiality.
+                  machine, ensuring complete privacy and security.
                 </span>
               </div>
             </div>
@@ -268,64 +225,43 @@ const App: React.FC = () => {
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                !isOllamaRunning
-                  ? 'Ollama service is not running'
-                  : selectedModelProvider?.isDownloading
-                    ? 'Please wait for model download to complete...'
-                    : 'Ask WorkspaceGPT...'
-              }
-              disabled={
-                isLoading ||
-                selectedModelProvider?.isDownloading ||
-                !isOllamaRunning
+                selectedModelProvider?.selectedModel
+                  ? 'Please configure model to use '
+                  : 'Ask WorkspaceGPT...'
               }
             />
             <div className='input-controls'>
               <div className='model-selector-bottom'>
-                <select
-                  value={selectedModelProvider?.provider}
-                  onChange={(e) => {
-                    const providerConfig = activeModels.find(
-                      (model) => model.provider === e.target.value
-                    );
-                    handleModelChange(
-                      providerConfig?.model!,
-                      providerConfig?.provider!
-                    );
-                  }}
-                  disabled={selectedModelProvider?.isDownloading}
-                  className={
-                    selectedModelProvider?.isDownloading ? 'loading' : ''
-                  }
-                >
-                  {activeModels && activeModels.length > 0 ? (
-                    // Render options from available models
-                    activeModels.map((model) => (
+                {activeModels?.length > 0 ? (
+                  <select
+                    value={selectedModelProvider?.provider}
+                    onChange={(e) => {
+                      const providerConfig = activeModels.find(
+                        (model) => model.provider === e.target.value
+                      );
+                      handleModelChange(
+                        providerConfig?.model!,
+                        providerConfig?.provider!
+                      );
+                    }}
+                    disabled={selectedModelProvider?.isDownloading}
+                    className={
+                      selectedModelProvider?.isDownloading ? 'loading' : ''
+                    }
+                  >
+                    {activeModels.map((model) => (
                       <option key={model.provider} value={model.provider}>
                         {model.provider} ({model.model})
                       </option>
-                    ))
-                  ) : (
-                    // Fallback options if no models are available
-                    <>
-                      <option value='llama3.2:1b'>
-                        {selectedModelProvider?.isDownloading &&
-                        selectedModelProvider?.selectedModel === 'llama3.2:1b'
-                          ? `Llama3.2 (${selectedModelProvider.downloadProgress}%)`
-                          : 'Llama3.2'}
-                      </option>
-                    </>
-                  )}
-                </select>
-                {selectedModelProvider?.isDownloading && (
-                  <div className='model-progress'>
-                    <div
-                      className='progress-bar'
-                      style={{
-                        width: `${selectedModelProvider.downloadProgress}%`,
-                      }}
-                    />
-                  </div>
+                    ))}
+                  </select>
+                ) : (
+                  <button
+                    onClick={() => setShowSettings(true)}
+                    title='Open Settings'
+                  >
+                    Select Model
+                  </button>
                 )}
               </div>
               <button

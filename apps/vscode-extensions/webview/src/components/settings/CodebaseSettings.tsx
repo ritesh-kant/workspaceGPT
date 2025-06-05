@@ -179,6 +179,7 @@ const CodebaseSettings: React.FC = () => {
           type='checkbox'
           checked={codebaseConfig?.isCodebaseEnabled}
           onChange={handleToggleChange}
+          disabled
         />
         <span className='slider round'></span>
       </label>

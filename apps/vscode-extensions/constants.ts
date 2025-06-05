@@ -46,8 +46,6 @@ export const MESSAGE_TYPES = {
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
   MODEL_DOWNLOAD_ERROR: 'model-download-error',
 
-  OLLAMA_STATUS: 'ollama-status',
-  RETRY_OLLAMA_CHECK: 'retry-ollama-check',
   FETCH_AVAILABLE_MODELS: 'fetch-available-models',
   FETCH_AVAILABLE_MODELS_RESPONSE: 'fetch-available-models-response',
   FETCH_AVAILABLE_MODELS_ERROR: 'fetch-available-models-error',
@@ -81,7 +79,6 @@ export const EXTENSION = {
 
 // Model Constants
 export const MODEL = {
-  OLLAMA: 'Ollama',
   DEFAULT_CHAT_MODEL: 'llama3.2:1b',
 
   DEFAULT_TEXT_EMBEDDING_DIMENSIONS: 384, // Default dimensions for the embedding model

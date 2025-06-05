@@ -137,7 +137,6 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     resetSettingStore();
     resetModelStore();
     resetChatStore();
-    // Show feedback message
     batchUpdateConfig('confluence', {
       messageType: 'success',
       statusMessage: 'VSCode state reset successfully',
