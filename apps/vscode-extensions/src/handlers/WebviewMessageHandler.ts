@@ -12,7 +12,7 @@ import {
 } from '../../constants';
 import { ChatService } from '../services/chatService';
 import { ConfluenceService } from '../services/confluenceService';
-import { EmbeddingService } from '../services/embeddingService';
+import { EmbeddingService } from '../services/confluenceEmbeddingService';
 import { CodebaseService } from '../services/codebaseService';
 import { EmbeddingConfig, CodebaseConfig } from '../types/types';
 import { isOllamaRunningCheck } from '../utils/ollamaCheck';

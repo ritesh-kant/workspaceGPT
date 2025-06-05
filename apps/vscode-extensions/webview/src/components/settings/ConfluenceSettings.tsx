@@ -94,8 +94,7 @@ const ConfluenceSettings: React.FC = () => {
           });
           clearStatusMessageAfterDelay(
             'confluence',
-            'messageType',
-            'unknown'
+            'statusMessage',
           );
           break;
 
@@ -151,6 +150,10 @@ const ConfluenceSettings: React.FC = () => {
       messageType: 'error',
     });
     handleConfluenceActions.stopSync(vscode, config);
+    clearStatusMessageAfterDelay(
+      'confluence',
+      'statusMessage',
+    );
   };
 
   return (

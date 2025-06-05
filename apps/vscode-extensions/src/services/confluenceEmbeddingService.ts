@@ -1,0 +1,253 @@
+import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
+import { fork, ChildProcess } from 'child_process';
+import {
+  EmbeddingConfig,
+  EmbeddingProgress,
+  EmbeddingSearchMessage,
+  EmbeddingSearchResult,
+} from 'src/types/types';
+import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
+
+export class EmbeddingService {
+  private embeddingProcess: ChildProcess | null = null;
+  private webviewView: vscode.WebviewView;
+  private context: vscode.ExtensionContext;
+  private embeddingProgress?: EmbeddingProgress;
+
+  constructor(
+    webviewView: vscode.WebviewView,
+    context: vscode.ExtensionContext
+  ) {
+    this.webviewView = webviewView;
+    this.context = context;
+    this.loadEmbeddingProgress();
+  }
+
+  private loadEmbeddingProgress() {
+    const progress = this.context.globalState.get<EmbeddingProgress>(
+      STORAGE_KEYS.EMBEDDING_PROGRESS
+    );
+    this.embeddingProgress = progress;
+  }
+
+  private async saveEmbeddingProgress(progress: EmbeddingProgress) {
+    await this.context.globalState.update(
+      STORAGE_KEYS.EMBEDDING_PROGRESS,
+      progress
+    );
+    this.embeddingProgress = progress;
+  }
+
+  public async createEmbeddings(
+    config: EmbeddingConfig,
+    resume: boolean = false
+  ) {
+    try {
+      this.stopEmbeddingProcess();
+
+      await this.resetStateIfNotResume(resume);
+
+      const { embeddingDirPath, mdDirPath, processPath } =
+        await this.getConfluenceMDAndEmbeddingPath('createEmbeddingForText.js');
+
+      // Create a new child process
+      const { workerData } = this.createWorkerData(
+        mdDirPath,
+        embeddingDirPath,
+        config,
+        resume
+      );
+
+      this.embeddingProcess = fork(processPath, [], {
+        env: {
+          workerData: JSON.stringify(workerData),
+        },
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+        execArgv: process.execArgv.filter((arg) => !arg.includes('--inspect')), // Remove any existing inspect arguments
+      });
+
+      // Handle messages from the process
+      this.embeddingProcess.on('message', async (data) => {
+        await this.handleCreateEmbeddingMessage(data);
+      });
+
+      this.embeddingProcess.on('error', (error) => {
+        this.handleError(error);
+      });
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  public async searchEmbeddings(
+    query: string
+  ): Promise<EmbeddingSearchResult[]> {
+    try {
+      const { embeddingDirPath, processPath } =
+        await this.getConfluenceMDAndEmbeddingPath('searchProcess.js');
+
+      const workerData = {
+        query,
+        embeddingDirPath,
+      };
+
+      const searchProcess = fork(processPath, [], {
+        env: {
+          workerData: JSON.stringify(workerData),
+        },
+        execArgv: ['--max-old-space-size=4096', '--inspect'],
+      });
+
+      return new Promise((resolve, reject) => {
+        searchProcess.on('message', (message: EmbeddingSearchMessage) => {
+          if (message.type === 'results') {
+            resolve(message.data || []);
+          } else if (message.type === 'error') {
+            reject(new Error(message.message || 'Unknown error'));
+          }
+        });
+
+        searchProcess.on('error', (error) => {
+          console.error('Search process error:', error);
+          reject(error);
+          searchProcess.kill();
+        });
+      });
+    } catch (error) {
+      console.error('Error in embedding search:', error);
+      throw error;
+    }
+  }
+
+  public getEmbeddingProgress() {
+    return this.embeddingProgress;
+  }
+
+  public async resetEmbeddingProgress() {
+    this.embeddingProgress = undefined;
+    await this.context.globalState.update(
+      STORAGE_KEYS.EMBEDDING_PROGRESS,
+      undefined
+    );
+  }
+
+  // Util functions
+  private stopEmbeddingProcess(): void {
+    if (this.embeddingProcess) {
+      this.embeddingProcess.kill();
+      this.embeddingProcess = null;
+    }
+  }
+  private async ensureDirectoryExists(dirPath: string) {
+    try {
+      await fs.promises.access(dirPath).catch(async () => {
+        await fs.promises.mkdir(dirPath, { recursive: true });
+      });
+    } catch (error) {
+      console.error('Error creating directory:', error);
+      throw error;
+    }
+  }
+
+  private handleError(error: unknown) {
+    console.error('Error starting embedding process:', error);
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    this.stopEmbeddingProcess();
+  }
+
+  private async handleCreateEmbeddingMessage(message: any) {
+    // const message = JSON.parse(data ?? 'null');
+
+    switch (message.type) {
+      case WORKER_STATUS.PROCESSING:
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS,
+          progress: message.progress,
+          current: message.current,
+          total: message.total,
+        });
+        await this.saveEmbeddingState(message);
+        break;
+
+      case WORKER_STATUS.ERROR:
+        console.error(`Worker error: ${message.message}`);
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
+          message: message.message,
+        });
+        break;
+
+      case WORKER_STATUS.COMPLETED:
+        console.log('Embedding creation complete');
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
+        });
+        await this.saveEmbeddingProgress(message);
+        break;
+    }
+  }
+
+  private async saveEmbeddingState(message: any) {
+    this.embeddingProgress = {
+      processedFiles: message.current,
+      totalFiles: message.total,
+      lastProcessedFile: message.lastProcessedFile,
+      isComplete: false,
+    };
+    await this.saveEmbeddingProgress(this.embeddingProgress);
+  }
+
+  private createWorkerData(
+    mdDirPath: string,
+    embeddingDirPath: string,
+    config: EmbeddingConfig,
+    resume: boolean
+  ) {
+    const workerData = {
+      mdDirPath,
+      embeddingDirPath,
+      config,
+      resume,
+      lastProcessedFile: this.embeddingProgress?.lastProcessedFile,
+      processedFiles: this.embeddingProgress?.processedFiles || 0,
+    };
+    return { workerData };
+  }
+
+  private async getConfluenceMDAndEmbeddingPath(processName: string) {
+    const mdDirPath = path.join(
+      this.context.globalStorageUri.fsPath,
+      'confluence',
+      'mds'
+    );
+    const embeddingDirPath = path.join(
+      this.context.globalStorageUri.fsPath,
+      'embeddings'
+    );
+    const processPath = path.join(
+      __dirname,
+      'workers',
+      'confluence',
+      processName
+    );
+    await this.ensureDirectoryExists(embeddingDirPath);
+
+    return { embeddingDirPath, mdDirPath, processPath };
+  }
+
+  private async resetStateIfNotResume(resume: boolean) {
+    if (!resume) {
+      this.embeddingProgress = {
+        processedFiles: 0,
+        totalFiles: 0,
+        isComplete: false,
+      };
+      await this.saveEmbeddingProgress(this.embeddingProgress);
+    }
+  }
+}

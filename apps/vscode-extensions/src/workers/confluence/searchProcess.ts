@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { MODEL } from '../../../constants';
+import { MODEL, SEARCH_CONSTANTS } from '../../../constants';
 import { initializeEmbeddingModel } from 'src/utils/initializeEmbeddingModel';
 
 let extractor: any;
@@ -24,23 +24,10 @@ interface Metadata {
   url: string;
 }
 
-// Parse command line arguments
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.error('No arguments provided');
-  process.exit(1);
-}
-
-const workerDataStr = args[0];
 let workerData: WorkerData;
 
-try {
-  workerData = JSON.parse(workerDataStr);
-} catch (error) {
-  console.error('Failed to parse worker data:', error);
-  process.exit(1);
-}
-
+const workerDataStr = process.env.workerData;
+workerData = JSON.parse(workerDataStr!);
 const { query, embeddingDirPath } = workerData;
 
 // Calculate cosine similarity between two vectors
@@ -53,30 +40,45 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 async function searchEmbeddings(): Promise<void> {
   try {
+    console.log('SearchWorker : Starting searchEmbeddings function...');
+
     // Check if embeddings exist
     const indexPath = path.join(embeddingDirPath, 'index.json');
+    console.log('SearchWorker : Checking for index at:', indexPath);
+
     if (!fs.existsSync(indexPath)) {
       throw new Error(`Embedding index not found at: ${indexPath}`);
     }
 
+    console.log('SearchWorker : Index file found, proceeding with search...');
+
     // Load index data
     const indexData = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    console.log('SearchWorker : Index data loaded:', indexData);
 
     // Initialize embedding model
-    // console.log('Initializing embedding model...');
+    console.log('SearchWorker : Initializing embedding model...');
     extractor = await initializeEmbeddingModel(
       MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
       embeddingDirPath,
       (progress: any) => {
-        // console.log('Model download progress:', progress);
+        console.log('SearchWorker : Model download progress:', progress);
       }
     );
-    // console.log('Model initialization complete');
+    console.log('SearchWorker : Model initialization complete');
 
     // Create embedding for query
+    console.log('SearchWorker : Creating embedding for query:', query);
     const queryEmbedding = await createEmbeddingForText(query);
+    console.log(
+      'SearchWorker : Query embedding created, length:',
+      queryEmbedding.length
+    );
 
     // Load all embeddings and calculate similarities
+    console.log(
+      'SearchWorker : Loading embeddings and calculating similarities...'
+    );
     const similarities: Array<{ id: number; score: number }> = [];
 
     for (let i = 0; i < indexData.total; i++) {
@@ -87,7 +89,9 @@ async function searchEmbeddings(): Promise<void> {
       }
 
       try {
-        const metadata: Metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+        const metadata: Metadata = JSON.parse(
+          fs.readFileSync(metadataPath, 'utf8')
+        );
         const similarity = cosineSimilarity(queryEmbedding, metadata.embedding);
         similarities.push({ id: i, score: similarity });
       } catch (fileError) {
@@ -96,33 +100,53 @@ async function searchEmbeddings(): Promise<void> {
     }
 
     // Sort by similarity score and get top k results
-    const k = 3;
+    console.log('SearchWorker : Found', similarities.length, 'similarities');
+    const k = SEARCH_CONSTANTS.MAX_SEARCH_RESULTS;
     const topResults = similarities
       .sort((a, b) => b.score - a.score)
       .slice(0, k);
+    console.log('SearchWorker : Top results:', topResults);
 
     // Load metadata and prepare results
+    console.log('SearchWorker : Loading metadata for top results...');
     const results = await Promise.all(
       topResults.map(async ({ id, score }) => {
+        console.log(`SearchWorker : Loading metadata for id: ${id}`);
         const metadataPath = path.join(embeddingDirPath, `${id}.json`);
-        const metadata: Metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+        console.log(`SearchWorker : Metadata path: ${metadataPath}`);
+        const metadata: Metadata = JSON.parse(
+          fs.readFileSync(metadataPath, 'utf8')
+        );
+        console.log(`SearchWorker : Loaded metadata for: ${metadata.filename}`);
         return {
           text: metadata.text,
           score: score,
-          source: metadata.url
+          source: metadata.url,
         } as SearchResult;
       })
     );
+    console.log('SearchWorker : All metadata loaded successfully');
 
-    // Send results back to parent process
-    // console.log(JSON.stringify(results));
-    process.exit(0);
-
+    console.log(
+      'SearchWorker : Sending results back to parent:',
+      results.length,
+      'results'
+    );
+    // Send results back to parent process via IPC
+    process.send!({
+      type: 'results',
+      data: results,
+    });
+    console.log('SearchWorker : Results sent, exiting...');
+    // process.exit(results.length);
   } catch (error) {
-    console.error(JSON.stringify({
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Send error back to parent process via IPC
+    process.send!({
       type: 'error',
-      message: error instanceof Error ? error.message : String(error)
-    }));
+      message: errorMessage,
+    });
     process.exit(1);
   }
 }
@@ -130,18 +154,13 @@ async function searchEmbeddings(): Promise<void> {
 // Create embedding using Xenova/Transformers
 async function createEmbeddingForText(text: string): Promise<number[]> {
   try {
-    // console.log(`Generating embedding for text of length ${text.length}...`);
+    // console.log(`SearchWorker : Generating embedding for text of length ${text.length}...`);
 
     if (!extractor) {
       throw new Error('Embedding model not initialized');
     }
 
-    const startTime = Date.now();
     const output = await extractor(text, { pooling: 'mean', normalize: true });
-    const duration = Date.now() - startTime;
-
-    // console.log(`Embedding generation completed in ${duration}ms`);
-    // console.log(`Generated embedding with ${output.data.length} dimensions`);
 
     return Array.from(output.data);
   } catch (error) {
@@ -149,6 +168,7 @@ async function createEmbeddingForText(text: string): Promise<number[]> {
     throw error;
   }
 }
+
 
 // Start processing
 searchEmbeddings();

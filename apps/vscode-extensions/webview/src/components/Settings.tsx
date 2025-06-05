@@ -54,8 +54,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           });
           clearStatusMessageAfterDelay(
             'codebase',
-            'messageType',
-            'unknown'
+            'statusMessage',
           );
           break;
 
@@ -75,8 +74,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           });
           clearStatusMessageAfterDelay(
             'codebase',
-            'messageType',
-            'unknown'
+            'statusMessage',
           );
           break;
 
@@ -105,8 +103,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           });
           clearStatusMessageAfterDelay(
             'codebase',
-            'messageType',
-            'unknown'
+            'statusMessage',
           );
           break;
 

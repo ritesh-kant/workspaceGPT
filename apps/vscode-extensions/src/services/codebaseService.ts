@@ -347,7 +347,7 @@ export class CodebaseService {
         __dirname,
         'workers',
         'codebase',
-        'codebaseEmbeddingWorker.js'
+        'codebaseEmbeddingProcess.js'
       );
       this.embeddingProcess = fork(workerPath, [], {
         // Pass data as environment variables or as message

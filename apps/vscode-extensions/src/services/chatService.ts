@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { EmbeddingService } from './embeddingService';
+import { EmbeddingService } from './confluenceEmbeddingService';
 import path from 'path';
 import { Worker } from 'worker_threads';
 import { WORKER_STATUS, MESSAGE_TYPES, MODEL, ModelType } from '../../constants';

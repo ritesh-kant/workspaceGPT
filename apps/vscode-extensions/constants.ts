@@ -56,11 +56,8 @@ export const MESSAGE_TYPES = {
   WORKSPACE_PATH: 'workspace-path',
 } as const;
 
-// UI Constants
-export const UI_CONSTANTS = {
-  CHUNK_SIZE: 50, // Characters per chunk for streaming
-  CHUNK_DELAY: 30, // Milliseconds between chunks
-  MAX_SEARCH_RESULTS: 3, // Number of nearest neighbors to retrieve
+export const SEARCH_CONSTANTS = {
+  MAX_SEARCH_RESULTS: 5, // Number of nearest neighbors to retrieve
 };
 
 // Storage Keys

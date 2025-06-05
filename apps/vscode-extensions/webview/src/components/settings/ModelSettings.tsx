@@ -41,7 +41,8 @@ const ModelSettings: React.FC = () => {
       selectedModelProvider.provider,
       selectedModelProvider.apiKey
     );
-
+  }, []);
+  useEffect(() => {
     // Listen for model configuration and sync updates from extension
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
@@ -159,7 +160,7 @@ const ModelSettings: React.FC = () => {
               onChange={(e) =>
                 handleModelChange(
                   e.target.value,
-                  selectedModelProvider.provider,
+                  selectedModelProvider.provider
                 )
               }
               disabled={selectedModelProvider?.isDownloading}

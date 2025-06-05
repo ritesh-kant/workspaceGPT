@@ -25,25 +25,18 @@ interface Metadata {
   url?: string;
   frontmatter?: Record<string, any>;
 }
+let workerData;
+const workerDataStr = process.env.workerData;
+workerData = JSON.parse(workerDataStr!);
 
-// Parse command line arguments
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.error('No arguments provided');
-  process.exit(1);
-}
-
-const workerDataStr = args[0];
-let workerData: WorkerData;
-
-try {
-  workerData = JSON.parse(workerDataStr);
-} catch (error) {
-  console.error('Failed to parse worker data:', error);
-  process.exit(1);
-}
-
-const { mdDirPath, embeddingDirPath, config, resume, lastProcessedFile, processedFiles } = workerData;
+const {
+  mdDirPath,
+  embeddingDirPath,
+  config,
+  resume,
+  lastProcessedFile,
+  processedFiles,
+} = workerData;
 
 // Initialize markdown-it
 md = new MarkdownIt({ html: false });
@@ -53,7 +46,10 @@ md = new MarkdownIt({ html: false });
  * @param markdownContent The raw markdown content
  * @returns Object containing cleaned content and extracted frontmatter
  */
-function extractFrontmatter(markdownContent: string): { content: string; frontmatter?: Record<string, any> } {
+function extractFrontmatter(markdownContent: string): {
+  content: string;
+  frontmatter?: Record<string, any>;
+} {
   // Check if content has frontmatter (starts with ---)
   if (!markdownContent || !markdownContent.trim().startsWith('---')) {
     return { content: markdownContent || '' };
@@ -72,7 +68,7 @@ function extractFrontmatter(markdownContent: string): { content: string; frontma
 
     // Parse the frontmatter as key-value pairs
     const frontmatter: Record<string, any> = {};
-    frontmatterRaw.split('\n').forEach(line => {
+    frontmatterRaw.split('\n').forEach((line) => {
       const trimmedLine = line.trim();
       if (trimmedLine && !trimmedLine.startsWith('#')) {
         const colonIndex = trimmedLine.indexOf(':');
@@ -86,16 +82,15 @@ function extractFrontmatter(markdownContent: string): { content: string; frontma
       }
     });
 
-    return { content, frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined };
+    return {
+      content,
+      frontmatter:
+        Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
+    };
   } catch (error) {
     console.error('Error parsing frontmatter:', error);
     return { content: markdownContent };
   }
-}
-
-// Function to send messages back to parent process
-function sendMessage(message: any) {
-  process.stdout.write(JSON.stringify(message) + '\n');
 }
 
 async function createEmbeddings(): Promise<void> {
@@ -107,10 +102,10 @@ async function createEmbeddings(): Promise<void> {
       embeddingDirPath,
       (progress: any) => {
         // console.log('Model download progress:', progress);
-        sendMessage({
+        process.send!({
           type: WORKER_STATUS.PROCESSING,
           progress: progress.progress || 0,
-          message: progress.message || 'Initializing model...'
+          message: progress.message || 'Initializing model...',
         });
       }
     );
@@ -129,7 +124,7 @@ async function createEmbeddings(): Promise<void> {
     // If resuming, find the starting point
     let startIndex = 0;
     if (resume && lastProcessedFile) {
-      startIndex = files.findIndex(file => file === lastProcessedFile);
+      startIndex = files.findIndex((file) => file === lastProcessedFile);
       if (startIndex !== -1) {
         startIndex++; // Start from the next file
       }
@@ -142,7 +137,8 @@ async function createEmbeddings(): Promise<void> {
       const markdownContent = fs.readFileSync(filePath, 'utf8');
 
       // Extract frontmatter metadata if present
-      const { content: cleanContent, frontmatter } = extractFrontmatter(markdownContent);
+      const { content: cleanContent, frontmatter } =
+        extractFrontmatter(markdownContent);
 
       // Log metadata if found
       if (frontmatter && Object.keys(frontmatter).length > 0) {
@@ -174,13 +170,14 @@ async function createEmbeddings(): Promise<void> {
       );
 
       // Report progress
-      const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
-      sendMessage({
+      const currentProgress =
+        resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
+      process.send!({
         type: WORKER_STATUS.PROCESSING,
         progress: ((currentProgress / total) * 100).toFixed(1),
         current: currentProgress,
         total,
-        lastProcessedFile: file
+        lastProcessedFile: file,
       });
     }
 
@@ -191,27 +188,22 @@ async function createEmbeddings(): Promise<void> {
         total: total,
         dimensions: config.dimensions,
         includesMetadata: true,
-        metadataFields: ['url', 'frontmatter']
+        metadataFields: ['url', 'frontmatter'],
       })
     );
 
     // Complete
-    sendMessage({ type: WORKER_STATUS.COMPLETED, total: total });
-    // console.log('Embeddings created successfully!');
-    process.exit(0);
+    process.send!({ type: WORKER_STATUS.COMPLETED, total: total });
   } catch (error) {
-    sendMessage({
+    process.send!({
       type: WORKER_STATUS.ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
-    process.exit(1);
   }
 }
 
 // Create embedding using transformer model
-async function createEmbeddingForText(
-  text: string,
-): Promise<number[]> {
+async function createEmbeddingForText(text: string): Promise<number[]> {
   try {
     // console.log(`Generating embedding for text of length ${text.length}...`);
 
