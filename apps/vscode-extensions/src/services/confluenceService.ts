@@ -207,19 +207,19 @@ export class ConfluenceService {
       });
 
       // Handle worker exit
-      this.worker.on('exit', (code) => {
-        if (code !== 0) {
-          console.error(`Worker stopped with exit code ${code}`);
-          // Notify the webview that sync is being stopped
-          this.webviewView.webview.postMessage({
-            type: MESSAGE_TYPES.SYNC_CONFLUENCE_STOP,
-            source: 'confluence',
-            progress: 0,
-            message: 'Stopping sync process...',
-          });
-        }
-        this.worker = null;
-      });
+      // this.worker.on('exit', (code) => {
+      //   if (code !== 0) {
+      //     console.error(`Worker stopped with exit code ${code}`);
+      //     // Notify the webview that sync is being stopped
+      //     this.webviewView.webview.postMessage({
+      //       type: MESSAGE_TYPES.SYNC_CONFLUENCE_STOP,
+      //       source: 'confluence',
+      //       progress: 0,
+      //       message: 'Stopping sync process...',
+      //     });
+      //   }
+      //   this.worker = null;
+      // });
     } catch (error) {
       console.error('Error starting worker:', error);
       this.webviewView.webview.postMessage({

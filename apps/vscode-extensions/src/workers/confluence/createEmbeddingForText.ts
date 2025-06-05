@@ -1,57 +1,12 @@
-import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import path from 'path';
 import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
 import { MODEL, WORKER_STATUS } from '../../../constants';
-
-/**
- * Extracts frontmatter metadata from markdown content
- * @param markdownContent The raw markdown content
- * @returns Object containing cleaned content and extracted frontmatter
- */
-function extractFrontmatter(markdownContent: string): { content: string; frontmatter?: Record<string, any> } {
-  // Check if content has frontmatter (starts with ---)
-  if (!markdownContent || !markdownContent.trim().startsWith('---')) {
-    return { content: markdownContent || '' };
-  }
-
-  try {
-    // Find the second --- that closes the frontmatter block
-    const secondDashIndex = markdownContent.indexOf('---', 3);
-    if (secondDashIndex === -1) {
-      return { content: markdownContent };
-    }
-
-    // Extract the frontmatter content
-    const frontmatterRaw = markdownContent.substring(3, secondDashIndex).trim();
-    const content = markdownContent.substring(secondDashIndex + 3).trim();
-    
-    // Parse the frontmatter as key-value pairs
-    const frontmatter: Record<string, any> = {};
-    frontmatterRaw.split('\n').forEach(line => {
-      const trimmedLine = line.trim();
-      if (trimmedLine && !trimmedLine.startsWith('#')) {
-        const colonIndex = trimmedLine.indexOf(':');
-        if (colonIndex !== -1) {
-          const key = trimmedLine.substring(0, colonIndex).trim();
-          const value = trimmedLine.substring(colonIndex + 1).trim();
-          if (key && value) {
-            frontmatter[key] = value;
-          }
-        }
-      }
-    });
-
-    return { content, frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined };
-  } catch (error) {
-    console.error('Error parsing frontmatter:', error);
-    return { content: markdownContent };
-  }
-}
+import { initializeEmbeddingModel } from 'src/utils/initializeEmbeddingModel';
 
 let md: MarkdownIt;
-let ollamaModel: string;
+let extractor: any;
 
 interface WorkerData {
   mdDirPath: string;
@@ -70,14 +25,92 @@ interface Metadata {
   url?: string;
   frontmatter?: Record<string, any>;
 }
+let workerData;
+const workerDataStr = process.env.workerData;
+workerData = JSON.parse(workerDataStr!);
 
-const { mdDirPath, embeddingDirPath, config, resume, lastProcessedFile, processedFiles } = workerData as WorkerData;
+const {
+  mdDirPath,
+  embeddingDirPath,
+  config,
+  resume,
+  lastProcessedFile,
+  processedFiles,
+} = workerData;
 
 // Initialize markdown-it
 md = new MarkdownIt({ html: false });
 
+/**
+ * Extracts frontmatter metadata from markdown content
+ * @param markdownContent The raw markdown content
+ * @returns Object containing cleaned content and extracted frontmatter
+ */
+function extractFrontmatter(markdownContent: string): {
+  content: string;
+  frontmatter?: Record<string, any>;
+} {
+  // Check if content has frontmatter (starts with ---)
+  if (!markdownContent || !markdownContent.trim().startsWith('---')) {
+    return { content: markdownContent || '' };
+  }
+
+  try {
+    // Find the second --- that closes the frontmatter block
+    const secondDashIndex = markdownContent.indexOf('---', 3);
+    if (secondDashIndex === -1) {
+      return { content: markdownContent };
+    }
+
+    // Extract the frontmatter content
+    const frontmatterRaw = markdownContent.substring(3, secondDashIndex).trim();
+    const content = markdownContent.substring(secondDashIndex + 3).trim();
+
+    // Parse the frontmatter as key-value pairs
+    const frontmatter: Record<string, any> = {};
+    frontmatterRaw.split('\n').forEach((line) => {
+      const trimmedLine = line.trim();
+      if (trimmedLine && !trimmedLine.startsWith('#')) {
+        const colonIndex = trimmedLine.indexOf(':');
+        if (colonIndex !== -1) {
+          const key = trimmedLine.substring(0, colonIndex).trim();
+          const value = trimmedLine.substring(colonIndex + 1).trim();
+          if (key && value) {
+            frontmatter[key] = value;
+          }
+        }
+      }
+    });
+
+    return {
+      content,
+      frontmatter:
+        Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
+    };
+  } catch (error) {
+    console.error('Error parsing frontmatter:', error);
+    return { content: markdownContent };
+  }
+}
+
 async function createEmbeddings(): Promise<void> {
   try {
+    // Initialize embedding model first
+    // console.log('Confluence: Initializing embedding model...');
+    extractor = await initializeEmbeddingModel(
+      MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
+      embeddingDirPath,
+      (progress: any) => {
+        // console.log('Model download progress:', progress);
+        process.send!({
+          type: WORKER_STATUS.PROCESSING,
+          progress: progress.progress || 0,
+          message: progress.message || 'Initializing model...',
+        });
+      }
+    );
+    // console.log('Confluence: Model initialization complete');
+
     const files = fs
       .readdirSync(mdDirPath)
       .filter((file) => file.endsWith('.md'));
@@ -91,7 +124,7 @@ async function createEmbeddings(): Promise<void> {
     // If resuming, find the starting point
     let startIndex = 0;
     if (resume && lastProcessedFile) {
-      startIndex = files.findIndex(file => file === lastProcessedFile);
+      startIndex = files.findIndex((file) => file === lastProcessedFile);
       if (startIndex !== -1) {
         startIndex++; // Start from the next file
       }
@@ -102,22 +135,23 @@ async function createEmbeddings(): Promise<void> {
       const file = files[i];
       const filePath = path.join(mdDirPath, file);
       const markdownContent = fs.readFileSync(filePath, 'utf8');
-      
+
       // Extract frontmatter metadata if present
-      const { content: cleanContent, frontmatter } = extractFrontmatter(markdownContent);
-      
+      const { content: cleanContent, frontmatter } =
+        extractFrontmatter(markdownContent);
+
       // Log metadata if found
       if (frontmatter && Object.keys(frontmatter).length > 0) {
-        console.log(`Extracted metadata from ${file}:`, frontmatter);
+        // console.log(`Extracted metadata from ${file}:`, frontmatter);
       }
-      
+
       // Convert markdown to structured plain text
       const content = md
         .render(cleanContent)
         .replace(/<[^>]*>/g, '')
         .trim();
 
-      // Create embedding for the content using all-MiniLM-L6-v2
+      // Create embedding for the content using Xenova/all-MiniLM-L6-v2
       const embedding = await createEmbeddingForText(content);
 
       // Store metadata with embedding
@@ -136,13 +170,14 @@ async function createEmbeddings(): Promise<void> {
       );
 
       // Report progress
-      const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
-      parentPort?.postMessage({
+      const currentProgress =
+        resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
+      process.send!({
         type: WORKER_STATUS.PROCESSING,
         progress: ((currentProgress / total) * 100).toFixed(1),
         current: currentProgress,
         total,
-        lastProcessedFile: file
+        lastProcessedFile: file,
       });
     }
 
@@ -153,46 +188,37 @@ async function createEmbeddings(): Promise<void> {
         total: total,
         dimensions: config.dimensions,
         includesMetadata: true,
-        metadataFields: ['url', 'frontmatter']
+        metadataFields: ['url', 'frontmatter'],
       })
     );
 
     // Complete
-    parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED });
-    console.log('Embeddings created successfully!');
+    process.send!({ type: WORKER_STATUS.COMPLETED, total: total });
   } catch (error) {
-    parentPort?.postMessage({
+    process.send!({
       type: WORKER_STATUS.ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
   }
 }
 
-// Create embedding using Ollama API
-async function createEmbeddingForText(
-  text: string,
-): Promise<number[]> {
+// Create embedding using transformer model
+async function createEmbeddingForText(text: string): Promise<number[]> {
   try {
-    const response = await fetch('http://localhost:11434/api/embeddings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL.DEFAULT_OLLAMA_EMBEDDING_MODEL,
-        prompt: text
-      })
-    });
+    // console.log(`Generating embedding for text of length ${text.length}...`);
 
-    if (!response.ok) {
-      throw new Error(`Failed to generate embeddings: ${response.statusText}`);
+    if (!extractor) {
+      throw new Error('Embedding model not initialized');
     }
 
-    const result = await response.json();
-    
-    if (!result.embedding || !Array.isArray(result.embedding)) {
-      throw new Error('Invalid embedding response from Ollama');
-    }
-    
-    return result.embedding;
+    const startTime = Date.now();
+    const output = await extractor(text, { pooling: 'mean', normalize: true });
+    const duration = Date.now() - startTime;
+
+    // console.log(`Embedding generation completed in ${duration}ms`);
+    // console.log(`Generated embedding with ${output.data.length} dimensions`);
+
+    return Array.from(output.data);
   } catch (error) {
     console.error('Error creating embedding:', error);
     throw error;

@@ -2,42 +2,6 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 
-export interface ConfluenceConfig {
-  baseUrl: string;
-  spaceKey: string;
-  userEmail: string;
-  apiToken: string;
-  isConfluenceEnabled: boolean;
-  confluenceSyncProgress: number;
-  confluenceIndexProgress: number;
-  isSyncing: boolean;
-  isIndexing: boolean;
-  isSyncCompleted: boolean;
-  isIndexingCompleted: boolean;
-  connectionStatus: 'unknown' | 'success' | 'error';
-  statusMessage: string;
-  canResume: boolean;
-  canResumeIndexing: boolean;
-}
-
-export interface CodebaseConfig {
-  repoPath: string;
-  scanFrequency: string;
-  includePatterns: string;
-  excludePatterns: string;
-  maxFileSizeKb: number;
-  isSyncing: boolean;
-  isIndexing: boolean;
-  isCodebaseEnabled: boolean;
-  codebaseSyncProgress: number;
-  codebaseIndexProgress: number;
-  connectionStatus: 'unknown' | 'success' | 'error';
-  statusMessage: string;
-  canResume: boolean;
-  canResumeIndexing: boolean;
-  isSyncCompleted: boolean;
-  isIndexingCompleted: boolean;
-}
 
 export interface SettingsConfig {
   confluence: ConfluenceConfig;
@@ -55,7 +19,7 @@ export const settingsDefaultConfig: SettingsConfig = {
     confluenceIndexProgress: 0,
     isSyncing: false,
     isIndexing: false,
-    connectionStatus: 'unknown',
+    messageType: 'success',
     statusMessage: '',
     canResume: false,
     canResumeIndexing: false,
@@ -73,7 +37,7 @@ export const settingsDefaultConfig: SettingsConfig = {
     isCodebaseEnabled: false,
     codebaseSyncProgress: 0,
     codebaseIndexProgress: 0,
-    connectionStatus: 'unknown',
+    messageType: 'success',
     statusMessage: '',
     canResume: false,
     canResumeIndexing: false,
@@ -101,6 +65,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
+import { CodebaseConfig, ConfluenceConfig } from '../types';
 
 const vscodeStorage = {
   getItem: () => {
@@ -163,7 +128,6 @@ export const useSettingsStore = create<SettingsState>()(
             ...newConfig[section],
             ...updates
           };
-          console.log(`Batch updating ${section}:`, updates);
           return { config: newConfig };
         });
       },

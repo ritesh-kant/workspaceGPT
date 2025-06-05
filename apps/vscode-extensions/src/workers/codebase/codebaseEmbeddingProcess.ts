@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { WORKER_STATUS } from '../../../constants';
+
+import { MODEL, WORKER_STATUS } from '../../../constants';
+import { initializeEmbeddingModel } from 'src/utils/initializeEmbeddingModel';
 
 interface WorkerData {
   codebaseDirPath: string;
@@ -22,41 +24,11 @@ interface EmbeddingData {
   text: string; // Store the original text for future reference
   embedding: number[];
 }
-const importModule = new Function('modulePath', 'return import(modulePath)');
 let codebaseDirPath: string;
 let embeddingDirPath: string;
 let config: { dimensions: number };
 let resume: boolean;
 let extractor: any;
-
-async function initializeModel() {
-  try {
-    const { pipeline } = await importModule('@xenova/transformers');
-    // Add model options with local_files_only set to false to allow downloading if needed
-    // and add a longer timeout to handle potential network issues
-    extractor = await pipeline(
-      'feature-extraction',
-      'jinaai/jina-embeddings-v2-base-code',
-      {
-        local_files_only: false,
-        revision: 'main',
-        quantized: false,
-        cache_dir: path.join(embeddingDirPath, '.cache', 'transformers'),
-        progress_callback: (progress: any) => {
-          if (progress.status === 'progress' && process.send) {
-            process.send({
-              type: WORKER_STATUS.PROCESSING,
-              progress: Math.round(progress.progress),
-              message: `Downloading model: ${Math.round(progress.progress)}%`,
-            });
-          }
-        },
-      }
-    );
-  } catch (error) {
-    throw new Error(`Failed to initialize model: ${(error as Error).message}`);
-  }
-}
 
 async function getProcessedFiles(): Promise<Set<string>> {
   if (!resume) return new Set();
@@ -96,14 +68,14 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
   try {
     console.log(`Generating embedding for text of length ${text.length}...`);
     console.log('Using extractor with pooling: mean, normalize: true');
-    
+
     const startTime = Date.now();
     const output = await extractor(text, { pooling: 'mean', normalize: true });
     const duration = Date.now() - startTime;
-    
+
     console.log(`Embedding generation completed in ${duration}ms`);
     console.log(`Generated embedding with ${output.data.length} dimensions`);
-    
+
     return Array.from(output.data);
   } catch (error) {
     console.error('Error generating embedding:', error);
@@ -122,8 +94,10 @@ async function saveEmbedding(data: EmbeddingData): Promise<void> {
 }
 
 async function processFile(file: ProcessedFile): Promise<void> {
-  console.log(`Processing file: ${file.filePath} (size: ${file.text.length} chars)`);
-  
+  console.log(
+    `Processing file: ${file.filePath} (size: ${file.text.length} chars)`
+  );
+
   if (file.text.length > 1000000) {
     console.log(`Skipping large file: ${file.filePath} - exceeds size limit`);
     return;
@@ -131,13 +105,15 @@ async function processFile(file: ProcessedFile): Promise<void> {
 
   console.log(`Generating embedding for: ${file.filePath}`);
   const embedding = await generateEmbedding(file.text);
-  
+
   if (!embedding) {
     console.error(`Failed to generate embedding for: ${file.filePath}`);
     return;
   }
-  
-  console.log(`Successfully generated embedding for file: ${file.filePath} (dimensions: ${embedding.length})`);
+
+  console.log(
+    `Successfully generated embedding for file: ${file.filePath} (dimensions: ${embedding.length})`
+  );
   await saveEmbedding({
     filename: file.filename,
     filePath: file.filePath,
@@ -200,25 +176,32 @@ async function processEmbeddings(): Promise<void> {
     console.log('Starting embedding process...');
     console.log('Checking access to codebase directory:', codebaseDirPath);
     await fs.promises.access(codebaseDirPath);
-    
+
     console.log('Creating embedding directory:', embeddingDirPath);
     await fs.promises.mkdir(embeddingDirPath, { recursive: true });
-    
+
     console.log('Initializing embedding model...');
-    await initializeModel();
+    extractor = await initializeEmbeddingModel(
+      MODEL.DEFAULT_CODE_EMBEDDING_MODEL,
+      embeddingDirPath,
+      (progress: any) => {
+        console.log(progress);
+      }
+    );
     console.log('Model initialization complete');
 
     console.log('Getting list of already processed files...');
     const processedPaths = await getProcessedFiles();
     console.log(`Found ${processedPaths.size} already processed files`);
-    
+
     console.log('Collecting files to process from:', codebaseDirPath);
     const files = await collectFiles(codebaseDirPath, processedPaths);
     console.log(`Collected ${files.length} files to process`);
 
-    if (files.length === 0) {
-      const message = resume ? 'All files already processed' : 'No files to process';
-      console.log(message);
+    if (!files.length) {
+      const message = resume
+        ? 'All files already processed'
+        : 'No files to process';
       process.send?.({
         type: WORKER_STATUS.COMPLETED,
         message,
@@ -229,7 +212,7 @@ async function processEmbeddings(): Promise<void> {
     console.log(`Starting to process ${files.length} files...`);
     await processFiles(files);
     console.log('All files processed successfully');
-    
+
     process.send?.({
       type: WORKER_STATUS.COMPLETED,
       message: 'Embedding complete',
@@ -252,7 +235,7 @@ process.on('message', (data: WorkerData) => {
   embeddingDirPath = data.embeddingDirPath;
   config = data.config;
   resume = data.resume;
-  
+
   // Enhanced logging with clear formatting
   console.log('==========================================');
   console.log('Embedding worker started with configuration:');
@@ -261,7 +244,7 @@ process.on('message', (data: WorkerData) => {
   console.log('- Dimensions:', config.dimensions);
   console.log('- Resume mode:', resume);
   console.log('==========================================');
-  
+
   // Start processing
   processEmbeddings();
 });

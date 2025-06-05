@@ -60,6 +60,15 @@
                 "${workspaceFolder}/apps/confluence-extractor/dist/**/*.js",
                 "${workspaceFolder}/packages/confluence-utils/dist/**/*.js"
             ]
-        }
+        },
+        {
+            "name": "Attach to Search Process",
+            "port": 9229,
+            "request": "attach",
+            "skipFiles": [
+              "<node_internals>/**"
+            ],
+            "type": "node"
+          }
     ]
 }

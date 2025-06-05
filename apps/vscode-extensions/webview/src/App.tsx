@@ -3,10 +3,16 @@ import './App.css';
 import ChatMessage from './components/ChatMessage';
 import SettingsButton from './components/Settings';
 import { VSCodeAPI } from './vscode';
-import { useChatStore, useSettingsStore, useModelStore } from './store';
+import {
+  setModelState,
+  useChatStore,
+  useModelActions,
+  useModelProviders,
+  useSelectedModelProvider,
+  useSettingsStore,
+} from './store';
 import { MESSAGE_TYPES, STORAGE_KEYS } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
-import { modelDefaultConfig } from './store/modelStore';
 
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
@@ -22,29 +28,33 @@ const App: React.FC = () => {
     setShowTips,
   } = useChatStore();
 
-  const { showSettings, setShowSettings, setConfig: setSettingsConfig } = useSettingsStore();
   const {
-    config: modelConfig,
-    batchUpdateConfig: batchUpdateModelConfig,
-    setConfig: setModelConfig,
-    handleModelChange,
+    showSettings,
+    setShowSettings,
+    setConfig: setSettingsConfig,
+  } = useSettingsStore();
 
-  } = useModelStore();
+  const modelProviders = useModelProviders();
+
+  const selectedModelProvider = useSelectedModelProvider();
+
+  const { handleModelChange } = useModelActions();
+
+  const [activeModels, setActiveModels] = useState<
+    {
+      provider: string;
+      model: string;
+    }[]
+  >([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
-  const [isOllamaRunning, setIsOllamaRunning] = useState(true);
-
   useEffect(() => {
-    // Handle messages from the extension
-    console.log('App mounted =====');
     vscode.postMessage({
       type: MESSAGE_TYPES.GET_WORKSPACE_PATH,
     });
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
-    });
+
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
       switch (message.type) {
@@ -55,39 +65,6 @@ const App: React.FC = () => {
           });
           setIsLoading(false);
           break;
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_IN_PROGRESS:
-          batchUpdateModelConfig({
-            isDownloading: true,
-            downloadProgress: message.progress ?? '0',
-            downloadStatus: 'downloading',
-            downloadDetails: {
-              current: message.current || '0 MB',
-              total: message.total || '0 MB',
-            },
-          });
-          break;
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_COMPLETE:
-          let availableModels;
-          if (message.models && Array.isArray(message.models)) {
-            availableModels = message.models.filter(
-              (eachModel: { name: string }) => !eachModel.name.includes('embed')
-            );
-          }
-
-          batchUpdateModelConfig({
-            isDownloading: false,
-            downloadProgress: 100,
-            downloadStatus: 'completed',
-            availableModels,
-          });
-          break;
-        case MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR:
-          batchUpdateModelConfig({
-            isDownloading: false,
-            downloadStatus: 'error',
-            errorMessage: message.message,
-          });
-          break;
         case MESSAGE_TYPES.ERROR_CHAT:
           addMessage({
             content: 'Error occurred. Please start a new chat.',
@@ -95,9 +72,6 @@ const App: React.FC = () => {
             isError: true,
           });
           setIsLoading(false);
-          break;
-        case MESSAGE_TYPES.OLLAMA_STATUS:
-          setIsOllamaRunning(message.isRunning);
           break;
         case MESSAGE_TYPES.SHOW_SETTINGS:
           setShowSettings(true);
@@ -111,12 +85,16 @@ const App: React.FC = () => {
           setShowTips(true);
           hideSettings();
           break;
-        case MESSAGE_TYPES.GET_GLOBAL_STATE:
+        case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
-            setSettingsConfig(message.state || settingsDefaultConfig);
+            setSettingsConfig(message.state?.config || settingsDefaultConfig);
           }
           if (message.key === STORAGE_KEYS.MODEL) {
-            setModelConfig(message.state || modelDefaultConfig);
+            setModelState(message.state || selectedModelProvider);
+            console.log(
+              'selectedModelProvider',
+              message.state || selectedModelProvider
+            );
           }
           break;
       }
@@ -126,11 +104,19 @@ const App: React.FC = () => {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  const handleRetryOllama = () => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RETRY_OLLAMA_CHECK,
-    });
-  };
+  useEffect(() => {
+    const activeModelProviders = modelProviders.filter(
+      (provider) => provider?.availableModels?.length && provider.selectedModel
+    );
+    const activeModels: Array<{
+      provider: string;
+      model: string;
+    }> = activeModelProviders.map((provider) => ({
+      provider: provider.provider,
+      model: provider.selectedModel,
+    }));
+    setActiveModels(activeModels);
+  }, [modelProviders]);
 
   useEffect(() => {
     // Scroll to bottom when messages change
@@ -141,11 +127,10 @@ const App: React.FC = () => {
     if (inputValue.trim() === '') return;
 
     // Check if model is currently downloading
-    if (modelConfig.isDownloading) {
+    if (!selectedModelProvider?.selectedModel) {
       // Show notification to wait for model download to complete
       addMessage({
-        content:
-          'Please wait for the model download to complete before sending messages.',
+        content: 'Please select the model from settings to use the model',
         isUser: false,
       });
       return;
@@ -165,7 +150,9 @@ const App: React.FC = () => {
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
       message: inputValue,
-      modelId: modelConfig.selectedModel,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider, // Use the provider string from the selectedModelProvider object
+      apiKey: selectedModelProvider?.apiKey,
     });
   };
 
@@ -181,61 +168,18 @@ const App: React.FC = () => {
   };
 
   return (
-    <div
-      className='app-container'
-      style={
-        {
-          '--banner-height': !isOllamaRunning ? '30px' : '0',
-        } as React.CSSProperties
-      }
-    >
-      {!isOllamaRunning && (
-        <div className='banner-container'>
-          <div className='banner-content'>
-            <div className='banner-message'>
-              <span className='warning-icon'>⚠️</span>
-              <span>Ollama Service Not Running</span>
-              <button
-                onClick={handleRetryOllama}
-                className='retry-button'
-                title='Retry connection'
-              >
-                ↻
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+    <div className='app-container'>
       <div className='chat-container'>
-
         {showTips && messages.length === 0 ? (
           <div className='welcome-container'>
             <h1 className='welcome-title'>👋 Hello</h1>
             <p className='welcome-subtitle'>How can WorkspaceGPT help?</p>
-            <div className='prerequisite-container'>
-              <div className='prerequisite-message'>
-                <span className='prerequisite-icon'>⚙️</span>
-                <span>
-                  To get started, please install{' '}
-                  <a
-                    href='https://ollama.com'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                  >
-                    Ollama
-                  </a>{' '}
-                  on your system - it's quick and easy!
-                </span>
-              </div>
-            </div>
             <div className='privacy-container'>
               <div className='privacy-message'>
                 <span className='privacy-icon'>🛡️</span>
                 <span>
                   Your data stays secure! Everything runs locally on your
-                  machine, ensuring complete privacy and security. Think of it
-                  as your personal AI assistant that respects your
-                  confidentiality.
+                  machine, ensuring complete privacy and security.
                 </span>
               </div>
             </div>
@@ -269,9 +213,7 @@ const App: React.FC = () => {
                 isError={message.isError}
               />
             ))}
-            {isLoading && (
-              <div className='loading-indicator'>Thinking...</div>
-            )}
+            {isLoading && <div className='loading-indicator'>Thinking...</div>}
             <div ref={messagesEndRef} />
           </div>
         )}
@@ -283,60 +225,46 @@ const App: React.FC = () => {
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                !isOllamaRunning
-                  ? 'Ollama service is not running'
-                  : modelConfig.isDownloading
-                    ? 'Please wait for model download to complete...'
-                    : 'Ask WorkspaceGPT...'
-              }
-              disabled={
-                isLoading || modelConfig.isDownloading || !isOllamaRunning
+                selectedModelProvider?.selectedModel
+                  ? 'Please configure model to use '
+                  : 'Ask WorkspaceGPT...'
               }
             />
             <div className='input-controls'>
               <div className='model-selector-bottom'>
                 <select
-                  value={modelConfig.selectedModel}
-                  onChange={(e) => handleModelChange(e.target.value)}
-                  disabled={modelConfig.isDownloading}
-                  className={modelConfig.isDownloading ? 'loading' : ''}
+                  value={selectedModelProvider?.provider}
+                  onChange={(e) => {
+                    if (e.target.value === 'selectModel') {
+                      setShowSettings(true);
+                      return;
+                    }
+                    const providerConfig = activeModels.find(
+                      (model) => model.provider === e.target.value
+                    );
+                    handleModelChange(
+                      providerConfig?.model!,
+                      providerConfig?.provider!
+                    );
+                  }}
                 >
-                  {modelConfig.availableModels &&
-                  modelConfig.availableModels.length > 0 ? (
-                    // Render options from available models
-                    modelConfig.availableModels.map((model) => (
-                      <option key={model.model} value={model.model}>
-                        {modelConfig.isDownloading &&
-                        modelConfig.selectedModel === model.model
-                        ? `${model.name} (${modelConfig.downloadProgress}%)`
-                        : `${model.name} (${model?.details?.parameter_size})`}
-                      </option>
-                    ))
-                  ) : (
-                    // Fallback options if no models are available
-                    <>
-                      <option value='llama3.2:1b'>
-                        {modelConfig.isDownloading &&
-                        modelConfig.selectedModel === 'llama3.2:1b'
-                        ? `Llama3.2 (${modelConfig.downloadProgress}%)`
-                        : 'Llama3.2'}
-                      </option>
-                    </>
+                  {activeModels?.map((model) => (
+                    <option key={model.provider} value={model.provider}>
+                      {model.provider} ({model.model})
+                    </option>
+                  ))}
+                  {!activeModels?.length && (
+                    <option value='none'>Select Model</option>
                   )}
+                  <hr />
+                  <option value='selectModel'>Edit...</option>
                 </select>
-                {modelConfig.isDownloading && (
-                  <div className='model-progress'>
-                    <div
-                      className='progress-bar'
-                      style={{ width: `${modelConfig.downloadProgress}%` }}
-                    />
-                  </div>
-                )}
               </div>
               <button
                 onClick={handleSendMessage}
                 disabled={
-                  isLoading || !inputValue.trim() || modelConfig.isDownloading
+                  isLoading ||
+                  !inputValue.trim()
                 }
                 className='send-button'
                 aria-label='Send message'
@@ -346,10 +274,7 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
-        <SettingsButton
-          isVisible={showSettings}
-          onBack={hideSettings}
-        />
+        <SettingsButton isVisible={showSettings} onBack={hideSettings} />
       </div>
     </div>
   );
