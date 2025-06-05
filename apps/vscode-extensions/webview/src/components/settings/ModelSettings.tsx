@@ -155,7 +155,6 @@ const ModelSettings: React.FC = () => {
                   selectedModelProvider.provider
                 )
               }
-              disabled={selectedModelProvider?.isDownloading}
             >
               {selectedModelProvider?.availableModels &&
                 // Render options from available models
@@ -165,18 +164,6 @@ const ModelSettings: React.FC = () => {
                   </option>
                 ))}
             </select>
-            {selectedModelProvider?.isDownloading && (
-              <div className='model-download-status'>
-                <div className='progress-bar'>
-                  <div
-                    className='progress-fill'
-                    style={{
-                      width: `${selectedModelProvider.downloadProgress}%`,
-                    }}
-                  ></div>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>

@@ -69,7 +69,6 @@ export const modelDefaultConfig: ModelConfig[] = MODEL_PROVIDERS.map(
     provider: provider.MODEL_PROVIDER,
     selectedModel: provider.DEFAULT_CHAT_MODEL,
     apiKey: provider.API_KEY,
-    isDownloading: false,
     downloadProgress: 0,
     downloadStatus: 'idle',
     isLoadingModels: false,

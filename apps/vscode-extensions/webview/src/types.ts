@@ -54,7 +54,6 @@ export interface ModelConfig {
   selectedModel: string;
   provider: string;
   apiKey?: string;
-  isDownloading: boolean;
   downloadProgress: number;
   downloadStatus: 'idle' | 'downloading' | 'completed' | 'error';
   errorMessage?: string;

@@ -247,10 +247,6 @@ const App: React.FC = () => {
                       providerConfig?.provider!
                     );
                   }}
-                  disabled={selectedModelProvider?.isDownloading}
-                  className={
-                    selectedModelProvider?.isDownloading ? 'loading' : ''
-                  }
                 >
                   {activeModels?.map((model) => (
                     <option key={model.provider} value={model.provider}>
@@ -268,8 +264,7 @@ const App: React.FC = () => {
                 onClick={handleSendMessage}
                 disabled={
                   isLoading ||
-                  !inputValue.trim() ||
-                  selectedModelProvider?.isDownloading
+                  !inputValue.trim()
                 }
                 className='send-button'
                 aria-label='Send message'
