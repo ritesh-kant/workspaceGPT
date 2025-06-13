@@ -3,7 +3,7 @@ import path from 'path';
 import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
 import { MODEL, WORKER_STATUS } from '../../../constants';
-import { initializeEmbeddingModel } from 'src/utils/initializeEmbeddingModel';
+import { initializeEmbeddingModel } from '../utils/initializeEmbeddingModel';
 
 let md: MarkdownIt;
 let extractor: any;

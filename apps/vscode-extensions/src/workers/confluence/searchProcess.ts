@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { MODEL, SEARCH_CONSTANTS } from '../../../constants';
-import { initializeEmbeddingModel } from 'src/utils/initializeEmbeddingModel';
+import { initializeEmbeddingModel } from '../utils/initializeEmbeddingModel';
 
 let extractor: any;
 

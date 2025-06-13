@@ -97,22 +97,72 @@ export class EmbeddingService {
         env: {
           workerData: JSON.stringify(workerData),
         },
-        execArgv: ['--max-old-space-size=4096', '--inspect'],
+        execArgv: ['--max-old-space-size=4096'],
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc']
       });
 
       return new Promise((resolve, reject) => {
+        let isResolved = false;
+
+        // Set up timeout
+        const timeout = setTimeout(() => {
+          if (!isResolved) {
+            isResolved = true;
+            console.error('Search process timeout');
+            searchProcess.kill();
+            reject(new Error('Search process timeout after 30 seconds'));
+          }
+        }, 30000); // 30 second timeout
+
         searchProcess.on('message', (message: EmbeddingSearchMessage) => {
+          if (isResolved) return;
+
+          clearTimeout(timeout);
+          isResolved = true;
+
           if (message.type === 'results') {
+            console.log(`Search completed with ${message.data?.length || 0} results`);
             resolve(message.data || []);
           } else if (message.type === 'error') {
+            console.error('Search process returned error:', message.message);
             reject(new Error(message.message || 'Unknown error'));
           }
+          searchProcess.kill();
         });
 
         searchProcess.on('error', (error) => {
+          if (isResolved) return;
+
+          clearTimeout(timeout);
+          isResolved = true;
           console.error('Search process error:', error);
           reject(error);
           searchProcess.kill();
+        });
+
+        searchProcess.on('exit', (code, signal) => {
+          if (isResolved) return;
+
+          clearTimeout(timeout);
+          isResolved = true;
+
+          if (code !== 0) {
+            console.error(`Search process exited with code ${code}, signal ${signal}`);
+            reject(new Error(`Search process exited with code ${code}`));
+          } else {
+            // Process exited normally but didn't send a message
+            console.warn('Search process exited without sending results');
+            resolve([]);
+          }
+        });
+
+        // Log stderr for debugging
+        searchProcess.stderr?.on('data', (data) => {
+          console.error('Search process stderr:', data.toString());
+        });
+
+        searchProcess.stdout?.on('data', (data) => {
+          console.log('Search process stdout:', data.toString());
         });
       });
     } catch (error) {

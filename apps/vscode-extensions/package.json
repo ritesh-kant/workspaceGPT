@@ -93,12 +93,13 @@
     }
   },
   "scripts": {
+    "postinstall": "node scripts/build/patch-xenova-transformer.js",
     "vscode:prepublish": "pnpm run build",
     "build": "pnpm build-webview && node esbuild.config.js",
     "watch": "pnpm watch-webview && node esbuild.config.js --watch",
     "vscode:publish": "vsce publish --no-dependencies",
     "vscode:publish-pre-release": "vsce publish --no-dependencies --pre-release",
-    "vscode:test": "vsce package --no-dependencies && code --install-extension workspacegpt-extension-${npm_package_version}.vsix",
+    "vscode:test": "vsce package --no-dependencies && trae --install-extension workspacegpt-extension-${npm_package_version}.vsix",
     "build-webview": "cd webview && pnpm install && pnpm run build",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
@@ -107,10 +108,14 @@
     "create-tag": "git tag workspaceGPT-v${npm_package_version} && git push origin workspaceGPT-v${npm_package_version}"
   },
   "dependencies": {
+    "@huggingface/jinja": "^0.5.0",
     "@workspace-gpt/confluence-utils": "workspace:*",
     "@xenova/transformers": "^2.17.2",
     "glob": "^11.0.2",
     "markdown-it": "^14.1.0",
+    "onnxruntime-common": "1.14.0",
+    "onnxruntime-node": "1.14.0",
+    "onnxruntime-web": "1.14.0",
     "openai": "^4.85.4"
   },
   "devDependencies": {
@@ -124,10 +129,5 @@
     "eslint": "^8.56.0",
     "typescript": "^5.3.3"
   },
-  "files": [
-    "dist",
-    "webview/dist",
-    "resources"
-  ],
   "preview": true
 }

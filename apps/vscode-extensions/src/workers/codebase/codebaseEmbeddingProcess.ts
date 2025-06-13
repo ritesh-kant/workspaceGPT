@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { MODEL, WORKER_STATUS } from '../../../constants';
-import { initializeEmbeddingModel } from 'src/utils/initializeEmbeddingModel';
+import { initializeEmbeddingModel } from '../utils/initializeEmbeddingModel';
 
 interface WorkerData {
   codebaseDirPath: string;

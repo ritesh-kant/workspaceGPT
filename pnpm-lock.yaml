@@ -60,6 +60,9 @@ importers:
 
   apps/vscode-extensions:
     dependencies:
+      '@huggingface/jinja':
+        specifier: ^0.5.0
+        version: 0.5.0
       '@workspace-gpt/confluence-utils':
         specifier: workspace:*
         version: link:../../packages/confluence-utils
@@ -72,6 +75,15 @@ importers:
       markdown-it:
         specifier: ^14.1.0
         version: 14.1.0
+      onnxruntime-common:
+        specifier: 1.14.0
+        version: 1.14.0
+      onnxruntime-node:
+        specifier: 1.14.0
+        version: 1.14.0
+      onnxruntime-web:
+        specifier: 1.14.0
+        version: 1.14.0
       openai:
         specifier: ^4.85.4
         version: 4.85.4(ws@8.18.1)(zod@3.24.2)
@@ -611,6 +623,10 @@ packages:
 
   '@huggingface/jinja@0.2.2':
     resolution: {integrity: sha512-/KPde26khDUIPkTGU82jdtTW9UAuvUTumCAbFs/7giR0SxsvZC4hru51PBvpijH6BVkHcROcvZM/lpy5h1jRRA==}
+    engines: {node: '>=18'}
+
+  '@huggingface/jinja@0.5.0':
+    resolution: {integrity: sha512-Ptc03/jGRiYRoi0bUYKZ14MkDslsBRT24oxmsvUlfYrvQMldrxCevhPnT+hfX8awKTT8/f/0ZBBWldoeAcMHdQ==}
     engines: {node: '>=18'}
 
   '@humanfs/core@0.19.1':
@@ -4189,6 +4205,8 @@ snapshots:
 
   '@huggingface/jinja@0.2.2': {}
 
+  '@huggingface/jinja@0.5.0': {}
+
   '@humanfs/core@0.19.1': {}
 
   '@humanfs/node@0.16.6':
@@ -6875,7 +6893,6 @@ snapshots:
   onnxruntime-node@1.14.0:
     dependencies:
       onnxruntime-common: 1.14.0
-    optional: true
 
   onnxruntime-web@1.14.0:
     dependencies:
