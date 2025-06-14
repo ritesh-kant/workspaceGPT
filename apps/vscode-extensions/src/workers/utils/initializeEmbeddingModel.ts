@@ -13,7 +13,7 @@ export async function initializeEmbeddingModel(embeddingModel: string, embedding
         'feature-extraction',
         embeddingModel,
         {
-          local_files_only: true,
+          local_files_only: false,
           revision: 'main',
           quantized: true,
           cache_dir: path.join(embeddingDirPath, '.cache', 'transformers'),

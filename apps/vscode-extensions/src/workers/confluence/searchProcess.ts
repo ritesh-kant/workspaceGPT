@@ -47,7 +47,12 @@ async function searchEmbeddings(): Promise<void> {
     console.log('SearchWorker : Checking for index at:', indexPath);
 
     if (!fs.existsSync(indexPath)) {
-      throw new Error(`Embedding index not found at: ${indexPath}`);
+      console.log(`Embedding index not found at: ${indexPath}`);
+      process.send!({
+        type: 'results',
+        data: [],
+      });
+      process.exit(0)
     }
 
     console.log('SearchWorker : Index file found, proceeding with search...');
