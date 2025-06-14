@@ -90,7 +90,7 @@ export const MODEL = {
 export const MODEL_PROVIDERS = [
   {
     MODEL_PROVIDER: 'Ollama',
-    DEFAULT_CHAT_MODEL: 'llama3.2:1b',
+    DEFAULT_CHAT_MODEL: undefined,
     API_KEY: 'DUMMY_API_KEY',
     BASE_URL: 'http://localhost:11434/v1',
     DEFAULT_TEXT_EMBEDDING_DIMENSIONS: 768, // Default dimensions for the embedding model

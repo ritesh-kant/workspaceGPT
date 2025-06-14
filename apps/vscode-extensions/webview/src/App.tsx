@@ -43,8 +43,8 @@ const App: React.FC = () => {
   const [activeModels, setActiveModels] = useState<
     {
       provider: string;
-      model: string;
-    }[]
+      model?: string;
+    }[] 
   >([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -110,7 +110,7 @@ const App: React.FC = () => {
     );
     const activeModels: Array<{
       provider: string;
-      model: string;
+      model?: string;
     }> = activeModelProviders.map((provider) => ({
       provider: provider.provider,
       model: provider.selectedModel,

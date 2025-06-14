@@ -51,7 +51,7 @@ export interface AvailableModel {
 }
 
 export interface ModelConfig {
-  selectedModel: string;
+  selectedModel?: string;
   provider: string;
   apiKey?: string;
   downloadProgress: number;
