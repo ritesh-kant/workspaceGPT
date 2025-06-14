@@ -94,7 +94,6 @@ export const handleInputChange = (
   field: string,
   value: string
 ) => {
-  console.log('handleInputChange', section, field, value);
   const setConfig = useSettingsStore.getState().setConfig;
   const config = useSettingsStore.getState().config;
   const updatedConfig = {
