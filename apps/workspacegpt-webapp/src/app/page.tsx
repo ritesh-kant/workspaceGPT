@@ -168,7 +168,7 @@ export default function Home() {
                 </Link>
                 <button
                   onClick={openInstallModal}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-medium px-6 rounded-full transition-colors flex items-center justify-center gap-2 h-[50px]"
+                  className="bg-[#1ff2b4] hover:bg-[#1ce2a7] text-white font-medium px-6 rounded-full transition-colors flex items-center justify-center gap-2 h-[50px]"
                 >
                   <div className="flex items-center">
                     <Image
@@ -185,10 +185,11 @@ export default function Home() {
                       height={24}
                       className="inline-block"
                     />
-                    <span className="text-white mx-1">+</span>
+                    <span className="text-[#000000] mx-1">+</span>
                   </div>
-                  <span>Install WorkspaceGPT</span>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <span className="text-[#000000]">Install WorkspaceGPT</span>
+                  
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-1" fill="none" viewBox="0 0 24 24" stroke="black">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
