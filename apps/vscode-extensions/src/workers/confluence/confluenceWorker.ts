@@ -150,9 +150,9 @@ async function processPageBatch(
         });
 
         updatedCount++;
-        console.log(
-          `✅ Processed and sent page ${updatedCount}/${totalSize}: ${processedPage.filename}`
-        );
+        // console.log(
+        //   `✅ Processed and sent page ${updatedCount}/${totalSize}: ${processedPage.filename}`
+        // );
       } else {
         console.log(
           `⚠️ Skipped page due to insufficient content: ${page.title}`

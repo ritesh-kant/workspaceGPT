@@ -280,11 +280,6 @@ input:checked + .slider:before {
   transition: width 0.3s ease;
 } */
 
-.model-download-status .progress-text {
-  color: var(--vscode-descriptionForeground);
-  font-size: 0.8rem;
-}
-
 .error-message {
   margin-top: 0.5rem;
   color: var(--vscode-errorForeground);
@@ -303,4 +298,11 @@ input:checked + .slider:before {
 
 .help-link:hover {
   text-decoration: underline;
+}
+
+.progress-container .progress-text {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--vscode-descriptionForeground);
 }

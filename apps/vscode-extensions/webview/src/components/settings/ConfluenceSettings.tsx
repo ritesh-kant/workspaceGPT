@@ -132,6 +132,10 @@ const ConfluenceSettings: React.FC = () => {
       messageType: 'success',
     });
     handleConfluenceActions.startSync(vscode, config);
+    clearStatusMessageAfterDelay(
+      'confluence',
+      'statusMessage',
+    );
   };
 
   const resumeSync = () => {
@@ -141,6 +145,10 @@ const ConfluenceSettings: React.FC = () => {
       messageType: 'success',
     });
     handleConfluenceActions.resumeSync(vscode, config);
+    clearStatusMessageAfterDelay(
+      'confluence',
+      'statusMessage',
+    );
   };
 
   const stopSync = () => {
@@ -260,30 +268,34 @@ const ConfluenceSettings: React.FC = () => {
           {/* Progress bars and status messages */}
           <div className='progress-container'>
             {confluenceConfig.isSyncing && (
-              <div className='progress-bar'>
-                <div
-                  className='progress-fill'
-                  style={{
-                    width: `${confluenceConfig.confluenceSyncProgress}%`,
-                  }}
-                />
+              <>
+                <div className='progress-bar'>
+                  <div
+                    className='progress-fill'
+                    style={{
+                      width: `${confluenceConfig.confluenceSyncProgress}%`,
+                    }}
+                  />
+                </div>
                 <span className='progress-text'>
                   Sync Progress: {confluenceConfig.confluenceSyncProgress}%
                 </span>
-              </div>
+              </>
             )}
             {confluenceConfig.isIndexing && (
-              <div className='progress-bar'>
-                <div
-                  className='progress-fill'
-                  style={{
-                    width: `${confluenceConfig.confluenceIndexProgress}%`,
-                  }}
-                />
+              <>
+                <div className='progress-bar'>
+                  <div
+                    className='progress-fill'
+                    style={{
+                      width: `${confluenceConfig.confluenceIndexProgress}%`,
+                    }}
+                  />
+                </div>
                 <span className='progress-text'>
                   Index Progress: {confluenceConfig.confluenceIndexProgress}%
                 </span>
-              </div>
+              </>
             )}
           </div>
 
