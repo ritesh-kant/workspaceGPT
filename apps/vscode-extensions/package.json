@@ -93,7 +93,7 @@
     }
   },
   "scripts": {
-    "postinstall": "node scripts/build/patch-xenova-transformer.js",
+    "postinstall": "node scripts/post-install/patch-xenova-transformer.js",
     "vscode:prepublish": "pnpm run build",
     "build": "pnpm build-webview && node esbuild.config.js",
     "watch": "pnpm watch-webview && node esbuild.config.js --watch",

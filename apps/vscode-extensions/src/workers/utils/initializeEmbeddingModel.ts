@@ -17,9 +17,6 @@ export async function initializeEmbeddingModel(embeddingModel: string, embedding
           revision: 'main',
           quantized: true,
           cache_dir: path.join(embeddingDirPath, '.cache', 'transformers'),
-          // Configure ONNX runtime to avoid tensor location issues
-          // device: 'cpu',
-          // dtype: 'fp32',
           progress_callback: (progress: any) => {
             if (progress.status === 'progress') {
               const progressPercent = Math.round(progress.progress);
