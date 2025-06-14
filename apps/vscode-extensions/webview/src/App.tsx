@@ -67,7 +67,7 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.ERROR_CHAT:
           addMessage({
-            content: 'Error occurred. Please start a new chat.',
+            content: 'Error occurred. Please restart WorkspaceGPT.',
             isUser: false,
             isError: true,
           });
