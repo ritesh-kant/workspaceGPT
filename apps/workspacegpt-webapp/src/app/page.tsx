@@ -6,8 +6,19 @@ import { useState } from "react";
 
 export default function Home() {
   const [showVSCodeOpenedMessage, setShowVSCodeOpenedMessage] = useState(false);
+  const [showCursorOpenedMessage, setShowCursorOpenedMessage] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
 
   const [showFallbackLink, setShowFallbackLink] = useState(false);
+  const [showCursorFallbackLink, setShowCursorFallbackLink] = useState(false);
+
+  const openInstallModal = () => {
+    setShowInstallModal(true);
+  };
+
+  const closeInstallModal = () => {
+    setShowInstallModal(false);
+  };
 
   const openVSCode = () => {
     // Try to open VS Code with your extension in the marketplace
@@ -16,6 +27,7 @@ export default function Home() {
     // Show a message to the user that we attempted to open VS Code
     setShowVSCodeOpenedMessage(true);
     setShowFallbackLink(true);
+    setShowInstallModal(false);
 
     // Hide the message after 5 seconds
     setTimeout(() => {
@@ -23,14 +35,110 @@ export default function Home() {
     }, 5000);
   };
 
+  const openCursor = () => {
+    // Try to open Cursor (assuming similar protocol)
+    window.open('cursor:extension/Riteshkant.workspacegpt-extension');
+
+    // Show a message to the user that we attempted to open Cursor
+    setShowCursorOpenedMessage(true);
+    setShowCursorFallbackLink(true);
+    setShowInstallModal(false);
+
+    // Hide the message after 5 seconds
+    setTimeout(() => {
+      setShowCursorOpenedMessage(false);
+    }, 5000);
+  };
+
   return (
     <div className="flex flex-col min-h-screen">
+      {/* Install Modal */}
+      {showInstallModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white bg-opacity-95 rounded-xl shadow-xl p-8 max-w-md w-full mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-purple-900">Install WorkspaceGPT</h2>
+              <button 
+                onClick={closeInstallModal}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-center mb-6 text-gray-600">Select your IDE</p>
+            
+            <div className="space-y-4">
+              {/* VS Code */}
+              <div className="flex items-center justify-between bg-white rounded-lg p-4 shadow-sm border border-gray-100">
+                <div className="flex items-center">
+                  <div className="w-10 h-10 flex-shrink-0 mr-4">
+                    <Image
+                      src="/vscode-icon.svg"
+                      alt="VS Code"
+                      width={40}
+                      height={40}
+                    />
+                  </div>
+                  <span className="font-medium">VS Code</span>
+                </div>
+                <button
+                  onClick={openVSCode}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                >
+                  Install
+                </button>
+              </div>
+              
+              {/* Cursor */}
+              <div className="flex items-center justify-between bg-white rounded-lg p-4 shadow-sm border border-gray-100">
+                <div className="flex items-center">
+                  <div className="w-10 h-10 flex-shrink-0 mr-4">
+                    <Image
+                      src="/cursor-icon.png"
+                      alt="Cursor"
+                      width={40}
+                      height={40}
+                    />
+                  </div>
+                  <span className="font-medium">Cursor</span>
+                </div>
+                <button
+                  onClick={openCursor}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                >
+                  Install
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Hero Section */}
       <header className="bg-gradient-to-r from-blue-600 to-[#1ff2b4] text-white py-20 relative">
         {showVSCodeOpenedMessage && (
           <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg transition-opacity duration-300 z-10">
             <p>Attempting to open WorkspaceGPT extension in VS Code. If it doesn&apos;t open, please make sure VS Code is installed.</p>
             {showFallbackLink && (
+              <p className="mt-2">
+                <a
+                  href="https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline font-medium hover:text-white/80"
+                >
+                  Or click here to open in browser
+                </a>
+              </p>
+            )}
+          </div>
+        )}
+        {showCursorOpenedMessage && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg transition-opacity duration-300 z-10">
+            <p>Attempting to open WorkspaceGPT extension in Cursor. If it doesn&apos;t open, please make sure Cursor is installed.</p>
+            {showCursorFallbackLink && (
               <p className="mt-2">
                 <a
                   href="https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension"
@@ -59,17 +167,30 @@ export default function Home() {
                   Explore Features
                 </Link>
                 <button
-                  onClick={openVSCode}
-                  className="bg-[#ffffff82] border-2 text-blue-600  border-white hover:bg-white/10 font-medium px-6 rounded-lg transition-colors flex items-center justify-center gap-2 h-[50px]"
+                  onClick={openInstallModal}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-medium px-6 rounded-full transition-colors flex items-center justify-center gap-2 h-[50px]"
                 >
-                  <Image
-                    src="/vscode-icon.svg"
-                    alt="VSCode Icon"
-                    width={30}
-                    height={30}
-                    className="inline-block"
-                  />
-                  Install now
+                  <div className="flex items-center">
+                    <Image
+                      src="/vscode-icon.svg"
+                      alt="VS Code"
+                      width={24}
+                      height={24}
+                      className="inline-block"
+                    />
+                    <Image
+                      src="/cursor-icon.png"
+                      alt="Cursor"
+                      width={24}
+                      height={24}
+                      className="inline-block"
+                    />
+                    <span className="text-white mx-1">+</span>
+                  </div>
+                  <span>Install WorkspaceGPT</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
                 </button>
               </div>
             </div>
