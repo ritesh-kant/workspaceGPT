@@ -180,7 +180,7 @@ const ConfluenceSettings: React.FC = () => {
               onChange={(e) =>
                 handleInputChange('confluence', 'baseUrl', e.target.value)
               }
-              placeholder='https://your-domain.atlassian.net'
+              placeholder='https://your-domain.atlassian.net/wiki'
             />
           </div>
 
