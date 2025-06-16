@@ -12,12 +12,14 @@ import { EmbeddingService } from '../services/confluenceEmbeddingService';
 import { CodebaseService } from '../services/codebaseService';
 import { EmbeddingConfig, CodebaseConfig } from '../types/types';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
+import { AnalyticsService } from '../services/analyticsService';
 
 export class WebviewMessageHandler {
   private chatService?: ChatService;
   private confluenceService?: ConfluenceService;
   private embeddingService?: EmbeddingService;
   private codebaseService?: CodebaseService;
+  private analyticsService: AnalyticsService;
 
   private confluenceConfig?: any;
   private codebaseConfig?: CodebaseConfig;
@@ -26,6 +28,8 @@ export class WebviewMessageHandler {
     private readonly webviewView: vscode.WebviewView,
     private readonly context: vscode.ExtensionContext
   ) {
+    this.analyticsService = new AnalyticsService(context);
+    
     this.confluenceService = new ConfluenceService(
       this.webviewView,
       this.context
@@ -55,36 +59,52 @@ export class WebviewMessageHandler {
         await this.handleCheckConfluenceConnection();
         break;
       case MESSAGE_TYPES.START_CONFLUENCE_SYNC:
+        this.analyticsService.trackEvent('confluence_sync_started');
         await this.handleStartConfluenceSync();
         break;
       case MESSAGE_TYPES.RESUME_CONFLUENCE_SYNC:
+        this.analyticsService.trackEvent('confluence_sync_resumed');
         await this.handleResumeConfluenceSync();
         break;
       case MESSAGE_TYPES.STOP_CONFLUENCE_SYNC:
+        this.analyticsService.trackEvent('confluence_sync_stopped');
         await this.handleStopConfluenceSync();
         break;
       case MESSAGE_TYPES.START_CODEBASE_SYNC:
+        this.analyticsService.trackEvent('codebase_sync_started');
         await this.handleStartCodebaseSync();
         break;
       case MESSAGE_TYPES.RESUME_CODEBASE_SYNC:
+        this.analyticsService.trackEvent('codebase_sync_resumed');
         await this.handleResumeCodebaseSync();
         break;
       case MESSAGE_TYPES.STOP_CODEBASE_SYNC:
+        this.analyticsService.trackEvent('codebase_sync_stopped');
         await this.handleStopCodebaseSync();
         break;
       case MESSAGE_TYPES.NEW_CHAT:
+        this.analyticsService.trackEvent('new_chat_created');
         await this.handleNewChat();
         break;
       case MESSAGE_TYPES.SHOW_SETTINGS:
+        this.analyticsService.trackEvent('settings_opened');
         await this.handleShowSettings();
         break;
       case MESSAGE_TYPES.SEND_MESSAGE:
+        this.analyticsService.trackEvent('message_sent', {
+          messageLength: data.message?.length || 0
+        });
         await this.handleSendMessage(data);
         break;
       case MESSAGE_TYPES.UPDATE_MODEL:
+        this.analyticsService.trackEvent('model_updated', {
+          modelId: data.modelId,
+          modelType: data.modelType
+        });
         await this.handleUpdateModel(data);
         break;
       case MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE:
+        this.analyticsService.trackEvent('confluence_indexing_resumed');
         await this.handleResumeIndexingConfluence();
         break;
 
@@ -92,6 +112,7 @@ export class WebviewMessageHandler {
         await this.handleGetWorkspacePath();
         break;
       case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS:
+        this.analyticsService.trackEvent('models_fetched');
         await this.handleFetchAvailableModels(data);
         break;
     }
@@ -141,6 +162,11 @@ export class WebviewMessageHandler {
         message: `Successfully connected to Confluence. Found ${totalPages} pages.`,
       });
     } catch (error) {
+      // Track connection error
+      this.analyticsService.trackEvent('confluence_connection_error', {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS,
         status: false,
@@ -163,6 +189,10 @@ export class WebviewMessageHandler {
       );
     } catch (error) {
       console.error('Error in Confluence sync:', error);
+      this.analyticsService.trackEvent('confluence_sync_error', {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -285,6 +315,12 @@ export class WebviewMessageHandler {
       // Send the message to the chat service with API key if available
       await this.chatService.sendMessage(message, modelId, apiKey, provider);
     } catch (error) {
+      this.analyticsService.trackEvent('message_send_error', {
+        modelId: data.modelId,
+        provider: data.provider,
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      
       this.handleError('Error:', error);
     }
   }
@@ -292,6 +328,13 @@ export class WebviewMessageHandler {
   private handleError(prefix: string, error: unknown): void {
     const errorMessage = error instanceof Error ? error.message : String(error);
     vscode.window.showErrorMessage(`${prefix} ${errorMessage}`);
+    
+    // Track error with analytics
+    this.analyticsService.trackEvent('error_occurred', {
+      errorType: prefix,
+      errorMessage: errorMessage
+    });
+    
     this.webviewView.webview.postMessage({
       type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
       message: errorMessage,
@@ -384,6 +427,10 @@ export class WebviewMessageHandler {
       );
     } catch (error) {
       console.error('Error in Codebase sync:', error);
+      this.analyticsService.trackEvent('codebase_sync_error', {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CODEBASE_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -526,6 +573,11 @@ export class WebviewMessageHandler {
       });
     } catch (error) {
       console.error('Error fetching available models:', error);
+      this.analyticsService.trackEvent('models_fetch_error', {
+        provider: data.provider,
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_ERROR,
         message: error instanceof Error ? error.message : String(error),

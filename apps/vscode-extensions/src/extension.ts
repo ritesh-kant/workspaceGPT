@@ -1,8 +1,15 @@
 import * as vscode from 'vscode';
 import { WebViewProvider } from './webViewprovider';
 import { EXTENSION, MESSAGE_TYPES } from '../constants';
+import { AnalyticsService } from './services/analyticsService';
+
+let analyticsService: AnalyticsService;
 
 export async function activate(context: vscode.ExtensionContext) {
+  // Initialize analytics service
+  analyticsService = new AnalyticsService(context);
+  analyticsService.trackEvent('extension_activated');
+
   // Register WebViewProvider
   const webViewProvider = new WebViewProvider(context.extensionUri, context);
   context.subscriptions.push(
@@ -16,6 +23,7 @@ export async function activate(context: vscode.ExtensionContext) {
   let askDisposable = vscode.commands.registerCommand(
     EXTENSION.COMMAND_ASK,
     () => {
+      analyticsService.trackEvent('command_ask_triggered');
       // Focus on the chat view when command is triggered
       vscode.commands.executeCommand(
         `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
@@ -27,6 +35,7 @@ export async function activate(context: vscode.ExtensionContext) {
   let newChatDisposable = vscode.commands.registerCommand(
     EXTENSION.COMMAND_NEW_CHAT,
     () => {
+      analyticsService.trackEvent('command_new_chat_triggered');
       // Focus on the chat view when command is triggered
       vscode.commands.executeCommand(
         `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
@@ -44,6 +53,7 @@ export async function activate(context: vscode.ExtensionContext) {
   let settingsDisposable = vscode.commands.registerCommand(
     EXTENSION.COMMAND_SETTINGS,
     () => {
+      analyticsService.trackEvent('command_settings_triggered');
       // Focus on the chat view when command is triggered
       vscode.commands.executeCommand(
         `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
@@ -62,4 +72,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(settingsDisposable);
 }
 
-export function deactivate() {}
+export async function deactivate() {
+  // Flush analytics before deactivating
+  await analyticsService?.flush();
+}
