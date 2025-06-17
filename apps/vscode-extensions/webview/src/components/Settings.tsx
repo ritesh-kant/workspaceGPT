@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { clearVSCodeState } from '../vscode';
+import { clearVSCodeState, VSCodeAPI } from '../vscode';
 import './Settings.css';
 import { useSettingsStore, useChatStore, useModelActions } from '../store';
 import { MESSAGE_TYPES } from '../constants';
@@ -22,6 +22,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   const { resetStore: resetModelStore } = useModelActions();
   const { resetStore: resetChatStore } = useChatStore();
 
+  const vscode = VSCodeAPI(); 
 
   useEffect(() => {
 
@@ -143,6 +144,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     });
     // Clear the success message after 2 seconds
     clearStatusMessageAfterDelay('confluence', 'statusMessage');
+    vscode.postMessage({
+      type: MESSAGE_TYPES.RESET,
+    });
   }
   if (!isVisible) return null;
 

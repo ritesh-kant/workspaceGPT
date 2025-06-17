@@ -5,6 +5,8 @@ import * as fs from 'fs';
 import { promisify } from 'util';
 import { MESSAGE_TYPES, WORKER_STATUS, STORAGE_KEYS } from '../../constants';
 import { ConfluencePageFetcher } from '@workspace-gpt/confluence-utils';
+import { deleteDirectory } from 'src/utils/deleteDirectory';
+import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 interface ProcessedPage {
   filename: string;
@@ -109,6 +111,14 @@ export class ConfluenceService {
           isComplete: false,
         };
         await this.saveSyncProgress(this.syncProgress);
+
+        // Delete old data directory if not resuming
+        const mdDirPath = path.join(
+          this.context.globalStorageUri.fsPath,
+          'confluence',
+          'mds'
+        );
+        await deleteDirectory(mdDirPath);
       }
 
       // Create a new worker
@@ -206,20 +216,6 @@ export class ConfluenceService {
         this.stopSync();
       });
 
-      // Handle worker exit
-      // this.worker.on('exit', (code) => {
-      //   if (code !== 0) {
-      //     console.error(`Worker stopped with exit code ${code}`);
-      //     // Notify the webview that sync is being stopped
-      //     this.webviewView.webview.postMessage({
-      //       type: MESSAGE_TYPES.SYNC_CONFLUENCE_STOP,
-      //       source: 'confluence',
-      //       progress: 0,
-      //       message: 'Stopping sync process...',
-      //     });
-      //   }
-      //   this.worker = null;
-      // });
     } catch (error) {
       console.error('Error starting worker:', error);
       this.webviewView.webview.postMessage({
@@ -263,7 +259,7 @@ export class ConfluenceService {
       );
 
       // Ensure the directory exists
-      await this.ensureDirectoryExists(mdDirPath);
+      await ensureDirectoryExists(mdDirPath);
 
       // Create the file path for the MD file
       const mdFilePath = path.join(mdDirPath, `${page.filename}.md`);
@@ -273,6 +269,7 @@ export class ConfluenceService {
       if (page.pageUrl) {
         contentWithMetadata = `---
         url: ${page.pageUrl}
+        fileName: ${page.filename}
         ---
         ${page.text}`;
       }
@@ -290,16 +287,4 @@ export class ConfluenceService {
     }
   }
 
-  private async ensureDirectoryExists(dirPath: string): Promise<void> {
-    try {
-      // Check if directory exists
-      await promisify(fs.access)(dirPath).catch(async () => {
-        // Create directory recursively if it doesn't exist
-        await promisify(fs.mkdir)(dirPath, { recursive: true });
-      });
-    } catch (error) {
-      console.error('Error creating directory:', error);
-      throw error;
-    }
-  }
 }

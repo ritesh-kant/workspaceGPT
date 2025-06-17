@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import { fork, ChildProcess } from 'child_process';
 import { EmbeddingConfig } from 'src/types/types';
 import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
+import { deleteDirectory } from 'src/utils/deleteDirectory';
+import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 interface SearchResult {
   text: string;
@@ -45,7 +47,9 @@ export class EmbeddingService {
     }
   }
 
-  private async saveEmbeddingProgress(progress: EmbeddingProgress): Promise<void> {
+  private async saveEmbeddingProgress(
+    progress: EmbeddingProgress
+  ): Promise<void> {
     try {
       await this.context.globalState.update(
         STORAGE_KEYS.EMBEDDING_PROGRESS,
@@ -57,20 +61,25 @@ export class EmbeddingService {
     }
   }
 
-  public async createEmbeddings(config: EmbeddingConfig, resume: boolean = false): Promise<void> {
+  public async createEmbeddings(
+    config: EmbeddingConfig,
+    resume: boolean = false
+  ): Promise<void> {
     try {
       // Stop any existing process
       this.stopEmbeddingProcess();
 
       // Load the current progress if resuming
       if (resume && this.embeddingProgress) {
-        console.log(`Resuming embedding from ${this.embeddingProgress.processedFiles}/${this.embeddingProgress.totalFiles} files`);
+        console.log(
+          `Resuming embedding from ${this.embeddingProgress.processedFiles}/${this.embeddingProgress.totalFiles} files`
+        );
       } else {
         // Reset progress if not resuming
         this.embeddingProgress = {
           processedFiles: 0,
           totalFiles: 0,
-          isComplete: false
+          isComplete: false,
         };
         await this.saveEmbeddingProgress(this.embeddingProgress);
       }
@@ -83,25 +92,34 @@ export class EmbeddingService {
       );
       const embeddingDirPath = path.join(
         this.context.globalStorageUri.fsPath,
+        'confluence',
         'embeddings'
       );
 
       // Ensure embedding directory exists
-      await this.ensureDirectoryExists(embeddingDirPath);
+      await ensureDirectoryExists(embeddingDirPath);
+
+      // Delete old data directory if not resuming
+      await deleteDirectory(embeddingDirPath);
 
       // Create a new child process
-      const processPath = path.join(__dirname, 'workers', 'confluence', 'confluenceEmbeddingProcess.js');
+      const processPath = path.join(
+        __dirname,
+        'workers',
+        'confluence',
+        'confluenceEmbeddingProcess.js'
+      );
       const workerData = {
         mdDirPath,
         embeddingDirPath,
         config,
         resume: resume,
         lastProcessedFile: this.embeddingProgress?.lastProcessedFile,
-        processedFiles: this.embeddingProgress?.processedFiles || 0
+        processedFiles: this.embeddingProgress?.processedFiles || 0,
       };
       this.embeddingProcess = fork(processPath, [JSON.stringify(workerData)], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-        execArgv: process.execArgv.filter(arg => !arg.includes('--inspect')) // Remove any existing inspect arguments
+        execArgv: process.execArgv.filter((arg) => !arg.includes('--inspect')), // Remove any existing inspect arguments
       });
 
       // Handle messages from the process
@@ -121,7 +139,7 @@ export class EmbeddingService {
               processedFiles: message.current,
               totalFiles: message.total,
               lastProcessedFile: message.lastProcessedFile,
-              isComplete: false
+              isComplete: false,
             };
             await this.saveEmbeddingProgress(this.embeddingProgress);
             break;
@@ -144,7 +162,7 @@ export class EmbeddingService {
             this.embeddingProgress = {
               processedFiles: message.total,
               totalFiles: message.total,
-              isComplete: true
+              isComplete: true,
             };
             await this.saveEmbeddingProgress(this.embeddingProgress);
 
@@ -153,7 +171,7 @@ export class EmbeddingService {
         }
       });
 
-      this.embeddingProcess.on("error", (data) => {
+      this.embeddingProcess.on('error', (data) => {
         console.error(`Embedding process stderr: ${data}`);
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
@@ -194,17 +212,23 @@ export class EmbeddingService {
   public async searchEmbeddings(query: string): Promise<SearchResult[]> {
     try {
       // Create a new child process for search
-      const processPath = path.join(__dirname, 'workers', 'confluence', 'searchProcess.js');
+      const processPath = path.join(
+        __dirname,
+        'workers',
+        'confluence',
+        'searchProcess.js'
+      );
       const workerData = {
         query,
         embeddingDirPath: path.join(
           this.context.globalStorageUri.fsPath,
+          'confluence',
           'embeddings'
         ),
       };
       const searchProcess = fork(processPath, [JSON.stringify(workerData)], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-        execArgv: process.execArgv.filter(arg => !arg.includes('--inspect')) // Remove any existing inspect arguments
+        execArgv: process.execArgv.filter((arg) => !arg.includes('--inspect')), // Remove any existing inspect arguments
       });
 
       return new Promise((resolve, reject) => {
@@ -237,14 +261,14 @@ export class EmbeddingService {
 
           if (code === 0) {
             try {
-              if(resultsData.trim() === "") {
-                resolve([])
+              if (resultsData.trim() === '') {
+                resolve([]);
                 return;
               }
               // Try to parse the last line as JSON (the actual results)
-              
+
               const lines = resultsData.trim().split('\n');
-             
+
               const lastLine = lines[lines.length - 1];
               const results = JSON.parse(lastLine);
               resolve(results);
@@ -254,7 +278,8 @@ export class EmbeddingService {
               reject(new Error('Failed to parse search results.'));
             }
           } else {
-            const errorMessage = errorData || `Search process exited with code ${code}`;
+            const errorMessage =
+              errorData || `Search process exited with code ${code}`;
             reject(new Error(errorMessage));
           }
         });
@@ -290,14 +315,4 @@ export class EmbeddingService {
     );
   }
 
-  private async ensureDirectoryExists(dirPath: string): Promise<void> {
-    try {
-      await fs.promises.access(dirPath).catch(async () => {
-        await fs.promises.mkdir(dirPath, { recursive: true });
-      });
-    } catch (error) {
-      console.error('Error creating directory:', error);
-      throw error;
-    }
-  }
 }

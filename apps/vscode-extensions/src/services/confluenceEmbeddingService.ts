@@ -9,6 +9,7 @@ import {
   EmbeddingSearchResult,
 } from 'src/types/types';
 import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
+import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 export class EmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
@@ -65,7 +66,7 @@ export class EmbeddingService {
           workerData: JSON.stringify(workerData),
         },
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-        execArgv: process.execArgv.filter((arg) => !arg.includes('--inspect')), // Remove any existing inspect arguments
+        execArgv: ['--inspect=9229'], // Enable debugging on port 9229
       });
 
       // Handle messages from the process
@@ -97,7 +98,7 @@ export class EmbeddingService {
         env: {
           workerData: JSON.stringify(workerData),
         },
-        execArgv: ['--max-old-space-size=4096'],
+        execArgv: ['--max-old-space-size=4096', '--inspect=9229'],
         stdio: ['pipe', 'pipe', 'pipe', 'ipc']
       });
 
@@ -157,13 +158,15 @@ export class EmbeddingService {
         });
 
         // Log stderr for debugging
-        searchProcess.stderr?.on('data', (data) => {
-          console.error('Search process stderr:', data.toString());
-        });
+        // searchProcess.stderr?.on('data', (data) => {
+        //   data = data.toString()
+        //   console.error('Search process stderr:', data);
+        // });
 
-        searchProcess.stdout?.on('data', (data) => {
-          console.log('Search process stdout:', data.toString());
-        });
+        // searchProcess.stdout?.on('data', (data) => {
+        //   data = data.toString()
+        //   console.log('Search process stdout:', data);
+        // });
       });
     } catch (error) {
       console.error('Error in embedding search:', error);
@@ -188,16 +191,6 @@ export class EmbeddingService {
     if (this.embeddingProcess) {
       this.embeddingProcess.kill();
       this.embeddingProcess = null;
-    }
-  }
-  private async ensureDirectoryExists(dirPath: string) {
-    try {
-      await fs.promises.access(dirPath).catch(async () => {
-        await fs.promises.mkdir(dirPath, { recursive: true });
-      });
-    } catch (error) {
-      console.error('Error creating directory:', error);
-      throw error;
     }
   }
 
@@ -277,6 +270,7 @@ export class EmbeddingService {
     );
     const embeddingDirPath = path.join(
       this.context.globalStorageUri.fsPath,
+      'confluence',
       'embeddings'
     );
     const processPath = path.join(
@@ -285,7 +279,7 @@ export class EmbeddingService {
       'confluence',
       processName
     );
-    await this.ensureDirectoryExists(embeddingDirPath);
+    await ensureDirectoryExists(embeddingDirPath);
 
     return { embeddingDirPath, mdDirPath, processPath };
   }

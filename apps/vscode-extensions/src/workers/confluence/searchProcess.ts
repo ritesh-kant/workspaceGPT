@@ -13,7 +13,11 @@ interface WorkerData {
 interface SearchResult {
   text: string;
   score: number;
-  source: string;
+  data: {
+    sourceName: 'CONFLUENCE' | 'CODEBASE';
+    source: string;
+    fileName: string;
+  };
 }
 
 interface Metadata {
@@ -52,7 +56,7 @@ async function searchEmbeddings(): Promise<void> {
         type: 'results',
         data: [],
       });
-      process.exit(0)
+      process.exit(0);
     }
 
     console.log('SearchWorker : Index file found, proceeding with search...');
@@ -126,7 +130,11 @@ async function searchEmbeddings(): Promise<void> {
         return {
           text: metadata.text,
           score: score,
-          source: metadata.url,
+          data: {
+            sourceName: 'CONFLUENCE',
+            source: metadata.url,
+            fileName: metadata.filename,
+          },
         } as SearchResult;
       })
     );
@@ -173,7 +181,6 @@ async function createEmbeddingForText(text: string): Promise<number[]> {
     throw error;
   }
 }
-
 
 // Start processing
 searchEmbeddings();

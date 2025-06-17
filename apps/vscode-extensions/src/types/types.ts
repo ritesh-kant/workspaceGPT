@@ -15,7 +15,11 @@ export interface CodebaseConfig {
 export interface EmbeddingSearchResult {
   text: string;
   score: number;
-  source: string;
+  data: {
+    sourceName: 'CONFLUENCE' | 'CODEBASE';
+    source: string;
+    fileName: string;
+  };
 }
 
 export interface EmbeddingSearchMessage {

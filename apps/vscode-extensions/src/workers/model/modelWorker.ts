@@ -2,24 +2,15 @@ import { parentPort, workerData } from 'worker_threads';
 import { createStructuredPrompt } from '../../utils/promptTemplates';
 import { MODEL_PROVIDERS } from '../../../constants';
 import OpenAI from 'openai';
+import { EmbeddingSearchResult } from 'src/types/types';
 
 interface WorkerData {
   prompt: string;
-  searchResults: Array<{
-    text: string;
-    score: number;
-    source: string;
-  }>;
+  searchResults: EmbeddingSearchResult[];
   modelId?: string;
   chatHistory?: string;
   provider?: string;
   apiKey?: string;
-}
-
-interface ModelResponse {
-  response?: string;
-  content?: string;
-  done?: boolean;
 }
 
 const {

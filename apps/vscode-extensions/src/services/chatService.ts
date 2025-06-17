@@ -2,7 +2,12 @@ import * as vscode from 'vscode';
 import { EmbeddingService } from './confluenceEmbeddingService';
 import path from 'path';
 import { Worker } from 'worker_threads';
-import { WORKER_STATUS, MESSAGE_TYPES, MODEL, ModelType } from '../../constants';
+import {
+  WORKER_STATUS,
+  MESSAGE_TYPES,
+  MODEL,
+  ModelType,
+} from '../../constants';
 import { CodebaseService } from './codebaseService';
 
 interface ChatMessage {
@@ -13,7 +18,7 @@ interface ChatMessage {
 interface SearchResult {
   text: string;
   score: number;
-  source: string;
+  data: { sourceName: 'CONFLUENCE' | 'CODEBASE'; source: string, fileName: string };
 }
 
 export class ChatService {
@@ -35,7 +40,10 @@ export class ChatService {
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
   }
 
-  public async initializeModel(modelId: string, modelType: ModelType): Promise<void> {
+  public async initializeModel(
+    modelId: string,
+    modelType: ModelType
+  ): Promise<void> {
     try {
       const workerPath = path.join(
         __dirname,
@@ -79,7 +87,7 @@ export class ChatService {
                   progress: result.progress,
                   current: result.current ?? '0 MB',
                   total: result.total ?? '0 MB',
-                  modelId: result.modelId ?? "",
+                  modelId: result.modelId ?? '',
                   modelType: result.modelType,
                 });
               }
@@ -138,7 +146,12 @@ export class ChatService {
     });
   }
 
-  public async sendMessage(message: string, modelId: string, apiKey: string, provider: string): Promise<void> {
+  public async sendMessage(
+    message: string,
+    modelId: string,
+    apiKey: string,
+    provider: string
+  ): Promise<void> {
     try {
       // Add user message to history
       this.chatHistory.push({
@@ -149,12 +162,15 @@ export class ChatService {
       // Search both Confluence and codebase embeddings
       const [confluenceResults, codebaseResults] = await Promise.all([
         this.embeddingService.searchEmbeddings(message),
-        []
+        [],
         // this.codebaseService.searchCodebase(message)
       ]);
 
       // Combine search results
-      const combinedResults = this.combineSearchResults(confluenceResults, codebaseResults);
+      const combinedResults = this.combineSearchResults(
+        confluenceResults,
+        codebaseResults
+      );
 
       // Generate response using model
       const modelResponse = await this.generateModelResponse(
@@ -190,14 +206,12 @@ export class ChatService {
     codebaseResults: SearchResult[]
   ): SearchResult[] {
     // Add source type to differentiate between Confluence and codebase results
-    const taggedConfluenceResults = confluenceResults.map(result => ({
+    const taggedConfluenceResults = confluenceResults.map((result) => ({
       ...result,
-      source: `Confluence: ${result.source}`
     }));
 
-    const taggedCodebaseResults = codebaseResults.map(result => ({
+    const taggedCodebaseResults = codebaseResults.map((result) => ({
       ...result,
-      source: `Codebase: ${result.source}`
     }));
 
     // Combine both result sets
@@ -210,9 +224,7 @@ export class ChatService {
     return combined.slice(0, 10);
   }
 
-  private formatSearchResults(
-    results: SearchResult[]
-  ): string {
+  private formatSearchResults(results: SearchResult[]): string {
     if (!results.length) {
       return 'No relevant information found.';
     }
@@ -220,7 +232,7 @@ export class ChatService {
     let markdown = '### Related Information\n\n';
 
     results.forEach((result, index) => {
-      markdown += `#### Source: ${result.source}\n\n`;
+      markdown += `#### Source: ${result.data.source}\n\n`;
       markdown += `${result.text}\n\n`;
       markdown += `*Relevance Score: ${(result.score * 100).toFixed(2)}%*\n\n`;
       if (index < results.length - 1) {
@@ -251,7 +263,10 @@ export class ChatService {
 
       // Format chat history for the prompt
       const formattedChatHistory = this.chatHistory
-        .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .map(
+          (msg) =>
+            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+        )
         .join('\n\n');
 
       const modelWorker = new Worker(workerPath, {
@@ -261,7 +276,7 @@ export class ChatService {
           modelId: modelId ?? this.currentModel,
           chatHistory: formattedChatHistory,
           provider: provider,
-          apiKey: apiKey
+          apiKey: apiKey,
         },
       });
 

@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import {
   MESSAGE_TYPES,
   MODEL,
@@ -13,6 +12,9 @@ import { CodebaseService } from '../services/codebaseService';
 import { EmbeddingConfig, CodebaseConfig } from '../types/types';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
 import { AnalyticsService } from '../services/analyticsService';
+import path from 'path';
+import { deleteDirectory } from 'src/utils/deleteDirectory';
+import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 export class WebviewMessageHandler {
   private chatService?: ChatService;
@@ -29,7 +31,7 @@ export class WebviewMessageHandler {
     private readonly context: vscode.ExtensionContext
   ) {
     this.analyticsService = new AnalyticsService(context);
-    
+
     this.confluenceService = new ConfluenceService(
       this.webviewView,
       this.context
@@ -41,11 +43,13 @@ export class WebviewMessageHandler {
     );
 
     this.codebaseService = new CodebaseService(this.webviewView, this.context);
-
   }
 
   public async handleMessage(data: any): Promise<void> {
     switch (data.type) {
+      case MESSAGE_TYPES.RESET:
+        await this.reset();
+        break;
       case MESSAGE_TYPES.UPDATE_GLOBAL_STATE:
         await this.updateGlobalState(data);
         break;
@@ -92,14 +96,14 @@ export class WebviewMessageHandler {
         break;
       case MESSAGE_TYPES.SEND_MESSAGE:
         this.analyticsService.trackEvent('message_sent', {
-          messageLength: data.message?.length || 0
+          messageLength: data.message?.length || 0,
         });
         await this.handleSendMessage(data);
         break;
       case MESSAGE_TYPES.UPDATE_MODEL:
         this.analyticsService.trackEvent('model_updated', {
           modelId: data.modelId,
-          modelType: data.modelType
+          modelType: data.modelType,
         });
         await this.handleUpdateModel(data);
         break;
@@ -116,6 +120,14 @@ export class WebviewMessageHandler {
         await this.handleFetchAvailableModels(data);
         break;
     }
+  }
+  private async reset() {
+    const confluenceDirPath = path.join(
+      this.context.globalStorageUri.fsPath,
+      'confluence'
+    );
+    await ensureDirectoryExists(confluenceDirPath);
+    await deleteDirectory(confluenceDirPath)
   }
 
   private async updateGlobalState(data: any): Promise<void> {
@@ -164,9 +176,9 @@ export class WebviewMessageHandler {
     } catch (error) {
       // Track connection error
       this.analyticsService.trackEvent('confluence_connection_error', {
-        errorMessage: error instanceof Error ? error.message : String(error)
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
-      
+
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS,
         status: false,
@@ -190,9 +202,9 @@ export class WebviewMessageHandler {
     } catch (error) {
       console.error('Error in Confluence sync:', error);
       this.analyticsService.trackEvent('confluence_sync_error', {
-        errorMessage: error instanceof Error ? error.message : String(error)
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
-      
+
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -318,9 +330,9 @@ export class WebviewMessageHandler {
       this.analyticsService.trackEvent('message_send_error', {
         modelId: data.modelId,
         provider: data.provider,
-        errorMessage: error instanceof Error ? error.message : String(error)
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
-      
+
       this.handleError('Error:', error);
     }
   }
@@ -328,13 +340,13 @@ export class WebviewMessageHandler {
   private handleError(prefix: string, error: unknown): void {
     const errorMessage = error instanceof Error ? error.message : String(error);
     vscode.window.showErrorMessage(`${prefix} ${errorMessage}`);
-    
+
     // Track error with analytics
     this.analyticsService.trackEvent('error_occurred', {
       errorType: prefix,
-      errorMessage: errorMessage
+      errorMessage: errorMessage,
     });
-    
+
     this.webviewView.webview.postMessage({
       type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
       message: errorMessage,
@@ -354,16 +366,7 @@ export class WebviewMessageHandler {
     return !!(config && config.repoPath);
   }
 
-  private async ensureDirectoryExists(dirPath: string): Promise<void> {
-    try {
-      await fs.promises.access(dirPath).catch(async () => {
-        await fs.promises.mkdir(dirPath, { recursive: true });
-      });
-    } catch (error) {
-      console.error('Error creating directory:', error);
-      throw error;
-    }
-  }
+
 
   private async handleUpdateModel(data: any): Promise<void> {
     try {
@@ -428,9 +431,9 @@ export class WebviewMessageHandler {
     } catch (error) {
       console.error('Error in Codebase sync:', error);
       this.analyticsService.trackEvent('codebase_sync_error', {
-        errorMessage: error instanceof Error ? error.message : String(error)
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
-      
+
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CODEBASE_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -575,9 +578,9 @@ export class WebviewMessageHandler {
       console.error('Error fetching available models:', error);
       this.analyticsService.trackEvent('models_fetch_error', {
         provider: data.provider,
-        errorMessage: error instanceof Error ? error.message : String(error)
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
-      
+
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_ERROR,
         message: error instanceof Error ? error.message : String(error),

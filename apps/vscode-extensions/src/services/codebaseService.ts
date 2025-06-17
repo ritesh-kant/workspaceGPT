@@ -10,6 +10,7 @@ import {
   STORAGE_KEYS,
   MODEL,
 } from '../../constants';
+import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 interface ProcessedFile {
   filename: string;
@@ -140,7 +141,7 @@ export class CodebaseService {
         'codebase',
         'files'
       );
-      await this.ensureDirectoryExists(codebaseDirPath);
+      await ensureDirectoryExists(codebaseDirPath);
 
       // Create a new worker
       const workerPath = path.join(
@@ -340,7 +341,7 @@ export class CodebaseService {
         'codebase',
         'embeddings'
       );
-      await this.ensureDirectoryExists(embeddingDirPath);
+      await ensureDirectoryExists(embeddingDirPath);
 
       // Start the embedding process using child_process.fork
       const workerPath = path.join(
@@ -515,7 +516,7 @@ export class CodebaseService {
       // If no embedding directories found, return the default path
       if (embeddingDirPaths.length === 0) {
         const defaultPath = path.join(baseDir, 'codebase', 'embeddings');
-        await this.ensureDirectoryExists(defaultPath);
+        await ensureDirectoryExists(defaultPath);
         embeddingDirPaths.push(defaultPath);
       }
 

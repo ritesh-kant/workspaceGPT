@@ -140,7 +140,7 @@ async function processPageBatch(
 
   for (const page of pages) {
     try {
-      const processedPage = processPage(page) as ProcessedPage;
+      const processedPage = processPage(confluenceBaseUrl, page) as ProcessedPage;
 
       if (processedPage.text.length > 60) {
         // Send each processed page back to the manager for saving

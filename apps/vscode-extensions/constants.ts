@@ -7,6 +7,7 @@ export const MESSAGE_TYPES = {
   SHOW_SETTINGS: 'show-settings',
   UPDATE_MODEL: 'update-model',
   ERROR_CHAT: 'error-chat',
+  RESET: 'reset',
 
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',

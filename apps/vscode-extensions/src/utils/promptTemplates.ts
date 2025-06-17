@@ -1,9 +1,10 @@
+import { EmbeddingSearchResult } from 'src/types/types';
+
 export function createStructuredPrompt(
-  searchResults: Array<{ text: string; score: number; source: string }>,
+  searchResults: EmbeddingSearchResult[],
   prompt: string,
   chatHistory: string = ''
 ): string {
-  // Extended greeting regex to match more variations
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
   const isGreeting = greetingRegex.test(prompt.trim());
@@ -11,9 +12,19 @@ export function createStructuredPrompt(
   const formattedContext =
     !isGreeting && searchResults.length > 0
       ? searchResults
-          .map((result) => `[Source: ${result.source}]\n${result.text}`)
+          .map((result) => `[Source: ${result.data.source}]\n${result.text}`)
           .join('\n\n')
       : '';
+
+  // Extract and deduplicate sources
+  const sourceLinks =
+    !isGreeting && searchResults.length > 0
+      ? searchResults.map((result) => result.data).filter((src) => !!src)
+      : [];
+
+  const sourcesMarkdown = sourceLinks.length
+    ? `**Sources:**\n${sourceLinks.map((src) => `[${src.fileName}](${src.source})`).join('\n')}\n`
+    : '';
 
   const personalityPrompt = `
   You are **WorkspaceGPT**, a local, privacy-first AI assistant for developers, designed to run entirely within Visual Studio Code. You use Retrieval-Augmented Generation (RAG) to provide intelligent, context-aware responses based on the user's codebase and integrated documentation. You sound like a senior engineer — helpful, concise, and confident. You know how to use Confluence documentation, code snippets, and workspace history to craft meaningful, Markdown-friendly responses.
@@ -25,10 +36,6 @@ export function createStructuredPrompt(
   - 🧭 **Smart Navigation**: Help users explore and understand their codebase more efficiently (feature in progress)
   - 🔐 **Privacy-First**: Run entirely on the developer’s machine using Ollama. No external API calls, no cloud, 100% local.
   - ⚙️ **Settings**: Accessible configuration panel and an easy reset mechanism
-
-  ## Supported Models:
-  - Default: \`llama3.2:1b\`
-  - Optional: \`gemma3:4b\`, \`mistral\`, or \`llama3.2:4b\`
 
   ## Design Guidelines:
   - Do not speculate; if you don't know, say so.
@@ -51,7 +58,8 @@ export function createStructuredPrompt(
 ${personalityPrompt}
 ${contextInstruction}
 
-${contextBlock}
+${contextBlock}${sourcesMarkdown}
+
 **Chat History:**
 \`\`\`
 ${chatHistory || 'No prior conversation.'}
@@ -63,5 +71,6 @@ ${prompt}
 \`\`\`
 
 **Answer (formatted in Markdown):**
+Return your answer in Markdown format. At the end, include the most relevant sources (if any) you used from the provided context, formatted as Markdown links under a section titled **Sources**.
 `;
 }

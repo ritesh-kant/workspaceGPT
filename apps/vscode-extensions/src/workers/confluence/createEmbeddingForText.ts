@@ -142,7 +142,7 @@ async function createEmbeddings(): Promise<void> {
 
       // Log metadata if found
       if (frontmatter && Object.keys(frontmatter).length > 0) {
-        // console.log(`Extracted metadata from ${file}:`, frontmatter);
+        console.log(`Extracted metadata from ${file}:`, frontmatter);
       }
 
       // Convert markdown to structured plain text
@@ -157,7 +157,7 @@ async function createEmbeddings(): Promise<void> {
       // Store metadata with embedding
       const metadata: Metadata = {
         id: i,
-        filename: file,
+        filename: frontmatter?.fileName ?? file,
         text: content,
         embedding: embedding,
         url: frontmatter?.url,
