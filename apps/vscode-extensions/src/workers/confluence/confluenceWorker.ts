@@ -82,7 +82,6 @@ async function fetchAndProcessPages() {
         processedCount = await processPageBatch(
           results,
           processedCount,
-          totalSize,
           processPage
         );
 
@@ -133,8 +132,7 @@ interface ProcessedPage {
 async function processPageBatch(
   pages: ConfluencePage[],
   processedCount: number,
-  totalSize: number,
-  processPage: (page: ConfluencePage) => ProcessedPage
+  processPage: (confluenceBaseUrl: string, page: ConfluencePage) => ProcessedPage
 ): Promise<number> {
   let updatedCount = processedCount;
 
