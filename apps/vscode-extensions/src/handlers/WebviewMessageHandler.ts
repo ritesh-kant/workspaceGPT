@@ -196,9 +196,16 @@ export class WebviewMessageHandler {
           'Confluence configuration is incomplete. Please check your settings.'
         );
       }
-      await this.confluenceService?.startSync(this.confluenceConfig, () =>
-        this.handleCompleteConfluenceSync()
-      );
+      await this.confluenceService?.startSync(this.confluenceConfig, async () => {
+        // On complete, update lastSyncTime in global state
+        const lastSyncTime = new Date().toISOString();
+        const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+        if (settings && settings.state && settings.state.config && settings.state.config.confluence) {
+          settings.state.config.confluence.lastSyncTime = lastSyncTime;
+          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
+        }
+        this.handleCompleteConfluenceSync();
+      });
     } catch (error) {
       console.error('Error in Confluence sync:', error);
       this.analyticsService.trackEvent('confluence_sync_error', {

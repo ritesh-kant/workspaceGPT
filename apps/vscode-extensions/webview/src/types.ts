@@ -26,6 +26,7 @@ export interface ConfluenceConfig {
   statusMessage: string;
   canResume: boolean;
   canResumeIndexing: boolean;
+  lastSyncTime?: string;
 }
 
 export interface CodebaseConfig {

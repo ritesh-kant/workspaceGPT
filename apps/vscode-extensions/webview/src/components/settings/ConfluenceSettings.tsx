@@ -47,6 +47,7 @@ const ConfluenceSettings: React.FC = () => {
             isSyncing: false,
             canResume: false,
             isSyncCompleted: true,
+            lastSyncTime: message.lastSyncTime || new Date().toISOString(),
           });
           clearStatusMessageAfterDelay('confluence', 'statusMessage');
           break;
@@ -264,6 +265,13 @@ const ConfluenceSettings: React.FC = () => {
               <button onClick={startSync}>Start Sync</button>
             )}
           </div>
+
+          {/* Last Sync Time */}
+          {confluenceConfig.lastSyncTime && (
+            <div className='last-sync-time' style={{ marginTop: '8px', color: '#888', fontSize: '0.95em' }}>
+              Last Sync: {new Date(confluenceConfig.lastSyncTime).toLocaleString()}
+            </div>
+          )}
 
           {/* Progress bars and status messages */}
           <div className='progress-container'>

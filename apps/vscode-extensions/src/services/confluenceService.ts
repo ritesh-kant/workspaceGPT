@@ -26,6 +26,7 @@ interface SyncProgress {
   totalPages: number;
   lastProcessedPageId?: string;
   isComplete: boolean;
+  lastSyncTime: string;
 }
 
 export class ConfluenceService {
@@ -109,6 +110,7 @@ export class ConfluenceService {
           processedPages: 0,
           totalPages: 0,
           isComplete: false,
+          lastSyncTime: '',
         };
         await this.saveSyncProgress(this.syncProgress);
 
@@ -159,6 +161,7 @@ export class ConfluenceService {
               totalPages: message.total,
               lastProcessedPageId: message.lastProcessedPageId,
               isComplete: false,
+              lastSyncTime: this.syncProgress?.lastSyncTime || '',
             };
             await this.saveSyncProgress(this.syncProgress);
             break;
@@ -181,10 +184,12 @@ export class ConfluenceService {
               `Sync complete. Processed ${message.pages.length} pages.`
             );
             // Notify the webview that sync is complete
+            const lastSyncTime = new Date().toISOString();
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
               source: 'confluence',
               pagesCount: message.pages.length,
+              lastSyncTime,
             });
 
             // Update progress as complete
@@ -192,6 +197,7 @@ export class ConfluenceService {
               processedPages: message.pages.length,
               totalPages: message.pages.length,
               isComplete: true,
+              lastSyncTime,
             };
             await this.saveSyncProgress(this.syncProgress);
 

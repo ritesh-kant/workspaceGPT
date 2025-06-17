@@ -24,7 +24,8 @@ export const settingsDefaultConfig: SettingsConfig = {
     canResume: false,
     canResumeIndexing: false,
     isSyncCompleted: false,
-    isIndexingCompleted: false
+    isIndexingCompleted: false,
+    lastSyncTime: undefined
   },
   codebase: {
     repoPath: '',
