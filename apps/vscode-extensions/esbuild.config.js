@@ -56,7 +56,7 @@ const extensionConfig = {
   external: [
     'vscode',
     '@xenova/transformers',  // Keep external - don't bundle
-    'onnxruntime-node',      // ONNX runtime (if used)
+    'onnxruntime-node',      // Required by @xenova/transformers for Node.js backend
     'sharp'                  // Image processing (if used)
   ],
   define: {
