@@ -17,6 +17,7 @@ tsconfig.json
 node_modules/**
 !dist/node_modules/@xenova/**
 !dist/node_modules/onnxruntime-*/**
+!dist/models/**
 
 # Documentation and misc
 README.md

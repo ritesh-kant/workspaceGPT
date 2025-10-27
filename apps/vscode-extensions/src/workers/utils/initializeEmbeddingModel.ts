@@ -5,25 +5,25 @@ let extractor: any;
 
 export async function initializeEmbeddingModel(embeddingModel: string, embeddingDirPath: string, progressCallback: (status: any) => void) {
     try {
-      // Add model options with local_files_only set to false to allow downloading if needed
-      // and add a longer timeout to handle potential network issues
-
-      // env.backends.onnx.wasm.wasmPaths = path.join(__dirname, '../../../node_modules/onnxruntime-web/dist/');
+      // Use pre-bundled models from the extension's models directory
+      // The models are bundled during build time for offline availability
+      const extensionModelsPath = path.join(__dirname, '../../models');
+      
       extractor = await pipeline(
         'feature-extraction',
         embeddingModel,
         {
-          local_files_only: false,
+          local_files_only: true, // Use only local files - no downloading
           revision: 'main',
           quantized: true,
-          cache_dir: path.join(embeddingDirPath, '.cache', 'transformers'),
+          cache_dir: extensionModelsPath, // Use bundled models directory
           progress_callback: (progress: any) => {
             if (progress.status === 'progress') {
               const progressPercent = Math.round(progress.progress);
               progressCallback({
                 type: progress.status,
                 progress: progressPercent,
-                message: `Downloading model: ${progressPercent}%`,
+                message: `Loading model: ${progressPercent}%`,
               });
             }
           },
