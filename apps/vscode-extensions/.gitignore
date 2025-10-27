@@ -1,0 +1,6 @@
+# Pre-downloaded embedding models
+# These are downloaded during build time and should not be committed
+models/
+
+# VS Code extension package
+*.vsix

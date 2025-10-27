@@ -137,6 +137,24 @@ async function copyDependencyWithNested(depName, srcNodeModules, destNodeModules
   }
 }
 
+// Copy pre-downloaded models to output directory
+async function copyModels() {
+  console.log('📦 Copying pre-downloaded models...');
+
+  const srcModelsDir = path.join(__dirname, 'models');
+  const outModelsDir = path.join(__dirname, 'dist', 'models');
+
+  // Check if models directory exists
+  if (!fs.existsSync(srcModelsDir)) {
+    console.warn('⚠️  Models directory not found. Run "pnpm run download-models" first.');
+    return;
+  }
+
+  // Copy models directory
+  await copyRecursive(srcModelsDir, outModelsDir);
+  console.log('✅ Models copied successfully');
+}
+
 // Copy essential dependencies to output directory
 async function copyDependencies() {
   console.log('📦 Copying dependencies...');
@@ -208,8 +226,9 @@ async function build() {
     ]);
     console.log('✅ ESBuild completed');
 
-    // Copy dependencies
+    // Copy dependencies and models
     await copyDependencies();
+    await copyModels();
 
     console.log('🎉 Build completed successfully');
   } catch (error) {
