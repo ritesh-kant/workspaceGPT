@@ -1,0 +1,12 @@
+{
+    "name": "auth-proxy",
+    "version": "1.0.0",
+    "private": true,
+    "main": "api/index.js",
+    "dependencies": {
+        "axios": "^1.6.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0"
+    }
+}
