@@ -148,7 +148,7 @@ export const WORKER_STATUS = {
 export const ATLASSIAN_OAUTH = {
   ATLASSIAN_CLIENT_ID: 'zP9e8TO6Rf7DIsVRtkbPJa2yi8WOeKGJ',
   // Token exchange is proxied through a Vercel function that holds the client_secret securely
-  TOKEN_PROXY_URL: 'https://confluence-auth-proxy.vercel.app/api/token',
+  TOKEN_PROXY_URL: 'https://workspace-gpt-confluence-auth-proxy.vercel.app/api/token',
   AUTH_URL: 'https://auth.atlassian.com/authorize',
   TOKEN_URL: 'https://auth.atlassian.com/oauth/token',
   ACCESSIBLE_RESOURCES_URL: 'https://api.atlassian.com/oauth/token/accessible-resources',
