@@ -11,9 +11,9 @@ import {
 
 interface WorkerData {
   spaceKey: string;
-  confluenceBaseUrl: string;
-  apiToken: string;
-  userEmail: string;
+  cloudId: string;
+  accessToken: string;
+  authMode: 'oauth' | 'basic';
   resume?: boolean;
   lastProcessedPageId?: string;
   processedPages?: number;
@@ -22,9 +22,9 @@ interface WorkerData {
 // Receive data from main thread
 const {
   spaceKey,
-  confluenceBaseUrl,
-  apiToken,
-  userEmail,
+  cloudId,
+  accessToken,
+  authMode,
   resume,
   lastProcessedPageId,
   processedPages,
@@ -32,31 +32,34 @@ const {
 
 async function fetchAndProcessPages() {
   try {
-    // Create the page fetcher
+    // Create the page fetcher with OAuth mode
     const extractor = new ConfluencePageFetcher(
       spaceKey,
-      confluenceBaseUrl,
-      apiToken,
-      userEmail,
-      apiToken
+      cloudId,
+      accessToken,
+      '', // userEmail not needed for OAuth
+      accessToken,
+      authMode
     );
+
+    // For OAuth, derive a base URL for processPage (used for building page URLs)
+    const confluenceBaseUrl = `https://api.atlassian.com/ex/confluence/${cloudId}`;
 
     // Get total pages count
     const totalSize = await extractor.getTotalPages();
     parentPort?.postMessage({ type: 'totalPages', count: totalSize });
 
     // Fetch all pages
-    let start = resume && processedPages ? processedPages : 0;
+    let cursor: string | null = null;
     let processedCount = resume && processedPages ? processedPages : 0;
     let hasMore = true;
     let allPages: ConfluencePage[] = [];
     let foundLastProcessedPage = !resume || !lastProcessedPageId;
 
     try {
-      // while (hasMore && allPages.length < 30) {
       while (hasMore) {
-        const response = await extractor.fetchPages(start, 10);
-        const { results, size, _links } = response;
+        const response = await extractor.fetchPages(cursor, 50); // Increased limit slightly for v2
+        const { results, _links } = response;
 
         // If resuming, skip pages until we find the last processed page
         if (resume && lastProcessedPageId && !foundLastProcessedPage) {
@@ -69,8 +72,10 @@ async function fetchAndProcessPages() {
             foundLastProcessedPage = true;
           } else {
             // If we haven't found the last processed page yet, skip this batch
-            start += size;
-            if (!_links.next) {
+            if (_links && _links.next) {
+              const url = new URL(`https://api.atlassian.com${_links.next}`);
+              cursor = url.searchParams.get('cursor');
+            } else {
               hasMore = false;
             }
             continue;
@@ -82,14 +87,18 @@ async function fetchAndProcessPages() {
         processedCount = await processPageBatch(
           results,
           processedCount,
-          processPage
+          processPage,
+          confluenceBaseUrl
         );
 
-        if (!_links.next) {
-          hasMore = false;
+        if (_links && _links.next) {
+            // Extract the cursor from the relative next link
+            // /wiki/api/v2/spaces/.../pages?cursor=XXXXX
+            const nextUrl = new URL(`https://api.atlassian.com${_links.next}`);
+            cursor = nextUrl.searchParams.get('cursor');
+            await sleep(1000);
         } else {
-          start += size;
-          await sleep(1000);
+            hasMore = false;
         }
 
         const progress = ((processedCount / totalSize) * 100).toFixed(1);
@@ -132,7 +141,8 @@ interface ProcessedPage {
 async function processPageBatch(
   pages: ConfluencePage[],
   processedCount: number,
-  processPage: (confluenceBaseUrl: string, page: ConfluencePage) => ProcessedPage
+  processPage: (confluenceBaseUrl: string, page: ConfluencePage) => ProcessedPage,
+  confluenceBaseUrl: string
 ): Promise<number> {
   let updatedCount = processedCount;
 
@@ -148,9 +158,6 @@ async function processPageBatch(
         });
 
         updatedCount++;
-        // console.log(
-        //   `✅ Processed and sent page ${updatedCount}/${totalSize}: ${processedPage.filename}`
-        // );
       } else {
         console.log(
           `⚠️ Skipped page due to insufficient content: ${page.title}`

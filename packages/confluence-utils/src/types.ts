@@ -25,13 +25,16 @@ export interface ProcessedPage {
 }
 
 export interface ConfluenceSearchResponse {
-  totalSize: number;
+  results: any[];
+  _links?: {
+    next?: string;
+  };
 }
 
 export interface ConfluencePageResponse {
   results: ConfluencePage[];
-  size: number;
-  _links: {
+  _links?: {
     next?: string;
+    base?: string;
   };
 }

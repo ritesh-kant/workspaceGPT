@@ -1,4 +1,4 @@
-export { ConfluencePageFetcher } from './utils/fetchPages';
+export { ConfluencePageFetcher, type AuthMode } from './utils/fetchPages';
 export { processPage } from './utils/processPage';
 
 export { extractTextFromXML } from './utils/xmlParser';
