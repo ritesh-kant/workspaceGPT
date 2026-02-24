@@ -85,7 +85,7 @@ export class ConfluenceAuthService {
   private buildAuthUrl(state: string): string {
     const params = new URLSearchParams({
       audience: 'api.atlassian.com',
-      client_id: ATLASSIAN_OAUTH.CLIENT_ID,
+      client_id: ATLASSIAN_OAUTH.ATLASSIAN_CLIENT_ID,
       scope: ATLASSIAN_OAUTH.SCOPES.join(' '),
       redirect_uri: `http://127.0.0.1:${ATLASSIAN_OAUTH.CALLBACK_PORT}${ATLASSIAN_OAUTH.CALLBACK_PATH}`,
       state,

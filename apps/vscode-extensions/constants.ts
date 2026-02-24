@@ -146,7 +146,7 @@ export const WORKER_STATUS = {
 
 // Atlassian OAuth 2.0 (3LO) Configuration
 export const ATLASSIAN_OAUTH = {
-  CLIENT_ID: 'zP9e8TO6Rf7DIsVRtkbPJa2yi8WOeKGJ',
+  ATLASSIAN_CLIENT_ID: 'zP9e8TO6Rf7DIsVRtkbPJa2yi8WOeKGJ',
   // Token exchange is proxied through a Vercel function that holds the client_secret securely
   TOKEN_PROXY_URL: 'https://confluence-auth-proxy.vercel.app/api/token',
   AUTH_URL: 'https://auth.atlassian.com/authorize',
