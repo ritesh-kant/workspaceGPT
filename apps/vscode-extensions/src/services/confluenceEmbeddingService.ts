@@ -187,7 +187,7 @@ export class EmbeddingService {
   }
 
   // Util functions
-  private stopEmbeddingProcess(): void {
+  public stopEmbeddingProcess(): void {
     if (this.embeddingProcess) {
       this.embeddingProcess.kill();
       this.embeddingProcess = null;

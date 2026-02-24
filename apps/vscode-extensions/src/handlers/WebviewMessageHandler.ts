@@ -211,7 +211,46 @@ export class WebviewMessageHandler {
 
   private async handleDisconnectConfluence(): Promise<void> {
     try {
+      // Stop any active sync or embedding processes
+      this.confluenceService?.stopSync();
+      this.embeddingService?.stopEmbeddingProcess();
+
+      // Clear OAuth tokens and site info
       await this.confluenceAuthService.disconnect();
+
+      // Reset sync and embedding progress
+      await this.confluenceService?.resetSyncProgress();
+      await this.embeddingService?.resetEmbeddingProgress();
+
+      // Delete downloaded confluence files (mds + embeddings)
+      const confluenceDirPath = path.join(
+        this.context.globalStorageUri.fsPath,
+        'confluence'
+      );
+      await deleteDirectory(confluenceDirPath);
+
+      // Clear confluence-specific config state in settings
+      const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+      if (settings?.state?.config?.confluence) {
+        settings.state.config.confluence = {
+          ...settings.state.config.confluence,
+          isAuthenticated: false,
+          siteName: '',
+          cloudId: '',
+          spaceKey: '',
+          availableSpaces: [],
+          isSyncing: false,
+          isIndexing: false,
+          canResume: false,
+          canResumeIndexing: false,
+          isSyncCompleted: false,
+          isIndexingCompleted: false,
+          confluenceSyncProgress: 0,
+          confluenceIndexProgress: 0,
+          lastSyncTime: '',
+        };
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
+      }
 
       // Notify webview
       this.webviewView.webview.postMessage({
