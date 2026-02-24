@@ -6,7 +6,8 @@ import {
   STORAGE_KEYS,
 } from '../../constants';
 import { ChatService } from '../services/chatService';
-import { ConfluenceService } from '../services/confluenceService';
+import { ConfluenceService, ConfluenceConfig } from '../services/confluenceService';
+import { ConfluenceAuthService } from '../services/confluenceAuthService';
 import { EmbeddingService } from '../services/confluenceEmbeddingService';
 import { CodebaseService } from '../services/codebaseService';
 import { EmbeddingConfig, CodebaseConfig } from '../types/types';
@@ -19,11 +20,11 @@ import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 export class WebviewMessageHandler {
   private chatService?: ChatService;
   private confluenceService?: ConfluenceService;
+  private confluenceAuthService: ConfluenceAuthService;
   private embeddingService?: EmbeddingService;
   private codebaseService?: CodebaseService;
   private analyticsService: AnalyticsService;
 
-  private confluenceConfig?: any;
   private codebaseConfig?: CodebaseConfig;
 
   constructor(
@@ -36,6 +37,8 @@ export class WebviewMessageHandler {
       this.webviewView,
       this.context
     );
+
+    this.confluenceAuthService = new ConfluenceAuthService(this.context);
 
     this.embeddingService = new EmbeddingService(
       this.webviewView,
@@ -59,6 +62,21 @@ export class WebviewMessageHandler {
       case MESSAGE_TYPES.CLEAR_GLOBAL_STATE:
         await this.handleClearGlobalState();
         break;
+
+      // Confluence OAuth
+      case MESSAGE_TYPES.START_CONFLUENCE_OAUTH:
+        this.analyticsService.trackEvent('confluence_oauth_started');
+        await this.handleStartConfluenceOAuth();
+        break;
+      case MESSAGE_TYPES.DISCONNECT_CONFLUENCE:
+        this.analyticsService.trackEvent('confluence_disconnected');
+        await this.handleDisconnectConfluence();
+        break;
+      case MESSAGE_TYPES.FETCH_CONFLUENCE_SPACES:
+        await this.handleFetchConfluenceSpaces();
+        break;
+
+      // Confluence sync
       case MESSAGE_TYPES.CHECK_CONFLUENCE_CONNECTION:
         await this.handleCheckConfluenceConnection();
         break;
@@ -74,6 +92,8 @@ export class WebviewMessageHandler {
         this.analyticsService.trackEvent('confluence_sync_stopped');
         await this.handleStopConfluenceSync();
         break;
+
+      // Codebase
       case MESSAGE_TYPES.START_CODEBASE_SYNC:
         this.analyticsService.trackEvent('codebase_sync_started');
         await this.handleStartCodebaseSync();
@@ -86,6 +106,8 @@ export class WebviewMessageHandler {
         this.analyticsService.trackEvent('codebase_sync_stopped');
         await this.handleStopCodebaseSync();
         break;
+
+      // Chat
       case MESSAGE_TYPES.NEW_CHAT:
         this.analyticsService.trackEvent('new_chat_created');
         await this.handleNewChat();
@@ -121,13 +143,14 @@ export class WebviewMessageHandler {
         break;
     }
   }
+
   private async reset() {
     const confluenceDirPath = path.join(
       this.context.globalStorageUri.fsPath,
       'confluence'
     );
     await ensureDirectoryExists(confluenceDirPath);
-    await deleteDirectory(confluenceDirPath)
+    await deleteDirectory(confluenceDirPath);
   }
 
   private async updateGlobalState(data: any): Promise<void> {
@@ -155,17 +178,99 @@ export class WebviewMessageHandler {
     }
   }
 
+  // --- Confluence OAuth Handlers ---
+
+  private async handleStartConfluenceOAuth(): Promise<void> {
+    try {
+      const result = await this.confluenceAuthService.startOAuthFlow();
+
+      // Notify the webview about the successful OAuth
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.CONFLUENCE_OAUTH_SUCCESS,
+        site: {
+          id: result.site.id,
+          name: result.site.name,
+          url: result.site.url,
+        },
+      });
+
+      // Also fetch and send spaces immediately
+      await this.handleFetchConfluenceSpaces();
+    } catch (error) {
+      console.error('Error in Confluence OAuth:', error);
+      this.analyticsService.trackEvent('confluence_oauth_error', {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.CONFLUENCE_OAUTH_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async handleDisconnectConfluence(): Promise<void> {
+    try {
+      await this.confluenceAuthService.disconnect();
+
+      // Notify webview
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.DISCONNECT_CONFLUENCE,
+        success: true,
+      });
+    } catch (error) {
+      console.error('Error disconnecting Confluence:', error);
+    }
+  }
+
+  private async handleFetchConfluenceSpaces(): Promise<void> {
+    try {
+      const site = this.confluenceAuthService.getStoredSite();
+      if (!site) {
+        throw new Error('No Confluence site connected. Please connect first.');
+      }
+
+      const spaces = await this.confluenceAuthService.fetchSpaces(site.id);
+
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.FETCH_CONFLUENCE_SPACES_RESPONSE,
+        spaces,
+      });
+    } catch (error) {
+      console.error('Error fetching Confluence spaces:', error);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.FETCH_CONFLUENCE_SPACES_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // --- Confluence Sync Handlers (updated for OAuth) ---
+
+  private async getConfluenceConfig(): Promise<ConfluenceConfig> {
+    const accessToken = await this.confluenceAuthService.getValidAccessToken();
+    const site = this.confluenceAuthService.getStoredSite();
+    const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    const spaceKey = config?.state?.config?.confluence?.spaceKey;
+
+    if (!site || !accessToken || !spaceKey) {
+      throw new Error(
+        'Confluence configuration is incomplete. Please connect to Confluence and select a space.'
+      );
+    }
+
+    return {
+      cloudId: site.id,
+      accessToken,
+      spaceKey,
+    };
+  }
+
   private async handleCheckConfluenceConnection(): Promise<void> {
     try {
-      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      this.confluenceConfig = config.state.config.confluence;
-      if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
-        throw new Error(
-          'Confluence configuration is incomplete. Please check your settings.'
-        );
-      }
+      const confluenceConfig = await this.getConfluenceConfig();
       const totalPages = await this.confluenceService?.getTotalPages(
-        this.confluenceConfig
+        confluenceConfig
       );
 
       this.webviewView.webview.postMessage({
@@ -189,18 +294,13 @@ export class WebviewMessageHandler {
 
   private async handleStartConfluenceSync(): Promise<void> {
     try {
-      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      this.confluenceConfig = config.state.config.confluence;
-      if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
-        throw new Error(
-          'Confluence configuration is incomplete. Please check your settings.'
-        );
-      }
-      await this.confluenceService?.startSync(this.confluenceConfig, async () => {
+      const confluenceConfig = await this.getConfluenceConfig();
+
+      await this.confluenceService?.startSync(confluenceConfig, async () => {
         // On complete, update lastSyncTime in global state
         const lastSyncTime = new Date().toISOString();
         const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-        if (settings && settings.state && settings.state.config && settings.state.config.confluence) {
+        if (settings?.state?.config?.confluence) {
           settings.state.config.confluence.lastSyncTime = lastSyncTime;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
         }
@@ -221,13 +321,7 @@ export class WebviewMessageHandler {
 
   private async handleResumeConfluenceSync(): Promise<void> {
     try {
-      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      this.confluenceConfig = config.state.config.confluence;
-      if (!this.isConfluenceConfigValid(this.confluenceConfig)) {
-        throw new Error(
-          'Confluence configuration is incomplete. Please check your settings.'
-        );
-      }
+      const confluenceConfig = await this.getConfluenceConfig();
 
       // Check if there's progress to resume
       const progress = this.confluenceService?.getSyncProgress();
@@ -239,7 +333,7 @@ export class WebviewMessageHandler {
 
       // Resume the sync with the existing progress
       await this.confluenceService?.startSync(
-        this.confluenceConfig,
+        confluenceConfig,
         () => this.handleCompleteConfluenceSync(),
         true // resume parameter
       );
@@ -268,13 +362,6 @@ export class WebviewMessageHandler {
 
   private async handleResumeIndexingConfluence(): Promise<void> {
     try {
-      // if (!this.embeddingService) {
-      //   this.embeddingService = new EmbeddingService(
-      //     this.webviewView,
-      //     this.context
-      //   );
-      // }
-
       // Check if there's progress to resume
       const progress = this.embeddingService?.getEmbeddingProgress();
       if (!progress || progress.isComplete) {
@@ -300,6 +387,8 @@ export class WebviewMessageHandler {
       });
     }
   }
+
+  // --- Chat Handlers ---
 
   private async handleNewChat(): Promise<void> {
     try {
@@ -360,20 +449,7 @@ export class WebviewMessageHandler {
     });
   }
 
-  private isConfluenceConfigValid(config: any): boolean {
-    return !!(
-      config.baseUrl &&
-      config.spaceKey &&
-      config.userEmail &&
-      config.apiToken
-    );
-  }
-
-  private isCodebaseConfigValid(config: any): boolean {
-    return !!(config && config.repoPath);
-  }
-
-
+  // --- Model Handlers ---
 
   private async handleUpdateModel(data: any): Promise<void> {
     try {
@@ -391,21 +467,16 @@ export class WebviewMessageHandler {
     }
   }
 
+  // --- Confluence Stop Sync ---
+
   private async handleStopConfluenceSync(): Promise<void> {
     try {
       // Stop the sync process
       this.confluenceService?.stopSync();
 
-      // Update the UI to reflect that sync has been stopped
-      // this.webviewView.webview.postMessage({
-      //   type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
-      //   source: 'confluence',
-      //   message: 'Sync process stopped by user',
-      // });
-
       // Update the global state to reflect that sync is no longer in progress
       const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-      if (config && config.state && config.state.config) {
+      if (config?.state?.config) {
         config.state.config.confluence.isSyncing = false;
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
@@ -416,6 +487,8 @@ export class WebviewMessageHandler {
       });
     }
   }
+
+  // --- Codebase Handlers ---
 
   private async handleStartCodebaseSync(): Promise<void> {
     try {
@@ -505,16 +578,9 @@ export class WebviewMessageHandler {
       // Stop the sync process
       this.codebaseService?.stopSync();
 
-      // Update the UI to reflect that sync has been stopped
-      // this.webviewView.webview.postMessage({
-      //   type: MESSAGE_TYPES.SYNC_CODEBASE_COMPLETE,
-      //   source: 'codebase',
-      //   message: 'Scan process stopped by user',
-      // });
-
       // Update the global state to reflect that sync is no longer in progress
       const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-      if (config && config.state && config.state.config) {
+      if (config?.state?.config) {
         config.state.config.codebase.isSyncing = false;
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
@@ -526,6 +592,8 @@ export class WebviewMessageHandler {
       });
     }
   }
+
+  // --- Workspace Path ---
 
   private async handleGetWorkspacePath(): Promise<void> {
     try {
@@ -546,7 +614,7 @@ export class WebviewMessageHandler {
         const config = this.context.globalState.get(
           STORAGE_KEYS.SETTINGS
         ) as any;
-        if (config && config.state && config.state.config) {
+        if (config?.state?.config) {
           config.state.config.codebase.repoPath = workspacePath;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
         }
@@ -567,6 +635,8 @@ export class WebviewMessageHandler {
       });
     }
   }
+
+  // --- Model Fetching ---
 
   private async handleFetchAvailableModels(data: any) {
     // Fetch the list of available models
@@ -593,5 +663,11 @@ export class WebviewMessageHandler {
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  // --- Helpers ---
+
+  private isCodebaseConfigValid(config: any): boolean {
+    return !!(config && config.repoPath);
   }
 }

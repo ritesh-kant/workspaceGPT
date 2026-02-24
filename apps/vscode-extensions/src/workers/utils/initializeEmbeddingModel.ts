@@ -9,6 +9,10 @@ export async function initializeEmbeddingModel(embeddingModel: string, embedding
       // The models are bundled during build time for offline availability
       const extensionModelsPath = path.join(__dirname, '../../models');
       
+      // Specifically tell Transformers.js where the local models are located
+      env.allowRemoteModels = false;
+      env.localModelPath = extensionModelsPath;
+      
       extractor = await pipeline(
         'feature-extraction',
         embeddingModel,

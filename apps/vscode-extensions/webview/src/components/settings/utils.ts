@@ -23,6 +23,24 @@ export const clearStatusMessageAfterDelay = (
 };
 
 export const handleConfluenceActions = {
+  startOAuth: (vscode: ReturnType<typeof VSCodeAPI>) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.START_CONFLUENCE_OAUTH,
+    });
+  },
+
+  disconnect: (vscode: ReturnType<typeof VSCodeAPI>) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.DISCONNECT_CONFLUENCE,
+    });
+  },
+
+  fetchSpaces: (vscode: ReturnType<typeof VSCodeAPI>) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.FETCH_CONFLUENCE_SPACES,
+    });
+  },
+
   checkConnection: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
     vscode.postMessage({
       type: MESSAGE_TYPES.CHECK_CONFLUENCE_CONNECTION,

@@ -10,12 +10,21 @@ export interface StatusMessage {
   delay?: number;
 }
 
+export interface ConfluenceSpace {
+  id: string;
+  key: string;
+  name: string;
+  type: string;
+  status: string;
+}
+
 export interface ConfluenceConfig {
-  baseUrl: string;
-  spaceKey: string;
-  userEmail: string;
-  apiToken: string;
   isConfluenceEnabled: boolean;
+  isAuthenticated: boolean;
+  siteName: string;
+  cloudId: string;
+  spaceKey: string;
+  availableSpaces: ConfluenceSpace[];
   confluenceSyncProgress: number;
   confluenceIndexProgress: number;
   isSyncing: boolean;
@@ -27,6 +36,7 @@ export interface ConfluenceConfig {
   canResume: boolean;
   canResumeIndexing: boolean;
   lastSyncTime?: string;
+  isConnecting?: boolean;
 }
 
 export interface CodebaseConfig {

@@ -25,6 +25,14 @@ export const MESSAGE_TYPES = {
   SYNC_CONFLUENCE_STOP: 'sync-confluence-stop',
   RESUME_CONFLUENCE_SYNC: 'resume-confluence-sync',
 
+  START_CONFLUENCE_OAUTH: 'start-confluence-oauth',
+  CONFLUENCE_OAUTH_SUCCESS: 'confluence-oauth-success',
+  CONFLUENCE_OAUTH_ERROR: 'confluence-oauth-error',
+  DISCONNECT_CONFLUENCE: 'disconnect-confluence',
+  FETCH_CONFLUENCE_SPACES: 'fetch-confluence-spaces',
+  FETCH_CONFLUENCE_SPACES_RESPONSE: 'fetch-confluence-spaces-response',
+  FETCH_CONFLUENCE_SPACES_ERROR: 'fetch-confluence-spaces-error',
+
   START_CODEBASE_SYNC: 'start-codebase-sync',
   RESUME_CODEBASE_SYNC: 'resume-codebase-sync',
   SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
@@ -67,6 +75,7 @@ export const STORAGE_KEYS = {
   CONFLUENCE_SYNC_PROGRESS: 'confluence-sync-progress',
   EMBEDDING_PROGRESS: 'embedding-progress',
   CODEBASE_SYNC_PROGRESS: 'codebase-sync-progress',
+  CONFLUENCE_OAUTH_TOKENS: 'confluence-oauth-tokens',
 };
 
 // Extension Constants
@@ -133,6 +142,27 @@ export const WORKER_STATUS = {
   COMPLETED: 'completed',
   ERROR: 'error',
   PROCESSED: 'processed',
+};
+
+// Atlassian OAuth 2.0 (3LO) Configuration
+export const ATLASSIAN_OAUTH = {
+  CLIENT_ID: 'zP9e8TO6Rf7DIsVRtkbPJa2yi8WOeKGJ',
+  // Token exchange is proxied through a Vercel function that holds the client_secret securely
+  TOKEN_PROXY_URL: 'https://confluence-auth-proxy.vercel.app/api/token',
+  AUTH_URL: 'https://auth.atlassian.com/authorize',
+  TOKEN_URL: 'https://auth.atlassian.com/oauth/token',
+  ACCESSIBLE_RESOURCES_URL: 'https://api.atlassian.com/oauth/token/accessible-resources',
+  SCOPES: [
+    'read:space:confluence',
+    'search:confluence',
+    'read:confluence-space.summary',
+    'read:confluence-content.summary',
+    'read:confluence-content.all',
+    'read:page:confluence',
+    'offline_access',
+  ],
+  CALLBACK_PORT: 32323,
+  CALLBACK_PATH: '/callback',
 };
 
 export type ModelType = 'chat' | 'embedding';

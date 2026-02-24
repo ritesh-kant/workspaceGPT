@@ -10,11 +10,12 @@ export interface SettingsConfig {
 
 export const settingsDefaultConfig: SettingsConfig = {
   confluence: {
-    baseUrl: '',
-    spaceKey: '',
-    userEmail: '',
-    apiToken: '',
     isConfluenceEnabled: false,
+    isAuthenticated: false,
+    siteName: '',
+    cloudId: '',
+    spaceKey: '',
+    availableSpaces: [],
     confluenceSyncProgress: 0,
     confluenceIndexProgress: 0,
     isSyncing: false,
@@ -25,7 +26,8 @@ export const settingsDefaultConfig: SettingsConfig = {
     canResumeIndexing: false,
     isSyncCompleted: false,
     isIndexingCompleted: false,
-    lastSyncTime: undefined
+    lastSyncTime: undefined,
+    isConnecting: false,
   },
   codebase: {
     repoPath: '',

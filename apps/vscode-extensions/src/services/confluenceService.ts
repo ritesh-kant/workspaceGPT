@@ -14,11 +14,10 @@ interface ProcessedPage {
   pageUrl?: string;
 }
 
-interface ConfluenceConfig {
-  baseUrl: string;
+export interface ConfluenceConfig {
+  cloudId: string;
   spaceKey: string;
-  userEmail: string;
-  apiToken: string;
+  accessToken: string;
 }
 
 interface SyncProgress {
@@ -70,18 +69,19 @@ export class ConfluenceService {
 
   async getTotalPages(config: ConfluenceConfig) {
     try {
-      // Create the page fetcher
+      // Create the page fetcher with OAuth mode
       const extractor = new ConfluencePageFetcher(
         config.spaceKey,
-        config.baseUrl,
-        config.apiToken,
-        config.userEmail,
-        config.apiToken
+        config.cloudId,
+        config.accessToken,
+        '', // userEmail not needed for OAuth
+        config.accessToken,
+        'oauth'
       );
 
       // Get total pages count
       const totalSize = await extractor.getTotalPages();
-      return totalSize; // Return the total pages coun
+      return totalSize;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -133,9 +133,9 @@ export class ConfluenceService {
       this.worker = new Worker(workerPath, {
         workerData: {
           spaceKey: config.spaceKey,
-          confluenceBaseUrl: config.baseUrl,
-          apiToken: config.apiToken,
-          userEmail: config.userEmail,
+          cloudId: config.cloudId,
+          accessToken: config.accessToken,
+          authMode: 'oauth',
           resume: resume,
           lastProcessedPageId: this.syncProgress?.lastProcessedPageId,
           processedPages: this.syncProgress?.processedPages || 0,
@@ -235,10 +235,8 @@ export class ConfluenceService {
   public stopSync(): void {
     if (this.worker) {
       console.log('Stopping Confluence sync process...');
-      // Terminate the worker
       this.worker.terminate();
       this.worker = null;
-
       console.log('Confluence sync process stopped');
     }
   }
@@ -292,5 +290,4 @@ export class ConfluenceService {
       throw error;
     }
   }
-
 }
