@@ -228,7 +228,7 @@ const App: React.FC = () => {
               onKeyDown={handleKeyDown}
               placeholder={
                 selectedModelProvider?.selectedModel
-                  ? 'Ask WorkspaceGPT...t'
+                  ? 'Ask WorkspaceGPT...'
                   : 'Please configure model to use '
               }
             />
