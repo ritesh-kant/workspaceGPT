@@ -117,7 +117,7 @@ export class ConfluenceAuthService {
           const error = url.searchParams.get('error');
 
           if (error) {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml(error));
             clearTimeout(timeout);
             this.shutdownServer();
@@ -126,7 +126,7 @@ export class ConfluenceAuthService {
           }
 
           if (returnedState !== state) {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml('State mismatch - possible CSRF attack'));
             clearTimeout(timeout);
             this.shutdownServer();
@@ -135,7 +135,7 @@ export class ConfluenceAuthService {
           }
 
           if (!code) {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml('No authorization code received'));
             clearTimeout(timeout);
             this.shutdownServer();
@@ -144,7 +144,7 @@ export class ConfluenceAuthService {
           }
 
           // Success!
-          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(this.getSuccessHtml());
           clearTimeout(timeout);
           this.shutdownServer();
@@ -397,7 +397,7 @@ export class ConfluenceAuthService {
   private getSuccessHtml(): string {
     return `<!DOCTYPE html>
 <html>
-<head><title>WorkspaceGPT - Connected!</title></head>
+<head><meta charset="utf-8"><title>WorkspaceGPT - Connected!</title></head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #1a1a2e; color: #e0e0e0;">
   <div style="text-align: center; padding: 40px; background: #16213e; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
     <div style="font-size: 64px; margin-bottom: 16px;">✅</div>
@@ -411,7 +411,7 @@ export class ConfluenceAuthService {
   private getErrorHtml(error: string): string {
     return `<!DOCTYPE html>
 <html>
-<head><title>WorkspaceGPT - Error</title></head>
+<head><meta charset="utf-8"><title>WorkspaceGPT - Error</title></head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #1a1a2e; color: #e0e0e0;">
   <div style="text-align: center; padding: 40px; background: #16213e; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
     <div style="font-size: 64px; margin-bottom: 16px;">❌</div>
