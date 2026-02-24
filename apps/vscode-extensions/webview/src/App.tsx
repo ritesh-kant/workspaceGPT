@@ -44,7 +44,7 @@ const App: React.FC = () => {
     {
       provider: string;
       model?: string;
-    }[] 
+    }[]
   >([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -90,11 +90,13 @@ const App: React.FC = () => {
             setSettingsConfig(message.state?.config || settingsDefaultConfig);
           }
           if (message.key === STORAGE_KEYS.MODEL) {
-            setModelState(message.state || selectedModelProvider);
-            console.log(
-              'selectedModelProvider',
-              message.state || selectedModelProvider
-            );
+            if (message.state && message.state.modelProviders) {
+              setModelState(message.state);
+              console.log(
+                'restored model state',
+                message.state
+              );
+            }
           }
           break;
       }

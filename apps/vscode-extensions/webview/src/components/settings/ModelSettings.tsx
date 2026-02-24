@@ -47,15 +47,34 @@ const ModelSettings: React.FC = () => {
 
       switch (message.type) {
         case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_RESPONSE:
+          const fetchedModels = message.models;
+          let newSelectedModel = selectedModelProvider.selectedModel;
+
+          if (fetchedModels && fetchedModels.length > 0) {
+            if (!newSelectedModel || !fetchedModels.find((m: any) => m.id === newSelectedModel)) {
+              newSelectedModel = fetchedModels[0].id;
+            }
+          }
+
           updateModelProvider(
             selectedModelProvider.provider,
             'availableModels',
-            message.models
+            fetchedModels
           );
+
+          if (newSelectedModel !== selectedModelProvider.selectedModel) {
+            updateModelProvider(
+              selectedModelProvider.provider,
+              'selectedModel',
+              newSelectedModel
+            );
+          }
+
           // Ensure selectedModelProvider state is also updated
           updateSelectedModelProvider({
             ...selectedModelProvider,
-            availableModels: message.models,
+            availableModels: fetchedModels,
+            selectedModel: newSelectedModel,
           });
           setApiKeyError(null);
           break;
@@ -110,37 +129,37 @@ const ModelSettings: React.FC = () => {
             provider.MODEL_PROVIDER === selectedModelProvider.provider &&
             provider.requireApiKey
         ) && (
-          <div className='form-group'>
-            <label htmlFor='api-key'>API Key</label>
-            <input
-              id='api-key'
-              type='password'
-              value={selectedModelProvider?.apiKey ?? ''}
-              onChange={(e) => {
-                const newApiKey = e.target.value;
-                // Update the API key immediately in the UI
-                updateModelProvider(
-                  selectedModelProvider.provider,
-                  'apiKey',
-                  newApiKey
-                );
-                updateSelectedModelProvider({
-                  ...selectedModelProvider,
-                  apiKey: newApiKey,
-                });
-                // Debounce the API call
-                debouncedFetchModels(newApiKey);
-              }}
-              placeholder='Enter your API key'
-            />
-            <small className='form-text'>
-              Required for {selectedModelProvider.provider} integration
-            </small>
-            {apiKeyError && (
-              <small className='form-text error-message'>{apiKeyError}</small>
-            )}
-          </div>
-        )}
+            <div className='form-group'>
+              <label htmlFor='api-key'>API Key</label>
+              <input
+                id='api-key'
+                type='password'
+                value={selectedModelProvider?.apiKey ?? ''}
+                onChange={(e) => {
+                  const newApiKey = e.target.value;
+                  // Update the API key immediately in the UI
+                  updateModelProvider(
+                    selectedModelProvider.provider,
+                    'apiKey',
+                    newApiKey
+                  );
+                  updateSelectedModelProvider({
+                    ...selectedModelProvider,
+                    apiKey: newApiKey,
+                  });
+                  // Debounce the API call
+                  debouncedFetchModels(newApiKey);
+                }}
+                placeholder='Enter your API key'
+              />
+              <small className='form-text'>
+                Required for {selectedModelProvider.provider} integration
+              </small>
+              {apiKeyError && (
+                <small className='form-text error-message'>{apiKeyError}</small>
+              )}
+            </div>
+          )}
 
         {showSelectModelValidator() && (
           <div className='form-group'>
