@@ -24,6 +24,12 @@ function generateSessionId(): string {
   });
 }
 
+const STARTER_PROMPTS = [
+  { icon: '🔍', text: 'What does this Project do?' },
+  { icon: '📝', text: 'Tell me the architecture of this project' },
+  { icon: '🏗️', text: 'Explain the architecture of this Project' },
+];
+
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
   const {
@@ -257,6 +263,36 @@ const App: React.FC = () => {
     setShowSettings(false);
   };
 
+  const handleStarterPrompt = (promptText: string) => {
+    setInputValue(promptText);
+    // Trigger send on next tick so inputValue is set
+    setTimeout(() => {
+      if (!selectedModelProvider?.selectedModel) {
+        addMessage({
+          content: 'Please select the model from settings to use the model',
+          isUser: false,
+        });
+        return;
+      }
+      let sessionId = currentSessionId;
+      if (!sessionId) {
+        sessionId = generateSessionId();
+        setCurrentSessionId(sessionId);
+      }
+      addMessage({ content: promptText, isUser: true });
+      setInputValue('');
+      setIsLoading(true);
+      setShowTips(false);
+      vscode.postMessage({
+        type: MESSAGE_TYPES.SEND_MESSAGE,
+        message: promptText,
+        modelId: selectedModelProvider?.selectedModel,
+        provider: selectedModelProvider.provider,
+        apiKey: selectedModelProvider?.apiKey,
+      });
+    }, 0);
+  };
+
   const handleSelectSession = (sessionId: string) => {
     // Save current chat first
     if (currentSessionId && messages.length > 0) {
@@ -303,20 +339,45 @@ const App: React.FC = () => {
             <div className='tips-container'>
               <h2 className='tips-title'>✨ Quick Tips</h2>
               <div className='tips-list'>
-                <div className='tip-item'>
+                <div
+                  className='tip-item tip-item--interactive'
+                  onClick={() => {
+                    setShowSettings(true);
+                    setShowHistory(false);
+                  }}
+                  role='button'
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { setShowSettings(true); setShowHistory(false); } }}
+                >
                   <span className='tip-icon'>🔗</span>
                   <span>
                     Connect Confluence in Settings to access your team's
                     knowledge base instantly
                   </span>
+                  <span className='tip-arrow'>→</span>
                 </div>
                 <div className='tip-item'>
                   <span className='tip-icon'>💡</span>
                   <span>
-                    Ask questions naturally about your docs - get insights and
+                    Ask questions naturally about your docs – get insights and
                     explore your documentation effortlessly
                   </span>
                 </div>
+              </div>
+            </div>
+            <div className='prompt-suggestions'>
+              <h2 className='prompt-suggestions-title'>💬 Try asking</h2>
+              <div className='prompt-suggestions-list'>
+                {STARTER_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt.text}
+                    className='prompt-item'
+                    onClick={() => handleStarterPrompt(prompt.text)}
+                  >
+                    <span className='prompt-item-icon'>{prompt.icon}</span>
+                    <span className='prompt-item-text'>{prompt.text}</span>
+                  </button>
+                ))}
               </div>
             </div>
           </div>
@@ -386,7 +447,10 @@ const App: React.FC = () => {
                 className='send-button'
                 aria-label='Send message'
               >
-                ➤
+                <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                  <path d='M22 2L11 13' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                  <path d='M22 2L15 22L11 13L2 9L22 2Z' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                </svg>
               </button>
             </div>
           </div>
