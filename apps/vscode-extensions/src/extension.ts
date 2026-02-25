@@ -2,13 +2,19 @@ import * as vscode from 'vscode';
 import { WebViewProvider } from './webViewprovider';
 import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { AnalyticsService } from './services/analyticsService';
+import { ConfluenceSyncScheduler } from './services/confluenceSyncScheduler';
 
 let analyticsService: AnalyticsService;
+let syncScheduler: ConfluenceSyncScheduler;
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize analytics service
   analyticsService = new AnalyticsService(context);
   analyticsService.trackEvent('extension_activated');
+
+  // Initialize and start background sync scheduler
+  syncScheduler = new ConfluenceSyncScheduler(context);
+  syncScheduler.start();
 
   // Register WebViewProvider
   const webViewProvider = new WebViewProvider(context.extensionUri, context);
@@ -73,6 +79,11 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export async function deactivate() {
+  // Stop background scheduler
+  if (syncScheduler) {
+    syncScheduler.stop();
+  }
+
   // Flush analytics before deactivating
   await analyticsService?.flush();
 }

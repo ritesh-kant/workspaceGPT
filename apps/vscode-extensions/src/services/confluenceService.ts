@@ -30,12 +30,12 @@ interface SyncProgress {
 
 export class ConfluenceService {
   private worker: Worker | null = null;
-  private webviewView: vscode.WebviewView;
+  private webviewView?: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private syncProgress: SyncProgress | null = null;
 
   constructor(
-    webviewView: vscode.WebviewView,
+    webviewView: vscode.WebviewView | undefined,
     context: vscode.ExtensionContext
   ) {
     this.webviewView = webviewView;
@@ -159,7 +159,7 @@ export class ConfluenceService {
         switch (message.type) {
           case WORKER_STATUS.PROCESSING:
             // Update progress in the webview
-            this.webviewView.webview.postMessage({
+            this.webviewView?.webview.postMessage({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_IN_PROGRESS,
               source: 'confluence',
               progress: message.progress,
@@ -185,7 +185,7 @@ export class ConfluenceService {
 
           case WORKER_STATUS.ERROR:
             console.error(`Worker error: ${message.message}`);
-            this.webviewView.webview.postMessage({
+            this.webviewView?.webview.postMessage({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
               message: message.message,
             });
@@ -197,7 +197,7 @@ export class ConfluenceService {
             );
             // Notify the webview that sync is complete
             const lastSyncTime = new Date().toISOString();
-            this.webviewView.webview.postMessage({
+            this.webviewView?.webview.postMessage({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
               source: 'confluence',
               pagesCount: message.pages.length,
@@ -227,7 +227,7 @@ export class ConfluenceService {
       // Handle worker errors
       this.worker.on('error', (error) => {
         console.error('Worker error:', error);
-        this.webviewView.webview.postMessage({
+        this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
           message: error.message,
         });
@@ -236,7 +236,7 @@ export class ConfluenceService {
 
     } catch (error) {
       console.error('Error starting worker:', error);
-      this.webviewView.webview.postMessage({
+      this.webviewView?.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });

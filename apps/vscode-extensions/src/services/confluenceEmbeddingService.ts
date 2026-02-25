@@ -13,12 +13,12 @@ import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 export class EmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
-  private webviewView: vscode.WebviewView;
+  private webviewView?: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private embeddingProgress?: EmbeddingProgress;
 
   constructor(
-    webviewView: vscode.WebviewView,
+    webviewView: vscode.WebviewView | undefined,
     context: vscode.ExtensionContext
   ) {
     this.webviewView = webviewView;
@@ -196,7 +196,7 @@ export class EmbeddingService {
 
   private handleError(error: unknown) {
     console.error('Error starting embedding process:', error);
-    this.webviewView.webview.postMessage({
+    this.webviewView?.webview.postMessage({
       type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
@@ -208,7 +208,7 @@ export class EmbeddingService {
 
     switch (message.type) {
       case WORKER_STATUS.PROCESSING:
-        this.webviewView.webview.postMessage({
+        this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS,
           progress: message.progress,
           current: message.current,
@@ -219,7 +219,7 @@ export class EmbeddingService {
 
       case WORKER_STATUS.ERROR:
         console.error(`Worker error: ${message.message}`);
-        this.webviewView.webview.postMessage({
+        this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
           message: message.message,
         });
@@ -227,7 +227,7 @@ export class EmbeddingService {
 
       case WORKER_STATUS.COMPLETED:
         console.log('Embedding creation complete');
-        this.webviewView.webview.postMessage({
+        this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
         });
         await this.saveEmbeddingProgress(message);
