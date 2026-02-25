@@ -185,6 +185,11 @@ const ConfluenceSettings: React.FC = () => {
     handleConfluenceActions.startOAuth(vscode);
   };
 
+  const cancelOAuth = () => {
+    handleConfluenceActions.cancelOAuth(vscode);
+    // State will be updated via the response from extension
+  };
+
   const disconnect = () => {
     handleConfluenceActions.disconnect(vscode);
   };
@@ -308,6 +313,25 @@ const ConfluenceSettings: React.FC = () => {
                   <>🔗 Connect to Confluence</>
                 )}
               </button>
+              {confluenceConfig?.isConnecting && (
+                <button
+                  onClick={cancelOAuth}
+                  className='secondary-button'
+                  style={{
+                    width: '100%',
+                    marginTop: '8px',
+                    padding: '8px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'transparent',
+                    border: '1px solid var(--vscode-button-background)',
+                    color: 'var(--vscode-button-foreground)',
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           )}
 

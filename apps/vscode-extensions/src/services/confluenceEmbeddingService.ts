@@ -13,6 +13,8 @@ import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 export class EmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
+  private searchWorker: ChildProcess | null = null;
+  private searchWorkerReady: boolean = false;
   private webviewView?: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private embeddingProgress?: EmbeddingProgress;
@@ -41,6 +43,121 @@ export class EmbeddingService {
     this.embeddingProgress = progress;
   }
 
+  /**
+   * Eagerly initialize the search worker in the background.
+   * Call this on extension activation so the first query is fast.
+   */
+  public eagerInit(): void {
+    // Fire-and-forget: spawn the worker in the background
+    this.ensureSearchWorker().catch((err) => {
+      console.warn('EmbeddingService: Eager init failed (will retry on first search):', err);
+    });
+  }
+
+  // ── Persistent Search Worker Management ────────────────────────────
+
+  /**
+   * Lazily spawns a persistent search worker and initializes it.
+   * The worker stays alive across queries — no more per-query model init.
+   */
+  private async ensureSearchWorker(): Promise<void> {
+    if (this.searchWorker && this.searchWorkerReady) {
+      return; // Already running and ready
+    }
+
+    // Kill any stale worker
+    this.stopSearchWorker();
+
+    const { embeddingDirPath, processPath } =
+      await this.getConfluenceMDAndEmbeddingPath('searchProcess.js');
+
+    this.searchWorker = fork(processPath, [], {
+      execArgv: ['--max-old-space-size=4096'],
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+    });
+
+    // Handle unexpected exits — mark as not ready so next search re-spawns
+    this.searchWorker.on('exit', (code, signal) => {
+      console.log(`Search worker exited (code=${code}, signal=${signal})`);
+      this.searchWorker = null;
+      this.searchWorkerReady = false;
+    });
+
+    this.searchWorker.on('error', (error) => {
+      console.error('Search worker error:', error);
+      this.searchWorker = null;
+      this.searchWorkerReady = false;
+    });
+
+    // Send init message and wait for 'ready'
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Search worker init timeout after 30 seconds'));
+        this.stopSearchWorker();
+      }, 30000);
+
+      const onMessage = (message: any) => {
+        if (message.type === 'ready') {
+          clearTimeout(timeout);
+          this.searchWorkerReady = true;
+          resolve();
+        } else if (message.type === 'error') {
+          clearTimeout(timeout);
+          reject(new Error(message.message || 'Search worker init error'));
+        }
+        // Remove this one-time listener; searchEmbeddings will set its own
+        this.searchWorker?.removeListener('message', onMessage);
+      };
+
+      this.searchWorker!.on('message', onMessage);
+      this.searchWorker!.send({ type: 'init', embeddingDirPath });
+    });
+
+    console.log('Search worker initialized and ready.');
+  }
+
+  private stopSearchWorker(): void {
+    if (this.searchWorker) {
+      this.searchWorker.kill();
+      this.searchWorker = null;
+      this.searchWorkerReady = false;
+    }
+  }
+
+  /**
+   * Tell the persistent search worker to reload embeddings from disk.
+   * Called after embedding creation completes.
+   */
+  private async reloadSearchWorkerEmbeddings(): Promise<void> {
+    if (!this.searchWorker || !this.searchWorkerReady) {
+      return; // Worker not running; next search will load fresh data
+    }
+
+    const { embeddingDirPath } =
+      await this.getConfluenceMDAndEmbeddingPath('searchProcess.js');
+
+    return new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        console.warn('Search worker reload timeout, will reload on next search.');
+        resolve();
+      }, 15000);
+
+      const onMessage = (message: any) => {
+        if (message.type === 'reloaded') {
+          clearTimeout(timeout);
+          console.log('Search worker embeddings reloaded.');
+          resolve();
+        }
+        this.searchWorker?.removeListener('message', onMessage);
+      };
+
+      this.searchWorker!.on('message', onMessage);
+      this.searchWorker!.send({ type: 'reload', embeddingDirPath });
+    });
+  }
+
+  // ── Public API ─────────────────────────────────────────────────────
+
   public async createEmbeddings(
     config: EmbeddingConfig,
     resume: boolean = false
@@ -66,7 +183,6 @@ export class EmbeddingService {
           workerData: JSON.stringify(workerData),
         },
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-        execArgv: ['--inspect=9229'], // Enable debugging on port 9229
       });
 
       // Handle messages from the process
@@ -86,90 +202,35 @@ export class EmbeddingService {
     query: string
   ): Promise<EmbeddingSearchResult[]> {
     try {
-      const { embeddingDirPath, processPath } =
-        await this.getConfluenceMDAndEmbeddingPath('searchProcess.js');
-
-      const workerData = {
-        query,
-        embeddingDirPath,
-      };
-
-      const searchProcess = fork(processPath, [], {
-        env: {
-          workerData: JSON.stringify(workerData),
-        },
-        execArgv: ['--max-old-space-size=4096', '--inspect=9229'],
-        stdio: ['pipe', 'pipe', 'pipe', 'ipc']
-      });
+      // Ensure the persistent search worker is running
+      await this.ensureSearchWorker();
 
       return new Promise((resolve, reject) => {
-        let isResolved = false;
-
-        // Set up timeout
         const timeout = setTimeout(() => {
-          if (!isResolved) {
-            isResolved = true;
-            console.error('Search process timeout');
-            searchProcess.kill();
-            reject(new Error('Search process timeout after 30 seconds'));
-          }
-        }, 30000); // 30 second timeout
+          console.error('Search timeout');
+          reject(new Error('Search timeout after 30 seconds'));
+        }, 30000);
 
-        searchProcess.on('message', (message: EmbeddingSearchMessage) => {
-          if (isResolved) return;
-
+        const onMessage = (message: EmbeddingSearchMessage) => {
           clearTimeout(timeout);
-          isResolved = true;
+          this.searchWorker?.removeListener('message', onMessage);
 
           if (message.type === 'results') {
             console.log(`Search completed with ${message.data?.length || 0} results`);
             resolve(message.data || []);
           } else if (message.type === 'error') {
-            console.error('Search process returned error:', message.message);
+            console.error('Search error:', message.message);
             reject(new Error(message.message || 'Unknown error'));
           }
-          searchProcess.kill();
-        });
+        };
 
-        searchProcess.on('error', (error) => {
-          if (isResolved) return;
-
-          clearTimeout(timeout);
-          isResolved = true;
-          console.error('Search process error:', error);
-          reject(error);
-          searchProcess.kill();
-        });
-
-        searchProcess.on('exit', (code, signal) => {
-          if (isResolved) return;
-
-          clearTimeout(timeout);
-          isResolved = true;
-
-          if (code !== 0) {
-            console.error(`Search process exited with code ${code}, signal ${signal}`);
-            reject(new Error(`Search process exited with code ${code}`));
-          } else {
-            // Process exited normally but didn't send a message
-            console.warn('Search process exited without sending results');
-            resolve([]);
-          }
-        });
-
-        // Log stderr for debugging
-        // searchProcess.stderr?.on('data', (data) => {
-        //   data = data.toString()
-        //   console.error('Search process stderr:', data);
-        // });
-
-        // searchProcess.stdout?.on('data', (data) => {
-        //   data = data.toString()
-        //   console.log('Search process stdout:', data);
-        // });
+        this.searchWorker!.on('message', onMessage);
+        this.searchWorker!.send({ type: 'search', query });
       });
     } catch (error) {
       console.error('Error in embedding search:', error);
+      // If the worker crashed, reset so it re-spawns on next search
+      this.stopSearchWorker();
       throw error;
     }
   }
@@ -194,6 +255,14 @@ export class EmbeddingService {
     }
   }
 
+  /**
+   * Clean up all child processes. Call this on extension deactivation.
+   */
+  public dispose(): void {
+    this.stopEmbeddingProcess();
+    this.stopSearchWorker();
+  }
+
   private handleError(error: unknown) {
     console.error('Error starting embedding process:', error);
     this.webviewView?.webview.postMessage({
@@ -204,8 +273,6 @@ export class EmbeddingService {
   }
 
   private async handleCreateEmbeddingMessage(message: any) {
-    // const message = JSON.parse(data ?? 'null');
-
     switch (message.type) {
       case WORKER_STATUS.PROCESSING:
         this.webviewView?.webview.postMessage({
@@ -231,6 +298,8 @@ export class EmbeddingService {
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
         });
         await this.saveEmbeddingProgress(message);
+        // Notify the search worker to reload embeddings from disk
+        await this.reloadSearchWorkerEmbeddings();
         break;
     }
   }

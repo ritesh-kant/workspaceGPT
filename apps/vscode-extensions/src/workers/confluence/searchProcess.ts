@@ -3,12 +3,7 @@ import path from 'path';
 import { MODEL, SEARCH_CONSTANTS } from '../../../constants';
 import { initializeEmbeddingModel } from '../utils/initializeEmbeddingModel';
 
-let extractor: any;
-
-interface WorkerData {
-  query: string;
-  embeddingDirPath: string;
-}
+// ── Types ──────────────────────────────────────────────────────────────
 
 interface SearchResult {
   text: string;
@@ -20,167 +15,345 @@ interface SearchResult {
   };
 }
 
-interface Metadata {
-  id: number;
+interface CachedEmbedding {
   filename: string;
   text: string;
-  embedding: number[];
   url: string;
+  embeddingOffset: number; // index into the flat Float32Array
 }
 
-let workerData: WorkerData;
-
-const workerDataStr = process.env.workerData;
-workerData = JSON.parse(workerDataStr!);
-const { query, embeddingDirPath } = workerData;
-
-// Calculate cosine similarity between two vectors
-function cosineSimilarity(a: number[], b: number[]): number {
-  const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
-  const normA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
-  const normB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
-  return dotProduct / (normA * normB);
+interface InitMessage {
+  type: 'init';
+  embeddingDirPath: string;
 }
 
-async function searchEmbeddings(): Promise<void> {
-  try {
-    console.log('SearchWorker : Starting searchEmbeddings function...');
+interface SearchMessage {
+  type: 'search';
+  query: string;
+}
 
-    // Check if embeddings exist
-    const indexPath = path.join(embeddingDirPath, 'index.json');
-    console.log('SearchWorker : Checking for index at:', indexPath);
+interface ReloadMessage {
+  type: 'reload';
+  embeddingDirPath: string;
+}
 
-    if (!fs.existsSync(indexPath)) {
-      console.log(`Embedding index not found at: ${indexPath}`);
-      process.send!({
-        type: 'results',
-        data: [],
-      });
-      process.exit(0);
+type WorkerMessage = InitMessage | SearchMessage | ReloadMessage;
+
+// ── State (lives for the lifetime of this process) ─────────────────────
+
+let extractor: any = null;
+let embeddingsMeta: CachedEmbedding[] = [];
+let embeddingsMatrix: Float32Array = new Float32Array(0); // flat array: N embeddings × D dimensions
+let embeddingNorms: Float32Array = new Float32Array(0);   // pre-computed norms
+let dimensions: number = 0;
+let currentEmbeddingDirPath: string = '';
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+function computeNorm(arr: Float32Array, offset: number, dim: number): number {
+  let sum = 0;
+  const end = offset + dim;
+  for (let i = offset; i < end; i++) {
+    sum += arr[i] * arr[i];
+  }
+  return Math.sqrt(sum);
+}
+
+/**
+ * Fast cosine similarity using pre-computed norm for the stored embedding.
+ * Query norm is also pre-computed once per search.
+ */
+function dotProduct(
+  query: Float32Array,
+  matrix: Float32Array,
+  matrixOffset: number,
+  dim: number
+): number {
+  let dot = 0;
+  for (let i = 0; i < dim; i++) {
+    dot += query[i] * matrix[matrixOffset + i];
+  }
+  return dot;
+}
+
+// ── Core Functions ─────────────────────────────────────────────────────
+
+async function initializeModel(embeddingDirPath: string): Promise<void> {
+  if (extractor) {
+    console.log('SearchWorker: Model already initialized, skipping.');
+    return;
+  }
+
+  console.log('SearchWorker: Initializing embedding model...');
+  extractor = await initializeEmbeddingModel(
+    MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
+    embeddingDirPath,
+    (progress: any) => {
+      console.log('SearchWorker: Model load progress:', progress);
     }
+  );
+  console.log('SearchWorker: Model initialization complete.');
 
-    console.log('SearchWorker : Index file found, proceeding with search...');
+  // Model warmup — run a dummy embedding to JIT-compile the ONNX runtime
+  console.log('SearchWorker: Warming up model...');
+  const warmupStart = Date.now();
+  await extractor('warmup', { pooling: 'mean', normalize: true });
+  console.log(`SearchWorker: Model warmup done in ${Date.now() - warmupStart}ms`);
+}
 
-    // Load index data
-    const indexData = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
-    console.log('SearchWorker : Index data loaded:', indexData);
+/**
+ * Try to load from a combined binary file first (fast path).
+ * Falls back to reading individual JSON files (slow path).
+ */
+async function loadAllEmbeddings(embeddingDirPath: string): Promise<void> {
+  console.log('SearchWorker: Loading embeddings...');
+  currentEmbeddingDirPath = embeddingDirPath;
 
-    // Initialize embedding model
-    console.log('SearchWorker : Initializing embedding model...');
-    extractor = await initializeEmbeddingModel(
-      MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
-      embeddingDirPath,
-      (progress: any) => {
-        console.log('SearchWorker : Model download progress:', progress);
+  const combinedPath = path.join(embeddingDirPath, 'embeddings.bin');
+  const combinedMetaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
+
+  // Fast path: combined binary file
+  if (fs.existsSync(combinedPath) && fs.existsSync(combinedMetaPath)) {
+    try {
+      const loadStart = Date.now();
+
+      // Read metadata
+      const metaContent = await fs.promises.readFile(combinedMetaPath, 'utf8');
+      const meta = JSON.parse(metaContent);
+      embeddingsMeta = meta.entries;
+      dimensions = meta.dimensions;
+
+      // Read binary embeddings as Float32Array
+      const buffer = await fs.promises.readFile(combinedPath);
+      embeddingsMatrix = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
+
+      // Pre-compute norms
+      embeddingNorms = new Float32Array(embeddingsMeta.length);
+      for (let i = 0; i < embeddingsMeta.length; i++) {
+        embeddingNorms[i] = computeNorm(embeddingsMatrix, i * dimensions, dimensions);
       }
-    );
-    console.log('SearchWorker : Model initialization complete');
 
-    // Create embedding for query
-    console.log('SearchWorker : Creating embedding for query:', query);
-    const queryEmbedding = await createEmbeddingForText(query);
-    console.log(
-      'SearchWorker : Query embedding created, length:',
-      queryEmbedding.length
-    );
+      console.log(`SearchWorker: Loaded ${embeddingsMeta.length} embeddings from binary in ${Date.now() - loadStart}ms`);
+      return;
+    } catch (err) {
+      console.warn('SearchWorker: Failed to load binary embeddings, falling back to JSON:', err);
+    }
+  }
 
-    // Load all embeddings and calculate similarities
-    console.log(
-      'SearchWorker : Loading embeddings and calculating similarities...'
-    );
-    const similarities: Array<{ id: string; score: number }> = [];
+  // Slow path: individual JSON files
+  await loadFromJsonFiles(embeddingDirPath);
+}
 
-    // Get all json files except index.json
-    const files = fs.readdirSync(embeddingDirPath)
-      .filter(f => f.endsWith('.json') && f !== 'index.json');
+async function loadFromJsonFiles(embeddingDirPath: string): Promise<void> {
+  const indexPath = path.join(embeddingDirPath, 'index.json');
+  if (!fs.existsSync(indexPath)) {
+    console.log('SearchWorker: No index.json found, cache is empty.');
+    embeddingsMeta = [];
+    embeddingsMatrix = new Float32Array(0);
+    embeddingNorms = new Float32Array(0);
+    dimensions = 0;
+    return;
+  }
 
-    for (const file of files) {
-      const metadataPath = path.join(embeddingDirPath, file);
+  const loadStart = Date.now();
 
+  // Get all json files except index.json and meta files
+  const files = fs.readdirSync(embeddingDirPath)
+    .filter(f => f.endsWith('.json') && f !== 'index.json' && f !== 'embeddings_meta.json');
+
+  // Read all files in parallel
+  const results = await Promise.all(
+    files.map(async (file) => {
       try {
-        const metadata: Metadata = JSON.parse(
-          fs.readFileSync(metadataPath, 'utf8')
-        );
-        const similarity = cosineSimilarity(queryEmbedding, metadata.embedding);
-        similarities.push({ id: file.replace('.json', ''), score: similarity });
-      } catch (fileError) {
-        continue;
+        const filePath = path.join(embeddingDirPath, file);
+        const content = await fs.promises.readFile(filePath, 'utf8');
+        return JSON.parse(content);
+      } catch {
+        return null;
       }
+    })
+  );
+
+  const validResults = results.filter((r): r is any => r !== null && r.embedding);
+
+  if (validResults.length === 0) {
+    embeddingsMeta = [];
+    embeddingsMatrix = new Float32Array(0);
+    embeddingNorms = new Float32Array(0);
+    dimensions = 0;
+    return;
+  }
+
+  // Pack into Float32Array
+  dimensions = validResults[0].embedding.length;
+  embeddingsMatrix = new Float32Array(validResults.length * dimensions);
+  embeddingsMeta = [];
+  embeddingNorms = new Float32Array(validResults.length);
+
+  for (let i = 0; i < validResults.length; i++) {
+    const r = validResults[i];
+    const offset = i * dimensions;
+    const embedding = r.embedding;
+    for (let j = 0; j < dimensions; j++) {
+      embeddingsMatrix[offset + j] = embedding[j];
+    }
+    embeddingsMeta.push({
+      filename: r.filename,
+      text: r.text,
+      url: r.url,
+      embeddingOffset: offset,
+    });
+    embeddingNorms[i] = computeNorm(embeddingsMatrix, offset, dimensions);
+  }
+
+  // Write combined binary for next time (async, don't await)
+  writeCombinedBinaryFile(embeddingDirPath).catch(err =>
+    console.warn('SearchWorker: Failed to write binary cache:', err)
+  );
+
+  console.log(`SearchWorker: Loaded ${embeddingsMeta.length} embeddings from JSON in ${Date.now() - loadStart}ms`);
+}
+
+/**
+ * Write combined binary file for fast loading next time,
+ * then delete individual JSON embedding files.
+ */
+async function writeCombinedBinaryFile(embeddingDirPath: string): Promise<void> {
+  const combinedPath = path.join(embeddingDirPath, 'embeddings.bin');
+  const combinedMetaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
+
+  // Write binary matrix
+  const buffer = Buffer.from(embeddingsMatrix.buffer, embeddingsMatrix.byteOffset, embeddingsMatrix.byteLength);
+  await fs.promises.writeFile(combinedPath, buffer);
+
+  // Write metadata (without embeddings — those are in the binary)
+  const meta = {
+    dimensions,
+    count: embeddingsMeta.length,
+    entries: embeddingsMeta,
+  };
+  await fs.promises.writeFile(combinedMetaPath, JSON.stringify(meta));
+
+  // Clean up individual JSON files — they're now redundant
+  const keepFiles = new Set(['index.json', 'embeddings_meta.json']);
+  const files = await fs.promises.readdir(embeddingDirPath);
+  const jsonFiles = files.filter(f => f.endsWith('.json') && !keepFiles.has(f));
+
+  let deletedCount = 0;
+  await Promise.all(
+    jsonFiles.map(async (file) => {
+      try {
+        await fs.promises.unlink(path.join(embeddingDirPath, file));
+        deletedCount++;
+      } catch { /* ignore */ }
+    })
+  );
+
+  console.log(`SearchWorker: Written combined binary cache. Deleted ${deletedCount} individual JSON files.`);
+}
+
+async function createEmbeddingForText(text: string): Promise<Float32Array> {
+  if (!extractor) {
+    throw new Error('Embedding model not initialized');
+  }
+  const output = await extractor(text, { pooling: 'mean', normalize: true });
+  return new Float32Array(output.data);
+}
+
+async function handleSearch(query: string): Promise<void> {
+  try {
+    if (!extractor) {
+      throw new Error('Model not initialized. Send "init" first.');
     }
 
-    // Sort by similarity score and get top k results
-    console.log('SearchWorker : Found', similarities.length, 'similarities');
-    const k = SEARCH_CONSTANTS.MAX_SEARCH_RESULTS;
-    const topResults = similarities
-      .sort((a, b) => b.score - a.score)
-      .slice(0, k);
-    console.log('SearchWorker : Top results:', topResults);
+    console.log('SearchWorker: Searching for:', query);
 
-    // Load metadata and prepare results
-    console.log('SearchWorker : Loading metadata for top results...');
-    const results = await Promise.all(
-      topResults.map(async ({ id, score }) => {
-        console.log(`SearchWorker : Loading metadata for id: ${id}`);
-        const metadataPath = path.join(embeddingDirPath, `${id}.json`);
-        console.log(`SearchWorker : Metadata path: ${metadataPath}`);
-        const metadata: Metadata = JSON.parse(
-          fs.readFileSync(metadataPath, 'utf8')
-        );
-        console.log(`SearchWorker : Loaded metadata for: ${metadata.filename}`);
-        return {
-          text: metadata.text,
-          score: score,
-          data: {
-            sourceName: 'CONFLUENCE',
-            source: metadata.url,
-            fileName: metadata.filename,
-          },
-        } as SearchResult;
-      })
-    );
-    console.log('SearchWorker : All metadata loaded successfully');
+    // Generate query embedding as Float32Array
+    const queryEmbedding = await createEmbeddingForText(query);
+    let queryNorm = 0;
+    for (let i = 0; i < queryEmbedding.length; i++) {
+      queryNorm += queryEmbedding[i] * queryEmbedding[i];
+    }
+    queryNorm = Math.sqrt(queryNorm);
 
-    console.log(
-      'SearchWorker : Sending results back to parent:',
-      results.length,
-      'results'
-    );
-    // Send results back to parent process via IPC
-    process.send!({
-      type: 'results',
-      data: results,
-    });
-    console.log('SearchWorker : Results sent, exiting...');
-    // process.exit(results.length);
+    // Compute similarities — pure typed-array math, no object allocation
+    const count = embeddingsMeta.length;
+    const scores = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const dot = dotProduct(queryEmbedding, embeddingsMatrix, i * dimensions, dimensions);
+      const denom = queryNorm * embeddingNorms[i];
+      scores[i] = denom === 0 ? 0 : dot / denom;
+    }
+
+    // Find top k results using partial sort
+    const k = Math.min(SEARCH_CONSTANTS.MAX_SEARCH_RESULTS, count);
+    const indices = Array.from({ length: count }, (_, i) => i);
+    indices.sort((a, b) => scores[b] - scores[a]);
+    const topIndices = indices.slice(0, k);
+
+    // Build results directly from cache
+    const results: SearchResult[] = topIndices.map((idx) => ({
+      text: embeddingsMeta[idx].text,
+      score: scores[idx],
+      data: {
+        sourceName: 'CONFLUENCE',
+        source: embeddingsMeta[idx].url,
+        fileName: embeddingsMeta[idx].filename,
+      },
+    }));
+
+    console.log(`SearchWorker: Returning ${results.length} results.`);
+    process.send!({ type: 'results', data: results });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-
-    // Send error back to parent process via IPC
-    process.send!({
-      type: 'error',
-      message: errorMessage,
-    });
-    process.exit(1);
+    console.error('SearchWorker: Search error:', errorMessage);
+    process.send!({ type: 'error', message: errorMessage });
   }
 }
 
-// Create embedding using Xenova/Transformers
-async function createEmbeddingForText(text: string): Promise<number[]> {
-  try {
-    // console.log(`SearchWorker : Generating embedding for text of length ${text.length}...`);
+// ── Message Handler (persistent worker loop) ───────────────────────────
 
-    if (!extractor) {
-      throw new Error('Embedding model not initialized');
+process.on('message', async (msg: WorkerMessage) => {
+  switch (msg.type) {
+    case 'init': {
+      try {
+        await initializeModel(msg.embeddingDirPath);
+        await loadAllEmbeddings(msg.embeddingDirPath);
+        process.send!({ type: 'ready' });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        process.send!({ type: 'error', message: `Init failed: ${errorMessage}` });
+      }
+      break;
     }
 
-    const output = await extractor(text, { pooling: 'mean', normalize: true });
+    case 'search': {
+      await handleSearch(msg.query);
+      break;
+    }
 
-    return Array.from(output.data);
-  } catch (error) {
-    console.error('Error creating embedding:', error);
-    throw error;
+    case 'reload': {
+      try {
+        await loadAllEmbeddings(msg.embeddingDirPath || currentEmbeddingDirPath);
+        process.send!({ type: 'reloaded' });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        process.send!({ type: 'error', message: `Reload failed: ${errorMessage}` });
+      }
+      break;
+    }
   }
-}
+});
 
-// Start processing
-searchEmbeddings();
+// Handle graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SearchWorker: Received SIGTERM, shutting down.');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SearchWorker: Received SIGINT, shutting down.');
+  process.exit(0);
+});
+
+console.log('SearchWorker: Process started, waiting for messages...');

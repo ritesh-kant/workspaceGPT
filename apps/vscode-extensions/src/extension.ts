@@ -3,9 +3,11 @@ import { WebViewProvider } from './webViewprovider';
 import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { AnalyticsService } from './services/analyticsService';
 import { ConfluenceSyncScheduler } from './services/confluenceSyncScheduler';
+import { EmbeddingService } from './services/confluenceEmbeddingService';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
+let embeddingService: EmbeddingService;
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize analytics service
@@ -15,6 +17,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize and start background sync scheduler
   syncScheduler = new ConfluenceSyncScheduler(context);
   syncScheduler.start();
+
+  // Eagerly initialize the search worker so the first chat query is fast
+  embeddingService = new EmbeddingService(undefined, context);
+  embeddingService.eagerInit();
 
   // Register WebViewProvider
   const webViewProvider = new WebViewProvider(context.extensionUri, context);
@@ -101,6 +107,11 @@ export async function deactivate() {
   // Stop background scheduler
   if (syncScheduler) {
     syncScheduler.stop();
+  }
+
+  // Clean up search worker process
+  if (embeddingService) {
+    embeddingService.dispose();
   }
 
   // Flush analytics before deactivating

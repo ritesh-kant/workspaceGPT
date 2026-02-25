@@ -94,15 +94,92 @@ function extractFrontmatter(markdownContent: string): {
   }
 }
 
+/**
+ * Load the existing binary meta file to check which files have already been embedded.
+ * Returns a Map of filename -> true for quick lookup.
+ */
+function loadExistingEmbeddingsMeta(): Map<string, boolean> {
+  const metaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
+  const existing = new Map<string, boolean>();
+
+  try {
+    if (fs.existsSync(metaPath)) {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      for (const entry of meta.entries || []) {
+        if (entry.filename) {
+          existing.set(entry.filename, true);
+        }
+      }
+    }
+  } catch {
+    // Ignore errors — treat as no existing embeddings
+  }
+
+  return existing;
+}
+
+/**
+ * Write the combined binary file and delete individual JSON embedding files.
+ */
+async function writeBinaryAndCleanup(
+  allEmbeddings: Array<{ filename: string; text: string; url: string; embedding: number[] }>
+): Promise<void> {
+  if (allEmbeddings.length === 0) return;
+
+  const dimensions = allEmbeddings[0].embedding.length;
+
+  // Pack all embeddings into a flat Float32Array
+  const matrix = new Float32Array(allEmbeddings.length * dimensions);
+  const entries: Array<{ filename: string; text: string; url: string; embeddingOffset: number }> = [];
+
+  for (let i = 0; i < allEmbeddings.length; i++) {
+    const offset = i * dimensions;
+    const emb = allEmbeddings[i].embedding;
+    for (let j = 0; j < dimensions; j++) {
+      matrix[offset + j] = emb[j];
+    }
+    entries.push({
+      filename: allEmbeddings[i].filename,
+      text: allEmbeddings[i].text,
+      url: allEmbeddings[i].url,
+      embeddingOffset: offset,
+    });
+  }
+
+  // Write binary matrix
+  const binPath = path.join(embeddingDirPath, 'embeddings.bin');
+  const buffer = Buffer.from(matrix.buffer, matrix.byteOffset, matrix.byteLength);
+  await fs.promises.writeFile(binPath, buffer);
+
+  // Write metadata
+  const metaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
+  await fs.promises.writeFile(metaPath, JSON.stringify({ dimensions, count: entries.length, entries }));
+
+  // Delete individual JSON files
+  const keepFiles = new Set(['index.json', 'embeddings_meta.json']);
+  const files = await fs.promises.readdir(embeddingDirPath);
+  const jsonFiles = files.filter(f => f.endsWith('.json') && !keepFiles.has(f));
+
+  let deletedCount = 0;
+  await Promise.all(
+    jsonFiles.map(async (file) => {
+      try {
+        await fs.promises.unlink(path.join(embeddingDirPath, file));
+        deletedCount++;
+      } catch { /* ignore */ }
+    })
+  );
+
+  console.log(`Written binary cache (${entries.length} embeddings). Deleted ${deletedCount} JSON files.`);
+}
+
 async function createEmbeddings(): Promise<void> {
   try {
     // Initialize embedding model first
-    // console.log('Confluence: Initializing embedding model...');
     extractor = await initializeEmbeddingModel(
       MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
       embeddingDirPath,
       (progress: any) => {
-        // console.log('Model download progress:', progress);
         process.send!({
           type: WORKER_STATUS.PROCESSING,
           progress: progress.progress || 0,
@@ -110,7 +187,6 @@ async function createEmbeddings(): Promise<void> {
         });
       }
     );
-    // console.log('Confluence: Model initialization complete');
 
     const files = fs
       .readdirSync(mdDirPath)
@@ -122,6 +198,9 @@ async function createEmbeddings(): Promise<void> {
       fs.mkdirSync(embeddingDirPath, { recursive: true });
     }
 
+    // Load existing embeddings from binary meta for incremental sync
+    const existingEmbeddings = loadExistingEmbeddingsMeta();
+
     // If resuming, find the starting point
     let startIndex = 0;
     if (resume && lastProcessedFile) {
@@ -131,23 +210,71 @@ async function createEmbeddings(): Promise<void> {
       }
     }
 
+    // Collect all embeddings (existing from binary meta + newly created)
+    // We'll rebuild the full binary at the end
+    const allEmbeddings: Array<{ filename: string; text: string; url: string; embedding: number[] }> = [];
+
+    // Load existing embeddings from binary if available (to preserve unchanged ones)
+    const binPath = path.join(embeddingDirPath, 'embeddings.bin');
+    const metaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
+    let existingData: Map<string, { text: string; url: string; embedding: number[] }> = new Map();
+
+    if (fs.existsSync(binPath) && fs.existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        const buffer = fs.readFileSync(binPath);
+        const matrix = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
+        const dim = meta.dimensions;
+
+        for (const entry of meta.entries) {
+          const offset = entry.embeddingOffset;
+          const embedding = Array.from(matrix.slice(offset, offset + dim));
+          existingData.set(entry.filename, {
+            text: entry.text,
+            url: entry.url,
+            embedding,
+          });
+        }
+      } catch {
+        existingData = new Map();
+      }
+    }
+
     // Process each file
     for (let i = startIndex; i < files.length; i++) {
       const file = files[i];
       const filePath = path.join(mdDirPath, file);
-      
+
       // We will save embeddings using a hash of the filename to support incremental updates
       const fileHash = crypto.createHash('sha256').update(file).digest('hex');
       const embeddingFilePath = path.join(embeddingDirPath, `${fileHash}.json`);
 
-      // Check for incremental embedding skipping
+      // Check for incremental embedding skipping:
+      // 1. Check individual JSON file (legacy)
+      // 2. Check binary meta (new)
+      const markdownContent = fs.readFileSync(filePath, 'utf8');
+      const { content: cleanContent, frontmatter } = extractFrontmatter(markdownContent);
+      const resolvedFilename = frontmatter?.fileName ?? file;
+
+      // Check if we can skip this file (already embedded and unchanged)
       if (fs.existsSync(embeddingFilePath)) {
+        // Legacy: individual JSON file exists
         const mdStat = fs.statSync(filePath);
         const embedStat = fs.statSync(embeddingFilePath);
-        
-        // If the embedding json is newer than the markdown file, we can safely skip generating a new embedding
+
         if (embedStat.mtimeMs > mdStat.mtimeMs) {
-          console.log(`Skipping unchanged file: ${file}`);
+          console.log(`Skipping unchanged file (JSON): ${file}`);
+          // Read existing embedding from JSON to include in the binary
+          try {
+            const existing = JSON.parse(fs.readFileSync(embeddingFilePath, 'utf8'));
+            allEmbeddings.push({
+              filename: existing.filename,
+              text: existing.text,
+              url: existing.url,
+              embedding: existing.embedding,
+            });
+          } catch { /* skip if can't read */ }
+
           const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
           process.send!({
             type: WORKER_STATUS.PROCESSING,
@@ -158,13 +285,27 @@ async function createEmbeddings(): Promise<void> {
           });
           continue;
         }
+      } else if (existingData.has(resolvedFilename)) {
+        // New: check binary meta — file was already embedded
+        console.log(`Skipping unchanged file (binary): ${file}`);
+        const existing = existingData.get(resolvedFilename)!;
+        allEmbeddings.push({
+          filename: resolvedFilename,
+          text: existing.text,
+          url: existing.url,
+          embedding: existing.embedding,
+        });
+
+        const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
+        process.send!({
+          type: WORKER_STATUS.PROCESSING,
+          progress: ((currentProgress / total) * 100).toFixed(1),
+          current: currentProgress,
+          total,
+          lastProcessedFile: file,
+        });
+        continue;
       }
-
-      const markdownContent = fs.readFileSync(filePath, 'utf8');
-
-      // Extract frontmatter metadata if present
-      const { content: cleanContent, frontmatter } =
-        extractFrontmatter(markdownContent);
 
       // Log metadata if found
       if (frontmatter && Object.keys(frontmatter).length > 0) {
@@ -177,23 +318,16 @@ async function createEmbeddings(): Promise<void> {
         .replace(/<[^>]*>/g, '')
         .trim();
 
-      // Create embedding for the content using Xenova/all-MiniLM-L6-v2
+      // Create embedding for the content
       const embedding = await createEmbeddingForText(content);
 
-      // Store metadata with embedding (no longer using 'i' as id explicitly, as it changes the file hash order)
-      const metadata: Metadata = {
-        id: i, // Keep id for backwards compatibility if needed, but the filename hash is the real ID now
-        filename: frontmatter?.fileName ?? file,
+      // Collect for binary write
+      allEmbeddings.push({
+        filename: resolvedFilename,
         text: content,
-        embedding: embedding,
-        url: frontmatter?.url,
-      };
-
-      // Save metadata to hashed filename
-      fs.writeFileSync(
-        embeddingFilePath,
-        JSON.stringify(metadata)
-      );
+        url: frontmatter?.url ?? '',
+        embedding,
+      });
 
       // Report progress
       const currentProgress =
@@ -217,6 +351,9 @@ async function createEmbeddings(): Promise<void> {
         metadataFields: ['url', 'frontmatter'],
       })
     );
+
+    // Write combined binary and clean up individual JSONs
+    await writeBinaryAndCleanup(allEmbeddings);
 
     // Complete
     process.send!({ type: WORKER_STATUS.COMPLETED, total: total });

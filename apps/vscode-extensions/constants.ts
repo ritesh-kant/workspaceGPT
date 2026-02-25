@@ -35,6 +35,7 @@ export const MESSAGE_TYPES = {
   RESUME_CONFLUENCE_SYNC: 'resume-confluence-sync',
 
   START_CONFLUENCE_OAUTH: 'start-confluence-oauth',
+  CANCEL_CONFLUENCE_OAUTH: 'cancel-confluence-oauth',
   CONFLUENCE_OAUTH_SUCCESS: 'confluence-oauth-success',
   CONFLUENCE_OAUTH_ERROR: 'confluence-oauth-error',
   DISCONNECT_CONFLUENCE: 'disconnect-confluence',

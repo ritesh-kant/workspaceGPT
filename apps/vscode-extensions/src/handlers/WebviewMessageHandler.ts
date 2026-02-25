@@ -75,6 +75,10 @@ export class WebviewMessageHandler {
         this.analyticsService.trackEvent('confluence_disconnected');
         await this.handleDisconnectConfluence();
         break;
+      case MESSAGE_TYPES.CANCEL_CONFLUENCE_OAUTH:
+        this.analyticsService.trackEvent('confluence_oauth_cancelled');
+        await this.handleCancelConfluenceOAuth();
+        break;
       case MESSAGE_TYPES.FETCH_CONFLUENCE_SPACES:
         await this.handleFetchConfluenceSpaces();
         break;
@@ -223,6 +227,19 @@ export class WebviewMessageHandler {
         type: MESSAGE_TYPES.CONFLUENCE_OAUTH_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private async handleCancelConfluenceOAuth(): Promise<void> {
+    try {
+      await this.confluenceAuthService.cancelOAuthFlow();
+      // Notify the webview about the cancellation to reset its state
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.CONFLUENCE_OAUTH_ERROR,
+        message: 'Authentication cancelled.',
+      });
+    } catch (error) {
+      console.error('Error cancelling Confluence OAuth:', error);
     }
   }
 

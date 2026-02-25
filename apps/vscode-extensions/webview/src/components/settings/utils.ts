@@ -28,6 +28,12 @@ export const handleConfluenceActions = {
       type: MESSAGE_TYPES.START_CONFLUENCE_OAUTH,
     });
   },
+ 
+  cancelOAuth: (vscode: ReturnType<typeof VSCodeAPI>) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.CANCEL_CONFLUENCE_OAUTH,
+    });
+  },
 
   disconnect: (vscode: ReturnType<typeof VSCodeAPI>) => {
     vscode.postMessage({

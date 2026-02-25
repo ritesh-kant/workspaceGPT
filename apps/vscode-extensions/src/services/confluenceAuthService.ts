@@ -27,6 +27,7 @@ export interface ConfluenceSpace {
 export class ConfluenceAuthService {
   private context: vscode.ExtensionContext;
   private server: http.Server | null = null;
+  private pendingReject: ((reason?: any) => void) | null = null;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -104,9 +105,12 @@ export class ConfluenceAuthService {
     return new Promise((resolve, reject) => {
       // Set a timeout (5 minutes)
       const timeout = setTimeout(() => {
+        this.clearPendingReject();
         this.shutdownServer();
         reject(new Error('OAuth authentication timed out. Please try again.'));
       }, 5 * 60 * 1000);
+
+      this.pendingReject = reject;
 
       this.server = http.createServer((req, res) => {
         const url = new URL(req.url || '', `http://127.0.0.1:${ATLASSIAN_OAUTH.CALLBACK_PORT}`);
@@ -120,6 +124,7 @@ export class ConfluenceAuthService {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml(error));
             clearTimeout(timeout);
+            this.clearPendingReject();
             this.shutdownServer();
             reject(new Error(`Atlassian authorization error: ${error}`));
             return;
@@ -129,6 +134,7 @@ export class ConfluenceAuthService {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml('State mismatch - possible CSRF attack'));
             clearTimeout(timeout);
+            this.clearPendingReject();
             this.shutdownServer();
             reject(new Error('OAuth state mismatch. Please try again.'));
             return;
@@ -138,6 +144,7 @@ export class ConfluenceAuthService {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml('No authorization code received'));
             clearTimeout(timeout);
+            this.clearPendingReject();
             this.shutdownServer();
             reject(new Error('No authorization code received from Atlassian.'));
             return;
@@ -147,6 +154,7 @@ export class ConfluenceAuthService {
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(this.getSuccessHtml());
           clearTimeout(timeout);
+          this.clearPendingReject();
           this.shutdownServer();
           resolve(code);
         } else {
@@ -163,6 +171,7 @@ export class ConfluenceAuthService {
 
       this.server.on('error', (err) => {
         clearTimeout(timeout);
+        this.clearPendingReject();
         reject(new Error(`Failed to start OAuth callback server: ${err.message}`));
       });
     });
@@ -348,6 +357,17 @@ export class ConfluenceAuthService {
   }
 
   /**
+   * Cancel any pending OAuth flow
+   */
+  async cancelOAuthFlow(): Promise<void> {
+    if (this.pendingReject) {
+      this.pendingReject(new Error('Authentication cancelled.'));
+      this.clearPendingReject();
+    }
+    this.shutdownServer();
+  }
+
+  /**
    * Check if user is currently authenticated
    */
   async isAuthenticated(): Promise<boolean> {
@@ -386,6 +406,10 @@ export class ConfluenceAuthService {
       this.server.close();
       this.server = null;
     }
+  }
+
+  private clearPendingReject(): void {
+    this.pendingReject = null;
   }
 
   private generateRandomState(): string {
