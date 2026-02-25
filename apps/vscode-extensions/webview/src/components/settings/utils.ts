@@ -49,11 +49,12 @@ export const handleConfluenceActions = {
     });
   },
 
-  startSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
+  startSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any, forceFull?: boolean) => {
     vscode.postMessage({
       type: MESSAGE_TYPES.START_CONFLUENCE_SYNC,
       section: 'confluence',
       config,
+      forceFull,
     });
   },
 

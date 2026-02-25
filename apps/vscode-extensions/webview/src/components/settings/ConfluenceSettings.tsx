@@ -203,14 +203,14 @@ const ConfluenceSettings: React.FC = () => {
     handleConfluenceActions.checkConnection(vscode, config);
   };
 
-  const startSync = () => {
+  const startSync = (forceFull: boolean = false) => {
     batchUpdateConfig('confluence', {
       isSyncing: true,
       confluenceSyncProgress: 0,
-      statusMessage: 'Starting sync process...',
+      statusMessage: forceFull ? 'Starting full sync process...' : 'Starting sync process...',
       messageType: 'success',
     });
-    handleConfluenceActions.startSync(vscode, config);
+    handleConfluenceActions.startSync(vscode, config, forceFull);
     clearStatusMessageAfterDelay(
       'confluence',
       'statusMessage',
@@ -463,13 +463,13 @@ const ConfluenceSettings: React.FC = () => {
                 <>
                   <div className='button-group'>
                     <button onClick={checkConnection}>Check Connection</button>
-                    {confluenceConfig.isSyncing ? (
+                    {(confluenceConfig.isSyncing || confluenceConfig.isIndexing) ? (
                       <button
                         onClick={stopSync}
                         className='stop-sync-button'
-                        title='Stop sync process'
+                        title='Stop process'
                       >
-                        Stop Sync
+                        {confluenceConfig.isIndexing ? 'Stop Indexing' : 'Stop Sync'}
                       </button>
                     ) : confluenceConfig.canResume ? (
                       <button
@@ -480,54 +480,46 @@ const ConfluenceSettings: React.FC = () => {
                         Resume Sync
                       </button>
                     ) : (
-                      <button onClick={startSync}>Start Sync</button>
+                      <>
+                        <button onClick={() => startSync(false)}>
+                          {confluenceConfig.lastSyncTime ? 'Sync Recent Changes' : 'Start Sync'}
+                        </button>
+                        {confluenceConfig.lastSyncTime && (
+                          <button
+                            onClick={() => startSync(true)}
+                            className='secondary-button'
+                            style={{ background: 'transparent', border: '1px solid var(--vscode-button-background)', color: 'var(--vscode-button-foreground)' }}
+                            title='Forces a complete fetch and reconstruction of the entire Confluence space index.'
+                          >
+                            Force Full Re-Sync
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
 
-                  {/* Last Sync Time */}
-                  {confluenceConfig.lastSyncTime && (
-                    <div className='last-sync-time' style={{ marginTop: '8px', color: '#888', fontSize: '0.95em' }}>
-                      Last Sync: {new Date(confluenceConfig.lastSyncTime).toLocaleString()}
-                    </div>
-                  )}
+                  {/* Sync Status / Last Sync Time / Progress */}
+                  <div className='sync-status-container' style={{ marginTop: '12px' }}>
+                    {(confluenceConfig.isSyncing || confluenceConfig.isIndexing) ? (
+                      <div className='active-sync-indicator' style={{ color: '#4ecca3', fontSize: '0.95em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span className="spinner">🔄</span>
+                        {confluenceConfig.isSyncing
+                          ? `Syncing... (${confluenceConfig.confluenceSyncProgress || 0}%)`
+                          : `Indexing... (${confluenceConfig.confluenceIndexProgress || 0}%)`}
+                      </div>
+                    ) : confluenceConfig.lastSyncTime ? (
+                      <div className='last-sync-time' style={{ color: '#888', fontSize: '0.95em' }}>
+                        Last Sync: {new Date(confluenceConfig.lastSyncTime).toLocaleString()}
+                        <span style={{ marginLeft: '8px', opacity: 0.7 }}>
+                          (Next auto-sync at ~{new Date(new Date(confluenceConfig.lastSyncTime).getTime() + 4 * 60 * 60 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
                 </>
               )}
             </>
           )}
-
-          {/* Progress bars and status messages */}
-          <div className='progress-container'>
-            {confluenceConfig.isSyncing && (
-              <>
-                <div className='progress-bar'>
-                  <div
-                    className='progress-fill'
-                    style={{
-                      width: `${confluenceConfig.confluenceSyncProgress}%`,
-                    }}
-                  />
-                </div>
-                <span className='progress-text'>
-                  Sync Progress: {confluenceConfig.confluenceSyncProgress}%
-                </span>
-              </>
-            )}
-            {confluenceConfig.isIndexing && (
-              <>
-                <div className='progress-bar'>
-                  <div
-                    className='progress-fill'
-                    style={{
-                      width: `${confluenceConfig.confluenceIndexProgress}%`,
-                    }}
-                  />
-                </div>
-                <span className='progress-text'>
-                  Index Progress: {confluenceConfig.confluenceIndexProgress}%
-                </span>
-              </>
-            )}
-          </div>
 
           {confluenceConfig.statusMessage && (
             <div

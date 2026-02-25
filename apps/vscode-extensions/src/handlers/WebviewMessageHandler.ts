@@ -82,7 +82,7 @@ export class WebviewMessageHandler {
         break;
       case MESSAGE_TYPES.START_CONFLUENCE_SYNC:
         this.analyticsService.trackEvent('confluence_sync_started');
-        await this.handleStartConfluenceSync();
+        await this.handleStartConfluenceSync(data.forceFull);
         break;
       case MESSAGE_TYPES.RESUME_CONFLUENCE_SYNC:
         this.analyticsService.trackEvent('confluence_sync_resumed');
@@ -331,8 +331,18 @@ export class WebviewMessageHandler {
     }
   }
 
-  private async handleStartConfluenceSync(): Promise<void> {
+  private async handleStartConfluenceSync(forceFull: boolean = false): Promise<void> {
     try {
+      if (forceFull) {
+        this.confluenceService?.stopSync();
+        await this.confluenceService?.resetSyncProgress();
+        const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+        if (settings?.state?.config?.confluence) {
+          settings.state.config.confluence.lastSyncTime = '';
+          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
+        }
+      }
+
       const confluenceConfig = await this.getConfluenceConfig();
 
       await this.confluenceService?.startSync(confluenceConfig, async () => {
