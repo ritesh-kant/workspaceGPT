@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "WorkspaceGPT is a fully local, privacy-first AI assistant for your development environment. Ask questions about your codebase or integrated Confluence documents — all without sending any data to external servers.",
-  "version": "0.0.68",
+  "version": "0.0.69",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
