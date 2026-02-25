@@ -9,6 +9,15 @@ export const MESSAGE_TYPES = {
   ERROR_CHAT: 'error-chat',
   RESET: 'reset',
 
+  // Chat History
+  SAVE_CHAT_HISTORY: 'save-chat-history',
+  GET_CHAT_HISTORY_LIST: 'get-chat-history-list',
+  GET_CHAT_HISTORY_LIST_RESPONSE: 'get-chat-history-list-response',
+  DELETE_CHAT_HISTORY: 'delete-chat-history',
+  GET_CHAT_SESSION: 'get-chat-session',
+  GET_CHAT_SESSION_RESPONSE: 'get-chat-session-response',
+  SHOW_HISTORY: 'show-history',
+
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',
   CLEAR_GLOBAL_STATE: 'clear-global-state',
@@ -84,6 +93,7 @@ export const EXTENSION = {
   COMMAND_ASK: 'workspacegpt.ask',
   COMMAND_NEW_CHAT: 'workspacegpt.newChat',
   COMMAND_SETTINGS: 'workspacegpt.settings',
+  COMMAND_HISTORY: 'workspacegpt.history',
   VIEW_CONTAINER: 'workspacegpt-sidebar',
 };
 

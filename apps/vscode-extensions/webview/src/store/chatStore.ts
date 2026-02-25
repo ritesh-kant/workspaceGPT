@@ -10,17 +10,29 @@ interface Message {
   isError?: boolean;
 }
 
+interface ChatSessionPreview {
+  id: string;
+  title: string;
+  updatedAt: number;
+}
+
 interface ChatState {
   messages: Message[];
   inputValue: string;
   isLoading: boolean;
   showTips: boolean;
+  currentSessionId: string | null;
+  historyList: ChatSessionPreview[];
+  showHistory: boolean;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
   setInputValue: (value: string) => void;
   setIsLoading: (isLoading: boolean) => void;
   setShowTips: (showTips: boolean) => void;
+  setCurrentSessionId: (id: string | null) => void;
+  setHistoryList: (list: ChatSessionPreview[]) => void;
+  setShowHistory: (show: boolean) => void;
   resetStore: () => void;
 }
 
@@ -49,6 +61,9 @@ export const chatDefaultState = {
   inputValue: '',
   isLoading: false,
   showTips: true,
+  currentSessionId: null,
+  historyList: [],
+  showHistory: false,
 };
 
 export const useChatStore = create<ChatState>()(
@@ -61,6 +76,9 @@ export const useChatStore = create<ChatState>()(
       setInputValue: (inputValue) => set({ inputValue }),
       setIsLoading: (isLoading) => set({ isLoading }),
       setShowTips: (showTips) => set({ showTips }),
+      setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
+      setHistoryList: (historyList) => set({ historyList }),
+      setShowHistory: (showHistory) => set({ showHistory }),
       resetStore: () => {
         const vscode = VSCodeAPI();
         vscode.setState({});

@@ -38,6 +38,14 @@
           "light": "resources/settings-dark.svg",
           "dark": "resources/settings-light.svg"
         }
+      },
+      {
+        "command": "workspacegpt.history",
+        "title": "Chat History",
+        "icon": {
+          "light": "resources/history-dark.svg",
+          "dark": "resources/history-light.svg"
+        }
       }
     ],
     "keybindings": [
@@ -81,9 +89,14 @@
           "group": "navigation@1"
         },
         {
+          "command": "workspacegpt.history",
+          "when": "view == workspacegpt.chatView",
+          "group": "navigation@2"
+        },
+        {
           "command": "workspacegpt.settings",
           "when": "view == workspacegpt.chatView",
-          "group": "navigation@1"
+          "group": "navigation@3"
         }
       ]
     },

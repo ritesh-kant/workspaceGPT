@@ -13,6 +13,7 @@ import { CodebaseService } from '../services/codebaseService';
 import { EmbeddingConfig, CodebaseConfig } from '../types/types';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
 import { AnalyticsService } from '../services/analyticsService';
+import { HistoryService } from '../services/historyService';
 import path from 'path';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
@@ -24,6 +25,7 @@ export class WebviewMessageHandler {
   private embeddingService?: EmbeddingService;
   private codebaseService?: CodebaseService;
   private analyticsService: AnalyticsService;
+  private historyService: HistoryService;
 
   private codebaseConfig?: CodebaseConfig;
 
@@ -32,6 +34,7 @@ export class WebviewMessageHandler {
     private readonly context: vscode.ExtensionContext
   ) {
     this.analyticsService = new AnalyticsService(context);
+    this.historyService = new HistoryService(context);
 
     this.confluenceService = new ConfluenceService(
       this.webviewView,
@@ -140,6 +143,20 @@ export class WebviewMessageHandler {
       case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS:
         this.analyticsService.trackEvent('models_fetched');
         await this.handleFetchAvailableModels(data);
+        break;
+
+      // Chat History
+      case MESSAGE_TYPES.SAVE_CHAT_HISTORY:
+        await this.handleSaveChatHistory(data);
+        break;
+      case MESSAGE_TYPES.GET_CHAT_HISTORY_LIST:
+        await this.handleGetChatHistoryList();
+        break;
+      case MESSAGE_TYPES.GET_CHAT_SESSION:
+        await this.handleGetChatSession(data);
+        break;
+      case MESSAGE_TYPES.DELETE_CHAT_HISTORY:
+        await this.handleDeleteChatHistory(data);
         break;
     }
   }
@@ -711,6 +728,51 @@ export class WebviewMessageHandler {
         type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  // --- Chat History Handlers ---
+
+  private async handleSaveChatHistory(data: any): Promise<void> {
+    try {
+      await this.historyService.saveHistory(data.sessionId, data.messages);
+    } catch (error) {
+      console.error('Error saving chat history:', error);
+    }
+  }
+
+  private async handleGetChatHistoryList(): Promise<void> {
+    try {
+      const historyList = await this.historyService.getHistoryList();
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.GET_CHAT_HISTORY_LIST_RESPONSE,
+        historyList,
+      });
+    } catch (error) {
+      console.error('Error getting chat history list:', error);
+    }
+  }
+
+  private async handleGetChatSession(data: any): Promise<void> {
+    try {
+      const messages = await this.historyService.getChatSession(data.sessionId);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.GET_CHAT_SESSION_RESPONSE,
+        sessionId: data.sessionId,
+        messages,
+      });
+    } catch (error) {
+      console.error('Error getting chat session:', error);
+    }
+  }
+
+  private async handleDeleteChatHistory(data: any): Promise<void> {
+    try {
+      await this.historyService.deleteChatSession(data.sessionId);
+      // Refresh the list after deletion
+      await this.handleGetChatHistoryList();
+    } catch (error) {
+      console.error('Error deleting chat history:', error);
     }
   }
 

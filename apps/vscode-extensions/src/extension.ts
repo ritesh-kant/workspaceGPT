@@ -76,6 +76,25 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(askDisposable);
   context.subscriptions.push(newChatDisposable);
   context.subscriptions.push(settingsDisposable);
+
+  // Register the history command
+  let historyDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_HISTORY,
+    () => {
+      analyticsService.trackEvent('command_history_triggered');
+      // Focus on the chat view when command is triggered
+      vscode.commands.executeCommand(
+        `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
+      );
+
+      // Get the webview view and send a message to show history
+      const webviewView = webViewProvider.getWebviewView();
+      if (webviewView) {
+        webviewView.webview.postMessage({ type: MESSAGE_TYPES.SHOW_HISTORY });
+      }
+    }
+  );
+  context.subscriptions.push(historyDisposable);
 }
 
 export async function deactivate() {

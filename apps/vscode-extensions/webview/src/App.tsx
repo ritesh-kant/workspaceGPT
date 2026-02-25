@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import './App.css';
 import ChatMessage from './components/ChatMessage';
+import ChatHistorySidebar from './components/ChatHistorySidebar';
 import SettingsButton from './components/Settings';
 import { VSCodeAPI } from './vscode';
 import {
@@ -14,6 +15,15 @@ import {
 import { MESSAGE_TYPES, STORAGE_KEYS } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
 
+// Simple UUID generator (no external dep needed)
+function generateSessionId(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
   const {
@@ -21,11 +31,18 @@ const App: React.FC = () => {
     inputValue,
     isLoading,
     showTips,
+    currentSessionId,
+    historyList,
+    showHistory,
     addMessage,
     clearMessages,
     setInputValue,
     setIsLoading,
     setShowTips,
+    setCurrentSessionId,
+    setHistoryList,
+    setShowHistory,
+    setMessages,
   } = useChatStore();
 
   const {
@@ -50,9 +67,33 @@ const App: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
+  // Debounced save: to avoid writing to disk on every keystroke / rapid message
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveCurrentChat = useCallback(
+    (msgs: typeof messages, sessionId: string | null) => {
+      if (!sessionId || msgs.length === 0) return;
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      saveTimeoutRef.current = setTimeout(() => {
+        vscode.postMessage({
+          type: MESSAGE_TYPES.SAVE_CHAT_HISTORY,
+          sessionId,
+          messages: msgs,
+        });
+      }, 500); // 500ms debounce
+    },
+    [vscode]
+  );
+
   useEffect(() => {
     vscode.postMessage({
       type: MESSAGE_TYPES.GET_WORKSPACE_PATH,
+    });
+
+    // Request history list on mount
+    vscode.postMessage({
+      type: MESSAGE_TYPES.GET_CHAT_HISTORY_LIST,
     });
 
     const handleMessage = (event: MessageEvent) => {
@@ -75,15 +116,18 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.SHOW_SETTINGS:
           setShowSettings(true);
+          setShowHistory(false);
           break;
         case MESSAGE_TYPES.NEW_CHAT:
-          // Clear messages and reset the chat state
-          setIsLoading(true);
-          clearMessages();
-          setInputValue('');
-          setIsLoading(false);
-          setShowTips(true);
-          hideSettings();
+          handleNewChat();
+          break;
+        case MESSAGE_TYPES.SHOW_HISTORY:
+          setShowHistory(true);
+          setShowSettings(false);
+          // Refresh history list when opened
+          vscode.postMessage({
+            type: MESSAGE_TYPES.GET_CHAT_HISTORY_LIST,
+          });
           break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
@@ -99,12 +143,30 @@ const App: React.FC = () => {
             }
           }
           break;
+        case MESSAGE_TYPES.GET_CHAT_HISTORY_LIST_RESPONSE:
+          setHistoryList(message.historyList || []);
+          break;
+        case MESSAGE_TYPES.GET_CHAT_SESSION_RESPONSE:
+          if (message.messages) {
+            setMessages(message.messages);
+            setCurrentSessionId(message.sessionId);
+            setShowTips(false);
+            setShowHistory(false);
+          }
+          break;
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
+
+  // Auto-save whenever messages change (debounced)
+  useEffect(() => {
+    if (messages.length > 0 && currentSessionId) {
+      saveCurrentChat(messages, currentSessionId);
+    }
+  }, [messages, currentSessionId, saveCurrentChat]);
 
   useEffect(() => {
     const activeModelProviders = modelProviders.filter(
@@ -125,6 +187,25 @@ const App: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const handleNewChat = () => {
+    // Save current chat before starting a new one
+    if (currentSessionId && messages.length > 0) {
+      // Force an immediate save (no debounce)
+      vscode.postMessage({
+        type: MESSAGE_TYPES.SAVE_CHAT_HISTORY,
+        sessionId: currentSessionId,
+        messages,
+      });
+    }
+    setIsLoading(false);
+    clearMessages();
+    setInputValue('');
+    setCurrentSessionId(null);
+    setShowTips(true);
+    setShowHistory(false);
+    hideSettings();
+  };
+
   const handleSendMessage = () => {
     if (inputValue.trim() === '') return;
 
@@ -136,6 +217,13 @@ const App: React.FC = () => {
         isUser: false,
       });
       return;
+    }
+
+    // If no session ID yet, generate one now
+    let sessionId = currentSessionId;
+    if (!sessionId) {
+      sessionId = generateSessionId();
+      setCurrentSessionId(sessionId);
     }
 
     addMessage({
@@ -167,6 +255,33 @@ const App: React.FC = () => {
   // Add a handler for hiding settings
   const hideSettings = () => {
     setShowSettings(false);
+  };
+
+  const handleSelectSession = (sessionId: string) => {
+    // Save current chat first
+    if (currentSessionId && messages.length > 0) {
+      vscode.postMessage({
+        type: MESSAGE_TYPES.SAVE_CHAT_HISTORY,
+        sessionId: currentSessionId,
+        messages,
+      });
+    }
+    // Request the session data from the extension host
+    vscode.postMessage({
+      type: MESSAGE_TYPES.GET_CHAT_SESSION,
+      sessionId,
+    });
+  };
+
+  const handleDeleteSession = (sessionId: string) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
+      sessionId,
+    });
+    // If deleting the active session, reset
+    if (sessionId === currentSessionId) {
+      handleNewChat();
+    }
   };
 
   return (
@@ -277,6 +392,15 @@ const App: React.FC = () => {
           </div>
         </div>
         <SettingsButton isVisible={showSettings} onBack={hideSettings} />
+        <ChatHistorySidebar
+          isVisible={showHistory}
+          historyList={historyList}
+          currentSessionId={currentSessionId}
+          onSelectSession={handleSelectSession}
+          onDeleteSession={handleDeleteSession}
+          onClose={() => setShowHistory(false)}
+          onNewChat={handleNewChat}
+        />
       </div>
     </div>
   );
