@@ -131,4 +131,73 @@ export class ConfluencePageFetcher {
             throw error;
         }
     }
+
+    /**
+     * Fetch pages that were updated since the last sync time.
+     * Uses Confluence V1 Search API with CQL as V2 has limited filtering support.
+     * @param lastSyncTime ISO string of the last sync time
+     * @param cursor Pagination cursor
+     * @param limit Results per page
+     */
+    async fetchRecentPagesSince(lastSyncTime: string, limit: number = 50, start: number = 0): Promise<{results: any[], size: number, start: number}> {
+        try {
+            // Formatting exact ISO string into something CQL friendly might be required depending on Confluence's exact parser
+            // Usually YYYY-MM-DD HH:mm works, but using a relative time or simpler date might be safer if timezone issues arise.
+            // Let's use standard ISO 8601 formatting which CQL generally supports (e.g. "2023-10-25T10:00Z")
+            // A more robust CQL approach for lastmodified is: lastmodified >= "2024-01-01"
+            
+            // Format to 'YYYY-MM-DD HH:mm'
+            const date = new Date(lastSyncTime);
+            const year = date.getUTCFullYear();
+            const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(date.getUTCDate()).padStart(2, '0');
+            const hours = String(date.getUTCHours()).padStart(2, '0');
+            const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+            const formattedDate = `${year}-${month}-${day} ${hours}:${minutes}`;
+
+            // We must URL encode the CQL query
+            // space = "SPACEKEY" and lastmodified >= "YYYY-MM-DD HH:mm" and type = page
+            const cql = `space="${this.spaceKey}" and type="page" and lastmodified>="${formattedDate}"`;
+            const encodedCql = encodeURIComponent(cql);
+            
+            const url = `${this.confluenceBaseUrl}/rest/api/search?cql=${encodedCql}&limit=${limit}&start=${start}`;
+            
+            const response = await axios.get<ConfluenceSearchResponse>(
+                url,
+                this.getRequestConfig()
+            );
+
+            // V1 Search API returns a slightly different structure than V2 Pages API.
+            // The objects inside results don't have the full body.storage.value by default.
+            // We'll need to fetch the individual pages based on these results.
+            return {
+                results: response.data?.results || [],
+                size: response.data?.results?.length || 0,
+                start: start
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`❌ Error fetching recent pages since ${lastSyncTime}:`, errorMessage);
+            throw error;
+        }
+    }
+
+    /**
+     * Fetch a single page by its ID using the V2 API, including its storage body.
+     * Useful when combined with the V1 Search API which only returns metadata.
+     */
+    async fetchPageById(pageId: string): Promise<ConfluencePage> {
+        try {
+            const url = `${this.confluenceBaseUrl}/wiki/api/v2/pages/${pageId}?body-format=storage`;
+            const response = await axios.get<ConfluencePage>(
+                url,
+                this.getRequestConfig()
+            );
+            return response.data;
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`❌ Error fetching page ${pageId}:`, errorMessage);
+            throw error;
+        }
+    }
 }

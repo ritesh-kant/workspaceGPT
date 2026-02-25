@@ -26,6 +26,9 @@ export interface ProcessedPage {
 
 export interface ConfluenceSearchResponse {
   results: any[];
+  totalSize?: number;
+  size?: number;
+  start?: number;
   _links?: {
     next?: string;
   };

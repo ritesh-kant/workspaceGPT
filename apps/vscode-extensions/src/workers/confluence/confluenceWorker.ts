@@ -17,6 +17,8 @@ interface WorkerData {
   resume?: boolean;
   lastProcessedPageId?: string;
   processedPages?: number;
+  isIncremental?: boolean;
+  lastSyncTime?: string;
 }
 
 // Receive data from main thread
@@ -28,6 +30,8 @@ const {
   resume,
   lastProcessedPageId,
   processedPages,
+  isIncremental,
+  lastSyncTime,
 } = workerData as WorkerData;
 
 async function fetchAndProcessPages() {
@@ -45,90 +49,187 @@ async function fetchAndProcessPages() {
     // For OAuth, derive a base URL for processPage (used for building page URLs)
     const confluenceBaseUrl = `https://api.atlassian.com/ex/confluence/${cloudId}`;
 
-    // Get total pages count
-    const totalSize = await extractor.getTotalPages();
-    parentPort?.postMessage({ type: 'totalPages', count: totalSize });
-
-    // Fetch all pages
-    let cursor: string | null = null;
+    const limit = 50;
     let processedCount = resume && processedPages ? processedPages : 0;
-    let hasMore = true;
     let allPages: ConfluencePage[] = [];
-    let foundLastProcessedPage = !resume || !lastProcessedPageId;
 
-    try {
-      while (hasMore) {
-        const response = await extractor.fetchPages(cursor, 50); // Increased limit slightly for v2
-        const { results, _links } = response;
-
-        // If resuming, skip pages until we find the last processed page
-        if (resume && lastProcessedPageId && !foundLastProcessedPage) {
-          const lastProcessedIndex = results.findIndex(
-            (page) => page.id === lastProcessedPageId
-          );
-          if (lastProcessedIndex !== -1) {
-            // Skip the last processed page and all previous pages
-            results.splice(0, lastProcessedIndex + 1);
-            foundLastProcessedPage = true;
-          } else {
-            // If we haven't found the last processed page yet, skip this batch
-            if (_links && _links.next) {
-              const url = new URL(`https://api.atlassian.com${_links.next}`);
-              cursor = url.searchParams.get('cursor');
-            } else {
-              hasMore = false;
-            }
-            continue;
-          }
-        }
-
-        allPages = allPages.concat(results);
-
-        processedCount = await processPageBatch(
-          results,
-          processedCount,
-          processPage,
-          confluenceBaseUrl
-        );
-
-        if (_links && _links.next) {
-            // Extract the cursor from the relative next link
-            // /wiki/api/v2/spaces/.../pages?cursor=XXXXX
-            const nextUrl = new URL(`https://api.atlassian.com${_links.next}`);
-            cursor = nextUrl.searchParams.get('cursor');
-            await sleep(1000);
-        } else {
-            hasMore = false;
-        }
-
-        const progress = ((processedCount / totalSize) * 100).toFixed(1);
-        console.log(
-          `📊 Progress: ${progress}% (${processedCount}/${totalSize} pages)`
-        );
-        parentPort?.postMessage({
-          type: WORKER_STATUS.PROCESSING,
-          progress,
-          current: processedCount,
-          total: totalSize,
-          lastProcessedPageId: results[results.length - 1]?.id,
-        });
-      }
-
-      parentPort?.postMessage({
-        type: WORKER_STATUS.COMPLETED,
-        pages: allPages,
-      });
-    } catch (error) {
-      parentPort?.postMessage({
-        type: WORKER_STATUS.ERROR,
-        message: `Error processing page : ${error instanceof Error ? error.message : String(error)}`,
-      });
+    if (isIncremental && lastSyncTime) {
+      console.log(`🚀 Starting Incremental Sync for pages updated since ${lastSyncTime}`);
+      allPages = await doIncrementalSync(extractor, confluenceBaseUrl, limit, lastSyncTime, processedCount);
+    } else {
+      console.log(`🚀 Starting Full Sync`);
+      allPages = await doFullSync(extractor, confluenceBaseUrl, limit, processedCount);
     }
+
+    parentPort?.postMessage({
+      type: WORKER_STATUS.COMPLETED,
+      pages: allPages,
+    });
   } catch (error) {
     parentPort?.postMessage({
       type: WORKER_STATUS.ERROR,
       message: `Error in worker: ${error instanceof Error ? error.message : String(error)}`,
     });
+  }
+}
+
+async function doIncrementalSync(
+  extractor: ConfluencePageFetcher,
+  confluenceBaseUrl: string,
+  limit: number,
+  lastSyncTime: string,
+  initialProcessedCount: number
+): Promise<ConfluencePage[]> {
+  let hasMore = true;
+  let incrementalStart = 0;
+  let allPages: ConfluencePage[] = [];
+  let processedCount: number = initialProcessedCount;
+
+  try {
+    while (hasMore) {
+      // Use the V1 search API to find pages modified since last sync
+      const searchResponse = await extractor.fetchRecentPagesSince(lastSyncTime, limit, incrementalStart);
+      const totalSize = searchResponse.size;
+      
+      if (incrementalStart === 0 && totalSize > 0) {
+        parentPort?.postMessage({ type: 'totalPages', count: totalSize });
+      } else if (incrementalStart === 0 && totalSize === 0) {
+        parentPort?.postMessage({ type: 'totalPages', count: 0 });
+        hasMore = false;
+        break;
+      }
+
+      // Search results from v1 don't include the full body, we need to fetch them individually via v2
+      const pagePromises = searchResponse.results.map((searchResult: any) => 
+        extractor.fetchPageById(searchResult.content?.id || searchResult.id)
+          .catch(err => {
+            console.warn(`Failed to fetch page ${searchResult.id} during incremental sync:`, err);
+            return null;
+          })
+      );
+      
+      const results = (await Promise.all(pagePromises)).filter(p => p !== null) as ConfluencePage[];
+      allPages = allPages.concat(results);
+
+      processedCount = await processPageBatch(
+        results,
+        processedCount,
+        processPage,
+        confluenceBaseUrl
+      );
+
+      const progress = totalSize > 0 ? ((processedCount / totalSize) * 100).toFixed(1) : "100.0";
+      console.log(`📊 Progress: ${progress}% (${processedCount}/${totalSize} pages)`);
+      
+      parentPort?.postMessage({
+        type: WORKER_STATUS.PROCESSING,
+        progress,
+        current: processedCount,
+        total: totalSize,
+        lastProcessedPageId: results[results.length - 1]?.id,
+      });
+
+      if (searchResponse.results.length === limit) {
+         incrementalStart += limit;
+         // Add artificial delay for pagination
+         await sleep(1000);
+      } else {
+         hasMore = false;
+      }
+    }
+    return allPages;
+  } catch (error) {
+    parentPort?.postMessage({
+      type: WORKER_STATUS.ERROR,
+      message: `Error processing incremental sync page: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    throw error;
+  }
+}
+
+async function doFullSync(
+  extractor: ConfluencePageFetcher,
+  confluenceBaseUrl: string,
+  limit: number,
+  initialProcessedCount: number
+): Promise<ConfluencePage[]> {
+  let cursor: string | null = null;
+  let hasMore = true;
+  let allPages: ConfluencePage[] = [];
+  let foundLastProcessedPage = !resume || !lastProcessedPageId;
+  let processedCount: number = initialProcessedCount;
+
+  try {
+    const totalSize = await extractor.getTotalPages().catch(() => 0);
+    parentPort?.postMessage({ type: 'totalPages', count: totalSize });
+
+    while (hasMore) {
+      let results: ConfluencePage[] = [];
+      let nextLink: string | null = null;
+
+      const response = await extractor.fetchPages(cursor, limit);
+      results = response.results;
+      
+      if (response._links && response._links.next) {
+        nextLink = response._links.next;
+      }
+
+      // If resuming, skip pages until we find the last processed page
+      if (resume && lastProcessedPageId && !foundLastProcessedPage) {
+        const lastProcessedIndex = results.findIndex(
+          (page) => page.id === lastProcessedPageId
+        );
+        if (lastProcessedIndex !== -1) {
+          // Skip the last processed page and all previous pages
+          results.splice(0, lastProcessedIndex + 1);
+          foundLastProcessedPage = true;
+        } else {
+          // If we haven't found the last processed page yet, skip this batch
+          if (nextLink) {
+            const url = new URL(`https://api.atlassian.com${nextLink}`);
+            cursor = url.searchParams.get('cursor');
+          } else {
+            hasMore = false;
+          }
+          continue; // Skip the rest of the loop for this batch
+        }
+      }
+
+      if (nextLink) {
+          const nextUrl = new URL(`https://api.atlassian.com${nextLink}`);
+          cursor = nextUrl.searchParams.get('cursor');
+          await sleep(1000);
+      } else {
+          hasMore = false;
+      }
+
+      allPages = allPages.concat(results);
+
+      processedCount = await processPageBatch(
+        results,
+        processedCount,
+        processPage,
+        confluenceBaseUrl
+      );
+
+      const progress = totalSize > 0 ? ((processedCount / totalSize) * 100).toFixed(1) : "100.0";
+      console.log(`📊 Progress: ${progress}% (${processedCount}/${totalSize} pages)`);
+      
+      parentPort?.postMessage({
+        type: WORKER_STATUS.PROCESSING,
+        progress,
+        current: processedCount,
+        total: totalSize,
+        lastProcessedPageId: results[results.length - 1]?.id,
+      });
+    }
+    return allPages;
+  } catch (error) {
+    parentPort?.postMessage({
+      type: WORKER_STATUS.ERROR,
+      message: `Error processing full sync page: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    throw error;
   }
 }
 

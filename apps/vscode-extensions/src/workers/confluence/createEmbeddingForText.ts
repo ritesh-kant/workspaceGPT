@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
 import { MODEL, WORKER_STATUS } from '../../../constants';
@@ -134,6 +135,31 @@ async function createEmbeddings(): Promise<void> {
     for (let i = startIndex; i < files.length; i++) {
       const file = files[i];
       const filePath = path.join(mdDirPath, file);
+      
+      // We will save embeddings using a hash of the filename to support incremental updates
+      const fileHash = crypto.createHash('sha256').update(file).digest('hex');
+      const embeddingFilePath = path.join(embeddingDirPath, `${fileHash}.json`);
+
+      // Check for incremental embedding skipping
+      if (fs.existsSync(embeddingFilePath)) {
+        const mdStat = fs.statSync(filePath);
+        const embedStat = fs.statSync(embeddingFilePath);
+        
+        // If the embedding json is newer than the markdown file, we can safely skip generating a new embedding
+        if (embedStat.mtimeMs > mdStat.mtimeMs) {
+          console.log(`Skipping unchanged file: ${file}`);
+          const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
+          process.send!({
+            type: WORKER_STATUS.PROCESSING,
+            progress: ((currentProgress / total) * 100).toFixed(1),
+            current: currentProgress,
+            total,
+            lastProcessedFile: file,
+          });
+          continue;
+        }
+      }
+
       const markdownContent = fs.readFileSync(filePath, 'utf8');
 
       // Extract frontmatter metadata if present
@@ -154,18 +180,18 @@ async function createEmbeddings(): Promise<void> {
       // Create embedding for the content using Xenova/all-MiniLM-L6-v2
       const embedding = await createEmbeddingForText(content);
 
-      // Store metadata with embedding
+      // Store metadata with embedding (no longer using 'i' as id explicitly, as it changes the file hash order)
       const metadata: Metadata = {
-        id: i,
+        id: i, // Keep id for backwards compatibility if needed, but the filename hash is the real ID now
         filename: frontmatter?.fileName ?? file,
         text: content,
         embedding: embedding,
         url: frontmatter?.url,
       };
 
-      // Save metadata
+      // Save metadata to hashed filename
       fs.writeFileSync(
-        path.join(embeddingDirPath, `${i}.json`),
+        embeddingFilePath,
         JSON.stringify(metadata)
       );
 

@@ -100,27 +100,37 @@ export class ConfluenceService {
       this.stopSync();
 
       // Load the current progress if resuming
+      let isIncremental = false;
+      let lastSyncTimeStr = '';
+
       if (resume && this.syncProgress) {
         console.log(
           `Resuming sync from ${this.syncProgress.processedPages}/${this.syncProgress.totalPages} pages`
         );
       } else {
+        // If not resuming, check if we have a last sync time for incremental sync
+        if (this.syncProgress && this.syncProgress.lastSyncTime) {
+          isIncremental = true;
+          lastSyncTimeStr = this.syncProgress.lastSyncTime;
+          console.log(`Starting incremental sync from ${lastSyncTimeStr}`);
+        } else {
+          // Delete old data directory if not resuming and not incremental
+          const mdDirPath = path.join(
+            this.context.globalStorageUri.fsPath,
+            'confluence',
+            'mds'
+          );
+          await deleteDirectory(mdDirPath);
+        }
+
         // Reset progress if not resuming
         this.syncProgress = {
           processedPages: 0,
           totalPages: 0,
           isComplete: false,
-          lastSyncTime: '',
+          lastSyncTime: lastSyncTimeStr, // Keep the last sync time for the current incremental run if exists
         };
         await this.saveSyncProgress(this.syncProgress);
-
-        // Delete old data directory if not resuming
-        const mdDirPath = path.join(
-          this.context.globalStorageUri.fsPath,
-          'confluence',
-          'mds'
-        );
-        await deleteDirectory(mdDirPath);
       }
 
       // Create a new worker
@@ -139,6 +149,8 @@ export class ConfluenceService {
           resume: resume,
           lastProcessedPageId: this.syncProgress?.lastProcessedPageId,
           processedPages: this.syncProgress?.processedPages || 0,
+          isIncremental: isIncremental,
+          lastSyncTime: lastSyncTimeStr,
         },
       });
 

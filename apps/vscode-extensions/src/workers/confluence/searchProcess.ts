@@ -88,21 +88,21 @@ async function searchEmbeddings(): Promise<void> {
     console.log(
       'SearchWorker : Loading embeddings and calculating similarities...'
     );
-    const similarities: Array<{ id: number; score: number }> = [];
+    const similarities: Array<{ id: string; score: number }> = [];
 
-    for (let i = 0; i < indexData.total; i++) {
-      const metadataPath = path.join(embeddingDirPath, `${i}.json`);
+    // Get all json files except index.json
+    const files = fs.readdirSync(embeddingDirPath)
+      .filter(f => f.endsWith('.json') && f !== 'index.json');
 
-      if (!fs.existsSync(metadataPath)) {
-        continue;
-      }
+    for (const file of files) {
+      const metadataPath = path.join(embeddingDirPath, file);
 
       try {
         const metadata: Metadata = JSON.parse(
           fs.readFileSync(metadataPath, 'utf8')
         );
         const similarity = cosineSimilarity(queryEmbedding, metadata.embedding);
-        similarities.push({ id: i, score: similarity });
+        similarities.push({ id: file.replace('.json', ''), score: similarity });
       } catch (fileError) {
         continue;
       }
