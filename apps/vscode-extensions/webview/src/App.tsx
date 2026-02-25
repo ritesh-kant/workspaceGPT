@@ -207,7 +207,7 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = () => {
-    if (inputValue.trim() === '') return;
+    if (inputValue.trim() === '' || isLoading) return;
 
     // Check if model is currently downloading
     if (!selectedModelProvider?.selectedModel) {
