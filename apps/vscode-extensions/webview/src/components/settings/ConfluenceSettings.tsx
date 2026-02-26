@@ -294,7 +294,7 @@ const ConfluenceSettings: React.FC = () => {
           {/* Not Authenticated State */}
           {!isAuthenticated && (
             <div className='oauth-connect'>
-              <p style={{ color: '#a0a0a0', marginBottom: '12px', fontSize: '0.9em' }}>
+              <p style={{ color: '#a0a0a0', margin: '0 0 8px 0', fontSize: '0.9em' }}>
                 Connect your Atlassian account to sync Confluence pages.
               </p>
               <button

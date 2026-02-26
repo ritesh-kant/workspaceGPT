@@ -3,12 +3,7 @@ import { ConfluenceService, ConfluenceConfig } from './confluenceService';
 import { ConfluenceAuthService } from './confluenceAuthService';
 import { EmbeddingService } from './confluenceEmbeddingService';
 import { EmbeddingConfig } from '../types/types';
-import { MODEL, STORAGE_KEYS } from '../../constants';
-
-// 4 hours in milliseconds
-const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
-// Check every 15 minutes
-const CHECK_INTERVAL_MS = 15 * 60 * 1000;
+import { CHECK_INTERVAL_MS, MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../constants';
 
 export class ConfluenceSyncScheduler {
   private intervalId?: NodeJS.Timeout;

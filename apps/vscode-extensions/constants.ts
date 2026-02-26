@@ -182,3 +182,9 @@ export enum ModelTypeEnum {
   Chat = 'chat',
   Embedding = 'embedding',
 }
+
+// Used for incremental sync
+// 4 hours in milliseconds
+export const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
+// Check every 15 minutes
+export const CHECK_INTERVAL_MS = 15 * 60 * 1000;
