@@ -25,9 +25,9 @@ function generateSessionId(): string {
 }
 
 const STARTER_PROMPTS = [
-  { icon: '🔍', text: 'What does this Project do?' },
-  { icon: '📝', text: 'Tell me the architecture of this project' },
-  { icon: '🏗️', text: 'Explain the architecture of this Project' },
+  { icon: '', text: 'What does this Project do?' },
+  { icon: '', text: 'Tell me the architecture of this project' },
+  { icon: '', text: 'Explain the architecture of this Project' },
 ];
 
 const App: React.FC = () => {

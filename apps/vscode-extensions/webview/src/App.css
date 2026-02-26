@@ -123,6 +123,7 @@
     var(--vscode-textLink-activeForeground)
   );
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   text-align: center;
   letter-spacing: -0.02em;
@@ -270,6 +271,7 @@
   margin-bottom: 0.6rem;
   color: var(--vscode-editor-foreground);
   text-align: left;
+  padding-left: 0.5rem;
 }
 
 .prompt-suggestions-list {
