@@ -52,10 +52,13 @@ const App: React.FC = () => {
   } = useChatStore();
 
   const {
+    config,
     showSettings,
     setShowSettings,
     setConfig: setSettingsConfig,
   } = useSettingsStore();
+
+  const isConfluenceConnected = config.confluence?.isAuthenticated || false;
 
   const modelProviders = useModelProviders();
 
@@ -252,6 +255,13 @@ const App: React.FC = () => {
     });
   };
 
+  const handleStopMessage = () => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.STOP_MESSAGE,
+    });
+    setIsLoading(false);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       handleSendMessage();
@@ -320,67 +330,134 @@ const App: React.FC = () => {
     }
   };
 
+  const formatDate = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
   return (
     <div className='app-container'>
       <div className='chat-container'>
         {showTips && messages.length === 0 ? (
-          <div className='welcome-container'>
-            <h1 className='welcome-title'>👋 Hello</h1>
-            <p className='welcome-subtitle'>How can WorkspaceGPT help?</p>
-            <div className='privacy-container'>
-              <div className='privacy-message'>
-                <span className='privacy-icon'>🛡️</span>
-                <span>
-                  Your data stays secure! Everything runs locally on your
-                  machine, ensuring complete privacy and security.
-                </span>
-              </div>
-            </div>
-            <div className='tips-container'>
-              <h2 className='tips-title'>✨ Quick Tips</h2>
-              <div className='tips-list'>
-                <div
-                  className='tip-item tip-item--interactive'
-                  onClick={() => {
-                    setShowSettings(true);
-                    setShowHistory(false);
-                  }}
-                  role='button'
-                  tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { setShowSettings(true); setShowHistory(false); } }}
+          isConfluenceConnected ? (
+            <div className='recent-chats-container'>
+              <div className='recent-chats-header'>
+                <div className='recent-chats-title-group'>
+                  <h2>Recent Chats</h2>
+                </div>
+                <button
+                  onClick={() => setShowHistory(true)}
+                  className='see-all-btn'
+                  title='View all history'
                 >
-                  <span className='tip-icon'>🔗</span>
-                  <span>
-                    Connect Confluence in Settings to access your team's
-                    knowledge base instantly
-                  </span>
-                  <span className='tip-arrow'>→</span>
-                </div>
-                <div className='tip-item'>
-                  <span className='tip-icon'>💡</span>
-                  <span>
-                    Ask questions naturally about your docs – get insights and
-                    explore your documentation effortlessly
-                  </span>
+                  See all
+                </button>
+              </div>
+              <div className='recent-chats-list'>
+                {historyList.length === 0 ? (
+                  <div className='no-recent-chats'>
+                    <p>No recent chats yet. Start a conversation below!</p>
+                  </div>
+                ) : (
+                  historyList.slice(0, 3).map((session) => (
+                    <div
+                      key={session.id}
+                      className='recent-chat-card'
+                      onClick={() => handleSelectSession(session.id)}
+                    >
+                      <div className='recent-chat-card-content'>
+                        <span className='recent-chat-card-title'>{session.title}</span>
+                        <span className='recent-chat-card-date'>{formatDate(session.updatedAt)}</span>
+                      </div>
+                      <div className='recent-chat-card-arrow'>→</div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className='prompt-suggestions recent-chats-prompts'>
+                <h2 className='prompt-suggestions-title'>Try asking</h2>
+                <div className='prompt-suggestions-list'>
+                  {STARTER_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt.text}
+                      className='prompt-item'
+                      onClick={() => handleStarterPrompt(prompt.text)}
+                    >
+                      <span className='prompt-item-text'>{prompt.text}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
-            <div className='prompt-suggestions'>
-              <h2 className='prompt-suggestions-title'>💬 Try asking</h2>
-              <div className='prompt-suggestions-list'>
-                {STARTER_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt.text}
-                    className='prompt-item'
-                    onClick={() => handleStarterPrompt(prompt.text)}
+          ) : (
+            <div className='welcome-container'>
+              <h1 className='welcome-title'>👋 Hello</h1>
+              <p className='welcome-subtitle'>How can WorkspaceGPT help?</p>
+              <div className='privacy-container'>
+                <div className='privacy-message'>
+                  <span className='privacy-icon'>🛡️</span>
+                  <span>
+                    Your data stays secure! Everything runs locally on your
+                    machine, ensuring complete privacy and security.
+                  </span>
+                </div>
+              </div>
+              <div className='tips-container'>
+                <h2 className='tips-title'>✨ Quick Tips</h2>
+                <div className='tips-list'>
+                  <div
+                    className='tip-item tip-item--interactive'
+                    onClick={() => {
+                      setShowSettings(true);
+                      setShowHistory(false);
+                    }}
+                    role='button'
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { setShowSettings(true); setShowHistory(false); } }}
                   >
-                    <span className='prompt-item-icon'>{prompt.icon}</span>
-                    <span className='prompt-item-text'>{prompt.text}</span>
-                  </button>
-                ))}
+                    <span className='tip-icon'>🔗</span>
+                    <span>
+                      Connect Confluence in Settings to access your team's
+                      knowledge base instantly
+                    </span>
+                    <span className='tip-arrow'>→</span>
+                  </div>
+                  <div className='tip-item'>
+                    <span className='tip-icon'>💡</span>
+                    <span>
+                      Ask questions naturally about your docs – get insights and
+                      explore your documentation effortlessly
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className='prompt-suggestions'>
+                <h2 className='prompt-suggestions-title'>💬 Try asking</h2>
+                <div className='prompt-suggestions-list'>
+                  {STARTER_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt.text}
+                      className='prompt-item'
+                      onClick={() => handleStarterPrompt(prompt.text)}
+                    >
+                      <span className='prompt-item-icon'>{prompt.icon}</span>
+                      <span className='prompt-item-text'>{prompt.text}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
+          )
         ) : (
           <div className='messages-container'>
             {messages.map((message, index) => (
@@ -438,20 +515,30 @@ const App: React.FC = () => {
                   <option value='selectModel'>Edit...</option>
                 </select>
               </div>
-              <button
-                onClick={handleSendMessage}
-                disabled={
-                  isLoading ||
-                  !inputValue.trim()
-                }
-                className='send-button'
-                aria-label='Send message'
-              >
-                <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-                  <path d='M22 2L11 13' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-                  <path d='M22 2L15 22L11 13L2 9L22 2Z' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-                </svg>
-              </button>
+              {isLoading ? (
+                <button
+                  onClick={handleStopMessage}
+                  className='stop-button action-btn'
+                  aria-label='Stop generation'
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--vscode-errorForeground, #f48771)', cursor: 'pointer' }}
+                >
+                  <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                    <rect x='6' y='6' width='12' height='12' rx='2' fill='currentColor' />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  onClick={handleSendMessage}
+                  disabled={!inputValue.trim()}
+                  className='send-button action-btn'
+                  aria-label='Send message'
+                >
+                  <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                    <path d='M22 2L11 13' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                    <path d='M22 2L15 22L11 13L2 9L22 2Z' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -129,6 +129,10 @@ export class WebviewMessageHandler {
         });
         await this.handleSendMessage(data);
         break;
+      case MESSAGE_TYPES.STOP_MESSAGE:
+        this.analyticsService.trackEvent('message_stopped');
+        await this.handleStopMessage();
+        break;
       case MESSAGE_TYPES.UPDATE_MODEL:
         this.analyticsService.trackEvent('model_updated', {
           modelId: data.modelId,
@@ -513,6 +517,16 @@ export class WebviewMessageHandler {
       });
 
       this.handleError('Error:', error);
+    }
+  }
+
+  private async handleStopMessage(): Promise<void> {
+    try {
+      if (this.chatService) {
+        this.chatService.stopMessage();
+      }
+    } catch (error) {
+      this.handleError('Error stopping message:', error);
     }
   }
 

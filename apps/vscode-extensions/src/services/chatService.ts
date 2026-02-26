@@ -28,6 +28,8 @@ export class ChatService {
   private context: vscode.ExtensionContext;
   private chatHistory: ChatMessage[] = [];
   private currentModel: string;
+  private currentModelWorker: Worker | null = null;
+  private currentReject: ((reason?: any) => void) | null = null;
 
   constructor(
     webviewView: vscode.WebviewView,
@@ -136,6 +138,17 @@ export class ChatService {
     }
   }
 
+  public stopMessage(): void {
+    if (this.currentModelWorker) {
+      this.currentModelWorker.terminate();
+      this.currentModelWorker = null;
+      if (this.currentReject) {
+        this.currentReject(new Error('Generation cancelled by user.'));
+        this.currentReject = null;
+      }
+    }
+  }
+
   public async newChat(): Promise<void> {
     // Clear chat history
     this.chatHistory = [];
@@ -193,6 +206,10 @@ export class ChatService {
         content: modelResponse,
       });
     } catch (error) {
+      if (error instanceof Error && error.message === 'Generation cancelled by user.') {
+        console.log('Chat generation cancelled by user.');
+        return;
+      }
       console.error('Error in chat:', error);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.ERROR_CHAT,
@@ -280,7 +297,10 @@ export class ChatService {
         },
       });
 
+      this.currentModelWorker = modelWorker;
+
       return new Promise((resolve, reject) => {
+        this.currentReject = reject;
         modelWorker.on(
           'message',
           (result: {
@@ -302,12 +322,16 @@ export class ChatService {
             } else {
               resolve(result.content ?? 'No response generated');
             }
+            this.currentModelWorker = null;
+            this.currentReject = null;
             modelWorker.terminate();
           }
         );
 
         modelWorker.on('error', (error) => {
           reject(error);
+          this.currentModelWorker = null;
+          this.currentReject = null;
           modelWorker.terminate();
         });
       });

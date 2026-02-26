@@ -269,29 +269,31 @@
   font-weight: 600;
   margin-bottom: 0.6rem;
   color: var(--vscode-editor-foreground);
-  text-align: center;
+  text-align: left;
 }
 
 .prompt-suggestions-list {
   display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-start;
 }
 
 .prompt-item {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.6rem 0.85rem;
+  justify-content: center;
+  padding: 0.5rem 1rem;
   background: transparent;
   border: 1px solid var(--vscode-editor-lineHighlightBorder);
-  border-radius: 8px;
+  border-radius: 20px;
   cursor: pointer;
   transition: all 0.2s ease;
-  text-align: left;
+  text-align: center;
   color: var(--vscode-editor-foreground);
   font-size: 0.8rem;
-  width: 100%;
+  width: auto;
   line-height: 1.4;
 }
 
@@ -815,4 +817,142 @@ button:hover:not(:disabled) {
   height: 100%;
   background-color: var(--vscode-progressBar-foreground);
   transition: width 0.3s ease;
+}
+
+/* Recent Chats Styles */
+.recent-chats-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 800px;
+  padding: 0.5rem;
+  margin: 0 auto;
+  width: 100%;
+  overflow-y: auto;
+  animation: fadeIn 0.5s ease-out;
+}
+
+.recent-chats-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 0 0.5rem;
+}
+
+.recent-chats-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.recent-chats-title-group h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--vscode-editor-foreground);
+}
+
+.recent-chats-icon {
+  font-size: 1.2rem;
+}
+
+.see-all-btn {
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  border: none;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.2rem 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.see-all-btn:hover {
+  text-decoration: underline;
+  background: color-mix(
+    in srgb,
+    var(--vscode-editor-background) 88%,
+    var(--vscode-textLink-foreground)
+  );
+}
+
+.recent-chats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 2rem;
+}
+
+.recent-chat-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.85rem;
+  background: color-mix(
+    in srgb,
+    var(--vscode-editor-background) 94%,
+    var(--vscode-textLink-foreground)
+  );
+  border: 1px solid var(--vscode-editor-lineHighlightBorder);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.recent-chat-card:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--vscode-editor-lineHighlightBorder) 40%,
+    var(--vscode-textLink-foreground)
+  );
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.recent-chat-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  overflow: hidden;
+}
+
+.recent-chat-card-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--vscode-editor-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent-chat-card-date {
+  font-size: 0.75rem;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+}
+
+.recent-chat-card-arrow {
+  color: var(--vscode-descriptionForeground);
+  font-size: 1.2rem;
+  opacity: 0.5;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.recent-chat-card:hover .recent-chat-card-arrow {
+  opacity: 1;
+  transform: translateX(3px);
+  color: var(--vscode-textLink-foreground);
+}
+
+.no-recent-chats {
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  padding: 1.5rem 0;
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.recent-chats-prompts {
+  margin-top: 1rem;
 }

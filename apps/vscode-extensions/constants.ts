@@ -8,6 +8,7 @@ export const MESSAGE_TYPES = {
   UPDATE_MODEL: 'update-model',
   ERROR_CHAT: 'error-chat',
   RESET: 'reset',
+  STOP_MESSAGE: 'stop-message',
 
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',
