@@ -570,11 +570,13 @@ export class WebviewMessageHandler {
     try {
       // Stop the sync process
       this.confluenceService?.stopSync();
+      this.embeddingService?.stopEmbeddingProcess();
 
       // Update the global state to reflect that sync is no longer in progress
       const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       if (config?.state?.config) {
         config.state.config.confluence.isSyncing = false;
+        config.state.config.confluence.isIndexing = false;
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
     } catch (error) {
@@ -679,6 +681,7 @@ export class WebviewMessageHandler {
       const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       if (config?.state?.config) {
         config.state.config.codebase.isSyncing = false;
+        config.state.config.codebase.isIndexing = false;
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
     } catch (error) {

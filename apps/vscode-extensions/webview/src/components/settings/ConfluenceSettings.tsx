@@ -134,7 +134,7 @@ const ConfluenceSettings: React.FC = () => {
           batchUpdateConfig('confluence', {
             confluenceIndexProgress: message.progress,
             messageType: 'success',
-            isIndexing: message.progress < 100,
+            isIndexing: true,
             canResumeIndexing: true,
             isSyncing: false,
             canResume: false,
@@ -161,6 +161,7 @@ const ConfluenceSettings: React.FC = () => {
         case MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR:
           batchUpdateConfig('confluence', {
             isSyncing: false,
+            isIndexing: false,
             messageType: 'error',
             statusMessage: `Indexing error: ${message.message}`,
             canResumeIndexing: true,
@@ -238,7 +239,8 @@ const ConfluenceSettings: React.FC = () => {
   const stopSync = () => {
     batchUpdateConfig('confluence', {
       isSyncing: false,
-      statusMessage: 'Stopping sync process...',
+      isIndexing: false,
+      statusMessage: 'Stopping process...',
       messageType: 'error',
     });
     handleConfluenceActions.stopSync(vscode, config);

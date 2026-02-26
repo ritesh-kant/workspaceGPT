@@ -15,7 +15,7 @@ const CodebaseSettings: React.FC = () => {
 
   const vscode = VSCodeAPI();
   const codebaseConfig = config.codebase as CodebaseConfig;
-  
+
   useEffect(() => {
 
     // Listen for codebase configuration and sync updates from extension
@@ -72,7 +72,7 @@ const CodebaseSettings: React.FC = () => {
           batchUpdateConfig('codebase', {
             codebaseIndexProgress: message.progress,
             messageType: 'success',
-            isIndexing: message.progress < 100,
+            isIndexing: true,
             canResumeIndexing: true,
             isSyncing: false,
             canResume: false,
@@ -99,6 +99,7 @@ const CodebaseSettings: React.FC = () => {
         case MESSAGE_TYPES.INDEXING_CODEBASE_ERROR:
           batchUpdateConfig('codebase', {
             isSyncing: false,
+            isIndexing: false,
             messageType: 'error',
             statusMessage: `Indexing error: ${message.message}`,
             canResumeIndexing: true,
@@ -114,7 +115,7 @@ const CodebaseSettings: React.FC = () => {
           }
           break;
 
-        
+
       }
     };
 
@@ -160,7 +161,8 @@ const CodebaseSettings: React.FC = () => {
   const stopSync = () => {
     batchUpdateConfig('codebase', {
       isSyncing: false,
-      statusMessage: 'Stopping scan process...',
+      isIndexing: false,
+      statusMessage: 'Stopping process...',
     });
     handleCodebaseActions.stopSync(vscode, config);
   };
@@ -172,187 +174,187 @@ const CodebaseSettings: React.FC = () => {
 
   return (
     <div className='settings-section'>
-    <div className='section-header'>
-      <h3>Codebase Integration</h3>
-      <label className='toggle-switch'>
-        <input
-          type='checkbox'
-          checked={codebaseConfig?.isCodebaseEnabled}
-          onChange={handleToggleChange}
-          disabled
-        />
-        <span className='slider round'></span>
-      </label>
-    </div>
-
-    {codebaseConfig?.isCodebaseEnabled && (
-      <div className='settings-form'>
-        <div className='form-group'>
-          <label htmlFor='codebase-repo-path'>Repository Path</label>
+      <div className='section-header'>
+        <h3>Codebase Integration</h3>
+        <label className='toggle-switch'>
           <input
-            id='codebase-repo-path'
-            type='text'
-            value={codebaseConfig?.repoPath}
-            onChange={(e) =>
-              handleInputChange('codebase', 'repoPath', e.target.value)
-            }
-            placeholder='/path/to/your/repository'
+            type='checkbox'
+            checked={codebaseConfig?.isCodebaseEnabled}
+            onChange={handleToggleChange}
+            disabled
           />
-        </div>
-
-        <div className='form-group'>
-          <label htmlFor='codebase-include-patterns'>Include Patterns</label>
-          <input
-            id='codebase-include-patterns'
-            type='text'
-            value={codebaseConfig?.includePatterns}
-            onChange={(e) =>
-              handleInputChange('codebase', 'includePatterns', e.target.value)
-            }
-            placeholder='**/*.{js,ts,jsx,tsx,py,java,c,cpp,h,hpp}'
-          />
-          <small className='help-text'>Comma-separated glob patterns</small>
-        </div>
-
-        <div className='form-group'>
-          <label htmlFor='codebase-exclude-patterns'>Exclude Patterns</label>
-          <input
-            id='codebase-exclude-patterns'
-            type='text'
-            value={codebaseConfig?.excludePatterns}
-            onChange={(e) =>
-              handleInputChange('codebase', 'excludePatterns', e.target.value)
-            }
-            placeholder='**/node_modules/**,**/dist/**,**/.git/**'
-          />
-          <small className='help-text'>Comma-separated glob patterns</small>
-        </div>
-
-        <div className='form-group'>
-          <label htmlFor='codebase-max-file-size'>Max File Size (KB)</label>
-          <input
-            id='codebase-max-file-size'
-            type='number'
-            value={codebaseConfig?.maxFileSizeKb}
-            onChange={(e) =>
-              handleInputChange('codebase', 'maxFileSizeKb', e.target.value)
-            }
-            placeholder='500'
-          />
-        </div>
-
-        <div className='form-group'>
-          <label htmlFor='codebase-scan-frequency'>
-            Scan Frequency
-          </label>
-          <select
-            id='codebase-scan-frequency'
-            className='select-larger'
-            value={codebaseConfig?.scanFrequency}
-            onChange={(e) =>
-              handleInputChange(
-                'codebase',
-                'scanFrequency',
-                e.target.value
-              )
-            }
-          >
-            <option value='hourly'>Hourly</option>
-            <option value='daily'>Daily</option>
-            <option value='weekly'>Weekly</option>
-          </select>
-        </div>
-
-        <div className='button-group'>
-          {codebaseConfig.isSyncing ? (
-            <button
-              onClick={stopSync}
-              className='stop-sync-button'
-              disabled={codebaseConfig.isIndexing}
-            >
-              Stop Sync
-            </button>
-          ) : codebaseConfig.canResume ? (
-            <button
-              onClick={resumeSync}
-              className='resume-sync-button'
-              disabled={codebaseConfig.isIndexing}
-            >
-              Resume Sync
-            </button>
-          ) : codebaseConfig.isSyncCompleted ? (
-            <button
-              onClick={startSync}
-              disabled={codebaseConfig.isIndexing}
-            >
-              Start Re-Sync
-            </button>
-          ) : (
-            <button
-              onClick={startSync}
-              disabled={codebaseConfig.isIndexing}
-            >
-              Start Sync
-            </button>
-          )}
-        </div>
-
-        {codebaseConfig.messageType && (
-          <div
-            className={`status-message ${codebaseConfig.messageType}`}
-          >
-            {codebaseConfig.statusMessage}
-          </div>
-        )}
-
-        {codebaseConfig.isSyncing && (
-          <div className='sync-progress'>
-            <div className='progress-label'>
-              Syncing: {codebaseConfig.codebaseSyncProgress}%
-            </div>
-            <div className='progress-bar'>
-              <div
-                className='progress-fill'
-                style={{
-                  width: `${codebaseConfig.codebaseSyncProgress}%`,
-                }}
-              ></div>
-            </div>
-          </div>
-        )}
-
-        {codebaseConfig.isIndexing && (
-          <div className='sync-progress'>
-            <div className='progress-label'>
-              Indexing: {codebaseConfig.codebaseIndexProgress}%
-            </div>
-            <div className='progress-bar'>
-              <div
-                className='progress-fill'
-                style={{
-                  width: `${codebaseConfig.codebaseIndexProgress}%`,
-                }}
-              ></div>
-            </div>
-          </div>
-        )}
-
-        {/* Show resume indexing button if indexing was interrupted */}
-        {!codebaseConfig.isSyncing &&
-         !codebaseConfig.isIndexing &&
-         codebaseConfig.canResumeIndexing && (
-          <div className='button-group'>
-            <button
-              onClick={resumeIndexing}
-              className='resume-sync-button'
-            >
-              Resume Indexing
-            </button>
-          </div>
-        )}
+          <span className='slider round'></span>
+        </label>
       </div>
-    )}
-  </div>
+
+      {codebaseConfig?.isCodebaseEnabled && (
+        <div className='settings-form'>
+          <div className='form-group'>
+            <label htmlFor='codebase-repo-path'>Repository Path</label>
+            <input
+              id='codebase-repo-path'
+              type='text'
+              value={codebaseConfig?.repoPath}
+              onChange={(e) =>
+                handleInputChange('codebase', 'repoPath', e.target.value)
+              }
+              placeholder='/path/to/your/repository'
+            />
+          </div>
+
+          <div className='form-group'>
+            <label htmlFor='codebase-include-patterns'>Include Patterns</label>
+            <input
+              id='codebase-include-patterns'
+              type='text'
+              value={codebaseConfig?.includePatterns}
+              onChange={(e) =>
+                handleInputChange('codebase', 'includePatterns', e.target.value)
+              }
+              placeholder='**/*.{js,ts,jsx,tsx,py,java,c,cpp,h,hpp}'
+            />
+            <small className='help-text'>Comma-separated glob patterns</small>
+          </div>
+
+          <div className='form-group'>
+            <label htmlFor='codebase-exclude-patterns'>Exclude Patterns</label>
+            <input
+              id='codebase-exclude-patterns'
+              type='text'
+              value={codebaseConfig?.excludePatterns}
+              onChange={(e) =>
+                handleInputChange('codebase', 'excludePatterns', e.target.value)
+              }
+              placeholder='**/node_modules/**,**/dist/**,**/.git/**'
+            />
+            <small className='help-text'>Comma-separated glob patterns</small>
+          </div>
+
+          <div className='form-group'>
+            <label htmlFor='codebase-max-file-size'>Max File Size (KB)</label>
+            <input
+              id='codebase-max-file-size'
+              type='number'
+              value={codebaseConfig?.maxFileSizeKb}
+              onChange={(e) =>
+                handleInputChange('codebase', 'maxFileSizeKb', e.target.value)
+              }
+              placeholder='500'
+            />
+          </div>
+
+          <div className='form-group'>
+            <label htmlFor='codebase-scan-frequency'>
+              Scan Frequency
+            </label>
+            <select
+              id='codebase-scan-frequency'
+              className='select-larger'
+              value={codebaseConfig?.scanFrequency}
+              onChange={(e) =>
+                handleInputChange(
+                  'codebase',
+                  'scanFrequency',
+                  e.target.value
+                )
+              }
+            >
+              <option value='hourly'>Hourly</option>
+              <option value='daily'>Daily</option>
+              <option value='weekly'>Weekly</option>
+            </select>
+          </div>
+
+          <div className='button-group'>
+            {codebaseConfig.isSyncing ? (
+              <button
+                onClick={stopSync}
+                className='stop-sync-button'
+                disabled={codebaseConfig.isIndexing}
+              >
+                Stop Sync
+              </button>
+            ) : codebaseConfig.canResume ? (
+              <button
+                onClick={resumeSync}
+                className='resume-sync-button'
+                disabled={codebaseConfig.isIndexing}
+              >
+                Resume Sync
+              </button>
+            ) : codebaseConfig.isSyncCompleted ? (
+              <button
+                onClick={startSync}
+                disabled={codebaseConfig.isIndexing}
+              >
+                Start Re-Sync
+              </button>
+            ) : (
+              <button
+                onClick={startSync}
+                disabled={codebaseConfig.isIndexing}
+              >
+                Start Sync
+              </button>
+            )}
+          </div>
+
+          {codebaseConfig.messageType && (
+            <div
+              className={`status-message ${codebaseConfig.messageType}`}
+            >
+              {codebaseConfig.statusMessage}
+            </div>
+          )}
+
+          {codebaseConfig.isSyncing && (
+            <div className='sync-progress'>
+              <div className='progress-label'>
+                Syncing: {codebaseConfig.codebaseSyncProgress}%
+              </div>
+              <div className='progress-bar'>
+                <div
+                  className='progress-fill'
+                  style={{
+                    width: `${codebaseConfig.codebaseSyncProgress}%`,
+                  }}
+                ></div>
+              </div>
+            </div>
+          )}
+
+          {codebaseConfig.isIndexing && (
+            <div className='sync-progress'>
+              <div className='progress-label'>
+                Indexing: {codebaseConfig.codebaseIndexProgress}%
+              </div>
+              <div className='progress-bar'>
+                <div
+                  className='progress-fill'
+                  style={{
+                    width: `${codebaseConfig.codebaseIndexProgress}%`,
+                  }}
+                ></div>
+              </div>
+            </div>
+          )}
+
+          {/* Show resume indexing button if indexing was interrupted */}
+          {!codebaseConfig.isSyncing &&
+            !codebaseConfig.isIndexing &&
+            codebaseConfig.canResumeIndexing && (
+              <div className='button-group'>
+                <button
+                  onClick={resumeIndexing}
+                  className='resume-sync-button'
+                >
+                  Resume Indexing
+                </button>
+              </div>
+            )}
+        </div>
+      )}
+    </div>
   );
 };
 
