@@ -80,6 +80,7 @@ export class ConfluenceSyncScheduler {
           cloudId: site.id,
           accessToken,
           spaceKey,
+          siteUrl: site.url,
       };
 
       const confluenceService = new ConfluenceService(undefined, this.context);

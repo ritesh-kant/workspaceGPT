@@ -340,6 +340,7 @@ export class WebviewMessageHandler {
       cloudId: site.id,
       accessToken,
       spaceKey,
+      siteUrl: site.url,
     };
   }
 

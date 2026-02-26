@@ -13,6 +13,7 @@ interface WorkerData {
   spaceKey: string;
   cloudId: string;
   accessToken: string;
+  siteUrl: string;
   authMode: 'oauth' | 'basic';
   resume?: boolean;
   lastProcessedPageId?: string;
@@ -26,6 +27,7 @@ const {
   spaceKey,
   cloudId,
   accessToken,
+  siteUrl,
   authMode,
   resume,
   lastProcessedPageId,
@@ -46,8 +48,9 @@ async function fetchAndProcessPages() {
       authMode
     );
 
-    // For OAuth, derive a base URL for processPage (used for building page URLs)
-    const confluenceBaseUrl = `https://api.atlassian.com/ex/confluence/${cloudId}`;
+    // Use the user's actual Confluence site URL for building page URLs
+    // e.g. https://yoursite.atlassian.net/wiki
+    const confluenceBaseUrl = siteUrl ? `${siteUrl.replace(/\/$/, '')}/wiki` : `https://api.atlassian.com/ex/confluence/${cloudId}`;
 
     const limit = 50;
     let processedCount = resume && processedPages ? processedPages : 0;

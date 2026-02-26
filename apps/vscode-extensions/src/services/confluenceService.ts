@@ -18,6 +18,7 @@ export interface ConfluenceConfig {
   cloudId: string;
   spaceKey: string;
   accessToken: string;
+  siteUrl: string;
 }
 
 interface SyncProgress {
@@ -145,6 +146,7 @@ export class ConfluenceService {
           spaceKey: config.spaceKey,
           cloudId: config.cloudId,
           accessToken: config.accessToken,
+          siteUrl: config.siteUrl,
           authMode: 'oauth',
           resume: resume,
           lastProcessedPageId: this.syncProgress?.lastProcessedPageId,
