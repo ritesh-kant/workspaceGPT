@@ -38,10 +38,34 @@ export class HistoryService {
       title = firstUserMessage.content.slice(0, 30) + (firstUserMessage.content.length > 30 ? '...' : '');
     }
 
+    let updatedAt = Date.now();
+    try {
+      const existingBytes = await vscode.workspace.fs.readFile(filePath);
+      const existingData = JSON.parse(new TextDecoder().decode(existingBytes));
+      
+      // If the number of messages hasn't changed, and the last message content is the same,
+      // it's a spurious save (e.g., from just viewing the chat). Preserve the old updatedAt.
+      if (existingData.messages && existingData.messages.length === messages.length) {
+        const lastExisting = existingData.messages[existingData.messages.length - 1];
+        const lastNew = messages[messages.length - 1];
+        if (
+          (!lastExisting && !lastNew) || 
+          (lastExisting && lastNew && lastExisting.content === lastNew.content && lastExisting.isError === lastNew.isError)
+        ) {
+          updatedAt = existingData.updatedAt || updatedAt;
+        }
+      } else if (existingData.updatedAt && messages.length < existingData.messages?.length) {
+         // Should ideally not happen, but if somehow messages are fewer, maybe don't bump updatedAt unless it's a real update
+         // Actually, just let it bump if messages length changed.
+      }
+    } catch (e) {
+      // File doesn't exist or is invalid, use Date.now()
+    }
+
     const data = {
       id: sessionId,
       title,
-      updatedAt: Date.now(),
+      updatedAt,
       messages,
     };
 
