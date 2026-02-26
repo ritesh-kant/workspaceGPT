@@ -94,13 +94,14 @@ async function doIncrementalSync(
       const searchResponse = await extractor.fetchRecentPagesSince(lastSyncTime, limit, incrementalStart);
       const totalSize = searchResponse.size;
       
-      if (incrementalStart === 0 && totalSize > 0) {
-        parentPort?.postMessage({ type: 'totalPages', count: totalSize });
-      } else if (incrementalStart === 0 && totalSize === 0) {
+      if (totalSize === 0 && incrementalStart === 0) {
         parentPort?.postMessage({ type: 'totalPages', count: 0 });
         hasMore = false;
         break;
       }
+
+      // Report totalPages on every batch so the UI always has the correct total
+      parentPort?.postMessage({ type: 'totalPages', count: totalSize });
 
       // Search results from v1 don't include the full body, we need to fetch them individually via v2
       const pagePromises = searchResponse.results.map((searchResult: any) => 

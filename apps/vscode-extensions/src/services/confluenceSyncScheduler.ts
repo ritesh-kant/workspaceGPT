@@ -95,6 +95,13 @@ export class ConfluenceSyncScheduler {
         await embeddingService.createEmbeddings({
           dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
         } as EmbeddingConfig);
+
+        // Reset isIndexing after embeddings complete so future scheduled syncs aren't blocked
+        const updatedSettings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+        if (updatedSettings?.state?.config?.confluence) {
+          updatedSettings.state.config.confluence.isIndexing = false;
+          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, updatedSettings);
+        }
       });
 
     } catch (e) {

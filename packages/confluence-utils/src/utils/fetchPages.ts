@@ -172,7 +172,7 @@ export class ConfluencePageFetcher {
             // We'll need to fetch the individual pages based on these results.
             return {
                 results: response.data?.results || [],
-                size: response.data?.results?.length || 0,
+                size: response.data?.totalSize ?? response.data?.results?.length ?? 0,
                 start: start
             };
         } catch (error) {
