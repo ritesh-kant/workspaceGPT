@@ -94,7 +94,8 @@ export class ConfluenceService {
   public async startSync(
     config: ConfluenceConfig,
     onComplete?: () => Promise<void>,
-    resume: boolean = false
+    resume: boolean = false,
+    onError?: (error: Error) => void,
   ): Promise<void> {
     try {
       // Stop any existing worker
@@ -191,6 +192,9 @@ export class ConfluenceService {
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
               message: message.message,
             });
+            if (onError) {
+              onError(new Error(message.message));
+            }
             break;
 
           case WORKER_STATUS.COMPLETED:
@@ -234,6 +238,9 @@ export class ConfluenceService {
           message: error.message,
         });
         this.stopSync();
+        if (onError) {
+          onError(error);
+        }
       });
 
     } catch (error) {

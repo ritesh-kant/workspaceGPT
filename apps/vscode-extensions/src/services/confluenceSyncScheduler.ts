@@ -5,9 +5,14 @@ import { EmbeddingService } from './confluenceEmbeddingService';
 import { EmbeddingConfig } from '../types/types';
 import { CHECK_INTERVAL_MS, MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../constants';
 
+// If isSyncing/isIndexing has been stuck true for longer than this, auto-reset it.
+// This handles edge cases like VS Code crashing mid-sync.
+const STALE_FLAG_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+
 export class ConfluenceSyncScheduler {
   private intervalId?: NodeJS.Timeout;
   private confluenceAuthService: ConfluenceAuthService;
+  private syncStartedAt?: number;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.confluenceAuthService = new ConfluenceAuthService(context);
@@ -34,7 +39,19 @@ export class ConfluenceSyncScheduler {
 
       // Check if another sync is currently in progress
       if (config.state.config.confluence.isSyncing || config.state.config.confluence.isIndexing) {
-        return; 
+        // Guard against stale flags: if a sync was started by this scheduler
+        // instance and has been running for over an hour, the worker likely
+        // crashed without resetting state. Auto-recover.
+        if (this.syncStartedAt && (Date.now() - this.syncStartedAt > STALE_FLAG_TIMEOUT_MS)) {
+          console.warn('⚠️ Auto-sync: isSyncing/isIndexing stuck for over 1 hour — resetting stale flags');
+          config.state.config.confluence.isSyncing = false;
+          config.state.config.confluence.isIndexing = false;
+          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+          this.syncStartedAt = undefined;
+        } else {
+          console.log('⏳ Auto-sync: skipped — sync or indexing already in progress');
+          return;
+        }
       }
 
       const lastSyncTimeStr = config.state.config.confluence.lastSyncTime;
@@ -44,14 +61,25 @@ export class ConfluenceSyncScheduler {
 
       const lastSyncTime = new Date(lastSyncTimeStr).getTime();
       const now = Date.now();
+      const elapsed = now - lastSyncTime;
 
-      if (now - lastSyncTime >= SYNC_INTERVAL_MS) {
-        console.log('🔄 Triggering automated background sync...');
+      if (elapsed >= SYNC_INTERVAL_MS) {
+        console.log(`🔄 Triggering automated background sync (last sync ${Math.round(elapsed / 60000)} min ago)...`);
         await this.runSync();
       }
     } catch (err) {
       console.error('Background sync check failed:', err);
     }
+  }
+
+  private async resetSyncFlags() {
+    const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    if (config?.state?.config?.confluence) {
+      config.state.config.confluence.isSyncing = false;
+      config.state.config.confluence.isIndexing = false;
+      await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+    }
+    this.syncStartedAt = undefined;
   }
 
   private async runSync() {
@@ -70,6 +98,7 @@ export class ConfluenceSyncScheduler {
           config.state.config.confluence.isSyncing = true;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
+      this.syncStartedAt = Date.now();
 
       const confluenceConfig: ConfluenceConfig = {
           cloudId: site.id,
@@ -92,6 +121,8 @@ export class ConfluenceSyncScheduler {
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
         }
 
+        console.log('🔄 Auto-sync: page sync complete, starting embedding indexing...');
+
         await embeddingService.createEmbeddings({
           dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
         } as EmbeddingConfig);
@@ -102,17 +133,17 @@ export class ConfluenceSyncScheduler {
           updatedSettings.state.config.confluence.isIndexing = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, updatedSettings);
         }
+        this.syncStartedAt = undefined;
+        console.log('✅ Auto-sync: complete');
+      }, false, (error: Error) => {
+        // Error callback: reset flags so future scheduled syncs aren't blocked
+        console.error('❌ Auto-sync: worker error:', error.message);
+        this.resetSyncFlags();
       });
 
     } catch (e) {
       console.error('Automated background sync failed:', e);
-      // Reset syncing state on error
-      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      if (config?.state?.config?.confluence) {
-          config.state.config.confluence.isSyncing = false;
-          config.state.config.confluence.isIndexing = false;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-      }
+      await this.resetSyncFlags();
     }
   }
 }
