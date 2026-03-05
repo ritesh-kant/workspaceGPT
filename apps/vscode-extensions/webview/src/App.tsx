@@ -74,6 +74,7 @@ const App: React.FC = () => {
   >([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
   // Debounced save: to avoid writing to disk on every keystroke / rapid message
@@ -195,6 +196,22 @@ const App: React.FC = () => {
     // Scroll to bottom when messages change
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    // Auto-focus input on mount
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+
+    // Auto-focus input when webview window regains focus
+    const handleWindowFocus = () => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    };
+    window.addEventListener('focus', handleWindowFocus);
+    return () => window.removeEventListener('focus', handleWindowFocus);
+  }, []);
 
   const handleNewChat = () => {
     // Save current chat before starting a new one
@@ -475,6 +492,7 @@ const App: React.FC = () => {
         <div className='input-container'>
           <div className='input-wrapper'>
             <input
+              ref={inputRef}
               type='text'
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
