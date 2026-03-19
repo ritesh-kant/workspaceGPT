@@ -62,6 +62,30 @@ export const MESSAGE_TYPES = {
   INDEXING_CODEBASE_COMPLETE: 'indexing-codebase-complete',
   RESUME_INDEXING_CODEBASE: 'resume-indexing-codebase',
 
+  // Azure DevOps messages
+  CHECK_ADO_CONNECTION: 'check-ado-connection',
+  START_ADO_SYNC: 'start-ado-sync',
+  STOP_ADO_SYNC: 'stop-ado-sync',
+  SYNC_ADO_IN_PROGRESS: 'sync-ado-progress',
+  SYNC_ADO_COMPLETE: 'sync-ado-complete',
+  ADO_CONNECTION_STATUS: 'ado-connection-status',
+  SYNC_ADO_ERROR: 'sync-ado-error',
+  SYNC_ADO_STOP: 'sync-ado-stop',
+  RESUME_ADO_SYNC: 'resume-ado-sync',
+
+  SAVE_ADO_PAT: 'save-ado-pat',
+  ADO_PAT_SUCCESS: 'ado-pat-success',
+  ADO_PAT_ERROR: 'ado-pat-error',
+  FETCH_ADO_PROJECTS: 'fetch-ado-projects',
+  FETCH_ADO_PROJECTS_SUCCESS: 'fetch-ado-projects-success',
+  FETCH_ADO_PROJECTS_ERROR: 'fetch-ado-projects-error',
+  DISCONNECT_ADO: 'disconnect-ado',
+
+  INDEXING_ADO_ERROR: 'indexing-ado-error',
+  INDEXING_ADO_IN_PROGRESS: 'indexing-ado-progress',
+  INDEXING_ADO_COMPLETE: 'indexing-ado-complete',
+  RESUME_INDEXING_ADO: 'resume-indexing-ado',
+
   MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
   MODEL_DOWNLOAD_ERROR: 'model-download-error',
@@ -75,7 +99,7 @@ export const MESSAGE_TYPES = {
 } as const;
 
 export const SEARCH_CONSTANTS = {
-  MAX_SEARCH_RESULTS: 5, // Number of nearest neighbors to retrieve
+  MAX_SEARCH_RESULTS: 15, // Number of nearest neighbors to retrieve
 };
 
 // Storage Keys
@@ -87,6 +111,8 @@ export const STORAGE_KEYS = {
   EMBEDDING_PROGRESS: 'embedding-progress',
   CODEBASE_SYNC_PROGRESS: 'codebase-sync-progress',
   CONFLUENCE_OAUTH_TOKENS: 'confluence-oauth-tokens',
+  ADO_SYNC_PROGRESS: 'ado-sync-progress',
+  ADO_OAUTH_TOKENS: 'ado-oauth-tokens',
 };
 
 // Extension Constants
@@ -174,6 +200,21 @@ export const ATLASSIAN_OAUTH = {
     'offline_access',
   ],
   CALLBACK_PORT: 32323,
+  CALLBACK_PATH: '/callback',
+};
+
+// Azure DevOps OAuth 2.0 Configuration
+export const ADO_OAUTH = {
+  CLIENT_ID: 'REPLACE_WITH_ADO_APP_ID',
+  TOKEN_PROXY_URL: 'https://workspace-gpt-ado-auth-proxy.vercel.app/api/token', // Example Proxy
+  AUTH_URL: 'https://app.vssps.visualstudio.com/oauth2/authorize',
+  TOKEN_URL: 'https://app.vssps.visualstudio.com/oauth2/token',
+  SCOPES: [
+    'vso.work',
+    'vso.project',
+    'vso.code'
+  ],
+  CALLBACK_PORT: 32324, // Use a different port than Confluence
   CALLBACK_PATH: '/callback',
 };
 

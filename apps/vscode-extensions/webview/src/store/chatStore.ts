@@ -24,6 +24,7 @@ interface ChatState {
   currentSessionId: string | null;
   historyList: ChatSessionPreview[];
   showHistory: boolean;
+  contextSelection: string;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
@@ -33,6 +34,7 @@ interface ChatState {
   setCurrentSessionId: (id: string | null) => void;
   setHistoryList: (list: ChatSessionPreview[]) => void;
   setShowHistory: (show: boolean) => void;
+  setContextSelection: (selection: string) => void;
   resetStore: () => void;
 }
 
@@ -64,6 +66,7 @@ export const chatDefaultState = {
   currentSessionId: null,
   historyList: [],
   showHistory: false,
+  contextSelection: 'All',
 };
 
 export const useChatStore = create<ChatState>()(
@@ -79,6 +82,7 @@ export const useChatStore = create<ChatState>()(
       setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
       setHistoryList: (historyList) => set({ historyList }),
       setShowHistory: (showHistory) => set({ showHistory }),
+      setContextSelection: (contextSelection) => set({ contextSelection }),
       resetStore: () => {
         const vscode = VSCodeAPI();
         vscode.setState({});

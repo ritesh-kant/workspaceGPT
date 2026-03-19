@@ -49,6 +49,8 @@ const App: React.FC = () => {
     setHistoryList,
     setShowHistory,
     setMessages,
+    contextSelection,
+    setContextSelection,
   } = useChatStore();
 
   const {
@@ -269,6 +271,7 @@ const App: React.FC = () => {
       modelId: selectedModelProvider?.selectedModel,
       provider: selectedModelProvider.provider, // Use the provider string from the selectedModelProvider object
       apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
     });
   };
 
@@ -316,6 +319,7 @@ const App: React.FC = () => {
         modelId: selectedModelProvider?.selectedModel,
         provider: selectedModelProvider.provider,
         apiKey: selectedModelProvider?.apiKey,
+        contextSelection: contextSelection,
       });
     }, 0);
   };
@@ -505,6 +509,15 @@ const App: React.FC = () => {
             />
             <div className='input-controls'>
               <div className='model-selector-bottom'>
+                <select
+                  value={contextSelection}
+                  onChange={(e) => setContextSelection(e.target.value)}
+                  style={{ marginRight: '8px' }}
+                >
+                  <option value='All'>Context: All</option>
+                  <option value='Confluence'>Confluence</option>
+                  <option value='Azure DevOps'>Azure DevOps</option>
+                </select>
                 <select
                   value={selectedModelProvider?.provider}
                   onChange={(e) => {

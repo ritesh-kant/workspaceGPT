@@ -6,6 +6,7 @@ import { MESSAGE_TYPES } from '../constants';
 import { clearStatusMessageAfterDelay } from './settings/utils';
 import ModelSettings from './settings/ModelSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
+import AdoSettings from './settings/AdoSettings';
 import CodebaseSettings from './settings/CodebaseSettings';
 import { SettingsButtonProps } from '../types';
 
@@ -165,6 +166,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       <br />
 
       <ConfluenceSettings />
+      <br />
+
+      <AdoSettings />
       <br />
 
       <CodebaseSettings />

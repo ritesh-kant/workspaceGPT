@@ -63,7 +63,7 @@ async function generateWithOpenAI(prompt: string, model: string, baseURL: string
         }
       ],
       temperature: 0.3,
-      max_tokens: 512,
+      max_tokens: 4096,
     });
 
     const content = completion.choices[0]?.message?.content;

@@ -7,8 +7,10 @@ import {
   MESSAGE_TYPES,
   MODEL,
   ModelType,
+  STORAGE_KEYS
 } from '../../constants';
 import { CodebaseService } from './codebaseService';
+import { AdoEmbeddingService } from './azure/adoEmbeddingService';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -23,6 +25,7 @@ interface SearchResult {
 
 export class ChatService {
   private embeddingService: EmbeddingService;
+  private adoEmbeddingService: AdoEmbeddingService;
   private codebaseService: CodebaseService;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
@@ -38,6 +41,7 @@ export class ChatService {
     this.webviewView = webviewView;
     this.context = context;
     this.embeddingService = new EmbeddingService(webviewView, context);
+    this.adoEmbeddingService = new AdoEmbeddingService(webviewView, context);
     this.codebaseService = new CodebaseService(webviewView, context);
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
   }
@@ -163,7 +167,8 @@ export class ChatService {
     message: string,
     modelId: string,
     apiKey: string,
-    provider: string
+    provider: string,
+    contextSelection: string = 'All' // default to All
   ): Promise<void> {
     try {
       // Add user message to history
@@ -172,18 +177,28 @@ export class ChatService {
         content: message,
       });
 
-      // Search both Confluence and codebase embeddings
-      const [confluenceResults, codebaseResults] = await Promise.all([
-        this.embeddingService.searchEmbeddings(message),
-        [],
-        // this.codebaseService.searchCodebase(message)
-      ]);
+      // Search selected context using embedding services
+      const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+      const isConfluenceConnected = settings?.state?.config?.confluence?.isAuthenticated && settings?.state?.config?.confluence?.isIndexingCompleted;
+      const isAdoConnected = settings?.state?.config?.ado?.isAuthenticated && settings?.state?.config?.ado?.isIndexingCompleted;
+      
+      const searchPromises: Promise<SearchResult[]>[] = [];
+
+      if ((contextSelection === 'All' || contextSelection === 'Confluence') && isConfluenceConnected) {
+        searchPromises.push(this.embeddingService.searchEmbeddings(message));
+      }
+      
+      if ((contextSelection === 'All' || contextSelection === 'Azure DevOps') && isAdoConnected) {
+        searchPromises.push(this.adoEmbeddingService.searchEmbeddings(message));
+      }
+
+      // We still map search codebases logic if codebase is ever integrated
+      searchPromises.push(Promise.resolve([]));
+
+      const searchResultsArray = await Promise.all(searchPromises);
 
       // Combine search results
-      const combinedResults = this.combineSearchResults(
-        confluenceResults,
-        codebaseResults
-      );
+      const combinedResults = this.combineSearchResults(searchResultsArray);
 
       // Generate response using model
       const modelResponse = await this.generateModelResponse(
@@ -219,26 +234,17 @@ export class ChatService {
   }
 
   private combineSearchResults(
-    confluenceResults: SearchResult[],
-    codebaseResults: SearchResult[]
+    resultsArray: SearchResult[][]
   ): SearchResult[] {
-    // Add source type to differentiate between Confluence and codebase results
-    const taggedConfluenceResults = confluenceResults.map((result) => ({
-      ...result,
-    }));
-
-    const taggedCodebaseResults = codebaseResults.map((result) => ({
-      ...result,
-    }));
-
-    // Combine both result sets
-    const combined = [...taggedConfluenceResults, ...taggedCodebaseResults];
+    
+    // Flatten and combine all result sets
+    const combined = resultsArray.flat();
 
     // Sort by score (descending)
     combined.sort((a, b) => b.score - a.score);
 
-    // Return top results (limit to 10 for relevance)
-    return combined.slice(0, 10);
+    // Return top results (limit to 15 for relevance)
+    return combined.slice(0, 15);
   }
 
   private formatSearchResults(results: SearchResult[]): string {

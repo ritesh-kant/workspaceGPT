@@ -6,6 +6,7 @@ import { VSCodeAPI } from '../vscode';
 export interface SettingsConfig {
   confluence: ConfluenceConfig;
   codebase: CodebaseConfig;
+  ado: AdoConfig;
 }
 
 export const settingsDefaultConfig: SettingsConfig = {
@@ -18,6 +19,25 @@ export const settingsDefaultConfig: SettingsConfig = {
     availableSpaces: [],
     confluenceSyncProgress: 0,
     confluenceIndexProgress: 0,
+    isSyncing: false,
+    isIndexing: false,
+    messageType: 'success',
+    statusMessage: '',
+    canResume: false,
+    canResumeIndexing: false,
+    isSyncCompleted: false,
+    isIndexingCompleted: false,
+    lastSyncTime: undefined,
+    isConnecting: false,
+  },
+  ado: {
+    isAuthenticated: false,
+    orgName: '',
+    projectName: '',
+    availableProjects: [],
+    lookbackMonths: 24,
+    adoSyncProgress: 0,
+    adoIndexProgress: 0,
     isSyncing: false,
     isIndexing: false,
     messageType: 'success',
@@ -68,7 +88,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
-import { CodebaseConfig, ConfluenceConfig } from '../types';
+import { CodebaseConfig, ConfluenceConfig, AdoConfig } from '../types';
 
 const vscodeStorage = {
   getItem: () => {

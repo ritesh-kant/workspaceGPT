@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
 import { fork, ChildProcess } from 'child_process';
 import {
   EmbeddingConfig,
@@ -8,10 +7,10 @@ import {
   EmbeddingSearchMessage,
   EmbeddingSearchResult,
 } from 'src/types/types';
-import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
+import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../../constants';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
-export class EmbeddingService {
+export class AdoEmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
   private searchWorker: ChildProcess | null = null;
   private searchWorkerReady: boolean = false;
@@ -43,56 +42,42 @@ export class EmbeddingService {
     this.embeddingProgress = progress;
   }
 
-  /**
-   * Eagerly initialize the search worker in the background.
-   * Call this on extension activation so the first query is fast.
-   */
   public eagerInit(): void {
-    // Fire-and-forget: spawn the worker in the background
     this.ensureSearchWorker().catch((err) => {
-      console.warn('EmbeddingService: Eager init failed (will retry on first search):', err);
+      console.warn('AdoEmbeddingService: Eager init failed:', err);
     });
   }
 
-  // ── Persistent Search Worker Management ────────────────────────────
-
-  /**
-   * Lazily spawns a persistent search worker and initializes it.
-   * The worker stays alive across queries — no more per-query model init.
-   */
   private async ensureSearchWorker(): Promise<void> {
     if (this.searchWorker && this.searchWorkerReady) {
-      return; // Already running and ready
+      return; 
     }
 
-    // Kill any stale worker
     this.stopSearchWorker();
 
     const { embeddingDirPath, processPath } =
-      await this.getConfluenceMDAndEmbeddingPath('searchProcess.js');
+      await this.getAdoMDAndEmbeddingPath('searchProcess.js');
 
     this.searchWorker = fork(processPath, [], {
       execArgv: ['--max-old-space-size=4096'],
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
     });
 
-    // Handle unexpected exits — mark as not ready so next search re-spawns
     this.searchWorker.on('exit', (code, signal) => {
-      console.log(`Search worker exited (code=${code}, signal=${signal})`);
+      console.log(`ADO search worker exited (code=${code}, signal=${signal})`);
       this.searchWorker = null;
       this.searchWorkerReady = false;
     });
 
     this.searchWorker.on('error', (error) => {
-      console.error('Search worker error:', error);
+      console.error('ADO search worker error:', error);
       this.searchWorker = null;
       this.searchWorkerReady = false;
     });
 
-    // Send init message and wait for 'ready'
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Search worker init timeout after 30 seconds'));
+        reject(new Error('ADO search worker init timeout after 30 seconds'));
         this.stopSearchWorker();
       }, 30000);
 
@@ -103,17 +88,16 @@ export class EmbeddingService {
           resolve();
         } else if (message.type === 'error') {
           clearTimeout(timeout);
-          reject(new Error(message.message || 'Search worker init error'));
+          reject(new Error(message.message || 'ADO search worker init error'));
         }
-        // Remove this one-time listener; searchEmbeddings will set its own
         this.searchWorker?.removeListener('message', onMessage);
       };
 
       this.searchWorker!.on('message', onMessage);
-      this.searchWorker!.send({ type: 'init', embeddingDirPath });
+      this.searchWorker!.send({ type: 'init', embeddingDirPath, namespace: 'ADO' });
     });
 
-    console.log('Search worker initialized and ready.');
+    console.log('ADO search worker initialized and ready.');
   }
 
   private stopSearchWorker(): void {
@@ -124,39 +108,33 @@ export class EmbeddingService {
     }
   }
 
-  /**
-   * Tell the persistent search worker to reload embeddings from disk.
-   * Called after embedding creation completes.
-   */
   private async reloadSearchWorkerEmbeddings(): Promise<void> {
     if (!this.searchWorker || !this.searchWorkerReady) {
-      return; // Worker not running; next search will load fresh data
+      return;
     }
 
     const { embeddingDirPath } =
-      await this.getConfluenceMDAndEmbeddingPath('searchProcess.js');
+      await this.getAdoMDAndEmbeddingPath('searchProcess.js');
 
     return new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
-        console.warn('Search worker reload timeout, will reload on next search.');
+        console.warn('ADO search worker reload timeout, will reload on next search.');
         resolve();
       }, 15000);
 
       const onMessage = (message: any) => {
         if (message.type === 'reloaded') {
           clearTimeout(timeout);
-          console.log('Search worker embeddings reloaded.');
+          console.log('ADO search worker embeddings reloaded.');
           resolve();
         }
         this.searchWorker?.removeListener('message', onMessage);
       };
 
       this.searchWorker!.on('message', onMessage);
-      this.searchWorker!.send({ type: 'reload', embeddingDirPath });
+      this.searchWorker!.send({ type: 'reload', embeddingDirPath, namespace: 'ADO' });
     });
   }
-
-  // ── Public API ─────────────────────────────────────────────────────
 
   public async createEmbeddings(
     config: EmbeddingConfig,
@@ -164,13 +142,11 @@ export class EmbeddingService {
   ) {
     try {
       this.stopEmbeddingProcess();
-
       await this.resetStateIfNotResume(resume);
 
       const { embeddingDirPath, mdDirPath, processPath } =
-        await this.getConfluenceMDAndEmbeddingPath('createEmbeddingForText.js');
+        await this.getAdoMDAndEmbeddingPath('createEmbeddingForText.js');
 
-      // Create a new child process
       const { workerData } = this.createWorkerData(
         mdDirPath,
         embeddingDirPath,
@@ -185,7 +161,6 @@ export class EmbeddingService {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       });
 
-      // Handle messages from the process
       this.embeddingProcess.on('message', async (data) => {
         await this.handleCreateEmbeddingMessage(data);
       });
@@ -202,13 +177,12 @@ export class EmbeddingService {
     query: string
   ): Promise<EmbeddingSearchResult[]> {
     try {
-      // Ensure the persistent search worker is running
       await this.ensureSearchWorker();
 
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-          console.error('Search timeout');
-          reject(new Error('Search timeout after 30 seconds'));
+          console.error('ADO Search timeout');
+          reject(new Error('ADO Search timeout after 30 seconds'));
         }, 30000);
 
         const onMessage = (message: EmbeddingSearchMessage) => {
@@ -216,20 +190,28 @@ export class EmbeddingService {
           this.searchWorker?.removeListener('message', onMessage);
 
           if (message.type === 'results') {
-            console.log(`Search completed with ${message.data?.length || 0} results`);
-            resolve(message.data || []);
+            console.log(`ADO Search completed with ${message.data?.length || 0} results`);
+            
+            const taggedData = message.data?.map(o => ({
+               ...o,
+               data: {
+                 ...o.data,
+                 sourceName: 'ADO' as any
+               }
+            })) || [];
+
+            resolve(taggedData);
           } else if (message.type === 'error') {
-            console.error('Search error:', message.message);
+            console.error('ADO Search error:', message.message);
             reject(new Error(message.message || 'Unknown error'));
           }
         };
 
         this.searchWorker!.on('message', onMessage);
-        this.searchWorker!.send({ type: 'search', query });
+        this.searchWorker!.send({ type: 'search', query, namespace: 'ADO' });
       });
     } catch (error) {
-      console.error('Error in embedding search:', error);
-      // If the worker crashed, reset so it re-spawns on next search
+      console.error('Error in ADO embedding search:', error);
       this.stopSearchWorker();
       throw error;
     }
@@ -247,7 +229,6 @@ export class EmbeddingService {
     );
   }
 
-  // Util functions
   public stopEmbeddingProcess(): void {
     if (this.embeddingProcess) {
       this.embeddingProcess.kill();
@@ -255,18 +236,15 @@ export class EmbeddingService {
     }
   }
 
-  /**
-   * Clean up all child processes. Call this on extension deactivation.
-   */
   public dispose(): void {
     this.stopEmbeddingProcess();
     this.stopSearchWorker();
   }
 
   private handleError(error: unknown) {
-    console.error('Error starting embedding process:', error);
+    console.error('Error starting ADO embedding process:', error);
     this.webviewView?.webview.postMessage({
-      type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
+      type: MESSAGE_TYPES.INDEXING_ADO_ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
     this.stopEmbeddingProcess();
@@ -276,7 +254,7 @@ export class EmbeddingService {
     switch (message.type) {
       case WORKER_STATUS.PROCESSING:
         this.webviewView?.webview.postMessage({
-          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS,
+          type: MESSAGE_TYPES.INDEXING_ADO_IN_PROGRESS,
           progress: message.progress,
           current: message.current,
           total: message.total,
@@ -285,20 +263,19 @@ export class EmbeddingService {
         break;
 
       case WORKER_STATUS.ERROR:
-        console.error(`Worker error: ${message.message}`);
+        console.error(`ADO Worker error: ${message.message}`);
         this.webviewView?.webview.postMessage({
-          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
+          type: MESSAGE_TYPES.INDEXING_ADO_ERROR,
           message: message.message,
         });
         break;
 
       case WORKER_STATUS.COMPLETED:
-        console.log('Embedding creation complete');
+        console.log('ADO Embedding creation complete');
         this.webviewView?.webview.postMessage({
-          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
+          type: MESSAGE_TYPES.INDEXING_ADO_COMPLETE,
         });
         await this.saveEmbeddingProgress(message);
-        // Notify the search worker to reload embeddings from disk
         await this.reloadSearchWorkerEmbeddings();
         break;
     }
@@ -331,15 +308,15 @@ export class EmbeddingService {
     return { workerData };
   }
 
-  private async getConfluenceMDAndEmbeddingPath(processName: string) {
+  private async getAdoMDAndEmbeddingPath(processName: string) {
     const mdDirPath = path.join(
       this.context.globalStorageUri.fsPath,
-      'confluence',
+      'ado',
       'mds'
     );
     const embeddingDirPath = path.join(
       this.context.globalStorageUri.fsPath,
-      'confluence',
+      'ado',
       'embeddings'
     );
     const processPath = path.join(

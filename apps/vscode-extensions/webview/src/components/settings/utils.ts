@@ -9,7 +9,7 @@ import { ModelConfig } from '../../types';
 const vscode = VSCodeAPI();
 
 export const clearStatusMessageAfterDelay = (
-  section: 'confluence' | 'codebase',
+  section: 'confluence' | 'codebase' | 'ado',
   field: 'statusMessage' | 'messageType',
   value?: string | 'unknown',
   delay: number = 2000
@@ -81,6 +81,48 @@ export const handleConfluenceActions = {
   },
 };
 
+export const handleAdoActions = {
+
+  disconnect: (vscode: ReturnType<typeof VSCodeAPI>) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.DISCONNECT_ADO,
+    });
+  },
+
+  checkConnection: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.CHECK_ADO_CONNECTION,
+      section: 'ado',
+      config,
+    });
+  },
+
+  startSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any, forceFull?: boolean) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.START_ADO_SYNC,
+      section: 'ado',
+      config,
+      forceFull,
+    });
+  },
+
+  resumeSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.RESUME_ADO_SYNC,
+      section: 'ado',
+      config,
+    });
+  },
+
+  stopSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.STOP_ADO_SYNC,
+      section: 'ado',
+      config,
+    });
+  },
+};
+
 export const handleCodebaseActions = {
   startSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
     vscode.postMessage({
@@ -115,9 +157,9 @@ export const handleCodebaseActions = {
   },
 };
 export const handleInputChange = (
-  section: 'confluence' | 'codebase',
+  section: 'confluence' | 'codebase' | 'ado',
   field: string,
-  value: string
+  value: string | number
 ) => {
   const setConfig = useSettingsStore.getState().setConfig;
   const config = useSettingsStore.getState().config;

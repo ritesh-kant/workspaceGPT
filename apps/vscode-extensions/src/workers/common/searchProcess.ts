@@ -9,7 +9,7 @@ interface SearchResult {
   text: string;
   score: number;
   data: {
-    sourceName: 'CONFLUENCE' | 'CODEBASE';
+    sourceName: 'CONFLUENCE' | 'CODEBASE' | 'ADO';
     source: string;
     fileName: string;
   };
@@ -21,20 +21,22 @@ interface CachedEmbedding {
   url: string;
   embeddingOffset: number; // index into the flat Float32Array
 }
-
 interface InitMessage {
   type: 'init';
   embeddingDirPath: string;
+  namespace?: string;
 }
 
 interface SearchMessage {
   type: 'search';
   query: string;
+  namespace?: string;
 }
 
 interface ReloadMessage {
   type: 'reload';
   embeddingDirPath: string;
+  namespace?: string;
 }
 
 type WorkerMessage = InitMessage | SearchMessage | ReloadMessage;
@@ -47,6 +49,7 @@ let embeddingsMatrix: Float32Array = new Float32Array(0); // flat array: N embed
 let embeddingNorms: Float32Array = new Float32Array(0);   // pre-computed norms
 let dimensions: number = 0;
 let currentEmbeddingDirPath: string = '';
+let currentNamespace: 'CONFLUENCE' | 'CODEBASE' | 'ADO' = 'CONFLUENCE';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -279,10 +282,37 @@ async function handleSearch(query: string): Promise<void> {
     // Compute similarities — pure typed-array math, no object allocation
     const count = embeddingsMeta.length;
     const scores = new Float32Array(count);
+    const normalizedQuery = query.toLowerCase().trim();
+    const numberTokens = normalizedQuery.match(/\d+/g) || [];
+
     for (let i = 0; i < count; i++) {
       const dot = dotProduct(queryEmbedding, embeddingsMatrix, i * dimensions, dimensions);
       const denom = queryNorm * embeddingNorms[i];
-      scores[i] = denom === 0 ? 0 : dot / denom;
+      let score = denom === 0 ? 0 : dot / denom;
+
+      // HYBRID SEARCH BOOST: Lexical matching for exact IDs/phrases
+      const meta = embeddingsMeta[i];
+      const filenameLower = meta.filename.toLowerCase();
+      const textLower = meta.text.toLowerCase();
+
+      // 1. Exact ID/Filename match (E.g. query "tell me about 1224706" extracts "1224706" and matches "ADO-1224706")
+      let hasIdMatch = false;
+      for (const num of numberTokens) {
+        if (filenameLower.includes(num)) {
+          hasIdMatch = true;
+          break;
+        }
+      }
+
+      if (hasIdMatch) {
+        score += 0.5;
+      }
+      // 2. Exact phrase match in the document text -> Moderate +0.2 boost
+      else if (textLower.includes(normalizedQuery)) {
+        score += 0.2;
+      }
+
+      scores[i] = score;
     }
 
     // Find top k results using partial sort
@@ -296,7 +326,7 @@ async function handleSearch(query: string): Promise<void> {
       text: embeddingsMeta[idx].text,
       score: scores[idx],
       data: {
-        sourceName: 'CONFLUENCE',
+        sourceName: currentNamespace,
         source: embeddingsMeta[idx].url,
         fileName: embeddingsMeta[idx].filename,
       },
@@ -317,6 +347,9 @@ process.on('message', async (msg: WorkerMessage) => {
   switch (msg.type) {
     case 'init': {
       try {
+        if (msg.namespace) {
+          currentNamespace = msg.namespace as 'CONFLUENCE' | 'CODEBASE' | 'ADO';
+        }
         await initializeModel(msg.embeddingDirPath);
         await loadAllEmbeddings(msg.embeddingDirPath);
         process.send!({ type: 'ready' });

@@ -57,6 +57,27 @@ export interface CodebaseConfig {
   isSyncCompleted: boolean;
   isIndexingCompleted: boolean;
 }
+
+export interface AdoConfig {
+  isAuthenticated: boolean;
+  orgName: string;
+  projectName: string;
+  availableProjects: { id: string; name: string }[];
+  lookbackMonths: number;
+  adoSyncProgress: number;
+  adoIndexProgress: number;
+  isSyncing: boolean;
+  isIndexing: boolean;
+  isSyncCompleted: boolean;
+  isIndexingCompleted: boolean;
+  messageType: 'success' | 'error';
+  statusMessage: string;
+  canResume: boolean;
+  canResumeIndexing: boolean;
+  lastSyncTime?: string;
+  isConnecting?: boolean;
+}
+
 export interface AvailableModel {
   id: string;
 }

@@ -215,7 +215,7 @@ export class EmbeddingService {
       const processPath = path.join(
         __dirname,
         'workers',
-        'confluence',
+        'common',
         'searchProcess.js'
       );
       const workerData = {
