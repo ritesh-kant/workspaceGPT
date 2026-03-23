@@ -238,12 +238,41 @@ export class WebviewMessageHandler {
   }
 
   private async reset() {
-    const confluenceDirPath = path.join(
-      this.context.globalStorageUri.fsPath,
-      'confluence'
-    );
-    await ensureDirectoryExists(confluenceDirPath);
-    await deleteDirectory(confluenceDirPath);
+    try {
+      // 1. Stop all active syncs and embeddings
+      this.confluenceService?.stopSync();
+      this.embeddingService?.stopEmbeddingProcess();
+      this.adoService?.stopSync();
+      this.adoEmbeddingService?.stopEmbeddingProcess();
+      this.codebaseService?.stopSync();
+
+      // 2. Disconnect auth services
+      await this.confluenceAuthService?.disconnect();
+      await this.adoAuthService?.disconnect();
+
+      // 3. Reset progress states
+      await this.confluenceService?.resetSyncProgress();
+      await this.embeddingService?.resetEmbeddingProgress();
+      await this.adoService?.resetSyncProgress();
+      await this.adoEmbeddingService?.resetEmbeddingProgress();
+
+      // 4. Delete storage directories for all integrations
+      const directoriesToDelete = ['confluence', 'ado', 'codebase', 'chat_history'];
+      for (const dir of directoriesToDelete) {
+        const dirPath = path.join(this.context.globalStorageUri.fsPath, dir);
+        await deleteDirectory(dirPath);
+      }
+
+      // 5. Clear entire global state
+      const keys = this.context.globalState.keys();
+      for (const key of keys) {
+        await this.context.globalState.update(key, undefined);
+      }
+
+      console.log('WorkspaceGPT fully reset.');
+    } catch (error) {
+      console.error('Error during WorkspaceGPT reset:', error);
+    }
   }
 
   private async updateGlobalState(data: any): Promise<void> {
