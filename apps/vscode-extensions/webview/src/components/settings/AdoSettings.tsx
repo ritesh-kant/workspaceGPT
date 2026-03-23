@@ -288,37 +288,20 @@ const AdoSettings: React.FC = () => {
         {/* Authenticated State */}
         {isAuthenticated && (
           <>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '8px 12px',
-              background: 'rgba(78, 204, 163, 0.1)',
-              borderRadius: '6px',
-              marginBottom: '12px',
-              border: '1px solid rgba(78, 204, 163, 0.2)',
-            }}>
-              <span style={{ color: '#4ecca3', fontSize: '0.9em' }}>
+            <div className="connected-banner">
+              <span className="connected-label">
                 ✅ Connected to <strong>Azure DevOps</strong>
               </span>
               <button
                 onClick={disconnect}
-                style={{
-                  padding: '4px 10px',
-                  fontSize: '0.8em',
-                  background: 'rgba(231, 76, 60, 0.15)',
-                  color: '#e74c3c',
-                  border: '1px solid rgba(231, 76, 60, 0.3)',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                }}
+                className="disconnect-button"
               >
                 Disconnect
               </button>
             </div>
 
-            <div className="form-group" style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-              <div style={{ flex: 1 }}>
+            <div className="form-row">
+              <div className="form-group">
                 <label>Organization Name</label>
                 <input
                   type="text"
@@ -330,7 +313,6 @@ const AdoSettings: React.FC = () => {
               <button 
                 onClick={fetchProjects} 
                 disabled={!adoConfig.orgName || adoConfig.isConnecting}
-                style={{ padding: '8px 12px' }}
               >
                 Fetch Projects
               </button>
@@ -341,7 +323,7 @@ const AdoSettings: React.FC = () => {
                 <select
                   value={adoConfig.projectName || ''}
                   onChange={(e) => handleInputChange('ado', 'projectName', e.target.value)}
-                  style={{ width: '100%', padding: '8px', background: 'var(--vscode-input-background)', color: 'var(--vscode-input-foreground)', border: '1px solid var(--vscode-input-border)' }}
+                  className="settings-select"
                 >
                   <option value="">Select a project...</option>
                   {adoConfig.availableProjects.map((p) => (
@@ -363,7 +345,7 @@ const AdoSettings: React.FC = () => {
               <select
                 value={adoConfig.lookbackMonths ?? 24}
                 onChange={(e) => handleInputChange('ado', 'lookbackMonths', Number(e.target.value))}
-                style={{ width: '100%', padding: '8px', background: 'var(--vscode-input-background)', color: 'var(--vscode-input-foreground)', border: '1px solid var(--vscode-input-border)' }}
+                className="settings-select"
               >
                 <option value={1}>Last 1 month</option>
                 <option value={3}>Last 3 months</option>
@@ -396,7 +378,6 @@ const AdoSettings: React.FC = () => {
                         <button
                           onClick={() => startSync(true)}
                           className="secondary-button"
-                          style={{ background: 'transparent', border: '1px solid var(--vscode-button-background)', color: 'var(--vscode-button-foreground)' }}
                         >
                           Force Full Re-Sync
                         </button>

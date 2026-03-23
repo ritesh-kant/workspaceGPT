@@ -516,43 +516,46 @@ const App: React.FC = () => {
               }
             />
             <div className='input-controls'>
-              <div className='model-selector-bottom'>
-                <select
-                  value={contextSelection}
-                  onChange={(e) => setContextSelection(e.target.value)}
-                  style={{ marginRight: '8px' }}
-                >
-                  <option value='Auto'>Context: Auto ✨</option>
-                  <option value='Confluence'>Confluence</option>
-                  <option value='Azure DevOps'>Azure DevOps</option>
-                </select>
-                <select
-                  value={selectedModelProvider?.provider}
-                  onChange={(e) => {
-                    if (e.target.value === 'selectModel') {
-                      setShowSettings(true);
-                      return;
-                    }
-                    const providerConfig = activeModels.find(
-                      (model) => model.provider === e.target.value
-                    );
-                    handleModelChange(
-                      providerConfig?.model!,
-                      providerConfig?.provider!
-                    );
-                  }}
-                >
-                  {activeModels?.map((model) => (
-                    <option key={model.provider} value={model.provider}>
-                      {model.provider} ({model.model})
-                    </option>
-                  ))}
-                  {!activeModels?.length && (
-                    <option value='none'>Select Model</option>
-                  )}
-                  <hr />
-                  <option value='selectModel'>Edit...</option>
-                </select>
+              <div className='input-selectors'>
+                <div className='context-selector-bottom'>
+                  <select
+                    value={contextSelection}
+                    onChange={(e) => setContextSelection(e.target.value)}
+                  >
+                    <option value='Auto'>Context: Auto ✨</option>
+                    <option value='Confluence'>Confluence</option>
+                    <option value='Azure DevOps'>Azure DevOps</option>
+                  </select>
+                </div>
+                <div className='model-selector-bottom'>
+                  <select
+                    value={selectedModelProvider?.provider}
+                    onChange={(e) => {
+                      if (e.target.value === 'selectModel') {
+                        setShowSettings(true);
+                        return;
+                      }
+                      const providerConfig = activeModels.find(
+                        (model) => model.provider === e.target.value
+                      );
+                      handleModelChange(
+                        providerConfig?.model!,
+                        providerConfig?.provider!
+                      );
+                    }}
+                  >
+                    {activeModels?.map((model) => (
+                      <option key={model.provider} value={model.provider}>
+                        {model.provider} ({model.model})
+                      </option>
+                    ))}
+                    {!activeModels?.length && (
+                      <option value='none'>Select Model</option>
+                    )}
+                    <hr />
+                    <option value='selectModel'>Edit...</option>
+                  </select>
+                </div>
               </div>
               {isLoading ? (
                 <button

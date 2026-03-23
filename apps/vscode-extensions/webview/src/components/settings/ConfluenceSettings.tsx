@@ -294,20 +294,13 @@ const ConfluenceSettings: React.FC = () => {
           {/* Not Authenticated State */}
           {!isAuthenticated && (
             <div className='oauth-connect'>
-              <p style={{ color: '#a0a0a0', margin: '0 0 8px 0', fontSize: '0.9em' }}>
+              <p className="description-text">
                 Connect your Atlassian account to sync Confluence pages.
               </p>
               <button
                 onClick={startOAuth}
                 disabled={confluenceConfig?.isConnecting}
-                style={{
-                  width: '100%',
-                  padding: '10px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                }}
+                className="primary-button-full"
               >
                 {confluenceConfig?.isConnecting ? (
                   <>⏳ Connecting...</>
@@ -318,18 +311,7 @@ const ConfluenceSettings: React.FC = () => {
               {confluenceConfig?.isConnecting && (
                 <button
                   onClick={cancelOAuth}
-                  className='secondary-button'
-                  style={{
-                    width: '100%',
-                    marginTop: '8px',
-                    padding: '8px 16px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'transparent',
-                    border: '1px solid var(--vscode-button-background)',
-                    color: 'var(--vscode-button-foreground)',
-                  }}
+                  className='secondary-button button-full mt-8'
                 >
                   Cancel
                 </button>
@@ -341,30 +323,13 @@ const ConfluenceSettings: React.FC = () => {
           {isAuthenticated && (
             <>
               {/* Connected Site */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '8px 12px',
-                background: 'rgba(78, 204, 163, 0.1)',
-                borderRadius: '6px',
-                marginBottom: '12px',
-                border: '1px solid rgba(78, 204, 163, 0.2)',
-              }}>
-                <span style={{ color: '#4ecca3', fontSize: '0.9em' }}>
+              <div className="connected-banner">
+                <span className="connected-label">
                   ✅ Connected to <strong>{confluenceConfig.siteName || 'Confluence'}</strong>
                 </span>
                 <button
                   onClick={disconnect}
-                  style={{
-                    padding: '4px 10px',
-                    fontSize: '0.8em',
-                    background: 'rgba(231, 76, 60, 0.15)',
-                    color: '#e74c3c',
-                    border: '1px solid rgba(231, 76, 60, 0.3)',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
+                  className="disconnect-button"
                 >
                   Disconnect
                 </button>
@@ -373,26 +338,15 @@ const ConfluenceSettings: React.FC = () => {
               {/* Space Selection (Searchable Dropdown) */}
               <div className='form-group' ref={dropdownRef}>
                 <label htmlFor='confluence-space'>Select Space</label>
-                <div style={{ position: 'relative', width: '100%' }}>
+                <div className="searchable-dropdown-container">
                   <div
                     onClick={() => setIsOpen(!isOpen)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      background: 'var(--vscode-input-background)',
-                      color: 'var(--vscode-input-foreground)',
-                      border: '1px solid var(--vscode-input-border)',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}
+                    className="searchable-dropdown-trigger"
                   >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span className="trigger-text">
                       {selectedSpace ? `${selectedSpace.name} (${selectedSpace.key})` : '-- Select a space --'}
                     </span>
-                    <span>{isOpen ? '▲' : '▼'}</span>
+                    <span className="trigger-arrow">{isOpen ? '▲' : '▼'}</span>
                   </div>
 
                   {isOpen && (
@@ -429,52 +383,25 @@ const ConfluenceSettings: React.FC = () => {
                         }}
                         onClick={(e) => e.stopPropagation()}
                       />
-                      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                      <ul className="searchable-dropdown-list">
                         <li
                           onClick={() => handleSpaceChange('')}
-                          style={{
-                            padding: '8px 12px',
-                            cursor: 'pointer',
-                            color: 'var(--vscode-descriptionForeground)',
-                          }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--vscode-list-hoverBackground)')}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          className="searchable-dropdown-item clickable"
                         >
-                          -- Clear selection --
+                          <span className="item-subtitle">-- Clear selection --</span>
                         </li>
                         {filteredSpaces.map((space) => (
                           <li
                             key={space.key}
                             onClick={() => handleSpaceChange(space.key)}
-                            style={{
-                              padding: '8px 12px',
-                              cursor: 'pointer',
-                              background:
-                                space.key === confluenceConfig.spaceKey
-                                  ? 'var(--vscode-list-activeSelectionBackground)'
-                                  : 'transparent',
-                              color:
-                                space.key === confluenceConfig.spaceKey
-                                  ? 'var(--vscode-list-activeSelectionForeground)'
-                                  : 'var(--vscode-dropdown-foreground)',
-                            }}
-                            onMouseEnter={(e) => {
-                              if (space.key !== confluenceConfig.spaceKey) {
-                                e.currentTarget.style.background = 'var(--vscode-list-hoverBackground)';
-                              }
-                            }}
-                            onMouseLeave={(e) => {
-                              if (space.key !== confluenceConfig.spaceKey) {
-                                e.currentTarget.style.background = 'transparent';
-                              }
-                            }}
+                            className={`searchable-dropdown-item ${space.key === confluenceConfig.spaceKey ? 'selected' : ''}`}
                           >
-                            <div style={{ fontWeight: 'bold' }}>{space.name}</div>
-                            <div style={{ fontSize: '0.85em', opacity: 0.8 }}>{space.key} - {space.type}</div>
+                            <div className="item-title">{space.name}</div>
+                            <div className="item-subtitle">{space.key} - {space.type}</div>
                           </li>
                         ))}
                         {filteredSpaces.length === 0 && (
-                          <li style={{ padding: '8px 12px', color: 'var(--vscode-descriptionForeground)' }}>
+                          <li className="searchable-dropdown-empty">
                             No spaces found...
                           </li>
                         )}
@@ -510,33 +437,30 @@ const ConfluenceSettings: React.FC = () => {
                         <button onClick={() => startSync(false)}>
                           {confluenceConfig.lastSyncTime ? 'Sync Recent Changes' : 'Start Sync'}
                         </button>
-                        {confluenceConfig.lastSyncTime && (
-                          <button
-                            onClick={() => startSync(true)}
-                            className='secondary-button'
-                            style={{ background: 'transparent', border: '1px solid var(--vscode-button-background)', color: 'var(--vscode-button-foreground)' }}
-                            title='Forces a complete fetch and reconstruction of the entire Confluence space index.'
-                          >
-                            Force Full Re-Sync
-                          </button>
-                        )}
+                        <button
+                          onClick={() => startSync(true)}
+                          className='secondary-button'
+                          title='Forces a complete fetch and reconstruction of the entire Confluence space index.'
+                        >
+                          Force Full Re-Sync
+                        </button>
                       </>
                     )}
                   </div>
 
                   {/* Sync Status / Last Sync Time / Progress */}
-                  <div className='sync-status-container' style={{ marginTop: '12px' }}>
+                  <div className='sync-status-container mt-12'>
                     {(confluenceConfig.isSyncing || confluenceConfig.isIndexing) ? (
-                      <div className='active-sync-indicator' style={{ color: '#4ecca3', fontSize: '0.95em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div className='active-sync-indicator'>
                         <span className="spinner">🔄</span>
                         {confluenceConfig.isSyncing
                           ? `Syncing... (${confluenceConfig.confluenceSyncProgress || 0}%)`
                           : `Indexing... (${confluenceConfig.confluenceIndexProgress || 0}%)`}
                       </div>
                     ) : confluenceConfig.lastSyncTime ? (
-                      <div className='last-sync-time' style={{ color: '#888', fontSize: '0.95em' }}>
+                      <div className='last-sync-time'>
                         Last Sync: {new Date(confluenceConfig.lastSyncTime).toLocaleString()}
-                        <span style={{ marginLeft: '8px', opacity: 0.7 }}>
+                        <span className="next-sync-time">
                           (Next auto-sync at ~{new Date(new Date(confluenceConfig.lastSyncTime).getTime() + 4 * 60 * 60 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
                         </span>
                       </div>
