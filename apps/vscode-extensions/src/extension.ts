@@ -107,6 +107,42 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(historyDisposable);
+
+  // Register the clear data command
+  let clearDataDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_CLEAR_DATA,
+    async () => {
+      analyticsService.trackEvent('command_clear_data_triggered');
+      const selection = await vscode.window.showWarningMessage(
+        "Are you sure you want to clear all WorkspaceGPT data and cache? This cannot be undone.",
+        { modal: true },
+        "Yes, Clear Data"
+      );
+
+      if (selection === "Yes, Clear Data") {
+        // Stop any active background schedulers
+        if (syncScheduler) {
+          syncScheduler.stop();
+        }
+        if (adoSyncScheduler) {
+          adoSyncScheduler.stop();
+        }
+        
+        // If webview is active, tell it to reset (handles explicit stop of embedding process and auth disconnection)
+        const webviewView = webViewProvider.getWebviewView();
+        if (webviewView) {
+          await webViewProvider.sendMessage({ type: MESSAGE_TYPES.RESET });
+        } else {
+          // If webview is not active, clear directories and global state manually
+          const { clearWorkspaceGPTData } = await import('./utils/clearData');
+          await clearWorkspaceGPTData(context);
+        }
+        
+        vscode.window.showInformationMessage("WorkspaceGPT: All data and cache cleared successfully.");
+      }
+    }
+  );
+  context.subscriptions.push(clearDataDisposable);
 }
 
 export async function deactivate() {

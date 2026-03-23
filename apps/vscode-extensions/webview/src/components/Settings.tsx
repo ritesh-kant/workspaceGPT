@@ -7,7 +7,7 @@ import { clearStatusMessageAfterDelay } from './settings/utils';
 import ModelSettings from './settings/ModelSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
-import CodebaseSettings from './settings/CodebaseSettings';
+// import CodebaseSettings from './settings/CodebaseSettings';
 import { SettingsButtonProps } from '../types';
 
 const SettingsButton: React.FC<SettingsButtonProps> = ({
@@ -171,7 +171,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       <AdoSettings />
       <br />
 
-      <CodebaseSettings />
+      {/* <CodebaseSettings /> */}
       <br />
 
       <div className='settings-form'>

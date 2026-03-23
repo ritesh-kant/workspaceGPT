@@ -124,6 +124,7 @@ export const EXTENSION = {
   COMMAND_NEW_CHAT: 'workspacegpt.newChat',
   COMMAND_SETTINGS: 'workspacegpt.settings',
   COMMAND_HISTORY: 'workspacegpt.history',
+  COMMAND_CLEAR_DATA: 'workspacegpt.clearData',
   VIEW_CONTAINER: 'workspacegpt-sidebar',
 };
 

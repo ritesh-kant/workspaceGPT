@@ -20,6 +20,7 @@ import { HistoryService } from '../services/historyService';
 import path from 'path';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
+import { clearWorkspaceGPTData } from 'src/utils/clearData';
 
 export class WebviewMessageHandler {
   private chatService?: ChatService;
@@ -256,18 +257,13 @@ export class WebviewMessageHandler {
       await this.adoService?.resetSyncProgress();
       await this.adoEmbeddingService?.resetEmbeddingProgress();
 
-      // 4. Delete storage directories for all integrations
-      const directoriesToDelete = ['confluence', 'ado', 'codebase', 'chat_history'];
-      for (const dir of directoriesToDelete) {
-        const dirPath = path.join(this.context.globalStorageUri.fsPath, dir);
-        await deleteDirectory(dirPath);
-      }
+      // 4 & 5. Delete storage directories and clear global state
+      await clearWorkspaceGPTData(this.context);
 
-      // 5. Clear entire global state
-      const keys = this.context.globalState.keys();
-      for (const key of keys) {
-        await this.context.globalState.update(key, undefined);
-      }
+      // Notify frontend
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.RESET,
+      });
 
       console.log('WorkspaceGPT fully reset.');
     } catch (error) {

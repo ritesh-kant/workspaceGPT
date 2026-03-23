@@ -21,11 +21,15 @@
     "commands": [
       {
         "command": "workspacegpt.ask",
-        "title": "Ask WorkspaceGPT"
+        "title": "WorkspaceGPT: Ask"
+      },
+      {
+        "command": "workspacegpt.clearData",
+        "title": "WorkspaceGPT: Clear All Data and Cache"
       },
       {
         "command": "workspacegpt.newChat",
-        "title": "New Chat",
+        "title": "WorkspaceGPT: New Chat",
         "icon": {
           "light": "resources/plus-dark.svg",
           "dark": "resources/plus-light.svg"
@@ -33,7 +37,7 @@
       },
       {
         "command": "workspacegpt.settings",
-        "title": "Settings",
+        "title": "WorkspaceGPT: Settings",
         "icon": {
           "light": "resources/settings-dark.svg",
           "dark": "resources/settings-light.svg"
@@ -41,7 +45,7 @@
       },
       {
         "command": "workspacegpt.history",
-        "title": "Chat History",
+        "title": "WorkspaceGPT: Chat History",
         "icon": {
           "light": "resources/history-dark.svg",
           "dark": "resources/history-light.svg"
