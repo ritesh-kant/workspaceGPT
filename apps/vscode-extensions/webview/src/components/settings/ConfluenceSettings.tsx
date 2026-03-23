@@ -7,7 +7,7 @@ import {
   handleInputChange,
 } from './utils';
 import { ConfluenceConfig } from '../../types';
-import { MESSAGE_TYPES } from '../../constants';
+import { MESSAGE_TYPES, SYNC_INTERVAL_MS } from '../../constants';
 
 const ConfluenceSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
@@ -452,7 +452,11 @@ const ConfluenceSettings: React.FC = () => {
                   <div className='sync-status-container mt-12'>
                     {(confluenceConfig.isSyncing || confluenceConfig.isIndexing) ? (
                       <div className='active-sync-indicator'>
-                        <span className="spinner">🔄</span>
+                        <span className="spinner">
+                          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                          </svg>
+                        </span>
                         {confluenceConfig.isSyncing
                           ? `Syncing... (${confluenceConfig.confluenceSyncProgress || 0}%)`
                           : `Indexing... (${confluenceConfig.confluenceIndexProgress || 0}%)`}
@@ -461,7 +465,7 @@ const ConfluenceSettings: React.FC = () => {
                       <div className='last-sync-time'>
                         Last Sync: {new Date(confluenceConfig.lastSyncTime).toLocaleString()}
                         <span className="next-sync-time">
-                          (Next auto-sync at ~{new Date(new Date(confluenceConfig.lastSyncTime).getTime() + 4 * 60 * 60 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
+                          (Next auto-sync at ~{new Date(new Date(confluenceConfig.lastSyncTime).getTime() + SYNC_INTERVAL_MS).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
                         </span>
                       </div>
                     ) : null}

@@ -337,8 +337,13 @@
 }
 
 .spinner {
-  display: inline-block;
-  animation: rotate 2s linear infinite;
+  display: inline-flex;
+  animation: rotate 1s linear infinite;
+}
+
+.spinner svg {
+  width: 16px;
+  height: 16px;
 }
 
 @keyframes rotate {
