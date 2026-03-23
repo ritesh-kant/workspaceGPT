@@ -522,7 +522,7 @@ const App: React.FC = () => {
                   onChange={(e) => setContextSelection(e.target.value)}
                   style={{ marginRight: '8px' }}
                 >
-                  <option value='All'>Context: All</option>
+                  <option value='Auto'>Context: Auto ✨</option>
                   <option value='Confluence'>Confluence</option>
                   <option value='Azure DevOps'>Azure DevOps</option>
                 </select>

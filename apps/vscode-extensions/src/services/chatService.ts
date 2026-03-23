@@ -7,6 +7,7 @@ import {
   MESSAGE_TYPES,
   MODEL,
   ModelType,
+  MODEL_PROVIDERS,
   STORAGE_KEYS
 } from '../../constants';
 import { CodebaseService } from './codebaseService';
@@ -168,7 +169,7 @@ export class ChatService {
     modelId: string,
     apiKey: string,
     provider: string,
-    contextSelection: string = 'All' // default to All
+    contextSelection: string = 'Auto' // default to Auto
   ): Promise<void> {
     try {
       // Add user message to history
@@ -182,13 +183,29 @@ export class ChatService {
       const isConfluenceConnected = settings?.state?.config?.confluence?.isAuthenticated && settings?.state?.config?.confluence?.isIndexingCompleted;
       const isAdoConnected = settings?.state?.config?.ado?.isAuthenticated && settings?.state?.config?.ado?.isIndexingCompleted;
       
+      // Resolve 'Auto' context using fast LLM classification
+      let resolvedContext = contextSelection;
+      if (contextSelection === 'Auto' && isConfluenceConnected && isAdoConnected) {
+        resolvedContext = await this.classifyQueryContext(message, modelId, apiKey, provider);
+        console.log(`Auto context resolved to: ${resolvedContext}`);
+      } else if (contextSelection === 'Auto') {
+        // Only one source is available, just use whichever is connected
+        if (isAdoConnected && !isConfluenceConnected) {
+          resolvedContext = 'Azure DevOps';
+        } else if (isConfluenceConnected && !isAdoConnected) {
+          resolvedContext = 'Confluence';
+        } else {
+          resolvedContext = 'BOTH'; // Neither connected, searches will be empty
+        }
+      }
+
       const searchPromises: Promise<SearchResult[]>[] = [];
 
-      if ((contextSelection === 'All' || contextSelection === 'Confluence') && isConfluenceConnected) {
+      if ((resolvedContext === 'BOTH' || resolvedContext === 'Confluence') && isConfluenceConnected) {
         searchPromises.push(this.embeddingService.searchEmbeddings(message));
       }
       
-      if ((contextSelection === 'All' || contextSelection === 'Azure DevOps') && isAdoConnected) {
+      if ((resolvedContext === 'BOTH' || resolvedContext === 'Azure DevOps') && isAdoConnected) {
         searchPromises.push(this.adoEmbeddingService.searchEmbeddings(message));
       }
 
@@ -261,6 +278,55 @@ export class ChatService {
   }
 
   // streamResponse method removed as we're now sending the complete response at once
+
+  /**
+   * Fast LLM classification to determine which data source(s) a user query needs.
+   * Uses max_tokens=10 for speed — typically completes in <500ms.
+   */
+  private async classifyQueryContext(
+    query: string,
+    modelId: string,
+    apiKey: string,
+    provider: string
+  ): Promise<string> {
+    try {
+      const providerConfig = MODEL_PROVIDERS.find(p => p.MODEL_PROVIDER === provider);
+      if (!providerConfig || !apiKey) {
+        return 'BOTH'; // Fallback: search everything
+      }
+
+      const OpenAI = (await import('openai')).default;
+      const client = new OpenAI({
+        apiKey,
+        baseURL: providerConfig.BASE_URL,
+      });
+
+      const classificationPrompt = `You are a query classifier. Given a user query, respond with EXACTLY one word:
+- "ADO" if it's about work items, tickets, bugs, stories, sprints, iterations, or Azure DevOps
+- "CONFLUENCE" if it's about documentation, wiki pages, guides, runbooks, or Confluence content
+- "BOTH" if it could need both sources or you're unsure
+
+Query: "${query}"
+
+Classification:`;
+
+      const response = await client.chat.completions.create({
+        model: modelId,
+        messages: [{ role: 'user', content: classificationPrompt }],
+        max_tokens: 10,
+        temperature: 0,
+      });
+
+      const classification = response.choices[0]?.message?.content?.trim().toUpperCase() || 'BOTH';
+
+      if (classification.includes('ADO')) return 'Azure DevOps';
+      if (classification.includes('CONFLUENCE')) return 'Confluence';
+      return 'BOTH';
+    } catch (error) {
+      console.warn('Auto context classification failed, falling back to BOTH:', error);
+      return 'BOTH';
+    }
+  }
 
   private async generateModelResponse(
     message: string,

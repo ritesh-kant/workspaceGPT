@@ -67,7 +67,7 @@ export const chatDefaultState = {
   currentSessionId: null,
   historyList: [],
   showHistory: false,
-  contextSelection: 'All',
+  contextSelection: 'Auto',
 };
 
 export const useChatStore = create<ChatState>()(
