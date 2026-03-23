@@ -14,6 +14,10 @@ export interface AdoProject {
   url: string;
 }
 
+export interface AdoProfile {
+  displayName: string;
+}
+
 export class AdoAuthService {
   private context: vscode.ExtensionContext;
 

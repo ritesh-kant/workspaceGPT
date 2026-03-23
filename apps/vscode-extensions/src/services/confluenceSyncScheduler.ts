@@ -3,7 +3,7 @@ import { ConfluenceService, ConfluenceConfig } from './confluenceService';
 import { ConfluenceAuthService } from './confluenceAuthService';
 import { EmbeddingService } from './confluenceEmbeddingService';
 import { EmbeddingConfig } from '../types/types';
-import { CHECK_INTERVAL_MS, MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../constants';
+import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../constants';
 
 // If isSyncing/isIndexing has been stuck true for longer than this, auto-reset it.
 // This handles edge cases like VS Code crashing mid-sync.
@@ -19,9 +19,9 @@ export class ConfluenceSyncScheduler {
   }
 
   public start() {
-    this.intervalId = setInterval(() => this.checkAndSync(), CHECK_INTERVAL_MS);
-    // Optionally check immediately on start
-    this.checkAndSync();
+    this.intervalId = setInterval(() => this.checkAndSync(), SYNC_INTERVAL_MS);
+    // Determine if we should sync immediately on start
+    this.checkAndSync(true);
   }
 
   public stop() {
@@ -30,7 +30,7 @@ export class ConfluenceSyncScheduler {
     }
   }
 
-  private async checkAndSync() {
+  private async checkAndSync(force: boolean = false) {
     try {
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       if (!config?.state?.config?.confluence?.isAuthenticated || !config?.state?.config?.confluence?.spaceKey) {
@@ -63,8 +63,8 @@ export class ConfluenceSyncScheduler {
       const now = Date.now();
       const elapsed = now - lastSyncTime;
 
-      if (elapsed >= SYNC_INTERVAL_MS) {
-        console.log(`🔄 Triggering automated background sync (last sync ${Math.round(elapsed / 60000)} min ago)...`);
+      if (force || elapsed >= SYNC_INTERVAL_MS) {
+        console.log(`🔄 Triggering automated background sync (force: ${force}, last sync ${Math.round(elapsed / 60000)} min ago)...`);
         await this.runSync();
       }
     } catch (err) {

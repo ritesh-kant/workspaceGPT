@@ -229,5 +229,3 @@ export enum ModelTypeEnum {
 // Used for incremental sync
 // 1 hour in milliseconds
 export const SYNC_INTERVAL_MS = 1 * 60 * 60 * 1000;
-// Check every 3 minutes
-export const CHECK_INTERVAL_MS = 3 * 60 * 1000;

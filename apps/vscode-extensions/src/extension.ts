@@ -3,10 +3,12 @@ import { WebViewProvider } from './webViewprovider';
 import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { AnalyticsService } from './services/analyticsService';
 import { ConfluenceSyncScheduler } from './services/confluenceSyncScheduler';
+import { AdoSyncScheduler } from './services/azure/adoSyncScheduler';
 import { EmbeddingService } from './services/confluenceEmbeddingService';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
+let adoSyncScheduler: AdoSyncScheduler;
 let embeddingService: EmbeddingService;
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -17,6 +19,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize and start background sync scheduler
   syncScheduler = new ConfluenceSyncScheduler(context);
   syncScheduler.start();
+
+  // Initialize and start ADO sync scheduler
+  adoSyncScheduler = new AdoSyncScheduler(context);
+  adoSyncScheduler.start();
 
   // Eagerly initialize the search worker so the first chat query is fast
   embeddingService = new EmbeddingService(undefined, context);
@@ -107,6 +113,10 @@ export async function deactivate() {
   // Stop background scheduler
   if (syncScheduler) {
     syncScheduler.stop();
+  }
+
+  if (adoSyncScheduler) {
+    adoSyncScheduler.stop();
   }
 
   // Clean up search worker process
