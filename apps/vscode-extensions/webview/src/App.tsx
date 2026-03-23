@@ -26,8 +26,9 @@ function generateSessionId(): string {
 
 const STARTER_PROMPTS = [
   { icon: '', text: 'What does this Project do?' },
-  { icon: '', text: 'Tell me the architecture of this project' },
   { icon: '', text: 'Explain the architecture of this Project' },
+  { icon: '', text: 'Show Azure DevOps tickets assigned to me' },
+  { icon: '', text: 'Tell me the status of the ticket tkt-123456' },
 ];
 
 const App: React.FC = () => {

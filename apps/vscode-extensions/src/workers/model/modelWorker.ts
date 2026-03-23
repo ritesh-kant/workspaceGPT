@@ -11,6 +11,7 @@ interface WorkerData {
   chatHistory?: string;
   provider?: string;
   apiKey?: string;
+  adoUserName?: string;
 }
 
 const {
@@ -19,12 +20,13 @@ const {
   modelId,
   chatHistory,
   provider,
-  apiKey
+  apiKey,
+  adoUserName
 } = workerData as WorkerData;
 
 async function generateResponse(): Promise<void> {
   try {
-    const structuredPrompt = createStructuredPrompt(searchResults, prompt, chatHistory);
+    const structuredPrompt = createStructuredPrompt(searchResults, prompt, chatHistory, adoUserName);
 
     // Get provider configuration
     const providerConfig = MODEL_PROVIDERS.find(p => p.MODEL_PROVIDER === provider);

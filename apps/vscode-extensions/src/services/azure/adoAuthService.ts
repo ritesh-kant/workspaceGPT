@@ -33,7 +33,41 @@ export class AdoAuthService {
       throw new Error('Personal Access Token cannot be empty.');
     }
     await this.context.secrets.store(STORAGE_KEYS.ADO_OAUTH_TOKENS, pat.trim());
-    await this.context.globalState.update('ado-profile', { displayName: 'ADO User (PAT)' });
+
+    // Fetch real user display name from ADO
+    const profile = await this.fetchAuthenticatedUserProfile(pat.trim());
+    await this.context.globalState.update('ado-profile', profile);
+  }
+
+  /**
+   * Fetches the authenticated user's profile from Azure DevOps using a PAT.
+   * Falls back to a generic name if the API call fails.
+   */
+  private async fetchAuthenticatedUserProfile(pat: string): Promise<AdoProfile> {
+    try {
+      const authHeader = `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
+      const response = await fetch(
+        'https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1',
+        {
+          headers: {
+            Authorization: authHeader,
+            Accept: 'application/json',
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data: any = await response.json();
+        const displayName = data.displayName || data.coreAttributes?.DisplayName?.value;
+        if (displayName) {
+          console.log(`ADO authenticated user: ${displayName}`);
+          return { displayName };
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch ADO user profile, using fallback:', error);
+    }
+    return { displayName: 'ADO User (PAT)' };
   }
 
   /**

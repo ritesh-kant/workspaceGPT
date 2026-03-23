@@ -3,7 +3,8 @@ import { EmbeddingSearchResult } from 'src/types/types';
 export function createStructuredPrompt(
   searchResults: EmbeddingSearchResult[],
   prompt: string,
-  chatHistory: string = ''
+  chatHistory: string = '',
+  adoUserName?: string
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -41,6 +42,9 @@ export function createStructuredPrompt(
   - Always format responses in Markdown for readability.
   - Avoid small talk. Be to-the-point and helpful.
   - **ADO Tickets**: When answering about Azure DevOps tickets, ALWAYS explicitly mention its Status, assigned Sprint (Iteration), and any notable callouts from its Comments/Description — but ONLY if this information exists in the provided context.
+  ${adoUserName ? `
+  ## Current User Identity:
+  The currently authenticated Azure DevOps user is: **${adoUserName}**. When the user says "me", "my", or "I", they are referring to this person. Use this to filter and present relevant results from the context.` : ''}
   `;
 
   const contextInstruction = isGreeting

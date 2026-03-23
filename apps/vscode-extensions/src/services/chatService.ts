@@ -12,6 +12,7 @@ import {
 } from '../../constants';
 import { CodebaseService } from './codebaseService';
 import { AdoEmbeddingService } from './azure/adoEmbeddingService';
+import { AdoAuthService } from './azure/adoAuthService';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -27,6 +28,7 @@ interface SearchResult {
 export class ChatService {
   private embeddingService: EmbeddingService;
   private adoEmbeddingService: AdoEmbeddingService;
+  private adoAuthService: AdoAuthService;
   private codebaseService: CodebaseService;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
@@ -43,6 +45,7 @@ export class ChatService {
     this.context = context;
     this.embeddingService = new EmbeddingService(webviewView, context);
     this.adoEmbeddingService = new AdoEmbeddingService(webviewView, context);
+    this.adoAuthService = new AdoAuthService(context);
     this.codebaseService = new CodebaseService(webviewView, context);
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
   }
@@ -201,12 +204,21 @@ export class ChatService {
 
       const searchPromises: Promise<SearchResult[]>[] = [];
 
+      // Get ADO user display name for query augmentation
+      let adoUserName: string | undefined;
+      const adoProfile = this.adoAuthService.getStoredProfile();
+      if (adoProfile && adoProfile.displayName !== 'ADO User (PAT)') {
+        adoUserName = adoProfile.displayName;
+      }
+
       if ((resolvedContext === 'BOTH' || resolvedContext === 'Confluence') && isConfluenceConnected) {
         searchPromises.push(this.embeddingService.searchEmbeddings(message));
       }
       
       if ((resolvedContext === 'BOTH' || resolvedContext === 'Azure DevOps') && isAdoConnected) {
-        searchPromises.push(this.adoEmbeddingService.searchEmbeddings(message));
+        // Augment ADO search query with user's name when personal pronouns are detected
+        const adoSearchQuery = this.augmentQueryWithUserName(message, adoUserName);
+        searchPromises.push(this.adoEmbeddingService.searchEmbeddings(adoSearchQuery));
       }
 
       // We still map search codebases logic if codebase is ever integrated
@@ -223,7 +235,8 @@ export class ChatService {
         combinedResults,
         modelId,
         provider,
-        apiKey
+        apiKey,
+        adoUserName
       );
 
       // Add assistant response to history
@@ -328,12 +341,27 @@ Classification:`;
     }
   }
 
+  /**
+   * Detects personal pronouns in a query and augments it with the user's real name
+   * so embedding search can find relevant ADO tickets.
+   */
+  private augmentQueryWithUserName(query: string, userName?: string): string {
+    if (!userName) return query;
+
+    const personalPatterns = /\b(assigned to me|my tickets|my bugs|my tasks|my work items|my stories|my issues|for me|about me|i am working|i'm working|\bme\b|\bmy\b)\b/i;
+    if (personalPatterns.test(query)) {
+      return `${query} (user: ${userName})`;
+    }
+    return query;
+  }
+
   private async generateModelResponse(
     message: string,
     searchResults: SearchResult[],
     modelId: string,
     provider: string,
-    apiKey: string
+    apiKey: string,
+    adoUserName?: string
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -360,6 +388,7 @@ Classification:`;
           chatHistory: formattedChatHistory,
           provider: provider,
           apiKey: apiKey,
+          adoUserName: adoUserName,
         },
       });
 
