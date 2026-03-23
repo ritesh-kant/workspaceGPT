@@ -60,7 +60,7 @@ export class EmbeddingService {
    * Lazily spawns a persistent search worker and initializes it.
    * The worker stays alive across queries — no more per-query model init.
    */
-  private async ensureSearchWorker(): Promise<void> {
+  public async ensureSearchWorker(): Promise<void> {
     if (this.searchWorker && this.searchWorkerReady) {
       return; // Already running and ready
     }

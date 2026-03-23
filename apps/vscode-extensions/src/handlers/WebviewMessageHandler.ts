@@ -67,6 +67,21 @@ export class WebviewMessageHandler {
     );
 
     this.codebaseService = new CodebaseService(this.webviewView, this.context);
+
+    // Pre-warm the search workers in the background
+    const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    
+    // Pre-warm ADO worker if connected
+    if (config?.state?.config?.ado?.config?.isAdoConnected) {
+      console.log('Pre-warming ADO search worker...');
+      this.adoEmbeddingService.ensureSearchWorker().catch(e => console.error('Failed to pre-warm ADO worker', e));
+    }
+    
+    // Pre-warm Confluence worker if connected
+    if (config?.state?.config?.confluence?.isConnected) {
+      console.log('Pre-warming Confluence search worker...');
+      this.embeddingService.ensureSearchWorker().catch(e => console.error('Failed to pre-warm Confluence worker', e));
+    }
   }
 
   public async handleMessage(data: any): Promise<void> {

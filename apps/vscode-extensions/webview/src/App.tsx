@@ -41,6 +41,7 @@ const App: React.FC = () => {
     historyList,
     showHistory,
     addMessage,
+    appendToLastMessage,
     clearMessages,
     setInputValue,
     setIsLoading,
@@ -116,6 +117,13 @@ const App: React.FC = () => {
             content: message.content,
             isUser: false,
           });
+          setIsLoading(false);
+          break;
+        case MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK:
+          appendToLastMessage(message.content);
+          setIsLoading(false); // Stop loading animation since we're streaming now
+          break;
+        case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
           setIsLoading(false);
           break;
         case MESSAGE_TYPES.ERROR_CHAT:

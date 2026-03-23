@@ -2,6 +2,8 @@
 export const MESSAGE_TYPES = {
   SEND_MESSAGE: 'send-message',
   RECEIVE_MESSAGE: 'receive-message',
+  RECEIVE_MESSAGE_CHUNK: 'receive-message-chunk',
+  RECEIVE_MESSAGE_DONE: 'receive-message-done',
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
   SHOW_SETTINGS: 'show-settings',

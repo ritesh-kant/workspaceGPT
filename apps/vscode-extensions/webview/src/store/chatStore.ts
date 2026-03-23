@@ -27,6 +27,7 @@ interface ChatState {
   contextSelection: string;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
+  appendToLastMessage: (content: string) => void;
   clearMessages: () => void;
   setInputValue: (value: string) => void;
   setIsLoading: (isLoading: boolean) => void;
@@ -75,6 +76,15 @@ export const useChatStore = create<ChatState>()(
       ...chatDefaultState,
       setMessages: (messages) => set({ messages }),
       addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
+      appendToLastMessage: (content) => set((state) => {
+        const msgs = [...state.messages];
+        if (msgs.length > 0 && !msgs[msgs.length - 1].isUser) {
+          msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content: msgs[msgs.length - 1].content + content };
+        } else {
+          msgs.push({ content, isUser: false });
+        }
+        return { messages: msgs };
+      }),
       clearMessages: () => set({ messages: [] }),
       setInputValue: (inputValue) => set({ inputValue }),
       setIsLoading: (isLoading) => set({ isLoading }),

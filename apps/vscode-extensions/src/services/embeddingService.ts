@@ -22,6 +22,8 @@ interface EmbeddingProgress {
 
 export class EmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
+  private searchWorker: ChildProcess | null = null;
+  private searchWorkerReady: boolean = false;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private embeddingProgress: EmbeddingProgress | null = null;
@@ -209,89 +211,111 @@ export class EmbeddingService {
     }
   }
 
+  public async ensureSearchWorker(): Promise<void> {
+    if (this.searchWorker && this.searchWorkerReady) {
+      return;
+    }
+
+    const processPath = path.join(
+      __dirname,
+      'workers',
+      'common',
+      'searchProcess.js'
+    );
+    const embeddingDirPath = path.join(
+      this.context.globalStorageUri.fsPath,
+      'confluence',
+      'embeddings'
+    );
+
+    this.searchWorker = fork(processPath, [], {
+      execArgv: ['--max-old-space-size=4096'],
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+    });
+
+    this.searchWorker.on('exit', (code, signal) => {
+      console.log(`Confluence search worker exited (code=${code}, signal=${signal})`);
+      this.searchWorker = null;
+      this.searchWorkerReady = false;
+    });
+
+    this.searchWorker.on('error', (error) => {
+      console.error('Confluence search worker error:', error);
+      this.searchWorker = null;
+      this.searchWorkerReady = false;
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Confluence search worker init timeout after 30 seconds'));
+        this.stopSearchWorker();
+      }, 30000);
+
+      const onMessage = (message: any) => {
+        if (message.type === 'ready') {
+          clearTimeout(timeout);
+          this.searchWorkerReady = true;
+          resolve();
+        } else if (message.type === 'error') {
+          clearTimeout(timeout);
+          reject(new Error(message.message || 'Confluence search worker init error'));
+        }
+        this.searchWorker?.removeListener('message', onMessage);
+      };
+
+      this.searchWorker!.on('message', onMessage);
+      this.searchWorker!.send({ type: 'init', embeddingDirPath, namespace: 'CONFLUENCE' });
+    });
+
+    console.log('Confluence search worker initialized and ready.');
+  }
+
+  private stopSearchWorker(): void {
+    if (this.searchWorker) {
+      this.searchWorker.kill();
+      this.searchWorker = null;
+      this.searchWorkerReady = false;
+    }
+  }
+
   public async searchEmbeddings(query: string): Promise<SearchResult[]> {
     try {
-      // Create a new child process for search
-      const processPath = path.join(
-        __dirname,
-        'workers',
-        'common',
-        'searchProcess.js'
-      );
-      const workerData = {
-        query,
-        embeddingDirPath: path.join(
-          this.context.globalStorageUri.fsPath,
-          'confluence',
-          'embeddings'
-        ),
-      };
-      const searchProcess = fork(processPath, [JSON.stringify(workerData)], {
-        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-        execArgv: process.execArgv.filter((arg) => !arg.includes('--inspect')), // Remove any existing inspect arguments
-      });
+      await this.ensureSearchWorker();
 
       return new Promise((resolve, reject) => {
-        let resultsData = '';
-        let errorData = '';
+        const timeout = setTimeout(() => {
+          console.error('Confluence Search timeout');
+          reject(new Error('Confluence Search timeout after 30 seconds'));
+        }, 30000);
 
-        // Capture stdout
-        searchProcess.stdout?.on('data', (data) => {
-          const output = data.toString();
-          console.log('Search process stdout:', output);
-          resultsData += output;
-        });
+        const onMessage = (message: any) => {
+          clearTimeout(timeout);
+          this.searchWorker?.removeListener('message', onMessage);
 
-        // Capture stderr
-        searchProcess.stderr?.on('data', (data) => {
-          const error = data.toString();
-          console.error('Search process stderr:', error);
-          errorData += error;
-        });
+          if (message.type === 'results') {
+            console.log(`Confluence Search completed with ${message.data?.length || 0} results`);
+            
+            const taggedData = message.data?.map((o: any) => ({
+               ...o,
+               data: {
+                 ...o.data,
+                 sourceName: 'CONFLUENCE' as any
+               }
+            })) || [];
 
-        searchProcess.on('message', (data) => {
-          console.log('Search process message:', data);
-          resultsData += data.toString();
-        });
-
-        searchProcess.on('exit', (code) => {
-          console.log(`Search process exited with code: ${code}`);
-          console.log('Results data:', resultsData);
-          console.log('Error data:', errorData);
-
-          if (code === 0) {
-            try {
-              if (resultsData.trim() === '') {
-                resolve([]);
-                return;
-              }
-              // Try to parse the last line as JSON (the actual results)
-
-              const lines = resultsData.trim().split('\n');
-
-              const lastLine = lines[lines.length - 1];
-              const results = JSON.parse(lastLine);
-              resolve(results);
-            } catch (e) {
-              console.error('Failed to parse search results:', e);
-              console.error('Raw results data:', resultsData);
-              reject(new Error('Failed to parse search results.'));
-            }
-          } else {
-            const errorMessage =
-              errorData || `Search process exited with code ${code}`;
-            reject(new Error(errorMessage));
+            resolve(taggedData);
+          } else if (message.type === 'error') {
+            console.error('Confluence Search error:', message.message);
+            reject(new Error(message.message || 'Unknown error'));
           }
-        });
+        };
 
-        searchProcess.on('error', (error) => {
-          console.error('Search process error:', error);
-          reject(error);
-          searchProcess.kill();
-        });
+        this.searchWorker!.on('message', onMessage);
+        this.searchWorker!.send({ type: 'search', query, namespace: 'CONFLUENCE' });
       });
     } catch (error) {
-      console.error('Error in embedding search:', error);
+      console.error('Error in Confluence embedding search:', error);
+      this.stopSearchWorker();
       throw error;
     }
   }

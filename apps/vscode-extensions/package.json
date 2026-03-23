@@ -117,7 +117,7 @@
     "build-webview": "cd webview && pnpm install --ignore-workspace && pnpm run build",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "dev": "pnpm run build && code --new-window --extensionDevelopmentPath=${PWD}",
+    "dev": "pnpm run build && agy --new-window --extensionDevelopmentPath=${PWD}",
     "watch-webview": "cd webview && pnpm run dev",
     "create-tag": "git tag workspaceGPT-v${npm_package_version} && git push origin workspaceGPT-v${npm_package_version}"
   },

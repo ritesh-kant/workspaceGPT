@@ -48,7 +48,7 @@ export class AdoEmbeddingService {
     });
   }
 
-  private async ensureSearchWorker(): Promise<void> {
+  public async ensureSearchWorker(): Promise<void> {
     if (this.searchWorker && this.searchWorkerReady) {
       return; 
     }

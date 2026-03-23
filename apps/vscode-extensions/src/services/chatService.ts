@@ -200,7 +200,7 @@ export class ChatService {
       // Combine search results
       const combinedResults = this.combineSearchResults(searchResultsArray);
 
-      // Generate response using model
+      // Generate response using model (streaming)
       const modelResponse = await this.generateModelResponse(
         message,
         combinedResults,
@@ -212,12 +212,6 @@ export class ChatService {
       // Add assistant response to history
       this.chatHistory.push({
         role: 'assistant',
-        content: modelResponse,
-      });
-
-      // Send complete response to webview at once instead of streaming
-      this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.RECEIVE_MESSAGE,
         content: modelResponse,
       });
     } catch (error) {
@@ -307,6 +301,8 @@ export class ChatService {
 
       return new Promise((resolve, reject) => {
         this.currentReject = reject;
+        let fullContent = '';
+
         modelWorker.on(
           'message',
           (result: {
@@ -316,6 +312,33 @@ export class ChatService {
             progress?: string;
           }) => {
             switch (result.type) {
+              case 'chunk':
+                // Stream chunk to webview
+                this.webviewView.webview.postMessage({
+                  type: MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK,
+                  content: result.content || '',
+                });
+                break;
+
+              case 'done':
+                // Stream complete
+                fullContent = result.content || '';
+                this.webviewView.webview.postMessage({
+                  type: MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
+                });
+                this.currentModelWorker = null;
+                this.currentReject = null;
+                modelWorker.terminate();
+                resolve(fullContent);
+                break;
+
+              case 'error':
+                this.currentModelWorker = null;
+                this.currentReject = null;
+                modelWorker.terminate();
+                reject(new Error(result.message));
+                break;
+
               case WORKER_STATUS.PROCESSING:
                 this.webviewView.webview.postMessage({
                   type: MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS,
@@ -323,14 +346,6 @@ export class ChatService {
                 });
                 break;
             }
-            if (result.type === 'error') {
-              reject(new Error(result.message));
-            } else {
-              resolve(result.content ?? 'No response generated');
-            }
-            this.currentModelWorker = null;
-            this.currentReject = null;
-            modelWorker.terminate();
           }
         );
 
