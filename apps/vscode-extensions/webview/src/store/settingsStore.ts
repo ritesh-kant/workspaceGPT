@@ -31,6 +31,7 @@ export const settingsDefaultConfig: SettingsConfig = {
     isConnecting: false,
   },
   ado: {
+    isAdoEnabled: false,
     isAuthenticated: false,
     orgName: '',
     projectName: '',
@@ -135,7 +136,7 @@ export const useSettingsStore = create<SettingsState>()(
           const newConfig = { ...state.config };
           // Add type checking and logging
           console.log(`Updating ${section}.${String(field)} to:`, value);
-          if (section in newConfig && field in newConfig[section]) {
+          if (section in newConfig) {
             (newConfig[section] as any)[field] = value;
           } else {
             console.warn(`Invalid update attempt: ${section}.${String(field)}`);

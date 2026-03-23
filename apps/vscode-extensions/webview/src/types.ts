@@ -59,6 +59,7 @@ export interface CodebaseConfig {
 }
 
 export interface AdoConfig {
+  isAdoEnabled?: boolean;
   isAuthenticated: boolean;
   orgName: string;
   projectName: string;

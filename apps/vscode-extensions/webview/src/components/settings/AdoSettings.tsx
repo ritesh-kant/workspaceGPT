@@ -10,7 +10,7 @@ import { AdoConfig } from '../../types';
 import { MESSAGE_TYPES } from '../../constants';
 
 const AdoSettings: React.FC = () => {
-  const { config, batchUpdateConfig } = useSettingsStore();
+  const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
   const vscode = VSCodeAPI();
   const adoConfig = config.ado || ({} as AdoConfig);
 
@@ -242,11 +242,24 @@ const AdoSettings: React.FC = () => {
   const isAuthenticated = adoConfig?.isAuthenticated;
   const hasProjectSelected = !!adoConfig?.orgName && !!adoConfig?.projectName;
 
+  const handleToggleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateConfig('ado', 'isAdoEnabled', e.target.checked);
+  };
+
   return (
     <div className="settings-section">
       <div className="section-header">
         <h3>Azure DevOps Integration</h3>
+        <label className='toggle-switch'>
+          <input
+            type='checkbox'
+            checked={!!adoConfig?.isAdoEnabled}
+            onChange={handleToggleChange}
+          />
+          <span className='slider round'></span>
+        </label>
       </div>
+      {adoConfig?.isAdoEnabled && (
       <div className="settings-form">
 
         {/* Not Authenticated State */}
@@ -261,7 +274,7 @@ const AdoSettings: React.FC = () => {
                 value={patInput}
                 onChange={(e) => setPatInput(e.target.value)}
                 placeholder="Paste your PAT here..."
-                style={{ width: '100%', padding: '8px', marginBottom: '8px' }}
+                style={{ width: '100%', padding: '8px', marginBottom: '8px', boxSizing: 'border-box' }}
               />
             </div>
             <button
@@ -411,6 +424,7 @@ const AdoSettings: React.FC = () => {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };
