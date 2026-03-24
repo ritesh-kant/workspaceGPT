@@ -152,7 +152,55 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
-            setSettingsConfig(message.state?.config || settingsDefaultConfig);
+            const restoredConfig = message.state?.config || settingsDefaultConfig;
+            // Transient sync/index UI state is not meaningful across restarts.
+            // isSyncing, progress values, status messages, etc. were written during
+            // a previous session's run. Reset them to defaults so the UI doesn't
+            // show a stale "Syncing (100%)" or similar on every extension restart.
+            const transientConfluenceDefaults = {
+              isSyncing: false,
+              isIndexing: false,
+              confluenceSyncProgress: 0,
+              confluenceIndexProgress: 0,
+              canResume: false,
+              canResumeIndexing: false,
+              isSyncCompleted: restoredConfig.confluence?.isSyncCompleted ?? false,
+              isIndexingCompleted: restoredConfig.confluence?.isIndexingCompleted ?? false,
+              statusMessage: '',
+              messageType: 'success' as const,
+              isConnecting: false,
+            };
+            const transientAdoDefaults = {
+              isSyncing: false,
+              isIndexing: false,
+              adoSyncProgress: 0,
+              adoIndexProgress: 0,
+              canResume: false,
+              canResumeIndexing: false,
+              isSyncCompleted: restoredConfig.ado?.isSyncCompleted ?? false,
+              isIndexingCompleted: restoredConfig.ado?.isIndexingCompleted ?? false,
+              statusMessage: '',
+              messageType: 'success' as const,
+              isConnecting: false,
+            };
+            const transientCodebaseDefaults = {
+              isSyncing: false,
+              isIndexing: false,
+              codebaseSyncProgress: 0,
+              codebaseIndexProgress: 0,
+              canResume: false,
+              canResumeIndexing: false,
+              isSyncCompleted: restoredConfig.codebase?.isSyncCompleted ?? false,
+              isIndexingCompleted: restoredConfig.codebase?.isIndexingCompleted ?? false,
+              statusMessage: '',
+              messageType: 'success' as const,
+            };
+            setSettingsConfig({
+              ...restoredConfig,
+              confluence: { ...restoredConfig.confluence, ...transientConfluenceDefaults },
+              ado: { ...restoredConfig.ado, ...transientAdoDefaults },
+              codebase: { ...restoredConfig.codebase, ...transientCodebaseDefaults },
+            });
           }
           if (message.key === STORAGE_KEYS.MODEL) {
             if (message.state && message.state.modelProviders) {

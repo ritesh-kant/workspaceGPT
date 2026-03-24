@@ -2,14 +2,14 @@ import * as vscode from 'vscode';
 import { WebViewProvider } from './webViewprovider';
 import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { AnalyticsService } from './services/analyticsService';
-import { ConfluenceSyncScheduler } from './services/confluenceSyncScheduler';
-import { AdoSyncScheduler } from './services/azure/adoSyncScheduler';
-import { EmbeddingService } from './services/confluenceEmbeddingService';
+import { ConfluenceSyncScheduler } from './services/confluence/confluenceSyncScheduler';
+import { AdoSyncScheduler } from './services/ado/adoSyncScheduler';
+import { ConfluenceEmbeddingService } from './services/confluence/confluenceEmbeddingService';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
 let adoSyncScheduler: AdoSyncScheduler;
-let embeddingService: EmbeddingService;
+let embeddingService: ConfluenceEmbeddingService;
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize analytics service
@@ -25,7 +25,7 @@ export async function activate(context: vscode.ExtensionContext) {
   adoSyncScheduler.start();
 
   // Eagerly initialize the search worker so the first chat query is fast
-  embeddingService = new EmbeddingService(undefined, context);
+  embeddingService = new ConfluenceEmbeddingService(undefined, context);
   embeddingService.eagerInit();
 
   // Register WebViewProvider

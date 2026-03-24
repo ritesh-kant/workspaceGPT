@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
-import { CodebaseService } from '../services/codebaseService';
+import { CodebaseService } from '../services/codebase/codebaseService';
 import { CodebaseConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
 

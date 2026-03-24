@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import path from 'path';
 import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
-import { ConfluenceService, ConfluenceConfig } from '../services/confluenceService';
-import { ConfluenceAuthService } from '../services/confluenceAuthService';
-import { EmbeddingService } from '../services/confluenceEmbeddingService';
+import { ConfluenceService, ConfluenceConfig } from '../services/confluence/confluenceService';
+import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
+import { ConfluenceEmbeddingService } from '../services/confluence/confluenceEmbeddingService';
 import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
@@ -11,7 +11,7 @@ import { deleteDirectory } from 'src/utils/deleteDirectory';
 export class ConfluenceMessageHandler {
   private confluenceService: ConfluenceService;
   private confluenceAuthService: ConfluenceAuthService;
-  private embeddingService: EmbeddingService;
+  private embeddingService: ConfluenceEmbeddingService;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -20,7 +20,7 @@ export class ConfluenceMessageHandler {
   ) {
     this.confluenceService = new ConfluenceService(this.webviewView, this.context);
     this.confluenceAuthService = new ConfluenceAuthService(this.context);
-    this.embeddingService = new EmbeddingService(this.webviewView, this.context);
+    this.embeddingService = new ConfluenceEmbeddingService(this.webviewView, this.context);
 
     // Pre-warm Confluence worker if connected
     const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
@@ -164,6 +164,8 @@ export class ConfluenceMessageHandler {
           confluenceSyncProgress: 0,
           confluenceIndexProgress: 0,
           lastSyncTime: '',
+          _needsResume: false,
+          _needsResumeIndexing: false,
         };
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
       }
@@ -227,6 +229,8 @@ export class ConfluenceMessageHandler {
         const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
         if (settings?.state?.config?.confluence) {
           settings.state.config.confluence.lastSyncTime = '';
+          settings.state.config.confluence._needsResume = false;
+          settings.state.config.confluence._needsResumeIndexing = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
         }
       }
@@ -288,6 +292,8 @@ export class ConfluenceMessageHandler {
       if (config?.state?.config) {
         config.state.config.confluence.isSyncing = false;
         config.state.config.confluence.isIndexing = false;
+        config.state.config.confluence._needsResume = false;
+        config.state.config.confluence._needsResumeIndexing = false;
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
     } catch (error) {

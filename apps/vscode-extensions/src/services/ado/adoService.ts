@@ -43,9 +43,13 @@ export class AdoService {
     this.loadSyncProgress();
   }
 
-  private async loadSyncProgress(): Promise<void> {
+  private loadSyncProgress(): void {
     try {
-      const progress = await this.context.globalState.get<SyncProgress>(
+      // globalState.get is synchronous — no await needed.
+      // Using async/await here caused a race: the constructor called this method
+      // but startSync ran before the microtask resolved, so syncProgress was always
+      // null and incremental sync was never detected.
+      const progress = this.context.globalState.get<SyncProgress>(
         STORAGE_KEYS.ADO_SYNC_PROGRESS
       );
       this.syncProgress = progress || null;

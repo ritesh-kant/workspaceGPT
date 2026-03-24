@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
-import { ATLASSIAN_OAUTH, STORAGE_KEYS } from '../../constants';
+import { ATLASSIAN_OAUTH, STORAGE_KEYS } from '../../../constants';
 
 export interface OAuthTokens {
   accessToken: string;

@@ -1,17 +1,16 @@
 import * as vscode from 'vscode';
 import { ConfluenceService, ConfluenceConfig } from './confluenceService';
 import { ConfluenceAuthService } from './confluenceAuthService';
-import { EmbeddingService } from './confluenceEmbeddingService';
-import { EmbeddingConfig } from '../types/types';
-import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../constants';
-
-// If isSyncing/isIndexing has been stuck true for longer than this, auto-reset it.
-// This handles edge cases like VS Code crashing mid-sync.
-const STALE_FLAG_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+import { ConfluenceEmbeddingService } from './confluenceEmbeddingService';
+import { EmbeddingConfig } from '../../types/types';
+import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
 
 export class ConfluenceSyncScheduler {
   private intervalId?: NodeJS.Timeout;
   private confluenceAuthService: ConfluenceAuthService;
+  // Only set when THIS scheduler instance started a sync. Always undefined on a fresh
+  // extension start, which is how we distinguish a post-restart stale flag from an
+  // in-flight sync started by the current process.
   private syncStartedAt?: number;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -20,13 +19,62 @@ export class ConfluenceSyncScheduler {
 
   public start() {
     this.intervalId = setInterval(() => this.checkAndSync(), SYNC_INTERVAL_MS);
-    // Determine if we should sync immediately on start
-    this.checkAndSync(true);
+    // On start, first clear any stale in-progress flags left by a previous session,
+    // then decide whether to resume or run an incremental sync.
+    // Do not pass force=true — we only sync on startup if SYNC_INTERVAL_MS has
+    // actually elapsed since the last sync, not on every extension restart.
+    this.handleRestartRecovery().then(() => this.checkAndSync());
   }
 
   public stop() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
+    }
+  }
+
+  /**
+   * Called once on start. If the persisted state has isSyncing/isIndexing=true but
+   * syncStartedAt is undefined (we just restarted), those flags are stale from a
+   * previous session. We clear them so the scheduler is not stuck forever. If sync
+   * was mid-way (SyncProgress exists and !isComplete), we immediately trigger a
+   * resume so data is not lost.
+   */
+  private async handleRestartRecovery(): Promise<void> {
+    try {
+      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const confluenceConfig = config?.state?.config?.confluence;
+      if (!confluenceConfig?.isAuthenticated || !confluenceConfig?.spaceKey) {
+        return;
+      }
+
+      const wasStuckSyncing = confluenceConfig.isSyncing;
+      const wasStuckIndexing = confluenceConfig.isIndexing;
+
+      if (wasStuckSyncing || wasStuckIndexing) {
+        console.log(`🔁 Confluence: detected stale flags on restart (isSyncing=${wasStuckSyncing}, isIndexing=${wasStuckIndexing}) — clearing`);
+        confluenceConfig.isSyncing = false;
+        confluenceConfig.isIndexing = false;
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+      }
+
+      if (wasStuckIndexing) {
+        // Embedding process was running when extension was killed — signal webview to resume
+        confluenceConfig._needsResumeIndexing = true;
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+      }
+
+      if (wasStuckSyncing) {
+        // Check if sync was mid-way (not yet complete)
+        const syncProgress = this.context.globalState.get<{ isComplete: boolean }>(STORAGE_KEYS.CONFLUENCE_SYNC_PROGRESS);
+        if (syncProgress && !syncProgress.isComplete) {
+          console.log('🔁 Confluence: previous sync was interrupted — will resume on next checkAndSync');
+          // Mark that a resume is needed so checkAndSync picks it up
+          confluenceConfig._needsResume = true;
+          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+        }
+      }
+    } catch (err) {
+      console.error('Confluence restart recovery failed:', err);
     }
   }
 
@@ -37,20 +85,33 @@ export class ConfluenceSyncScheduler {
         return; // Not fully configured yet
       }
 
-      // Check if another sync is currently in progress
+      // Skip if the scheduler itself already has a sync running.
+      if (this.syncStartedAt) {
+        console.log('⏳ Auto-sync: skipped — scheduler sync already in progress');
+        return;
+      }
+
+      // Skip if a user-triggered sync or indexing is actively running.
+      // Stale flags from a previous crashed session are cleared exactly once in
+      // handleRestartRecovery() at startup, so anything still true here is live.
       if (config.state.config.confluence.isSyncing || config.state.config.confluence.isIndexing) {
-        // Guard against stale flags: if a sync was started by this scheduler
-        // instance and has been running for over an hour, the worker likely
-        // crashed without resetting state. Auto-recover.
-        if (this.syncStartedAt && (Date.now() - this.syncStartedAt > STALE_FLAG_TIMEOUT_MS)) {
-          console.warn('⚠️ Auto-sync: isSyncing/isIndexing stuck for over 1 hour — resetting stale flags');
-          config.state.config.confluence.isSyncing = false;
-          config.state.config.confluence.isIndexing = false;
+        console.log('⏳ Auto-sync: skipped — user sync/indexing already in progress');
+        return;
+      }
+
+      // Check if we need to resume an interrupted sync
+      if (config.state.config.confluence._needsResume) {
+        const syncProgress = this.context.globalState.get<{ isComplete: boolean }>(STORAGE_KEYS.CONFLUENCE_SYNC_PROGRESS);
+        if (syncProgress && !syncProgress.isComplete) {
+          console.log('🔁 Auto-sync: resuming interrupted Confluence sync...');
+          config.state.config.confluence._needsResume = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-          this.syncStartedAt = undefined;
-        } else {
-          console.log('⏳ Auto-sync: skipped — sync or indexing already in progress');
+          await this.runSync(true);
           return;
+        } else {
+          // Progress is complete or missing, clear the flag and fall through to normal sync
+          config.state.config.confluence._needsResume = false;
+          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
         }
       }
 
@@ -65,7 +126,7 @@ export class ConfluenceSyncScheduler {
 
       if (force || elapsed >= SYNC_INTERVAL_MS) {
         console.log(`🔄 Triggering automated background sync (force: ${force}, last sync ${Math.round(elapsed / 60000)} min ago)...`);
-        await this.runSync();
+        await this.runSync(false);
       }
     } catch (err) {
       console.error('Background sync check failed:', err);
@@ -82,7 +143,7 @@ export class ConfluenceSyncScheduler {
     this.syncStartedAt = undefined;
   }
 
-  private async runSync() {
+  private async runSync(resume: boolean = false) {
     try {
       const accessToken = await this.confluenceAuthService.getValidAccessToken();
       const site = this.confluenceAuthService.getStoredSite();
@@ -108,7 +169,7 @@ export class ConfluenceSyncScheduler {
       };
 
       const confluenceService = new ConfluenceService(undefined, this.context);
-      const embeddingService = new EmbeddingService(undefined, this.context);
+      const embeddingService = new ConfluenceEmbeddingService(undefined, this.context);
 
       await confluenceService.startSync(confluenceConfig, async () => {
         // Complete callback: update last sync time and start embeddings
@@ -135,7 +196,7 @@ export class ConfluenceSyncScheduler {
         }
         this.syncStartedAt = undefined;
         console.log('✅ Auto-sync: complete');
-      }, false, (error: Error) => {
+      }, resume, (error: Error) => {
         // Error callback: reset flags so future scheduled syncs aren't blocked
         console.error('❌ Auto-sync: worker error:', error.message);
         this.resetSyncFlags();

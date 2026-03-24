@@ -33,10 +33,18 @@ pnpm install
 # Build entire monorepo (Turbo handles dependency order)
 pnpm build
 
+# Validate codebase
+pnpm lint
+pnpm check-types
+
 # Run specific apps (uses pnpm filters)
 pnpm extractor start              # Extract Confluence data
 pnpm workspaceGPT start           # Start Streamlit RAG interface
 pnpm app:vscode-extension build   # Build VSCode extension
+
+# Initial setup helpers
+pnpm env:setup                    # Creates .env from .env.example if missing
+pnpm ollama:setup                 # Pulls default local model (llama3.2)
 
 # Reset data
 pnpm reset:extractor              # Clears .data directory
@@ -48,6 +56,7 @@ pnpm reset:workspaceGPT           # Clears vector_db directory
 2. VSCode extension uses custom esbuild config with:
    - **Main extension:** CommonJS (VSCode requirement)
    - **Workers:** ESM (for @xenova/transformers support)
+   - **Webview:** Built separately with Vite before extension bundling
    - Copies `@xenova/transformers` to `dist/node_modules` post-build
 3. **onnxruntime-node:** Required dependency for @xenova/transformers
    - @xenova/transformers has `onnxruntime-node` as an optional dependency
@@ -76,6 +85,7 @@ Confluence API → confluence-extractor → .data/confluence/mds/*.md
 **2. Environment Configuration:**
 - Root `.env` drives both Node.js and Python apps
 - Critical vars: `CONFLUENCE_BASE_URL`, `SPACE_KEY`, `API_TOKEN`, `APP_MODE` (LITE/STANDARD/EXPERT)
+- `APP_MODE` also controls vector DB folder naming (for example, `vector_db_standard`)
 
 **3. Conda Environment for Python:**
 ```bash
@@ -103,6 +113,10 @@ conda activate workspacegpt  # Must be active before running Python apps
 
 ## Testing & Development
 
+### Monorepo Build Tasks
+- Prefer VS Code task `build:all` for local dependency-safe builds (clean -> utils -> extractor)
+- `build:confluence-extractor` depends on `build:utils`
+
 ### VSCode Extension Development
 ```bash
 cd apps/vscode-extensions
@@ -111,6 +125,10 @@ pnpm run dev  # Builds and opens new VSCode window with extension loaded
 - Press F5 in VSCode to launch Extension Development Host
 - Webview runs separately: `cd webview && pnpm run dev`
 
+### Testing Reality
+- Most validation in this repo is currently build/lint/type-check oriented (`pnpm build`, `pnpm lint`, `pnpm check-types`)
+- VSCode extension has a `test` script, but broader automated test coverage is limited across apps
+
 ### Common Issues
 
 **"Cannot find module @workspace-gpt/confluence-utils"**
@@ -118,6 +136,9 @@ pnpm run dev  # Builds and opens new VSCode window with extension loaded
 
 **Python import errors**
 → Ensure `conda activate workspacegpt` is active
+
+**Streamlit module not found**
+→ Activate the conda env first, then rerun `pnpm workspaceGPT start`
 
 **VSCode extension not loading**
 → Check `dist/node_modules/@xenova/transformers` exists (should be copied by esbuild config)

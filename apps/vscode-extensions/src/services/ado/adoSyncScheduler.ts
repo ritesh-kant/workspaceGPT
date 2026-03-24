@@ -5,25 +5,72 @@ import { AdoEmbeddingService } from './adoEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
 
-// If isSyncing/isIndexing has been stuck true for longer than this, auto-reset it.
-// This handles edge cases like VS Code crashing mid-sync.
-const STALE_FLAG_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
-
 export class AdoSyncScheduler {
   private intervalId?: NodeJS.Timeout;
+  // Only set when THIS scheduler instance started a sync. Always undefined on a fresh
+  // extension start, which is how we distinguish a post-restart stale flag from an
+  // in-flight sync started by the current process.
   private syncStartedAt?: number;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   public start() {
     this.intervalId = setInterval(() => this.checkAndSync(), SYNC_INTERVAL_MS);
-    // Determine if we should sync immediately on start
-    this.checkAndSync(true);
+    // On start, first clear any stale in-progress flags left by a previous session,
+    // then decide whether to resume or run an incremental sync.
+    // Do not pass force=true — we only sync on startup if SYNC_INTERVAL_MS has
+    // actually elapsed since the last sync, not on every extension restart.
+    this.handleRestartRecovery().then(() => this.checkAndSync());
   }
 
   public stop() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
+    }
+  }
+
+  /**
+   * Called once on start. If the persisted state has isSyncing/isIndexing=true but
+   * syncStartedAt is undefined (we just restarted), those flags are stale from a
+   * previous session. We clear them so the scheduler is not stuck forever. If sync
+   * was mid-way (SyncProgress exists and !isComplete), we immediately trigger a
+   * resume so data is not lost.
+   */
+  private async handleRestartRecovery(): Promise<void> {
+    try {
+      const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const adoConfig = config?.state?.config?.ado;
+      if (!adoConfig?.isAuthenticated || !adoConfig?.orgName || !adoConfig?.projectName) {
+        return;
+      }
+
+      const wasStuckSyncing = adoConfig.isSyncing;
+      const wasStuckIndexing = adoConfig.isIndexing;
+
+      if (wasStuckSyncing || wasStuckIndexing) {
+        console.log(`🔁 ADO: detected stale flags on restart (isSyncing=${wasStuckSyncing}, isIndexing=${wasStuckIndexing}) — clearing`);
+        adoConfig.isSyncing = false;
+        adoConfig.isIndexing = false;
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+      }
+
+      if (wasStuckIndexing) {
+        // Embedding process was running when extension was killed — signal webview to resume
+        adoConfig._needsResumeIndexing = true;
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+      }
+
+      if (wasStuckSyncing) {
+        // Check if sync was mid-way (not yet complete)
+        const syncProgress = this.context.globalState.get<{ isComplete: boolean }>(STORAGE_KEYS.ADO_SYNC_PROGRESS);
+        if (syncProgress && !syncProgress.isComplete) {
+          console.log('🔁 ADO: previous sync was interrupted — will resume on next checkAndSync');
+          adoConfig._needsResume = true;
+          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+        }
+      }
+    } catch (err) {
+      console.error('ADO restart recovery failed:', err);
     }
   }
 
@@ -34,18 +81,33 @@ export class AdoSyncScheduler {
         return; // Not fully configured yet
       }
 
-      // Check if another sync is currently in progress
+      // If a live sync is already running in this process instance, skip.
+      if (this.syncStartedAt) {
+        console.log('⏳ Auto-sync ADO: skipped — scheduler sync already in progress');
+        return;
+      }
+
+      // Skip if a user-triggered sync or indexing is actively running.
+      // Stale flags from a previous crashed session are cleared exactly once in
+      // handleRestartRecovery() at startup, so anything still true here is live.
       if (config.state.config.ado.isSyncing || config.state.config.ado.isIndexing) {
-        // Guard against stale flags
-        if (this.syncStartedAt && (Date.now() - this.syncStartedAt > STALE_FLAG_TIMEOUT_MS)) {
-          console.warn('⚠️ Auto-sync ADO: isSyncing/isIndexing stuck for over 1 hour — resetting stale flags');
-          config.state.config.ado.isSyncing = false;
-          config.state.config.ado.isIndexing = false;
+        console.log('⏳ Auto-sync ADO: skipped — user sync/indexing already in progress');
+        return;
+      }
+
+      // Check if we need to resume an interrupted sync
+      if (config.state.config.ado._needsResume) {
+        const syncProgress = this.context.globalState.get<{ isComplete: boolean }>(STORAGE_KEYS.ADO_SYNC_PROGRESS);
+        if (syncProgress && !syncProgress.isComplete) {
+          console.log('🔁 Auto-sync ADO: resuming interrupted sync...');
+          config.state.config.ado._needsResume = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-          this.syncStartedAt = undefined;
-        } else {
-          console.log('⏳ Auto-sync ADO: skipped — sync or indexing already in progress');
+          await this.runSync(true);
           return;
+        } else {
+          // Progress is complete or missing, clear the flag and fall through to normal sync
+          config.state.config.ado._needsResume = false;
+          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
         }
       }
 
@@ -60,7 +122,7 @@ export class AdoSyncScheduler {
 
       if (force || elapsed >= SYNC_INTERVAL_MS) {
         console.log(`🔄 Triggering automated ADO background sync (force: ${force}, last sync ${Math.round(elapsed / 60000)} min ago)...`);
-        await this.runSync();
+        await this.runSync(false);
       }
     } catch (err) {
       console.error('ADO Background sync check failed:', err);
@@ -77,7 +139,7 @@ export class AdoSyncScheduler {
     this.syncStartedAt = undefined;
   }
 
-  private async runSync() {
+  private async runSync(resume: boolean = false) {
     try {
       const authService = new AdoAuthService(this.context);
       const accessToken = await authService.getValidAccessToken();
@@ -132,7 +194,7 @@ export class AdoSyncScheduler {
         }
         this.syncStartedAt = undefined;
         console.log('✅ Auto-sync ADO: complete');
-      }, false, (error: Error) => {
+      }, resume, (error: Error) => {
         // Error callback: reset flags so future scheduled syncs aren't blocked
         console.error('❌ Auto-sync ADO: worker error:', error.message);
         this.resetSyncFlags();

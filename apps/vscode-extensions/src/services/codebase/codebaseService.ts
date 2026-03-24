@@ -3,13 +3,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Worker } from 'worker_threads';
 import { fork, ChildProcess } from 'child_process';
-import { EmbeddingConfig } from '../types/types';
+import { EmbeddingConfig } from '../../types/types';
 import {
   WORKER_STATUS,
   MESSAGE_TYPES,
   STORAGE_KEYS,
   MODEL,
-} from '../../constants';
+} from '../../../constants';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 interface ProcessedFile {

@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import path from 'path';
 import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
-import { AdoService, AdoConfig } from '../services/azure/adoService';
-import { AdoAuthService } from '../services/azure/adoAuthService';
-import { AdoEmbeddingService } from '../services/azure/adoEmbeddingService';
+import { AdoService, AdoConfig } from '../services/ado/adoService';
+import { AdoAuthService } from '../services/ado/adoAuthService';
+import { AdoEmbeddingService } from '../services/ado/adoEmbeddingService';
 import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
@@ -129,6 +129,8 @@ export class AdoMessageHandler {
           adoSyncProgress: 0,
           adoIndexProgress: 0,
           lastSyncTime: '',
+          _needsResume: false,
+          _needsResumeIndexing: false,
         };
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
       }
@@ -214,6 +216,8 @@ export class AdoMessageHandler {
         const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
         if (settings?.state?.config?.ado) {
           settings.state.config.ado.lastSyncTime = '';
+          settings.state.config.ado._needsResume = false;
+          settings.state.config.ado._needsResumeIndexing = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
         }
       }
@@ -275,6 +279,8 @@ export class AdoMessageHandler {
       if (config?.state?.config?.ado) {
         config.state.config.ado.isSyncing = false;
         config.state.config.ado.isIndexing = false;
+        config.state.config.ado._needsResume = false;
+        config.state.config.ado._needsResumeIndexing = false;
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
       }
     } catch (error) {

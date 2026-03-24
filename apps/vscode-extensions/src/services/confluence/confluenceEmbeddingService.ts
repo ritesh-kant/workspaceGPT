@@ -8,10 +8,10 @@ import {
   EmbeddingSearchMessage,
   EmbeddingSearchResult,
 } from 'src/types/types';
-import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
+import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../../constants';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
-export class EmbeddingService {
+export class ConfluenceEmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
   private searchWorker: ChildProcess | null = null;
   private searchWorkerReady: boolean = false;

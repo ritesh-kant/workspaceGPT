@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { EmbeddingService } from './confluenceEmbeddingService';
+import { ConfluenceEmbeddingService } from './confluence/confluenceEmbeddingService';
 import path from 'path';
 import { Worker } from 'worker_threads';
 import {
@@ -11,7 +11,7 @@ import {
   STORAGE_KEYS
 } from '../../constants';
 import { CodebaseService } from './codebaseService';
-import { AdoEmbeddingService } from './azure/adoEmbeddingService';
+import { AdoEmbeddingService } from './ado/adoEmbeddingService';
 import { AdoAuthService } from './azure/adoAuthService';
 
 interface ChatMessage {
@@ -26,7 +26,7 @@ interface SearchResult {
 }
 
 export class ChatService {
-  private embeddingService: EmbeddingService;
+  private embeddingService: ConfluenceEmbeddingService;
   private adoEmbeddingService: AdoEmbeddingService;
   private adoAuthService: AdoAuthService;
   private codebaseService: CodebaseService;
@@ -43,7 +43,7 @@ export class ChatService {
   ) {
     this.webviewView = webviewView;
     this.context = context;
-    this.embeddingService = new EmbeddingService(webviewView, context);
+    this.embeddingService = new ConfluenceEmbeddingService(webviewView, context);
     this.adoEmbeddingService = new AdoEmbeddingService(webviewView, context);
     this.adoAuthService = new AdoAuthService(context);
     this.codebaseService = new CodebaseService(webviewView, context);
