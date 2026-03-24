@@ -10,9 +10,9 @@ import {
   MODEL_PROVIDERS,
   STORAGE_KEYS
 } from '../../constants';
-import { CodebaseService } from './codebaseService';
+import { CodebaseService } from './codebase/codebaseService';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
-import { AdoAuthService } from './azure/adoAuthService';
+import { AdoAuthService } from './ado/adoAuthService';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
