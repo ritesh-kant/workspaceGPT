@@ -302,10 +302,6 @@ export class ConfluenceService {
       // Write the content to the file
       const writeFile = promisify(fs.writeFile);
       await writeFile(mdFilePath, contentWithMetadata, 'utf8');
-
-      console.log(
-        `Saved MD file: ${page.filename}.md${page.pageUrl ? ' with metadata' : ''}`
-      );
     } catch (error) {
       console.error('Error saving MD file:', error);
       throw error;

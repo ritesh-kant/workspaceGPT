@@ -268,9 +268,16 @@ async function fetchAndProcessAdoItems() {
 
         processedCount++;
 
+        const progressPercent = ((processedCount / totalItems) * 100).toFixed(1);
+        
+        // Log progress every 50 items or on the last item to avoid overly noisy logs
+        if (processedCount % 50 === 0 || processedCount === totalItems) {
+            console.log(`📊 ADO Progress: ${progressPercent}% (${processedCount}/${totalItems} items)`);
+        }
+
         parentPort?.postMessage({
           type: WORKER_STATUS.PROCESSING,
-          progress: ((processedCount / totalItems) * 100).toFixed(1),
+          progress: progressPercent,
           current: processedCount,
           total: totalItems,
           lastProcessedId: filename,

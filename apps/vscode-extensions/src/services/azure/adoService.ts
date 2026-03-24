@@ -283,8 +283,7 @@ ${item.text}`;
 
       const writeFile = promisify(fs.writeFile);
       await writeFile(mdFilePath, contentWithMetadata, 'utf8');
-
-      console.log(`Saved ADO MD file: ${item.filename}.md${item.url ? ' with metadata' : ''}`);
+      // console.log(`Saved ADO MD file: ${item.filename}.md${item.url ? ' with metadata' : ''}`);
     } catch (error) {
       console.error('Error saving ADO MD file:', error);
       throw error;
