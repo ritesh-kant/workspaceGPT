@@ -37,6 +37,7 @@ const App: React.FC = () => {
     messages,
     inputValue,
     isLoading,
+    isStreaming,
     showTips,
     currentSessionId,
     historyList,
@@ -46,6 +47,7 @@ const App: React.FC = () => {
     clearMessages,
     setInputValue,
     setIsLoading,
+    setIsStreaming,
     setShowTips,
     setCurrentSessionId,
     setHistoryList,
@@ -119,13 +121,16 @@ const App: React.FC = () => {
             isUser: false,
           });
           setIsLoading(false);
+          setIsStreaming(false);
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK:
           appendToLastMessage(message.content);
           setIsLoading(false); // Stop loading animation since we're streaming now
+          setIsStreaming(true);
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
           setIsLoading(false);
+          setIsStreaming(false);
           break;
         case MESSAGE_TYPES.ERROR_CHAT:
           addMessage({
@@ -134,6 +139,7 @@ const App: React.FC = () => {
             isError: true,
           });
           setIsLoading(false);
+          setIsStreaming(false);
           break;
         case MESSAGE_TYPES.SHOW_SETTINGS:
           setShowSettings(true);
@@ -283,6 +289,7 @@ const App: React.FC = () => {
       });
     }
     setIsLoading(false);
+    setIsStreaming(false);
     clearMessages();
     setInputValue('');
     setCurrentSessionId(null);
@@ -318,6 +325,7 @@ const App: React.FC = () => {
 
     setInputValue('');
     setIsLoading(true);
+    setIsStreaming(false);
     setShowTips(false);
 
     // Get the selected model directly from the dropdown
@@ -337,6 +345,7 @@ const App: React.FC = () => {
       type: MESSAGE_TYPES.STOP_MESSAGE,
     });
     setIsLoading(false);
+    setIsStreaming(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -369,6 +378,7 @@ const App: React.FC = () => {
       addMessage({ content: promptText, isUser: true });
       setInputValue('');
       setIsLoading(true);
+      setIsStreaming(false);
       setShowTips(false);
       vscode.postMessage({
         type: MESSAGE_TYPES.SEND_MESSAGE,
@@ -606,7 +616,7 @@ const App: React.FC = () => {
                   </select>
                 </div>
               </div>
-              {isLoading ? (
+              {isLoading || isStreaming ? (
                 <button
                   onClick={handleStopMessage}
                   className='stop-button action-btn'

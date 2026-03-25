@@ -20,6 +20,7 @@ interface ChatState {
   messages: Message[];
   inputValue: string;
   isLoading: boolean;
+  isStreaming: boolean;
   showTips: boolean;
   currentSessionId: string | null;
   historyList: ChatSessionPreview[];
@@ -31,6 +32,7 @@ interface ChatState {
   clearMessages: () => void;
   setInputValue: (value: string) => void;
   setIsLoading: (isLoading: boolean) => void;
+  setIsStreaming: (isStreaming: boolean) => void;
   setShowTips: (showTips: boolean) => void;
   setCurrentSessionId: (id: string | null) => void;
   setHistoryList: (list: ChatSessionPreview[]) => void;
@@ -63,6 +65,7 @@ export const chatDefaultState = {
   messages: [],
   inputValue: '',
   isLoading: false,
+  isStreaming: false,
   showTips: true,
   currentSessionId: null,
   historyList: [],
@@ -88,6 +91,7 @@ export const useChatStore = create<ChatState>()(
       clearMessages: () => set({ messages: [] }),
       setInputValue: (inputValue) => set({ inputValue }),
       setIsLoading: (isLoading) => set({ isLoading }),
+      setIsStreaming: (isStreaming) => set({ isStreaming }),
       setShowTips: (showTips) => set({ showTips }),
       setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
       setHistoryList: (historyList) => set({ historyList }),
