@@ -12,7 +12,6 @@ import {
 } from '../../constants';
 import { CodebaseService } from './codebase/codebaseService';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
-import { AdoAuthService } from './ado/adoAuthService';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -28,7 +27,6 @@ interface SearchResult {
 export class ChatService {
   private embeddingService: ConfluenceEmbeddingService;
   private adoEmbeddingService: AdoEmbeddingService;
-  private adoAuthService: AdoAuthService;
   private codebaseService: CodebaseService;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
@@ -45,7 +43,6 @@ export class ChatService {
     this.context = context;
     this.embeddingService = new ConfluenceEmbeddingService(webviewView, context);
     this.adoEmbeddingService = new AdoEmbeddingService(webviewView, context);
-    this.adoAuthService = new AdoAuthService(context);
     this.codebaseService = new CodebaseService(webviewView, context);
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
   }
@@ -204,21 +201,12 @@ export class ChatService {
 
       const searchPromises: Promise<SearchResult[]>[] = [];
 
-      // Get ADO user display name for query augmentation
-      let adoUserName: string | undefined;
-      const adoProfile = this.adoAuthService.getStoredProfile();
-      if (adoProfile && adoProfile.displayName !== 'ADO User (PAT)') {
-        adoUserName = adoProfile.displayName;
-      }
-
       if ((resolvedContext === 'BOTH' || resolvedContext === 'Confluence') && isConfluenceConnected) {
         searchPromises.push(this.embeddingService.searchEmbeddings(message));
       }
       
       if ((resolvedContext === 'BOTH' || resolvedContext === 'Azure DevOps') && isAdoConnected) {
-        // Augment ADO search query with user's name when personal pronouns are detected
-        const adoSearchQuery = this.augmentQueryWithUserName(message, adoUserName);
-        searchPromises.push(this.adoEmbeddingService.searchEmbeddings(adoSearchQuery));
+        searchPromises.push(this.adoEmbeddingService.searchEmbeddings(message));
       }
 
       // We still map search codebases logic if codebase is ever integrated
@@ -235,8 +223,7 @@ export class ChatService {
         combinedResults,
         modelId,
         provider,
-        apiKey,
-        adoUserName
+        apiKey
       );
 
       // Add assistant response to history
@@ -360,8 +347,7 @@ Classification:`;
     searchResults: SearchResult[],
     modelId: string,
     provider: string,
-    apiKey: string,
-    adoUserName?: string
+    apiKey: string
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -388,7 +374,6 @@ Classification:`;
           chatHistory: formattedChatHistory,
           provider: provider,
           apiKey: apiKey,
-          adoUserName: adoUserName,
         },
       });
 

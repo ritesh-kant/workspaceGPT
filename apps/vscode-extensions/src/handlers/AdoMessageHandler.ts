@@ -83,7 +83,6 @@ export class AdoMessageHandler {
       await this.adoAuthService.savePat(pat);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.ADO_PAT_SUCCESS,
-        profile: this.adoAuthService.getStoredProfile(),
       });
     } catch (error) {
       console.error('Error in ADO PAT Save:', error);
