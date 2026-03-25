@@ -9,13 +9,17 @@ WorkspaceGPT is a **privacy-first, local-only RAG (Retrieval-Augmented Generatio
 **Apps:**
 - `apps/confluence-extractor` - Node.js service that extracts Confluence pages to markdown (`.data/confluence/mds`)
 - `apps/confluence-rag` - Python/Streamlit chat interface using LangChain + FAISS for local RAG
-- `apps/vscode-extensions` - VSCode extension providing in-editor chat with workspace/Confluence integration
+- `apps/vscode-extensions` - VSCode extension providing in-editor chat with workspace/Confluence/ADO integration
 - `apps/workspacegpt-webapp` - Next.js marketing/landing page
+- `apps/confluence-auth-proxy` - Vercel serverless OAuth 2.0 token proxy (keeps `ATLASSIAN_CLIENT_SECRET` server-side; **not in Turbo pipeline**, deploy with `vercel --prod`)
 
 **Shared Packages:**
 - `packages/confluence-utils` - Core Confluence API client and page processing utilities (used by extractor + VSCode extension)
 - `packages/eslint-config` - Shared ESLint configurations
 - `packages/typescript-config` - Shared TypeScript configurations
+- `packages/ui` - Shared React UI components (`button.tsx`, `card.tsx`, `code.tsx`); not yet consumed by any app
+- `packages/azure-devops-utils` - Scaffolded ADO utilities (empty — work in progress)
+- `packages/jira-utils` - Scaffolded Jira utilities (empty — work in progress)
 
 ## Build System & Workflows
 
@@ -73,6 +77,14 @@ Confluence API → confluence-extractor → .data/confluence/mds/*.md
                                          Python RAG service → FAISS vector DB (vector_db_standard/)
                                               ↓
                                          Streamlit UI or VSCode Extension
+
+Azure DevOps API → adoWorker.ts (ESM) → FAISS embeddings (via @xenova/transformers)
+                                              ↓
+                                         VSCode Extension chat (chatService.ts)
+
+Codebase files → codebaseWorker.ts → FAISS embeddings
+                                              ↓
+                                         VSCode Extension chat
 ```
 
 ### Key Patterns
@@ -94,9 +106,22 @@ conda activate workspacegpt  # Must be active before running Python apps
 ```
 
 **4. VSCode Extension State:**
-- Uses VSCode's `context.globalState` for persistence
-- PostHog analytics (privacy-respecting telemetry)
-- Webview built separately with Vite (webview/ subdirectory)
+- Uses VSCode's `context.globalState` for non-sensitive persistence; `context.secrets` for sensitive tokens (PAT, OAuth tokens)
+- PostHog analytics (privacy-respecting telemetry via `AnalyticsService`)
+- Webview built separately with Vite (`webview/` subdirectory); uses **Zustand** for state management (`chatStore`, `modelStore`, `settingsStore`)
+- Auto-starting schedulers on activation: `ConfluenceSyncScheduler` and `AdoSyncScheduler`
+
+**5. Confluence Authentication (OAuth 2.0 3LO):**
+- `ConfluenceAuthService` implements a full three-legged OAuth flow — spins up a local `http.Server` callback handler on activation
+- Uses CSRF state parameter; persists `OAuthTokens` (accessToken + refreshToken + expiresAt) via `context.secrets`
+- Token exchange is proxied through `apps/confluence-auth-proxy` (Vercel) to keep `ATLASSIAN_CLIENT_SECRET` server-side
+- Required env vars for proxy: `ATLASSIAN_CLIENT_ID`, `ATLASSIAN_CLIENT_SECRET`
+
+**6. Azure DevOps (ADO) Integration:**
+- `AdoAuthService` stores PAT in `context.secrets` (never `globalState`)
+- Auth header: `Basic base64(:PAT)` as required by Azure DevOps REST API
+- `AdoSyncScheduler` starts automatically on extension activation (alongside Confluence scheduler)
+- Full handler/service/worker trilogy: `AdoMessageHandler` → `AdoService` → `adoWorker.ts` (ESM)
 
 ### File Naming & Structure
 
@@ -110,6 +135,36 @@ conda activate workspacegpt  # Must be active before running Python apps
 - `src/chat.py` - Streamlit UI with streaming responses
 - `utils/chain_setup.py` - LangChain configuration
 - `utils/embeddings.py` - FAISS vector DB operations
+
+**VSCode Extension Source Layout:**
+```
+src/
+  extension.ts              # Activation: registers services, schedulers, commands
+  webViewprovider.ts
+  handlers/
+    WebviewMessageHandler.ts  # Routes all webview messages to sub-handlers
+    ChatMessageHandler.ts
+    ConfluenceMessageHandler.ts
+    AdoMessageHandler.ts      # ADO PAT save/disconnect, sync, indexing
+    CodebaseMessageHandler.ts
+    SystemMessageHandler.ts
+  services/
+    analyticsService.ts       # PostHog (eu.i.posthog.com)
+    chatService.ts
+    historyService.ts
+    confluence/               # confluenceAuthService, confluenceEmbeddingService, ...
+    ado/                      # adoAuthService, adoEmbeddingService, adoService, adoSyncScheduler
+    codebase/
+    jira/                     # Empty placeholder
+  workers/
+    confluence/confluenceWorker.ts
+    ado/adoWorker.ts          # ESM worker for ADO data
+    codebase/                 # codebaseWorker, codebaseCountWorker, codebaseSearchWorker
+    model/modelWorker.ts
+    common/                   # createEmbeddingForText, searchProcess
+    utils/initializeEmbeddingModel.ts
+    jira/                     # Empty placeholder
+```
 
 ## Testing & Development
 
@@ -147,13 +202,27 @@ pnpm run dev  # Builds and opens new VSCode window with extension loaded
 → Ensure `onnxruntime-node` is installed (required by @xenova/transformers for Node.js backend)
 → Check that `onnxruntime-node` is marked as external in `esbuild.config.js`
 
+**ADO sync not working**
+→ Verify PAT is saved via the ADO settings panel (stored in `context.secrets`)
+→ PAT must have read access to Azure DevOps work items and projects
+
+**Confluence OAuth flow failing**
+→ Ensure `confluence-auth-proxy` is deployed to Vercel with correct `ATLASSIAN_CLIENT_ID` / `ATLASSIAN_CLIENT_SECRET`
+→ Local callback server starts on activation — ensure no firewall blocks the ephemeral port
+
 ## Integration Points
 
 ### Confluence API
 - Uses Atlassian REST API v2
 - Batched fetching (default 10 pages per batch)
 - Rate limiting: 1000ms between batches
-- Authentication: Basic auth (email + API token)
+- Authentication: OAuth 2.0 (3LO) in VSCode extension; Basic auth (email + API token) in extractor/Python apps
+- OAuth token proxy: `apps/confluence-auth-proxy` (deploy separately to Vercel)
+
+### Azure DevOps API
+- PAT-based authentication (stored in VSCode `secrets`, never `globalState`)
+- Auth header format: `Basic base64(:PAT)` (colon-prefixed PAT)
+- Sync handled by worker (`adoWorker.ts`) with incremental progress reporting
 
 ### LLM Integration
 - Ollama default model: `llama3.2:1b` (can upgrade to `llama3.2:4b`, `mistral`, etc.)
@@ -179,9 +248,11 @@ Use `.vscode/tasks.json` tasks for common operations:
 ## When Adding New Features
 
 1. **New data source?** → Create extractor in `apps/`, reuse `confluence-utils` patterns
-2. **Shared utilities?** → Add to `packages/confluence-utils` or create new package
-3. **Python dependencies?** → Update `apps/confluence-rag/environment.yml`, run `pnpm app:confluence-rag env:update`
-4. **Node dependencies?** → Use `pnpm add -w <pkg>` for workspace root, or navigate to specific package
+2. **New VSCode integration (e.g., Jira)?** → Follow the ADO pattern: `Handler → Service → Worker`; stub dirs already exist in `services/jira/` and `workers/jira/`
+3. **Shared utilities?** → Add to `packages/confluence-utils` or create new package; `packages/azure-devops-utils` and `packages/jira-utils` are pre-scaffolded
+4. **Python dependencies?** → Update `apps/confluence-rag/environment.yml`, run `pnpm app:confluence-rag env:update`
+5. **Node dependencies?** → Use `pnpm add -w <pkg>` for workspace root, or navigate to specific package
+6. **New worker?** → Place in `src/workers/<integration>/`, built as ESM automatically by `getAllFiles()` in esbuild config
 
 ## Documentation References
 - Main README: `/README.md` - User setup guide
