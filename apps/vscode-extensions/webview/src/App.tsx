@@ -81,6 +81,9 @@ const App: React.FC = () => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // When true, discard incoming response chunks that belong to a previous request.
+  // useRef so it's always current inside the stale useEffect message-handler closure.
+  const ignoringStreamRef = useRef(false);
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
   // Debounced save: to avoid writing to disk on every keystroke / rapid message
@@ -116,6 +119,7 @@ const App: React.FC = () => {
       const message = event.data;
       switch (message.type) {
         case MESSAGE_TYPES.RECEIVE_MESSAGE:
+          if (ignoringStreamRef.current) break;
           addMessage({
             content: message.content,
             isUser: false,
@@ -124,11 +128,13 @@ const App: React.FC = () => {
           setIsStreaming(false);
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK:
+          if (ignoringStreamRef.current) break;
           appendToLastMessage(message.content);
           setIsLoading(false); // Stop loading animation since we're streaming now
           setIsStreaming(true);
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
+          ignoringStreamRef.current = false;
           setIsLoading(false);
           setIsStreaming(false);
           break;
@@ -279,6 +285,16 @@ const App: React.FC = () => {
   }, []);
 
   const handleNewChat = () => {
+    // Discard any in-flight chunks from the previous request.
+    // ignoringStreamRef is read synchronously in the message handler closure,
+    // so this takes effect immediately even before the worker is terminated.
+    ignoringStreamRef.current = true;
+
+    // Best-effort: also tell the extension host to terminate the worker.
+    if (isLoading || isStreaming) {
+      vscode.postMessage({ type: MESSAGE_TYPES.STOP_MESSAGE });
+    }
+
     // Save current chat before starting a new one
     if (currentSessionId && messages.length > 0) {
       // Force an immediate save (no debounce)
@@ -300,6 +316,7 @@ const App: React.FC = () => {
 
   const handleSendMessage = () => {
     if (inputValue.trim() === '' || isLoading) return;
+    ignoringStreamRef.current = false; // Accept chunks for this new request
 
     // Check if model is currently downloading
     if (!selectedModelProvider?.selectedModel) {
