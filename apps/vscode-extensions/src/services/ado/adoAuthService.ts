@@ -102,6 +102,78 @@ export class AdoAuthService {
     }
   }
 
+  /**
+   * Fetches the display name of the currently authenticated ADO user.
+   * Uses the connectionData endpoint which requires no extra PAT scope.
+   */
+  async fetchCurrentUser(orgName: string): Promise<{ displayName: string }> {
+    const authHeader = await this.getValidAuthHeader();
+    const url = `https://dev.azure.com/${encodeURIComponent(orgName)}/_apis/connectionData`;
+
+    const response = await fetch(url, {
+      headers: { Authorization: authHeader, Accept: 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ADO user identity (${response.status})`);
+    }
+
+    const data: any = await response.json();
+    const displayName: string = data?.authenticatedUser?.providerDisplayName;
+    if (!displayName) {
+      throw new Error('Could not determine display name from ADO connection data.');
+    }
+    return { displayName };
+  }
+
+  /**
+   * Fetches the current sprint (active iteration) for the given project/team.
+   * Tries "{projectName} Team" first, then falls back to "{projectName}".
+   */
+  async fetchCurrentSprint(
+    orgName: string,
+    projectName: string,
+    teamName?: string
+  ): Promise<{ name: string; iterationPath: string; startDate: string; endDate: string } | null> {
+    const authHeader = await this.getValidAuthHeader();
+
+    const teamsToTry = teamName
+      ? [teamName]
+      : [`${projectName} Team`, projectName];
+
+    for (const team of teamsToTry) {
+      const url = `https://dev.azure.com/${encodeURIComponent(orgName)}/${encodeURIComponent(projectName)}/${encodeURIComponent(team)}/_apis/work/teamsettings/iterations?$timeframe=current&api-version=7.1`;
+
+      try {
+        const response = await fetch(url, {
+          headers: { Authorization: authHeader, Accept: 'application/json' },
+        });
+
+        if (!response.ok) {
+          continue; // Try next team name
+        }
+
+        const data: any = await response.json();
+        const iterations: any[] = data?.value || [];
+        const current = iterations[0];
+        if (!current) {
+          continue;
+        }
+
+        return {
+          name: current.name,
+          iterationPath: current.path,
+          startDate: current.attributes?.startDate || '',
+          endDate: current.attributes?.finishDate || '',
+        };
+      } catch {
+        continue;
+      }
+    }
+
+    return null; // Sprint detection failed silently
+  }
+
   async disconnect(): Promise<void> {
     await this.context.secrets.delete(STORAGE_KEYS.ADO_OAUTH_TOKENS);
   }

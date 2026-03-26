@@ -88,6 +88,11 @@ export const MESSAGE_TYPES = {
   INDEXING_ADO_COMPLETE: 'indexing-ado-complete',
   RESUME_INDEXING_ADO: 'resume-indexing-ado',
 
+  FETCH_ADO_USER_IDENTITY: 'fetch-ado-user-identity',
+  FETCH_ADO_USER_IDENTITY_SUCCESS: 'fetch-ado-user-identity-success',
+  FETCH_ADO_USER_IDENTITY_ERROR: 'fetch-ado-user-identity-error',
+  SAVE_ADO_USER_DISPLAY_NAME: 'save-ado-user-display-name',
+
   MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
   MODEL_DOWNLOAD_ERROR: 'model-download-error',

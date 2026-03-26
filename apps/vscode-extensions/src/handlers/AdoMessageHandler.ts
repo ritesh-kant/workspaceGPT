@@ -63,6 +63,12 @@ export class AdoMessageHandler {
         this.analyticsService.trackEvent('ado_indexing_resumed');
         await this.handleResumeIndexingAdo();
         return true;
+      case MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY:
+        await this.handleFetchAdoUserIdentity();
+        return true;
+      case MESSAGE_TYPES.SAVE_ADO_USER_DISPLAY_NAME:
+        await this.handleSaveAdoUserDisplayName(data.displayName);
+        return true;
     }
     return false;
   }
@@ -119,6 +125,8 @@ export class AdoMessageHandler {
           isAuthenticated: false,
           orgName: '',
           projectName: '',
+          userDisplayName: '',
+          currentSprint: null,
           isSyncing: false,
           isIndexing: false,
           canResume: false,
@@ -187,7 +195,10 @@ export class AdoMessageHandler {
   private async handleCheckAdoConnection(): Promise<void> {
     try {
       const adoConfig = await this.getAdoConfig();
-      const totalItems = await this.adoService.getTotalItems(adoConfig);
+      const [totalItems] = await Promise.all([
+        this.adoService.getTotalItems(adoConfig),
+        this.fetchAndPersistUserIdentity(adoConfig.orgName, adoConfig.projectName),
+      ]);
 
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.ADO_CONNECTION_STATUS,
@@ -207,6 +218,62 @@ export class AdoMessageHandler {
     }
   }
 
+  /** Fetches user display name + current sprint and persists both to globalState. */
+  private async fetchAndPersistUserIdentity(orgName: string, projectName: string): Promise<void> {
+    const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+    const teamName = settings?.state?.config?.ado?.teamName || undefined;
+
+    const [userResult, sprintResult] = await Promise.allSettled([
+      this.adoAuthService.fetchCurrentUser(orgName),
+      this.adoAuthService.fetchCurrentSprint(orgName, projectName, teamName),
+    ]);
+
+    if (!settings?.state?.config?.ado) {
+      return;
+    }
+
+    if (userResult.status === 'fulfilled') {
+      settings.state.config.ado.userDisplayName = userResult.value.displayName;
+    } else {
+      console.warn('ADO user identity fetch failed:', userResult.reason);
+    }
+
+    settings.state.config.ado.currentSprint =
+      sprintResult.status === 'fulfilled' ? sprintResult.value : null;
+    if (sprintResult.status === 'rejected') {
+      console.warn('ADO sprint fetch failed:', sprintResult.reason);
+    }
+
+    await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
+
+    // Notify webview so the settings panel updates live
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY_SUCCESS,
+      userDisplayName: userResult.status === 'fulfilled' ? userResult.value.displayName : '',
+      currentSprint: sprintResult.status === 'fulfilled' ? sprintResult.value : null,
+    });
+  }
+
+  private async handleFetchAdoUserIdentity(): Promise<void> {
+    try {
+      const adoConfig = await this.getAdoConfig();
+      await this.fetchAndPersistUserIdentity(adoConfig.orgName, adoConfig.projectName);
+    } catch (error) {
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async handleSaveAdoUserDisplayName(displayName: string): Promise<void> {
+    const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+    if (settings?.state?.config?.ado) {
+      settings.state.config.ado.userDisplayName = displayName?.trim() || '';
+      await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
+    }
+  }
+
   private async handleStartAdoSync(forceFull: boolean = false): Promise<void> {
     try {
       if (forceFull) {
@@ -222,6 +289,11 @@ export class AdoMessageHandler {
       }
 
       const adoConfig = await this.getAdoConfig();
+
+      // Re-fetch sprint on each sync (sprint may have rolled over since last sync)
+      this.fetchAndPersistUserIdentity(adoConfig.orgName, adoConfig.projectName).catch(
+        (e) => console.warn('Sprint re-fetch on sync start failed:', e)
+      );
 
       await this.adoService.startSync(adoConfig, async () => {
         const lastSyncTime = new Date().toISOString();

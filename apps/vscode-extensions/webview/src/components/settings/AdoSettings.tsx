@@ -63,6 +63,8 @@ const AdoSettings: React.FC = () => {
             isAuthenticated: false,
             orgName: '',
             projectName: '',
+            userDisplayName: '',
+            currentSprint: null,
             isSyncing: false,
             isIndexing: false,
             canResume: false,
@@ -85,6 +87,17 @@ const AdoSettings: React.FC = () => {
             statusMessage: message.message || '',
           });
           clearStatusMessageAfterDelay('ado', 'statusMessage');
+          break;
+
+        case MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY_SUCCESS:
+          batchUpdateConfig('ado', {
+            userDisplayName: message.userDisplayName || '',
+            currentSprint: message.currentSprint || null,
+          });
+          break;
+
+        case MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY_ERROR:
+          console.warn('ADO user identity fetch error:', message.message);
           break;
 
         // Sync
@@ -170,6 +183,18 @@ const AdoSettings: React.FC = () => {
   }, []);
 
   const [patInput, setPatInput] = useState('');
+
+  // Auto-detect identity as soon as all required details are available
+  useEffect(() => {
+    if (
+      adoConfig?.isAuthenticated &&
+      adoConfig?.orgName &&
+      adoConfig?.projectName &&
+      !adoConfig?.userDisplayName
+    ) {
+      vscode.postMessage({ type: MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY });
+    }
+  }, [adoConfig?.isAuthenticated, adoConfig?.orgName, adoConfig?.projectName]);
 
   const submitPat = () => {
     batchUpdateConfig('ado', {
@@ -265,9 +290,14 @@ const AdoSettings: React.FC = () => {
         {/* Not Authenticated State */}
         {!isAuthenticated && (
           <div className="pat-connect">
-            <p style={{ color: '#a0a0a0', margin: '0 0 8px 0', fontSize: '0.9em' }}>
+            <p style={{ color: '#a0a0a0', margin: '0 0 4px 0', fontSize: '0.9em' }}>
               Enter your Azure DevOps Personal Access Token (PAT).
             </p>
+            <div style={{ margin: '0 0 10px 0', fontSize: '0.82em', color: '#888', lineHeight: '1.6' }}>
+              <span style={{ display: 'block', marginBottom: '2px' }}>Required PAT scopes:</span>
+              <span style={{ display: 'block' }}>✅ <strong>Work Items</strong> — Read &nbsp;<span style={{ color: '#666' }}>(tickets, queries, sprint detection)</span></span>
+              <span style={{ display: 'block' }}>✅ <strong>Project and Team</strong> — Read &nbsp;<span style={{ color: '#666' }}>(project listing)</span></span>
+            </div>
             <div className="form-group">
               <input
                 type="password"

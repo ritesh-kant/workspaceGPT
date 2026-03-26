@@ -201,12 +201,23 @@ export class ChatService {
 
       const searchPromises: Promise<SearchResult[]>[] = [];
 
+      // Read user identity and current sprint for context-aware search + prompt
+      const userDisplayName: string = settings?.state?.config?.ado?.userDisplayName || '';
+      const currentSprint = settings?.state?.config?.ado?.currentSprint || null;
+
       if ((resolvedContext === 'BOTH' || resolvedContext === 'Confluence') && isConfluenceConnected) {
         searchPromises.push(this.embeddingService.searchEmbeddings(message));
       }
       
       if ((resolvedContext === 'BOTH' || resolvedContext === 'Azure DevOps') && isAdoConnected) {
-        searchPromises.push(this.adoEmbeddingService.searchEmbeddings(message));
+        // Rewrite personal pronoun references for a more precise ADO search.
+        // Sprint references are NOT rewritten — the LLM uses today's date (injected into the
+        // system prompt) to infer the current sprint from IterationPath values in the context.
+        const adoQuery = this.rewriteQueryWithUser(message, userDisplayName);
+        if (adoQuery !== message) {
+          console.log(`ADO query rewritten: "${message}" → "${adoQuery}"`);
+        }
+        searchPromises.push(this.adoEmbeddingService.searchEmbeddings(adoQuery));
       }
 
       // We still map search codebases logic if codebase is ever integrated
@@ -223,7 +234,9 @@ export class ChatService {
         combinedResults,
         modelId,
         provider,
-        apiKey
+        apiKey,
+        userDisplayName,
+        currentSprint
       );
 
       // Add assistant response to history
@@ -278,6 +291,30 @@ export class ChatService {
   }
 
   // streamResponse method removed as we're now sending the complete response at once
+
+  /**
+   * Rewrites personal pronoun and sprint references in a query to concrete values,
+   * so the ADO embedding search finds more relevant results.
+   * e.g. "my tickets for this sprint" → "tickets assigned to John Smith for MyProject\Sprint 5"
+   */
+  private rewriteQueryWithUser(
+    query: string,
+    userDisplayName: string
+  ): string {
+    let rewritten = query;
+
+    if (userDisplayName) {
+      // Replace possessive/first-person references to the user
+      rewritten = rewritten.replace(
+        /\b(my|mine|assigned to me|i am assigned|assigned to myself)\b/gi,
+        `assigned to ${userDisplayName}`
+      );
+      // "tickets I own", "items I have"
+      rewritten = rewritten.replace(/\btickets I\b/gi, `tickets ${userDisplayName}`);
+    }
+
+    return rewritten;
+  }
 
   /**
    * Fast LLM classification to determine which data source(s) a user query needs.
@@ -347,7 +384,9 @@ Classification:`;
     searchResults: SearchResult[],
     modelId: string,
     provider: string,
-    apiKey: string
+    apiKey: string,
+    currentUserName: string = '',
+    currentSprint: { name: string; iterationPath: string; startDate: string; endDate: string } | null = null
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -374,6 +413,8 @@ Classification:`;
           chatHistory: formattedChatHistory,
           provider: provider,
           apiKey: apiKey,
+          currentUserName: currentUserName || undefined,
+          currentSprint: currentSprint || undefined,
         },
       });
 

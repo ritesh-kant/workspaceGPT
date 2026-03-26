@@ -58,13 +58,23 @@ export interface CodebaseConfig {
   isIndexingCompleted: boolean;
 }
 
+export interface AdoCurrentSprint {
+  name: string;
+  iterationPath: string;
+  startDate: string;
+  endDate: string;
+}
+
 export interface AdoConfig {
   isAdoEnabled?: boolean;
   isAuthenticated: boolean;
   orgName: string;
   projectName: string;
+  teamName?: string;
   availableProjects: { id: string; name: string }[];
   lookbackMonths: number;
+  userDisplayName?: string;
+  currentSprint?: AdoCurrentSprint | null;
   adoSyncProgress: number;
   adoIndexProgress: number;
   isSyncing: boolean;

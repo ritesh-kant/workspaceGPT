@@ -3,7 +3,9 @@ import { EmbeddingSearchResult } from 'src/types/types';
 export function createStructuredPrompt(
   searchResults: EmbeddingSearchResult[],
   prompt: string,
-  chatHistory: string = ''
+  chatHistory: string = '',
+  currentUserName?: string,
+  currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -26,8 +28,12 @@ export function createStructuredPrompt(
     ? `**Provided Sources (use ONLY these links):**\n${sourceLinks.map((src) => `[${src.fileName}](${src.source})`).join('\n')}\n`
     : '';
 
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
   const personalityPrompt = `
   You are **WorkspaceGPT**, a local, privacy-first AI assistant for developers, designed to run entirely within Visual Studio Code. You use Retrieval-Augmented Generation (RAG) to provide intelligent, context-aware responses based on the user's codebase and integrated documentation.
+
+  **Today's date: ${today}.** Use this to interpret relative time references like "current sprint", "this week", "recent", or "upcoming" based on sprint dates visible in the provided context.
 
   ## CRITICAL GROUNDING RULES (MUST FOLLOW):
   1. **ONLY use information explicitly present in the provided Context below.** Do NOT generate, infer, or fabricate any ticket IDs, URLs, status values, sprint names, or other factual details.
@@ -43,6 +49,21 @@ export function createStructuredPrompt(
   - **ADO Tickets**: When answering about Azure DevOps tickets, ALWAYS explicitly mention its Status, assigned Sprint (Iteration), and any notable callouts from its Comments/Description — but ONLY if this information exists in the provided context.
   `;
 
+  // Inject user identity and current sprint if available
+  const adoContextLines: string[] = [];
+  if (currentUserName) {
+    adoContextLines.push(`  - **Current ADO User:** ${currentUserName}. When the user refers to "my tickets", "my work", "assigned to me", or uses "I"/"me" in the context of Azure DevOps, they are referring to this person.`);
+  }
+  if (currentSprint) {
+    const datePart = currentSprint.startDate && currentSprint.endDate
+      ? ` (${new Date(currentSprint.startDate).toLocaleDateString()} – ${new Date(currentSprint.endDate).toLocaleDateString()}, path: ${currentSprint.iterationPath})`
+      : ` (path: ${currentSprint.iterationPath})`;
+    adoContextLines.push(`  - **Current Sprint:** ${currentSprint.name}${datePart}. When the user refers to "current sprint", "this sprint", or "active sprint", they mean this iteration.`);
+  }
+  const adoContextBlock = adoContextLines.length
+    ? `\n  ## Current ADO Context:\n${adoContextLines.join('\n')}\n`
+    : '';
+
   const contextInstruction = isGreeting
     ? 'The user greeted you. Respond with a warm, friendly greeting. **Do NOT use any context.**'
     : 'Answer the user\'s question using ONLY the context provided below. If the context does not contain relevant information, clearly state that you don\'t have the data rather than guessing.';
@@ -53,6 +74,7 @@ export function createStructuredPrompt(
 
   return `
 ${personalityPrompt}
+${adoContextBlock}
 ${contextInstruction}
 
 ${contextBlock}${sourcesMarkdown}
