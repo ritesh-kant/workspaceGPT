@@ -16,7 +16,7 @@ export interface EmbeddingSearchResult {
   text: string;
   score: number;
   data: {
-    sourceName: 'CONFLUENCE' | 'CODEBASE';
+    sourceName: 'CONFLUENCE' | 'CODEBASE' | 'ADO';
     source: string;
     fileName: string;
   };
@@ -33,4 +33,26 @@ export interface EmbeddingProgress {
   totalFiles: number;
   lastProcessedFile?: string;
   isComplete: boolean;
+}
+
+// ── Retrieval pipeline types ──────────────────────────────────────────
+
+export type QueryIntent = 'lookup' | 'semantic' | 'aggregation' | 'comparison' | 'chitchat';
+
+export type DataSource = 'CONFLUENCE' | 'ADO';
+
+export interface QueryClassification {
+  intent: QueryIntent;
+  sources: DataSource[];
+  confidence: 'high' | 'low';
+}
+
+export interface RetrievalPlan {
+  sources: DataSource[];
+  topKPerPass: number;
+  finalTopK: number;
+  maxPasses: number;
+  passThreshold: number;
+  similarityThreshold: number;
+  intent: QueryIntent;
 }

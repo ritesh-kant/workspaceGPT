@@ -26,6 +26,7 @@ interface ChatState {
   historyList: ChatSessionPreview[];
   showHistory: boolean;
   contextSelection: string;
+  statusText: string;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
   appendToLastMessage: (content: string) => void;
@@ -38,6 +39,7 @@ interface ChatState {
   setHistoryList: (list: ChatSessionPreview[]) => void;
   setShowHistory: (show: boolean) => void;
   setContextSelection: (selection: string) => void;
+  setStatusText: (text: string) => void;
   resetStore: () => void;
 }
 
@@ -71,6 +73,7 @@ export const chatDefaultState = {
   historyList: [],
   showHistory: false,
   contextSelection: 'Auto',
+  statusText: '',
 };
 
 export const useChatStore = create<ChatState>()(
@@ -97,6 +100,7 @@ export const useChatStore = create<ChatState>()(
       setHistoryList: (historyList) => set({ historyList }),
       setShowHistory: (showHistory) => set({ showHistory }),
       setContextSelection: (contextSelection) => set({ contextSelection }),
+      setStatusText: (statusText) => set({ statusText }),
       resetStore: () => {
         const vscode = VSCodeAPI();
         vscode.setState({});

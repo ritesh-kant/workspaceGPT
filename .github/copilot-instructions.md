@@ -257,5 +257,6 @@ Use `.vscode/tasks.json` tasks for common operations:
 ## Documentation References
 - Main README: `/README.md` - User setup guide
 - VSCode Extension: `/apps/vscode-extensions/README.md` - Extension features & setup
+- RAG Pipeline: `.github/rag-pipeline.md` - Multi-pass retrieval, reranking & query classification implementation
 - Turbo docs: https://turbo.build/repo/docs
 - pnpm workspaces: https://pnpm.io/workspaces

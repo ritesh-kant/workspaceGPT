@@ -11,6 +11,8 @@ export const MESSAGE_TYPES = {
   ERROR_CHAT: 'error-chat',
   RESET: 'reset',
   STOP_MESSAGE: 'stop-message',
+  // Retrieval pipeline status (shown to user while loading)
+  RETRIEVAL_STATUS: 'retrieval-status',
 
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',
@@ -107,6 +109,19 @@ export const MESSAGE_TYPES = {
 
 export const SEARCH_CONSTANTS = {
   MAX_SEARCH_RESULTS: 15, // Number of nearest neighbors to retrieve
+};
+
+export const RETRIEVAL_THRESHOLDS = {
+  // Per-intent minimum combined (cosine + BM25) score to include a result
+  LOOKUP_MIN_SCORE: 0.2,
+  AGGREGATION_MIN_SCORE: 0.2,
+  SEMANTIC_MIN_SCORE: 0.3,
+  COMPARISON_MIN_SCORE: 0.3,
+  // If the best pass-1 score is below this, a second retrieval pass is triggered (semantic only)
+  SEMANTIC_PASS2_TRIGGER: 0.45,
+  // Reranker blend weights (must sum to 1.0)
+  COSINE_WEIGHT: 0.65,
+  BM25_WEIGHT: 0.35,
 };
 
 // Storage Keys

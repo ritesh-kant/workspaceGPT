@@ -55,6 +55,8 @@ const App: React.FC = () => {
     setMessages,
     contextSelection,
     setContextSelection,
+    statusText,
+    setStatusText,
   } = useChatStore();
 
   const {
@@ -124,19 +126,25 @@ const App: React.FC = () => {
             content: message.content,
             isUser: false,
           });
+          setStatusText('');
           setIsLoading(false);
           setIsStreaming(false);
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK:
           if (ignoringStreamRef.current) break;
           appendToLastMessage(message.content);
+          setStatusText('');
           setIsLoading(false); // Stop loading animation since we're streaming now
           setIsStreaming(true);
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
           ignoringStreamRef.current = false;
+          setStatusText('');
           setIsLoading(false);
           setIsStreaming(false);
+          break;
+        case MESSAGE_TYPES.RETRIEVAL_STATUS:
+          setStatusText(message.text || '');
           break;
         case MESSAGE_TYPES.ERROR_CHAT:
           addMessage({
@@ -144,6 +152,7 @@ const App: React.FC = () => {
             isUser: false,
             isError: true,
           });
+          setStatusText('');
           setIsLoading(false);
           setIsStreaming(false);
           break;
@@ -306,6 +315,7 @@ const App: React.FC = () => {
     }
     setIsLoading(false);
     setIsStreaming(false);
+    setStatusText('');
     clearMessages();
     setInputValue('');
     setCurrentSessionId(null);
@@ -573,7 +583,12 @@ const App: React.FC = () => {
                 isError={message.isError}
               />
             ))}
-            {isLoading && <div className='loading-indicator'>Thinking...</div>}
+            {isLoading && (
+              <div className='loading-indicator'>
+                <span className='loading-pulse' />
+                <span>{statusText || 'Thinking...'}</span>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
         )}

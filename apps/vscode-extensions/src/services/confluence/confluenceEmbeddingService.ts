@@ -199,7 +199,8 @@ export class ConfluenceEmbeddingService {
   }
 
   public async searchEmbeddings(
-    query: string
+    query: string,
+    topK?: number
   ): Promise<EmbeddingSearchResult[]> {
     try {
       // Ensure the persistent search worker is running
@@ -225,7 +226,7 @@ export class ConfluenceEmbeddingService {
         };
 
         this.searchWorker!.on('message', onMessage);
-        this.searchWorker!.send({ type: 'search', query });
+        this.searchWorker!.send({ type: 'search', query, topK });
       });
     } catch (error) {
       console.error('Error in embedding search:', error);

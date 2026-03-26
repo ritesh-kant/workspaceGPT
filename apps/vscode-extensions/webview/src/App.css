@@ -492,11 +492,27 @@ button:hover:not(:disabled) {
 
 /* Loading indicator styles */
 .loading-indicator {
-  padding: 0.8rem;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
   color: var(--vscode-descriptionForeground);
-  font-style: italic;
   font-size: 0.8rem;
+}
+
+.loading-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--vscode-textLink-foreground);
+  flex-shrink: 0;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.3; transform: scale(0.85); }
+  50%       { opacity: 1;   transform: scale(1.15); }
 }
 
 .markdown-content {

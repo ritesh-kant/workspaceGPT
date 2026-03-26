@@ -12,17 +12,22 @@ import {
 } from '../../constants';
 import { CodebaseService } from './codebase/codebaseService';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
+import { classifyQuery } from 'src/utils/queryClassifier';
+import { buildPlan, expandQuery } from 'src/utils/queryPlanner';
+import { rerank } from 'src/utils/reranker';
+import {
+  DataSource,
+  EmbeddingSearchResult,
+  QueryClassification,
+} from 'src/types/types';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
-interface SearchResult {
-  text: string;
-  score: number;
-  data: { sourceName: 'CONFLUENCE' | 'CODEBASE'; source: string, fileName: string };
-}
+// Re-export for use within this file — keeps the rest of the class unchanged
+type SearchResult = EmbeddingSearchResult;
 
 export class ChatService {
   private embeddingService: ConfluenceEmbeddingService;
@@ -154,6 +159,14 @@ export class ChatService {
     }
   }
 
+  /** Sends a transient status label to the webview loading indicator. */
+  private postStatus(text: string): void {
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.RETRIEVAL_STATUS,
+      text,
+    });
+  }
+
   public async newChat(): Promise<void> {
     // Clear chat history
     this.chatHistory = [];
@@ -169,69 +182,128 @@ export class ChatService {
     modelId: string,
     apiKey: string,
     provider: string,
-    contextSelection: string = 'Auto' // default to Auto
+    contextSelection: string = 'Auto'
   ): Promise<void> {
     try {
-      // Add user message to history
-      this.chatHistory.push({
-        role: 'user',
-        content: message,
-      });
+      this.chatHistory.push({ role: 'user', content: message });
 
-      // Search selected context using embedding services
       const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-      const isConfluenceConnected = settings?.state?.config?.confluence?.isAuthenticated && settings?.state?.config?.confluence?.isIndexingCompleted;
-      const isAdoConnected = settings?.state?.config?.ado?.isAuthenticated && settings?.state?.config?.ado?.isIndexingCompleted;
-      
-      // Resolve 'Auto' context using fast LLM classification
-      let resolvedContext = contextSelection;
-      if (contextSelection === 'Auto' && isConfluenceConnected && isAdoConnected) {
-        resolvedContext = await this.classifyQueryContext(message, modelId, apiKey, provider);
-        console.log(`Auto context resolved to: ${resolvedContext}`);
-      } else if (contextSelection === 'Auto') {
-        // Only one source is available, just use whichever is connected
-        if (isAdoConnected && !isConfluenceConnected) {
-          resolvedContext = 'Azure DevOps';
-        } else if (isConfluenceConnected && !isAdoConnected) {
-          resolvedContext = 'Confluence';
-        } else {
-          resolvedContext = 'BOTH'; // Neither connected, searches will be empty
-        }
-      }
+      const isConfluenceConnected =
+        settings?.state?.config?.confluence?.isAuthenticated &&
+        settings?.state?.config?.confluence?.isIndexingCompleted;
+      const isAdoConnected =
+        settings?.state?.config?.ado?.isAuthenticated &&
+        settings?.state?.config?.ado?.isIndexingCompleted;
 
-      const searchPromises: Promise<SearchResult[]>[] = [];
-
-      // Read user identity and current sprint for context-aware search + prompt
       const userDisplayName: string = settings?.state?.config?.ado?.userDisplayName || '';
       const currentSprint = settings?.state?.config?.ado?.currentSprint || null;
 
-      if ((resolvedContext === 'BOTH' || resolvedContext === 'Confluence') && isConfluenceConnected) {
-        searchPromises.push(this.embeddingService.searchEmbeddings(message));
+      // Build the list of actually-connected sources
+      const availableSources: DataSource[] = [
+        ...(isConfluenceConnected ? ['CONFLUENCE' as DataSource] : []),
+        ...(isAdoConnected ? ['ADO' as DataSource] : []),
+      ];
+
+      // ── Step 1: Rule-based classification (synchronous, zero latency) ──
+      let classification: QueryClassification = classifyQuery(message, availableSources);
+
+      // Override sources when the user has explicitly chosen a context
+      if (contextSelection !== 'Auto') {
+        const explicitSource: DataSource | null =
+          contextSelection === 'Confluence' ? 'CONFLUENCE' :
+          contextSelection === 'Azure DevOps' ? 'ADO' : null;
+        if (explicitSource && availableSources.includes(explicitSource)) {
+          classification = { ...classification, sources: [explicitSource], confidence: 'high' };
+        } else if (!explicitSource) {
+          classification = { ...classification, sources: availableSources, confidence: 'high' };
+        }
       }
-      
-      if ((resolvedContext === 'BOTH' || resolvedContext === 'Azure DevOps') && isAdoConnected) {
-        // Rewrite personal pronoun references for a more precise ADO search.
-        // Sprint references are NOT rewritten — the LLM uses today's date (injected into the
-        // system prompt) to infer the current sprint from IterationPath values in the context.
+
+      // ── Step 2: Build preliminary plan from rule-based result ──────────
+      // Search starts immediately with this plan; LLM may refine intent in parallel.
+      const prelimPlan = buildPlan(classification);
+      console.log(`Preliminary plan: intent=${prelimPlan.intent}, sources=${prelimPlan.sources.join(',')}, topKPerPass=${prelimPlan.topKPerPass}`);
+
+      // ── Step 3: Fan-out search + LLM classification concurrently ───────
+      let finalResults: SearchResult[] = [];
+
+      if (prelimPlan.sources.length > 0 && prelimPlan.topKPerPass > 0) {
         const adoQuery = this.rewriteQueryWithUser(message, userDisplayName);
         if (adoQuery !== message) {
           console.log(`ADO query rewritten: "${message}" → "${adoQuery}"`);
         }
-        searchPromises.push(this.adoEmbeddingService.searchEmbeddings(adoQuery));
+
+        const sourceLabel = prelimPlan.sources
+          .map((s) => (s === 'ADO' ? 'Azure DevOps' : 'Confluence'))
+          .join(' & ');
+        this.postStatus(`Searching ${sourceLabel}...`);
+
+        // LLM classification is only worth the latency when:
+        // - rule confidence is low AND auto mode
+        // - a cloud provider + apiKey are available (skip for local Ollama)
+        // - BOTH sources are connected (single-source: intent only shifts topK by ±5, not worth it)
+        const isCloudProvider =
+          MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === provider)?.BASE_URL !== undefined &&
+          !!apiKey;
+        const needsLLM =
+          classification.confidence === 'low' &&
+          contextSelection === 'Auto' &&
+          isCloudProvider &&
+          availableSources.length > 1;
+
+        // Pass 1 search and LLM classification run at the same time
+        const [pass1PerSource, upgradedIntent] = await Promise.all([
+          Promise.all(
+            prelimPlan.sources.map((source) =>
+              this.searchSource(source, source === 'ADO' ? adoQuery : message, prelimPlan.topKPerPass)
+            )
+          ),
+          needsLLM
+            ? this.classifyIntentWithLLM(message, classification, modelId, apiKey, provider)
+            : Promise.resolve({ intent: classification.intent }),
+        ]);
+
+        // Apply upgraded intent and rebuild the final plan
+        if (needsLLM && upgradedIntent.intent !== classification.intent) {
+          console.log(`Intent upgraded via LLM: ${classification.intent} → ${upgradedIntent.intent}`);
+        }
+        classification = { ...classification, intent: upgradedIntent.intent };
+        const plan = buildPlan(classification);
+
+        const pass1Flat = pass1PerSource.flat();
+
+        // ── Step 4: Pass 2 (semantic only, when best pass-1 score is weak) ─
+        let allResults = pass1Flat;
+        if (plan.maxPasses === 2 && pass1Flat.length > 0) {
+          const bestScore = Math.max(...pass1Flat.map((r) => r.score));
+          if (bestScore < plan.passThreshold) {
+            console.log(`Pass 1 best score ${bestScore.toFixed(3)} < ${plan.passThreshold}. Running pass 2.`);
+            this.postStatus('Expanding search...');
+            const enrichedQuery = expandQuery(message, pass1Flat);
+            const pass2Results = await Promise.all(
+              plan.sources.map((source) =>
+                this.searchSource(
+                  source,
+                  source === 'ADO' ? this.rewriteQueryWithUser(enrichedQuery, userDisplayName) : enrichedQuery,
+                  plan.topKPerPass
+                )
+              )
+            );
+            allResults = [...pass1Flat, ...pass2Results.flat()];
+          }
+        }
+
+        // ── Step 5: Rerank + threshold filter ─────────────────────────────
+        this.postStatus('Ranking results...');
+        finalResults = rerank(message, allResults, plan);
+        console.log(`Reranked to ${finalResults.length} results (threshold=${plan.similarityThreshold}).`);
       }
 
-      // We still map search codebases logic if codebase is ever integrated
-      searchPromises.push(Promise.resolve([]));
-
-      const searchResultsArray = await Promise.all(searchPromises);
-
-      // Combine search results
-      const combinedResults = this.combineSearchResults(searchResultsArray);
-
-      // Generate response using model (streaming)
+      // ── Step 6: Generate response ──────────────────────────────────────
+      this.postStatus('Thinking...');
       const modelResponse = await this.generateModelResponse(
         message,
-        combinedResults,
+        finalResults,
         modelId,
         provider,
         apiKey,
@@ -239,11 +311,7 @@ export class ChatService {
         currentSprint
       );
 
-      // Add assistant response to history
-      this.chatHistory.push({
-        role: 'assistant',
-        content: modelResponse,
-      });
+      this.chatHistory.push({ role: 'assistant', content: modelResponse });
     } catch (error) {
       if (error instanceof Error && error.message === 'Generation cancelled by user.') {
         console.log('Chat generation cancelled by user.');
@@ -257,18 +325,18 @@ export class ChatService {
     }
   }
 
-  private combineSearchResults(
-    resultsArray: SearchResult[][]
-  ): SearchResult[] {
-    
-    // Flatten and combine all result sets
-    const combined = resultsArray.flat();
-
-    // Sort by score (descending)
-    combined.sort((a, b) => b.score - a.score);
-
-    // Return top results (limit to 15 for relevance)
-    return combined.slice(0, 15);
+  /**
+   * Routes a search request to the correct embedding service.
+   */
+  private async searchSource(
+    source: DataSource,
+    query: string,
+    topK: number
+  ): Promise<SearchResult[]> {
+    if (source === 'CONFLUENCE') {
+      return this.embeddingService.searchEmbeddings(query, topK);
+    }
+    return this.adoEmbeddingService.searchEmbeddings(query, topK);
   }
 
   private formatSearchResults(results: SearchResult[]): string {
@@ -317,66 +385,58 @@ export class ChatService {
   }
 
   /**
-   * Fast LLM classification to determine which data source(s) a user query needs.
-   * Uses max_tokens=10 for speed — typically completes in <500ms.
+   * Upgrades the intent classification using an LLM when the rule-based classifier
+   * returned low confidence. Only updates intent — source routing stays rule-determined.
+   * Guarded: will not fire for local Ollama (requires cloud provider + apiKey).
    */
-  private async classifyQueryContext(
+  private async classifyIntentWithLLM(
     query: string,
+    fallback: QueryClassification,
     modelId: string,
     apiKey: string,
     provider: string
-  ): Promise<string> {
+  ): Promise<Pick<QueryClassification, 'intent'>> {
     try {
-      const providerConfig = MODEL_PROVIDERS.find(p => p.MODEL_PROVIDER === provider);
+      const providerConfig = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === provider);
       if (!providerConfig || !apiKey) {
-        return 'BOTH'; // Fallback: search everything
+        return { intent: fallback.intent };
       }
 
       const OpenAI = (await import('openai')).default;
-      const client = new OpenAI({
-        apiKey,
-        baseURL: providerConfig.BASE_URL,
-      });
+      const client = new OpenAI({ apiKey, baseURL: providerConfig.BASE_URL });
 
-      const classificationPrompt = `You are a query classifier. Given a user query, respond with EXACTLY one word:
-- "ADO" if it's about work items, tickets, bugs, stories, sprints, iterations, or Azure DevOps
-- "CONFLUENCE" if it's about documentation, wiki pages, guides, runbooks, or Confluence content
-- "BOTH" if it could need both sources or you're unsure
+      const prompt = `Classify the intent of this query into exactly one of: lookup, semantic, aggregation, comparison, chitchat.
 
-Query: "${query}"
+- lookup: asking about a specific ticket, ID, or named item
+- semantic: open-ended question, explanation, or how-to
+- aggregation: asking to list, count, or summarize multiple items
+- comparison: comparing two or more things
+- chitchat: greeting or small talk
 
-Classification:`;
+Respond with a JSON object only, no markdown: {"intent": "<one of the five values>"}
+
+Query: "${query}"`;
 
       const response = await client.chat.completions.create({
         model: modelId,
-        messages: [{ role: 'user', content: classificationPrompt }],
-        max_tokens: 10,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 20,
         temperature: 0,
       });
 
-      const classification = response.choices[0]?.message?.content?.trim().toUpperCase() || 'BOTH';
-
-      if (classification.includes('ADO')) return 'Azure DevOps';
-      if (classification.includes('CONFLUENCE')) return 'Confluence';
-      return 'BOTH';
+      const raw = response.choices[0]?.message?.content?.trim() || '{}';
+      // Strip markdown code fences if present
+      const jsonStr = raw.replace(/^```[a-z]*\n?/i, '').replace(/```$/,'').trim();
+      const parsed = JSON.parse(jsonStr) as { intent?: string };
+      const validIntents = ['lookup', 'semantic', 'aggregation', 'comparison', 'chitchat'];
+      if (parsed.intent && validIntents.includes(parsed.intent)) {
+        return { intent: parsed.intent as QueryClassification['intent'] };
+      }
+      return { intent: fallback.intent };
     } catch (error) {
-      console.warn('Auto context classification failed, falling back to BOTH:', error);
-      return 'BOTH';
+      console.warn('LLM intent classification failed, keeping rule-based result:', error);
+      return { intent: fallback.intent };
     }
-  }
-
-  /**
-   * Detects personal pronouns in a query and augments it with the user's real name
-   * so embedding search can find relevant ADO tickets.
-   */
-  private augmentQueryWithUserName(query: string, userName?: string): string {
-    if (!userName) return query;
-
-    const personalPatterns = /\b(assigned to me|my tickets|my bugs|my tasks|my work items|my stories|my issues|for me|about me|i am working|i'm working|\bme\b|\bmy\b)\b/i;
-    if (personalPatterns.test(query)) {
-      return `${query} (user: ${userName})`;
-    }
-    return query;
   }
 
   private async generateModelResponse(

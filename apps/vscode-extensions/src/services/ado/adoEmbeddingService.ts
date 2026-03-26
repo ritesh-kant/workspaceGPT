@@ -174,7 +174,8 @@ export class AdoEmbeddingService {
   }
 
   public async searchEmbeddings(
-    query: string
+    query: string,
+    topK?: number
   ): Promise<EmbeddingSearchResult[]> {
     try {
       await this.ensureSearchWorker();
@@ -191,13 +192,13 @@ export class AdoEmbeddingService {
 
           if (message.type === 'results') {
             console.log(`ADO Search completed with ${message.data?.length || 0} results`);
-            
-            const taggedData = message.data?.map(o => ({
-               ...o,
-               data: {
-                 ...o.data,
-                 sourceName: 'ADO' as any
-               }
+
+            const taggedData: EmbeddingSearchResult[] = message.data?.map((o) => ({
+              ...o,
+              data: {
+                ...o.data,
+                sourceName: 'ADO' as const,
+              },
             })) || [];
 
             resolve(taggedData);
@@ -208,7 +209,7 @@ export class AdoEmbeddingService {
         };
 
         this.searchWorker!.on('message', onMessage);
-        this.searchWorker!.send({ type: 'search', query, namespace: 'ADO' });
+        this.searchWorker!.send({ type: 'search', query, topK, namespace: 'ADO' });
       });
     } catch (error) {
       console.error('Error in ADO embedding search:', error);

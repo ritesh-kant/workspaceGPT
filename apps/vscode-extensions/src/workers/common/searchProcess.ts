@@ -30,6 +30,7 @@ interface InitMessage {
 interface SearchMessage {
   type: 'search';
   query: string;
+  topK?: number;
   namespace?: string;
 }
 
@@ -263,7 +264,7 @@ async function createEmbeddingForText(text: string): Promise<Float32Array> {
   return new Float32Array(output.data);
 }
 
-async function handleSearch(query: string): Promise<void> {
+async function handleSearch(query: string, topK?: number): Promise<void> {
   try {
     if (!extractor) {
       throw new Error('Model not initialized. Send "init" first.');
@@ -316,7 +317,7 @@ async function handleSearch(query: string): Promise<void> {
     }
 
     // Find top k results using partial sort
-    const k = Math.min(SEARCH_CONSTANTS.MAX_SEARCH_RESULTS, count);
+    const k = Math.min(topK ?? SEARCH_CONSTANTS.MAX_SEARCH_RESULTS, count);
     const indices = Array.from({ length: count }, (_, i) => i);
     indices.sort((a, b) => scores[b] - scores[a]);
     const topIndices = indices.slice(0, k);
@@ -361,7 +362,7 @@ process.on('message', async (msg: WorkerMessage) => {
     }
 
     case 'search': {
-      await handleSearch(msg.query);
+      await handleSearch(msg.query, msg.topK);
       break;
     }
 
