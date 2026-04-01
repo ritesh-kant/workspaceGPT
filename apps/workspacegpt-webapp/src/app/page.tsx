@@ -12,102 +12,71 @@ export default function Home() {
   const [showFallbackLink, setShowFallbackLink] = useState(false);
   const [showCursorFallbackLink, setShowCursorFallbackLink] = useState(false);
 
-  const openInstallModal = () => {
-    setShowInstallModal(true);
-  };
-
-  const closeInstallModal = () => {
-    setShowInstallModal(false);
-  };
+  const openInstallModal = () => setShowInstallModal(true);
+  const closeInstallModal = () => setShowInstallModal(false);
 
   const openVSCode = () => {
-    // Try to open VS Code with your extension in the marketplace
     window.open('vscode:extension/Riteshkant.workspacegpt-extension');
-
-    // Show a message to the user that we attempted to open VS Code
     setShowVSCodeOpenedMessage(true);
     setShowFallbackLink(true);
     setShowInstallModal(false);
-
-    // Hide the message after 5 seconds
-    setTimeout(() => {
-      setShowVSCodeOpenedMessage(false);
-    }, 5000);
+    setTimeout(() => setShowVSCodeOpenedMessage(false), 5000);
   };
 
   const openCursor = () => {
-    // Try to open Cursor (assuming similar protocol)
     window.open('cursor:extension/Riteshkant.workspacegpt-extension');
-
-    // Show a message to the user that we attempted to open Cursor
     setShowCursorOpenedMessage(true);
     setShowCursorFallbackLink(true);
     setShowInstallModal(false);
-
-    // Hide the message after 5 seconds
-    setTimeout(() => {
-      setShowCursorOpenedMessage(false);
-    }, 5000);
+    setTimeout(() => setShowCursorOpenedMessage(false), 5000);
   };
 
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="flex flex-col min-h-screen relative overflow-hidden bg-[#030712] text-slate-200">
+      
+      {/* Background glow effects */}
+      <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-brand/10 blur-[150px] rounded-full pointer-events-none -z-10 animate-pulse-slow"></div>
+      <div className="absolute bottom-[20%] right-[-10%] w-[500px] h-[500px] bg-brand-blue/15 blur-[120px] rounded-full pointer-events-none -z-10"></div>
+      <div className="absolute top-[40%] left-[-10%] w-[400px] h-[400px] bg-purple-600/10 blur-[120px] rounded-full pointer-events-none -z-10"></div>
+
       {/* Install Modal */}
       {showInstallModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white bg-opacity-95 rounded-xl shadow-xl p-8 max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 transition-opacity">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 relative overflow-hidden">
+            {/* Modal subtle glow */}
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brand-blue to-brand"></div>
+            
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-purple-900">Install WorkspaceGPT</h2>
-              <button 
-                onClick={closeInstallModal}
-                className="text-gray-500 hover:text-gray-700"
-              >
+              <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">Install WorkspaceGPT</h2>
+              <button onClick={closeInstallModal} className="text-slate-400 hover:text-white transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
-            <p className="text-center mb-6 text-gray-600">Select your IDE</p>
+            <p className="text-slate-400 mb-6 font-medium">Select your preferred IDE to begin</p>
             
             <div className="space-y-4">
-              {/* VS Code */}
-              <div className="flex items-center justify-between bg-white rounded-lg p-4 shadow-sm border border-gray-100">
-                <div className="flex items-center">
-                  <div className="w-10 h-10 flex-shrink-0 mr-4">
-                    <Image
-                      src="/vscode-icon.svg"
-                      alt="VS Code"
-                      width={40}
-                      height={40}
-                    />
+              <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-white/10 transition-all duration-300">
+                <div className="flex items-center gap-4">
+                  <div className="bg-slate-800 p-2 rounded-lg border border-white/5">
+                    <Image src="/vscode-icon.svg" alt="VS Code" width={28} height={28} />
                   </div>
-                  <span className="font-medium">VS Code</span>
+                  <span className="font-semibold text-white">VS Code</span>
                 </div>
-                <button
-                  onClick={openVSCode}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                >
+                <button onClick={openVSCode} className="bg-brand-blue hover:bg-blue-500 text-white font-medium py-2 px-5 rounded-lg transition-colors text-sm">
                   Install
                 </button>
               </div>
               
-              {/* Cursor */}
-              <div className="flex items-center justify-between bg-white rounded-lg p-4 shadow-sm border border-gray-100">
-                <div className="flex items-center">
-                  <div className="w-10 h-10 flex-shrink-0 mr-4">
-                    <Image
-                      src="/cursor-icon.png"
-                      alt="Cursor"
-                      width={40}
-                      height={40}
-                    />
+              <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-white/10 transition-all duration-300">
+                <div className="flex items-center gap-4">
+                  <div className="bg-slate-800 p-2 rounded-lg border border-white/5">
+                    <Image src="/cursor-icon.png" alt="Cursor" width={28} height={28} />
                   </div>
-                  <span className="font-medium">Cursor</span>
+                  <span className="font-semibold text-white">Cursor</span>
                 </div>
-                <button
-                  onClick={openCursor}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                >
+                <button onClick={openCursor} className="bg-brand-blue hover:bg-blue-500 text-white font-medium py-2 px-5 rounded-lg transition-colors text-sm">
                   Install
                 </button>
               </div>
@@ -116,256 +85,265 @@ export default function Home() {
         </div>
       )}
       
-      {/* Hero Section */}
-      <header className="bg-gradient-to-r from-blue-600 to-[#1ff2b4] text-white py-20 relative">
-        {showVSCodeOpenedMessage && (
-          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg transition-opacity duration-300 z-10">
-            <p>Attempting to open WorkspaceGPT extension in VS Code. If it doesn&apos;t open, please make sure VS Code is installed.</p>
-            {showFallbackLink && (
-              <p className="mt-2">
-                <a
-                  href="https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline font-medium hover:text-white/80"
-                >
-                  Or click here to open in browser
-                </a>
-              </p>
+      <header className="py-24 relative lg:py-32">
+        {/* Messages */}
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-20 w-full max-w-2xl px-4">
+            {showVSCodeOpenedMessage && (
+            <div className="bg-slate-800/90 backdrop-blur border border-brand/30 text-white px-6 py-4 rounded-xl shadow-2xl mb-4 text-center">
+                <p className="text-sm">Attempting to open WorkspaceGPT in VS Code. Please ensure VS Code is installed.</p>
+                {showFallbackLink && (
+                <p className="mt-2 text-xs">
+                    <a href="https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Or open directly in browser →</a>
+                </p>
+                )}
+            </div>
             )}
-          </div>
-        )}
-        {showCursorOpenedMessage && (
-          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg transition-opacity duration-300 z-10">
-            <p>Attempting to open WorkspaceGPT extension in Cursor. If it doesn&apos;t open, please make sure Cursor is installed.</p>
-            {showCursorFallbackLink && (
-              <p className="mt-2">
-                <a
-                  href="https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline font-medium hover:text-white/80"
-                >
-                  Or click here to open in browser
-                </a>
-              </p>
+            {showCursorOpenedMessage && (
+            <div className="bg-slate-800/90 backdrop-blur border border-brand/30 text-white px-6 py-4 rounded-xl shadow-2xl text-center">
+                <p className="text-sm">Attempting to open WorkspaceGPT in Cursor. Please ensure Cursor is installed.</p>
+                {showCursorFallbackLink && (
+                <p className="mt-2 text-xs">
+                    <a href="https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Or open directly in browser →</a>
+                </p>
+                )}
+            </div>
             )}
-          </div>
-        )}
-        <div className="container mx-auto px-6">
-          <div className="flex flex-col md:flex-row items-center justify-between">
-            <div className="md:w-1/2 mb-10 md:mb-0">
-              <h1 className="text-4xl md:text-5xl font-bold mb-6">WorkspaceGPT</h1>
-              <p className="text-xl mb-8">
-                Your AI-powered, RAG-based coding assistant designed specifically for your local development environment.
+        </div>
+
+        <div className="container mx-auto px-6 relative z-10">
+          <div className="flex flex-col lg:flex-row items-center justify-between gap-12">
+            <div className="lg:w-1/2 md:mb-0 text-center lg:text-left">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/10 border border-brand/20 text-brand text-sm font-medium mb-8">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
+                </span>
+                WorkspaceGPT v1.0.0
+              </div>
+              <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-8">
+                Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand to-brand-blue">AI-powered</span> <br/> local coding assistant
+              </h1>
+              <p className="text-xl text-slate-400 mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
+                Chat with your codebase and your Confluence docs from right inside your IDE. Designed for total privacy running 100% locally or via your own APIs.
               </p>
-              <div className="flex flex-wrap gap-4">
+              
+              <div className="flex flex-wrap gap-4 justify-center lg:justify-start">
+                <button
+                  onClick={openInstallModal}
+                  className="bg-brand hover:bg-[#1ce2a7] text-black font-semibold px-8 py-4 rounded-full transition-all flex items-center gap-3 shadow-[0_0_20px_rgba(31,242,180,0.3)] hover:shadow-[0_0_30px_rgba(31,242,180,0.5)] transform hover:-translate-y-1"
+                >
+                  <div className="flex items-center rounded-full bg-black/10 px-2 py-1">
+                    <Image src="/vscode-icon.svg" alt="VS Code" width={18} height={18} className="drop-shadow-sm" />
+                    <span className="mx-1 opacity-50 text-xs font-bold">+</span>
+                    <Image src="/cursor-icon.png" alt="Cursor" width={18} height={18} className="drop-shadow-sm" />
+                  </div>
+                  <span>Install Extension</span>
+                </button>
                 <Link
                   href="#features"
-                  className="bg-white text-[#000000] hover:bg-gray-100 font-medium py-3 px-6 rounded-lg transition-colors flex items-center justify-center h-[50px]"
+                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium py-4 px-8 rounded-full transition-all backdrop-blur-sm"
                 >
                   Explore Features
                 </Link>
-                <button
-                  onClick={openInstallModal}
-                  className="bg-[#1ff2b4] hover:bg-[#1ce2a7] text-white font-medium px-6 rounded-full transition-colors flex items-center justify-center gap-2 h-[50px]"
-                >
-                  <div className="flex items-center">
-                    <Image
-                      src="/vscode-icon.svg"
-                      alt="VS Code"
-                      width={24}
-                      height={24}
-                      className="inline-block"
-                    />
-                    <Image
-                      src="/cursor-icon.png"
-                      alt="Cursor"
-                      width={24}
-                      height={24}
-                      className="inline-block"
-                    />
-                    <span className="text-[#000000] mx-1">+</span>
-                  </div>
-                  <span className="text-[#000000]">Install WorkspaceGPT</span>
-                  
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 ml-1" fill="none" viewBox="0 0 24 24" stroke="black">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
               </div>
             </div>
-            <div className="md:w-1/2 flex justify-center">
-              <div className="relative w-full max-w-md">
-                <Image
-                  src="/icon.png"
-                  alt="WorkspaceGPT Interface"
-                  width={500}
-                  height={400}
-                  className="rounded-lg"
-                  priority
-                />
+            
+            <div className="lg:w-1/2 flex justify-center lg:justify-end animate-float">
+              <div className="relative w-full max-w-lg aspect-square lg:aspect-[4/3]">
+                {/* Decorative UI element for the hero mockup */}
+                <div className="absolute inset-0 bg-gradient-to-tr from-brand-blue/20 to-brand/20 rounded-2xl blur-2xl -z-10"></div>
+                <div className="relative w-full h-full bg-slate-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+                  {/* Mockup Header */}
+                  <div className="h-10 border-b border-white/5 bg-slate-950 flex items-center px-4 gap-2">
+                    <div className="w-3 h-3 rounded-full bg-rose-500/80"></div>
+                    <div className="w-3 h-3 rounded-full bg-amber-500/80"></div>
+                    <div className="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+                    <div className="mx-auto text-xs text-slate-500 font-medium tracking-wide">WorkspaceGPT</div>
+                  </div>
+                  {/* Mockup Image */}
+                  <div className="relative flex-grow p-4 bg-slate-950 overflow-hidden">
+                    <Image
+                      src="/icon.png"
+                      alt="WorkspaceGPT Logo"
+                      fill
+                      className="object-contain p-12 opacity-90 drop-shadow-[0_0_15px_rgba(31,242,180,0.2)]"
+                      priority
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="flex-grow">
-        {/* Privacy Section */}
-        <section className="py-16 bg-gray-50">
-          <div className="container mx-auto px-6">
-            <h2 className="text-3xl font-bold text-center mb-12">🔐 100% Local & Private</h2>
-            <div className="max-w-3xl mx-auto text-lg">
-              <p className="mb-6">
-                Everything in WorkspaceGPT runs <strong>locally</strong> on your system. No data is sent to third-party servers.
-                Your code and your documents remain <strong>fully private and secure</strong>.
-              </p>
-              <p>
-                You don&apos;t need to worry about confidentiality — we don&apos;t share or transmit anything outside your machine.
-              </p>
-            </div>
-          </div>
-        </section>
+      <main className="flex-grow z-10 relative">
 
-        {/* Features Section */}
-        <section id="features" className="py-16">
+        {/* Privacy Highlight Row */}
+        <section className="py-12 border-y border-white/5 bg-slate-900/30 backdrop-blur-md">
           <div className="container mx-auto px-6">
-            <h2 className="text-3xl font-bold text-center mb-12 text-gray-100">🧠 Features</h2>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-              <div className="bg-white p-8 rounded-lg shadow-md">
-                <div className="text-3xl mb-4">🤖</div>
-                <h3 className="text-xl font-semibold mb-3">AI-Powered Workspace Q&A</h3>
-                <p>Get context-aware answers from your local workspace using Retrieval-Augmented Generation (RAG).</p>
+            <div className="flex flex-col md:flex-row items-center justify-center gap-10 md:gap-20 text-center">
+              <div className="flex flex-col items-center max-w-xs">
+                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4 text-2xl border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]">🔐</div>
+                <h3 className="text-lg font-semibold text-white mb-2">100% Local & Private</h3>
+                <p className="text-slate-400 text-sm">Run with Ollama locally with zero data sent out. Total privacy.</p>
               </div>
-              <div className="bg-white p-8 rounded-lg shadow-md">
-                <div className="text-3xl mb-4">📄</div>
-                <h3 className="text-xl font-semibold mb-3">Confluence Integration</h3>
-                <p>Seamlessly connect to your Confluence space and chat with your documentation.</p>
-              </div>
-              <div className="bg-white p-8 rounded-lg shadow-md">
-                <div className="text-3xl mb-4">🧭</div>
-                <h3 className="text-xl font-semibold mb-3">Smart Code Navigation</h3>
-                <p>Understand and explore your codebase more efficiently (coming soon!).</p>
-              </div>
-              <div className="bg-white p-8 rounded-lg shadow-md">
-                <div className="text-3xl mb-4">💬</div>
-                <h3 className="text-xl font-semibold mb-3">Interactive Chat Interface</h3>
-                <p>Ask questions and receive intelligent, project-specific responses.</p>
-              </div>
-              <div className="bg-white p-8 rounded-lg shadow-md">
-                <div className="text-3xl mb-4">⚡</div>
-                <h3 className="text-xl font-semibold mb-3">Runs Locally</h3>
-                <p>No remote APIs. Zero data leakage. Total privacy.</p>
+              <div className="hidden md:block w-px h-20 bg-gradient-to-b from-transparent via-white/10 to-transparent"></div>
+              <div className="flex flex-col items-center max-w-xs">
+                <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-4 text-2xl border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)]">☁️</div>
+                <h3 className="text-lg font-semibold text-white mb-2">Cloud Connectors</h3>
+                <p className="text-slate-400 text-sm">Hook into OpenAI, Gemini, Groq, or OpenRouter for maximum power.</p>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Getting Started Section */}
-        <section id="getting-started" className="py-16 bg-gray-50">
+        {/* Features Bento Grid */}
+        <section id="features" className="py-24">
           <div className="container mx-auto px-6">
-            <h2 className="text-3xl font-bold text-center mb-12">🚀 Getting Started</h2>
-
-            <div className="max-w-3xl mx-auto">
-              <h3 className="text-xl font-semibold mb-4">Prerequisites</h3>
-              <ul className="list-disc pl-6 mb-8 space-y-2">
-                <li><a href="https://ollama.com" className="text-blue-600 hover:underline">Ollama</a> installed and running locally</li>
-                <li>Node.js (v18 or higher)</li>
-              </ul>
-
-              <h3 className="text-xl font-semibold mb-4">Default Model</h3>
-              <p className="mb-8">
-                By default, WorkspaceGPT uses a lightweight model: <code className="bg-gray-200 px-2 py-1 rounded">llama3.2:1b</code>.
-                If you&apos;re looking for more accurate and context-rich responses, you can switch to a more capable model
-                that fits your system — such as <code className="bg-gray-200 px-2 py-1 rounded">llama3.2:4b</code>,
-                <code className="bg-gray-200 px-2 py-1 rounded">gemma3:4b</code>, or <code className="bg-gray-200 px-2 py-1 rounded">mistral</code>.
-              </p>
-
-              <h3 className="text-xl font-semibold mb-4">Installation</h3>
-              <ol className="list-decimal pl-6 mb-8 space-y-2">
-                <li>Open Visual Studio Code</li>
-                <li>Navigate to the Extensions view (<code className="bg-gray-200 px-2 py-1 rounded">Ctrl+Shift+X</code> or <code className="bg-gray-200 px-2 py-1 rounded">Cmd+Shift+X</code> on macOS)</li>
-                <li>Search for <strong>&quot;WorkspaceGPT&quot;</strong></li>
-                <li>Click <strong>Install</strong></li>
-              </ol>
+            <div className="text-center mb-16">
+              <h2 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 mb-4 tracking-tight">Capabilities designed for builders</h2>
+              <p className="text-slate-400 text-lg max-w-2xl mx-auto">Everything you need to navigate, understand, and build within your existing codebase seamlessly.</p>
             </div>
-          </div>
-        </section>
+            
+            <div className="grid md:grid-cols-3 gap-6 auto-rows-fr">
+              {/* Feature 1 */}
+              <div className="md:col-span-2 bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-brand/40 transition-colors duration-500 group relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-brand/5 rounded-full blur-3xl -mx-24 -my-24 group-hover:bg-brand/10 transition-colors"></div>
+                <div className="relative z-10">
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 shadow-inner text-brand">🤖</div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">AI-Powered Q&A</h3>
+                  <p className="text-slate-400 text-lg leading-relaxed max-w-lg">Get context-aware answers from your local workspace using blazing fast Retrieval-Augmented Generation (RAG).</p>
+                </div>
+              </div>
+              
+              {/* Feature 2 */}
+              <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-blue-500/40 transition-colors duration-500 group relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-colors"></div>
+                <div className="relative z-10">
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-blue-400">📄</div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Confluence One-Click</h3>
+                  <p className="text-slate-400">Seamlessly connect to your Confluence space and instantly start chatting with your documentation alongside your code.</p>
+                </div>
+              </div>
 
-        {/* Setup Guide Section */}
-        <section className="py-16 text-gray-100">
-          <div className="container mx-auto px-6">
-            <h2 className="text-3xl font-bold text-center mb-12">🛠 Setup Guide</h2>
+              {/* Feature 3 */}
+              <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-purple-500/40 transition-colors duration-500 group relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/10 rounded-full blur-2xl group-hover:bg-purple-500/20 transition-colors"></div>
+                <div className="relative z-10">
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-purple-400">🔷</div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Azure DevOps (ADO)</h3>
+                  <p className="text-slate-400">Deep integration with ADO to fetch work items, user stories, and pull requests directly into your AI context.</p>
+                </div>
+              </div>
 
-            <div className="max-w-3xl mx-auto">
-              <ol className="list-decimal pl-6 mb-8 space-y-3">
-                <li>Make sure Ollama is running on your system</li>
-                <li>Open the <strong>WorkspaceGPT</strong> sidebar in VSCode</li>
-                <li>Go to <code className="bg-gray-200 px-2 py-1 rounded text-black">Settings {`>`} Confluence Integration</code></li>
-                <li>Enter your Confluence details</li>
-                <li>Click <strong>&quot;Check Connection&quot;</strong> to verify access and fetch the total number of pages</li>
-                <li>Click <strong>&quot;Start Sync&quot;</strong> to begin syncing your Confluence content (this may take time depending on the number of pages)</li>
-              </ol>
-
-              <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-8 text-black">
-                <h3 className="text-lg font-semibold mb-2">🔁 Reset WorkspaceGPT</h3>
-                <p>
-                  If you ever need to reset WorkspaceGPT to its default state, simply go to:
-                  <br />
-                  <code className="bg-gray-200 px-2 py-1 rounded mt-2 inline-block">Settings {`>`}  Reset VSCode State</code>
-                </p>
+              {/* Feature 4 */}
+              <div className="md:col-span-2 bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-brand/40 transition-colors duration-500 group flex flex-col md:flex-row gap-8 items-center relative overflow-hidden">
+                <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-black/20 to-transparent"></div>
+                <div className="flex-1 relative z-10">
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-brand">💬</div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Interactive Editor Chat</h3>
+                  <p className="text-slate-400 text-lg leading-relaxed">Ask questions directly in the IDE to receive intelligent, project-specific code solutions. Stop switching context.</p>
+                </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Contributing Section */}
-        <section className="py-16 bg-gray-50">
-          <div className="container mx-auto px-6">
-            <h2 className="text-3xl font-bold text-center mb-12">🤝 Contributing</h2>
+        {/* Setup & Installation Guide */}
+        <section id="getting-started" className="py-24 border-t border-white/5 bg-slate-950">
+          <div className="container mx-auto px-6 max-w-5xl">
+            <h2 className="text-4xl font-bold text-center mb-16 tracking-tight">Ready in minutes</h2>
+            
+            <div className="grid md:grid-cols-2 gap-12 lg:gap-20">
+              
+              {/* Column 1: Installation */}
+              <div className="space-y-10">
+                <div>
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">1</div>
+                    <h3 className="text-2xl font-semibold text-white">Installation</h3>
+                  </div>
+                  <div className="pl-12 space-y-4 text-slate-400">
+                    <p>WorkspaceGPT is available directly through the marketplace. Install it for VS Code or Cursor.</p>
+                    <div className="bg-slate-900 border border-white/10 rounded-xl p-4 font-mono text-sm text-brand-blue flex justify-between items-center">
+                      <span>ext install Riteshkant.workspacegpt-extension</span>
+                      <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    </div>
+                  </div>
+                </div>
 
-            <div className="max-w-3xl mx-auto">
-              <p className="mb-6">We welcome contributions! Here&apos;s how:</p>
-              <ol className="list-decimal pl-6 space-y-2">
-                <li>Fork the repo</li>
-                <li>Create your feature branch (<code className="bg-gray-200 px-2 py-1 rounded">git checkout -b feature/amazing-feature</code>)</li>
-                <li>Commit your changes (<code className="bg-gray-200 px-2 py-1 rounded">git commit -m &apos;Add some amazing feature&apos;</code>)</li>
-                <li>Push to your branch (<code className="bg-gray-200 px-2 py-1 rounded">git push origin feature/amazing-feature</code>)</li>
-                <li>Open a Pull Request</li>
-              </ol>
+                <div>
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">2</div>
+                    <h3 className="text-2xl font-semibold text-white">Choose Provider</h3>
+                  </div>
+                  <div className="pl-12 text-slate-400 space-y-4">
+                    <p>Select your engine in <code className="bg-white/10 text-slate-200 px-2 rounded">Settings {`>`} Providers</code>.</p>
+                    <ul className="space-y-3">
+                      <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-emerald-500"></div> <span className="font-medium text-slate-300">Ollama (100% Local)</span> - Default: <code className="text-xs">llama3.2:1b</code></li>
+                      <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-blue-500"></div> <span className="font-medium text-slate-300">OpenAI / Gemini</span> - High performance models</li>
+                      <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-purple-500"></div> <span className="font-medium text-slate-300">OpenRouter</span> - Multiple model access</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Column 2: Integrations */}
+              <div className="space-y-10">
+                <div>
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">3</div>
+                    <h3 className="text-2xl font-semibold text-white">Connect Contexts</h3>
+                  </div>
+                  <div className="pl-12 text-slate-400 space-y-6">
+                    <div className="bg-slate-900 border border-white/5 p-5 rounded-2xl relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 w-full h-full bg-blue-500/5 group-hover:bg-blue-500/10 transition-colors pointer-events-none"></div>
+                      <h4 className="text-blue-400 font-semibold mb-2 flex items-center gap-2">
+                         Confluence Start
+                      </h4>
+                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Confluence</code>. Click <strong>Sign in</strong> for one-click auth, and hit <strong>Sync</strong>.</p>
+                    </div>
+
+                    <div className="bg-slate-900 border border-white/5 p-5 rounded-2xl relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 w-full h-full bg-purple-500/5 group-hover:bg-purple-500/10 transition-colors pointer-events-none"></div>
+                      <h4 className="text-purple-400 font-semibold mb-2 flex items-center gap-2">
+                        ADO Synchronization
+                      </h4>
+                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} ADO Integration</code>. Enter PAT to sync pull requests, tickets, and work items.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
             </div>
           </div>
         </section>
+
       </main>
 
       {/* Footer */}
-      <footer className="bg-gray-800 text-white py-12">
-        <div className="container mx-auto px-6">
-          <div className="flex flex-col md:flex-row justify-between items-center">
-            <div className="mb-6 md:mb-0">
-              <h2 className="text-2xl font-bold">WorkspaceGPT</h2>
-              <p className="mt-2">Talk to your code and your Confluence docs. Locally, privately, and intelligently.</p>
+      <footer className="border-t border-white/5 py-12 bg-slate-950 relative">
+        <div className="container mx-auto px-6 relative z-10">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex flex-shrink-0 items-center justify-center">
+                 <Image src="/icon.png" width={20} height={20} alt="Logo" className="w-[20px] h-[20px] object-contain opacity-80" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-white tracking-tight">WorkspaceGPT</h2>
+                <p className="text-slate-500 text-sm">Locally, privately, intelligently.</p>
+              </div>
             </div>
-            <div className="flex flex-col md:flex-row gap-12">
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Support</h3>
-                <ul className="space-y-2">
-                  <li><a href="#" className="hover:underline">Documentation</a></li>
-                  <li><a href="https://github.com/ritesh-kant/workspaceGPT/issues" className="hover:underline">GitHub Issues</a></li>
-                  <li><a href="mailto:contact@workspacegpt.in" className="hover:underline">Email Support</a></li>
-                </ul>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Resources</h3>
-                <ul className="space-y-2">
-                  <li><a href="https://devnotes.tech/tag/workspacegpt/" target="_blank" rel="noopener noreferrer" className="hover:underline">Blog</a></li>
-                </ul>
-              </div>
+            
+            <div className="flex gap-8 text-sm font-medium">
+              <a href="https://github.com/ritesh-kant/workspaceGPT/issues" className="text-slate-400 hover:text-white transition-colors">GitHub Issues</a>
+              <a href="mailto:contact@workspacegpt.in" className="text-slate-400 hover:text-white transition-colors">Contact</a>
+              <a href="https://devnotes.tech/tag/workspacegpt/" className="text-slate-400 hover:text-white transition-colors">Blog</a>
             </div>
           </div>
-          <div className="mt-8 pt-8 border-t border-gray-700 text-center">
-            <p>© {new Date().getFullYear()} WorkspaceGPT. Licensed under MIT.</p>
+          <div className="mt-12 pt-8 border-t border-white/5 text-center flex flex-col md:flex-row justify-between items-center gap-4">
+            <p className="text-slate-600 text-sm">© {new Date().getFullYear()} WorkspaceGPT. Proprietary Software.</p>
           </div>
         </div>
       </footer>
