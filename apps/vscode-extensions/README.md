@@ -1,13 +1,12 @@
 # WorkspaceGPT VSCode Extension
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/1.png" alt="Screenshot 1" width="27%" style="margin-right: 2%" />
-  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/2.png" alt="Screenshot 2" width="27%" style="margin-right: 2%" />
-  <img src="https://raw.githubusercontent.com/ritesh-kant/workspaceGPT/main/apps/vscode-extensions/resources/screenshots/3.png" alt="Screenshot 3" width="27%" />
+  <img src="resources/screenshots/1.png" alt="Screenshot 1" width="27%" style="margin-right: 2%" />
+  <img src="resources/screenshots/2.png" alt="Screenshot 2" width="27%" style="margin-right: 2%" />
+  <img src="resources/screenshots/3.png" alt="Screenshot 3" width="27%" />
 </p>
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Visit our homepage: [workspacegpt.in](https://workspacegpt.in)
 
@@ -24,7 +23,8 @@ WorkspaceGPT gives you control over your data privacy:
 ## 🧠 Features
 
 - 🤖 **AI-Powered Workspace Q&A**: Get context-aware answers from your local workspace using Retrieval-Augmented Generation (RAG)
-- 📄 **Confluence Integration**: Seamlessly connect to your Confluence space and chat with your documentation
+- 📄 **Confluence One-Click Integration**: Seamlessly connect to your Confluence space and chat with your documentation with just one click
+- 🔷 **Azure DevOps (ADO) Support**: Deep integration with ADO to track work items, pull requests, and synchronize relevant context directly
 - 🧭 **Smart Code Navigation**: Understand and explore your codebase more efficiently (coming soon!)
 - 💬 **Interactive Chat Interface**: Ask questions and receive intelligent, project-specific responses
 - ⚡ **Runs Locally**: No remote APIs. Zero data leakage. Total privacy.
@@ -58,10 +58,8 @@ By default, WorkspaceGPT uses a lightweight model: `llama3.2:1b` when using Olla
 1. Open the **WorkspaceGPT** sidebar in VSCode
 2. Select your preferred AI provider from the settings menu
 3. Configure your selected provider (API keys for cloud providers or connection settings for Ollama)
-4. For Confluence integration, go to `Settings > Confluence Integration`
-5. Enter your Confluence details
-6. Click **"Check Connection"** to verify access and fetch the total number of pages
-7. Click **"Start Sync"** to begin syncing your Confluence content (this may take time depending on the number of pages)
+4. **Confluence**: Go to `Settings > Confluence Integration`, securely sign in with one click, and select workspaces to **"Start Sync"**.
+5. **Azure DevOps (ADO)**: Go to `Settings > Azure DevOps`, provide your details, and sync your ADO context to chat with tickets and PRs.
 
 ### 🔁 Reset WorkspaceGPT
 
@@ -69,13 +67,11 @@ If you ever need to reset WorkspaceGPT to its default state, simply go to:
 
 `Settings > Reset VSCode State`
 
-## 🧑‍💻 For Opensource contribution or to run the project locally
+## 🧑‍💻 Running the project locally
 
-Clone the repo and start hacking!
+If you have source access, you can run the project locally:
 
 ```bash
-git clone https://github.com/ritesh-kant/workspaceGPT.git
-cd workspaceGPT/apps/vscode-extensions
 pnpm install
 pnpm run dev
 ```
@@ -87,19 +83,9 @@ pnpm run dev
 - `pnpm run lint` - Run ESLint
 - `pnpm run test` - Run test suite
 
-## 🤝 Contributing
-
-We welcome contributions! Here's how:
-
-1. Fork the repo
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to your branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
 ## 📄 License
 
-This project is licensed under the MIT License. See the [LICENSE.md](LICENSE.md) file for more info.
+This software is proprietary. See the [LICENSE.md](LICENSE.md) file for more details.
 
 ## 💬 Support
 
