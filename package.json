@@ -14,6 +14,7 @@
     "app:confluence-rag": "pnpm --filter confluence-rag",
     "app:confluence-extractor": "pnpm --filter confluence-extractor",
     "app:vscode-extension": "pnpm --filter workspacegpt-extension",
+    "app:mcp-server": "pnpm --filter @workspace-gpt/mcp-server",
     "ollama:setup": "ollama pull llama3.2",
     "env:setup": "shx test -f .env || shx cp .env.example .env"
   },

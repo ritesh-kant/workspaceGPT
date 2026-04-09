@@ -10,18 +10,24 @@
     "url": "https://github.com/ritesh-kant/workspaceGPT"
   },
   "engines": {
-    "vscode": "^1.87.0"
+    "vscode": "^1.98.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "workspacegpt.ask",
         "title": "WorkspaceGPT: Ask"
+      },
+      {
+        "command": "workspacegpt.setupMcp",
+        "title": "WorkspaceGPT: Connect MCP Server"
       },
       {
         "command": "workspacegpt.clearData",
@@ -50,6 +56,12 @@
           "light": "resources/history-dark.svg",
           "dark": "resources/history-light.svg"
         }
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "workspacegpt.mcpServer",
+        "label": "WorkspaceGPT MCP Server"
       }
     ],
     "keybindings": [
@@ -121,7 +133,7 @@
     "build-webview": "cd webview && pnpm install --ignore-workspace && pnpm run build",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "dev": "pnpm run build && agy --new-window --extensionDevelopmentPath=${PWD}",
+    "dev": "pnpm run build && code --new-window --extensionDevelopmentPath=${PWD}",
     "watch-webview": "cd webview && pnpm run dev",
     "create-tag": "git tag workspaceGPT-v${npm_package_version} && git push origin workspaceGPT-v${npm_package_version}"
   },
@@ -141,7 +153,7 @@
     "@types/glob": "^8.1.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "18.x",
-    "@types/vscode": "^1.87.0",
+    "@types/vscode": "^1.110.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
     "esbuild": "^0.20.1",

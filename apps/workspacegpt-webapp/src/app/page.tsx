@@ -42,19 +42,19 @@ export default function Home() {
       {/* Install Modal */}
       {showInstallModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 transition-opacity">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 relative overflow-hidden">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-6 sm:p-8 max-w-md w-full mx-4 relative overflow-hidden">
             {/* Modal subtle glow */}
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brand-blue to-brand"></div>
             
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">Install WorkspaceGPT</h2>
+              <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-300">Install WorkspaceGPT</h2>
               <button onClick={closeInstallModal} className="text-slate-400 hover:text-white transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
-            <p className="text-slate-400 mb-6 font-medium">Select your preferred IDE to begin</p>
+            <p className="text-slate-300 mb-6 font-medium">Select your preferred IDE to begin</p>
             
             <div className="space-y-4">
               <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-white/10 transition-all duration-300">
@@ -85,9 +85,9 @@ export default function Home() {
         </div>
       )}
       
-      <header className="py-24 relative lg:py-32">
+      <header className="py-16 sm:py-24 relative lg:py-32">
         {/* Messages */}
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-20 w-full max-w-2xl px-4">
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-30 w-full max-w-2xl px-4">
             {showVSCodeOpenedMessage && (
             <div className="bg-slate-800/90 backdrop-blur border border-brand/30 text-white px-6 py-4 rounded-xl shadow-2xl mb-4 text-center">
                 <p className="text-sm">Attempting to open WorkspaceGPT in VS Code. Please ensure VS Code is installed.</p>
@@ -111,26 +111,26 @@ export default function Home() {
         </div>
 
         <div className="container mx-auto px-6 relative z-10">
-          <div className="flex flex-col lg:flex-row items-center justify-between gap-12">
+          <div className="flex flex-col lg:flex-row items-center justify-between gap-8 lg:gap-12">
             <div className="lg:w-1/2 md:mb-0 text-center lg:text-left">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/10 border border-brand/20 text-brand text-sm font-medium mb-8">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/10 border border-brand/20 text-brand text-sm font-medium mb-6 sm:mb-8">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
                 </span>
                 WorkspaceGPT v1.0.0
               </div>
-              <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-8">
+              <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight mb-6 sm:mb-8 leading-[1.1]">
                 Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand to-brand-blue">AI-powered</span> <br/> local coding assistant
               </h1>
-              <p className="text-xl text-slate-400 mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
+              <p className="text-lg sm:text-xl text-slate-300 mb-8 sm:mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
                 Chat with your codebase and your Confluence docs from right inside your IDE. Designed for total privacy running 100% locally or via your own APIs.
               </p>
               
               <div className="flex flex-wrap gap-4 justify-center lg:justify-start">
                 <button
                   onClick={openInstallModal}
-                  className="bg-brand hover:bg-[#1ce2a7] text-black font-semibold px-8 py-4 rounded-full transition-all flex items-center gap-3 shadow-[0_0_20px_rgba(31,242,180,0.3)] hover:shadow-[0_0_30px_rgba(31,242,180,0.5)] transform hover:-translate-y-1"
+                  className="bg-brand hover:bg-[#1ce2a7] text-black font-semibold px-6 py-3 sm:px-8 sm:py-4 rounded-full transition-all flex items-center gap-3 shadow-[0_0_20px_rgba(31,242,180,0.3)] hover:shadow-[0_0_30px_rgba(31,242,180,0.5)] transform hover:-translate-y-1"
                 >
                   <div className="flex items-center rounded-full bg-black/10 px-2 py-1">
                     <Image src="/vscode-icon.svg" alt="VS Code" width={18} height={18} className="drop-shadow-sm" />
@@ -141,7 +141,7 @@ export default function Home() {
                 </button>
                 <Link
                   href="#features"
-                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium py-4 px-8 rounded-full transition-all backdrop-blur-sm"
+                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium px-6 py-3 sm:px-8 sm:py-4 rounded-full transition-all backdrop-blur-sm"
                 >
                   Explore Features
                 </Link>
@@ -166,7 +166,7 @@ export default function Home() {
                       src="/icon.png"
                       alt="WorkspaceGPT Logo"
                       fill
-                      className="object-contain p-12 opacity-90 drop-shadow-[0_0_15px_rgba(31,242,180,0.2)]"
+                      className="object-contain p-6 sm:p-12 opacity-90 drop-shadow-[0_0_15px_rgba(31,242,180,0.2)]"
                       priority
                     />
                   </div>
@@ -186,24 +186,24 @@ export default function Home() {
               <div className="flex flex-col items-center max-w-xs">
                 <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4 text-2xl border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]">🔐</div>
                 <h3 className="text-lg font-semibold text-white mb-2">100% Local & Private</h3>
-                <p className="text-slate-400 text-sm">Run with Ollama locally with zero data sent out. Total privacy.</p>
+                <p className="text-slate-300 text-sm">Run with Ollama locally with zero data sent out. Total privacy.</p>
               </div>
               <div className="hidden md:block w-px h-20 bg-gradient-to-b from-transparent via-white/10 to-transparent"></div>
               <div className="flex flex-col items-center max-w-xs">
                 <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-4 text-2xl border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)]">☁️</div>
                 <h3 className="text-lg font-semibold text-white mb-2">Cloud Connectors</h3>
-                <p className="text-slate-400 text-sm">Hook into OpenAI, Gemini, Groq, or OpenRouter for maximum power.</p>
+                <p className="text-slate-300 text-sm">Hook into OpenAI, Gemini, Groq, or OpenRouter for maximum power.</p>
               </div>
             </div>
           </div>
         </section>
 
         {/* Features Bento Grid */}
-        <section id="features" className="py-24">
+        <section id="features" className="pt-16 pb-8 sm:pt-24 sm:pb-12">
           <div className="container mx-auto px-6">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 mb-4 tracking-tight">Capabilities designed for builders</h2>
-              <p className="text-slate-400 text-lg max-w-2xl mx-auto">Everything you need to navigate, understand, and build within your existing codebase seamlessly.</p>
+            <div className="text-center mb-12 sm:mb-16">
+              <h2 className="text-3xl sm:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-300 mb-4 tracking-tight">Capabilities designed for builders</h2>
+              <p className="text-slate-300 text-base sm:text-lg max-w-2xl mx-auto">Everything you need to navigate, understand, and build within your existing codebase seamlessly.</p>
             </div>
             
             <div className="grid md:grid-cols-3 gap-6 auto-rows-fr">
@@ -213,7 +213,7 @@ export default function Home() {
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 shadow-inner text-brand">🤖</div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">AI-Powered Q&A</h3>
-                  <p className="text-slate-400 text-lg leading-relaxed max-w-lg">Get context-aware answers from your local workspace using blazing fast Retrieval-Augmented Generation (RAG).</p>
+                  <p className="text-slate-300 text-base sm:text-lg leading-relaxed max-w-lg">Get context-aware answers from your local workspace using blazing fast Retrieval-Augmented Generation (RAG).</p>
                 </div>
               </div>
               
@@ -223,7 +223,7 @@ export default function Home() {
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-blue-400">📄</div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Confluence One-Click</h3>
-                  <p className="text-slate-400">Seamlessly connect to your Confluence space and instantly start chatting with your documentation alongside your code.</p>
+                  <p className="text-slate-300">Seamlessly connect to your Confluence space and instantly start chatting with your documentation alongside your code.</p>
                 </div>
               </div>
 
@@ -233,7 +233,7 @@ export default function Home() {
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-purple-400">🔷</div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Azure DevOps (ADO)</h3>
-                  <p className="text-slate-400">Deep integration with ADO to fetch work items, user stories, and pull requests directly into your AI context.</p>
+                  <p className="text-slate-300">Deep integration with ADO to fetch work items, user stories, and pull requests directly into your AI context.</p>
                 </div>
               </div>
 
@@ -243,7 +243,7 @@ export default function Home() {
                 <div className="flex-1 relative z-10">
                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-brand">💬</div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Interactive Editor Chat</h3>
-                  <p className="text-slate-400 text-lg leading-relaxed">Ask questions directly in the IDE to receive intelligent, project-specific code solutions. Stop switching context.</p>
+                  <p className="text-slate-300 text-base sm:text-lg leading-relaxed">Ask questions directly in the IDE to receive intelligent, project-specific code solutions. Stop switching context.</p>
                 </div>
               </div>
             </div>
@@ -251,9 +251,9 @@ export default function Home() {
         </section>
 
         {/* Setup & Installation Guide */}
-        <section id="getting-started" className="py-24 border-t border-white/5 bg-slate-950">
+        <section id="getting-started" className="py-6 sm:py-10 border-t border-white/5 bg-slate-950">
           <div className="container mx-auto px-6 max-w-5xl">
-            <h2 className="text-4xl font-bold text-center mb-16 tracking-tight">Ready in minutes</h2>
+            <h2 className="text-3xl sm:text-4xl font-bold text-center mb-12 sm:mb-16 tracking-tight">Ready in minutes</h2>
             
             <div className="grid md:grid-cols-2 gap-12 lg:gap-20">
               
@@ -264,7 +264,7 @@ export default function Home() {
                     <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">1</div>
                     <h3 className="text-2xl font-semibold text-white">Installation</h3>
                   </div>
-                  <div className="pl-12 space-y-4 text-slate-400">
+                  <div className="pl-12 space-y-4 text-slate-300">
                     <p>WorkspaceGPT is available directly through the marketplace. Install it for VS Code or Cursor.</p>
                     <div className="bg-slate-900 border border-white/10 rounded-xl p-4 font-mono text-sm text-brand-blue flex justify-between items-center">
                       <span>ext install Riteshkant.workspacegpt-extension</span>
@@ -278,12 +278,27 @@ export default function Home() {
                     <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">2</div>
                     <h3 className="text-2xl font-semibold text-white">Choose Provider</h3>
                   </div>
-                  <div className="pl-12 text-slate-400 space-y-4">
+                  <div className="pl-12 text-slate-300 space-y-4">
                     <p>Select your engine in <code className="bg-white/10 text-slate-200 px-2 rounded">Settings {`>`} Providers</code>.</p>
-                    <ul className="space-y-3">
-                      <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-emerald-500"></div> <span className="font-medium text-slate-300">Ollama (100% Local)</span> - Default: <code className="text-xs">llama3.2:1b</code></li>
-                      <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-blue-500"></div> <span className="font-medium text-slate-300">OpenAI / Gemini</span> - High performance models</li>
-                      <li className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-purple-500"></div> <span className="font-medium text-slate-300">OpenRouter</span> - Multiple model access</li>
+                    <ul className="space-y-4">
+                      <li className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 mt-[0.4rem]"></div> 
+                        <div className="leading-relaxed">
+                          <span className="font-medium text-slate-200">Ollama (100% Local)</span> - Default: <code className="font-mono text-xs bg-white/10 px-1 py-0.5 rounded text-slate-300 ml-1">llama3.2:1b</code>
+                        </div>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0 mt-[0.4rem]"></div> 
+                        <div className="leading-relaxed">
+                          <span className="font-medium text-slate-200">OpenAI / Gemini</span> - High performance models
+                        </div>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full bg-purple-500 flex-shrink-0 mt-[0.4rem]"></div> 
+                        <div className="leading-relaxed">
+                          <span className="font-medium text-slate-200">OpenRouter</span> - Multiple model access
+                        </div>
+                      </li>
                     </ul>
                   </div>
                 </div>
@@ -296,7 +311,7 @@ export default function Home() {
                     <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">3</div>
                     <h3 className="text-2xl font-semibold text-white">Connect Contexts</h3>
                   </div>
-                  <div className="pl-12 text-slate-400 space-y-6">
+                  <div className="pl-12 text-slate-300 space-y-6">
                     <div className="bg-slate-900 border border-white/5 p-5 rounded-2xl relative overflow-hidden group">
                       <div className="absolute top-0 right-0 w-full h-full bg-blue-500/5 group-hover:bg-blue-500/10 transition-colors pointer-events-none"></div>
                       <h4 className="text-blue-400 font-semibold mb-2 flex items-center gap-2">
@@ -323,7 +338,7 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-white/5 py-12 bg-slate-950 relative">
+      <footer className="border-t border-white/5 py-8 sm:py-12 bg-slate-950 relative">
         <div className="container mx-auto px-6 relative z-10">
           <div className="flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="flex items-center gap-3">

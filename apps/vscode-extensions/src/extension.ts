@@ -5,11 +5,13 @@ import { AnalyticsService } from './services/analyticsService';
 import { ConfluenceSyncScheduler } from './services/confluence/confluenceSyncScheduler';
 import { AdoSyncScheduler } from './services/ado/adoSyncScheduler';
 import { ConfluenceEmbeddingService } from './services/confluence/confluenceEmbeddingService';
+import { McpUiManager } from './utils/mcpUiManager';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
 let adoSyncScheduler: AdoSyncScheduler;
 let embeddingService: ConfluenceEmbeddingService;
+let mcpUiManager: McpUiManager;
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize analytics service
@@ -28,6 +30,10 @@ export async function activate(context: vscode.ExtensionContext) {
   embeddingService = new ConfluenceEmbeddingService(undefined, context);
   embeddingService.eagerInit();
 
+  // Initialize MCP UI Manager (welcome notification + status bar button)
+  mcpUiManager = new McpUiManager(context);
+  await mcpUiManager.initialize();
+
   // Register WebViewProvider
   const webViewProvider = new WebViewProvider(context.extensionUri, context);
   context.subscriptions.push(
@@ -36,6 +42,27 @@ export async function activate(context: vscode.ExtensionContext) {
       webViewProvider
     )
   );
+
+  // Register MCP Server for GitHub Copilot / Claude Code discovery (@mcp)
+  if (vscode.lm?.registerMcpServerDefinitionProvider) {
+    context.subscriptions.push(
+      vscode.lm.registerMcpServerDefinitionProvider('workspacegpt.mcpServer', {
+        provideMcpServerDefinitions: async () => {
+          return [
+            new vscode.McpStdioServerDefinition(
+              'WorkspaceGPT',
+              'node',
+              [
+                context.asAbsolutePath('./dist/mcp-server.js'),
+                '--data-dir',
+                context.globalStorageUri.fsPath
+              ]
+            )
+          ];
+        }
+      })
+    );
+  }
 
   // Register the ask command
   let askDisposable = vscode.commands.registerCommand(
@@ -143,9 +170,29 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(clearDataDisposable);
+
+  // Register MCP Setup command
+  let setupMcpDisposable = vscode.commands.registerCommand(
+    'workspacegpt.setupMcp',
+    async () => {
+      analyticsService.trackEvent('command_setup_mcp_triggered');
+      const { installMcpServer } = await import('./utils/mcpInstaller');
+      await installMcpServer(context);
+      // Update status bar after installation
+      if (mcpUiManager) {
+        await mcpUiManager.updateStatusBar();
+      }
+    }
+  );
+  context.subscriptions.push(setupMcpDisposable);
 }
 
 export async function deactivate() {
+  // Dispose MCP UI Manager
+  if (mcpUiManager) {
+    mcpUiManager.dispose();
+  }
+
   // Stop background scheduler
   if (syncScheduler) {
     syncScheduler.stop();

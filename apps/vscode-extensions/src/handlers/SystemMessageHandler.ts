@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
 import { clearWorkspaceGPTData } from 'src/utils/clearData';
 import { AnalyticsService } from '../services/analyticsService';
+import { installMcpServer } from '../utils/mcpInstaller';
+import { isMcpInstalled } from '../utils/mcpStatusChecker';
 
 export class SystemMessageHandler {
   constructor(
@@ -27,6 +29,12 @@ export class SystemMessageHandler {
         return true;
       case MESSAGE_TYPES.GET_WORKSPACE_PATH:
         await this.handleGetWorkspacePath();
+        return true;
+      case MESSAGE_TYPES.SETUP_MCP:
+        await this.handleSetupMcp();
+        return true;
+      case MESSAGE_TYPES.MCP_STATUS:
+        await this.handleMcpStatus();
         return true;
     }
     return false;
@@ -67,6 +75,24 @@ export class SystemMessageHandler {
       console.error('Error clearing global state:', error);
       throw error;
     }
+  }
+
+  private async handleSetupMcp(): Promise<void> {
+    await installMcpServer(this.context);
+    // Reply with updated status so the settings panel reflects the change
+    const isInstalled = await isMcpInstalled();
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.MCP_STATUS,
+      isInstalled,
+    });
+  }
+
+  private async handleMcpStatus(): Promise<void> {
+    const isInstalled = await isMcpInstalled();
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.MCP_STATUS,
+      isInstalled,
+    });
   }
 
   private async handleShowSettings(): Promise<void> {

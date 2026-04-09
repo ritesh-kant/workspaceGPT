@@ -105,6 +105,10 @@ export const MESSAGE_TYPES = {
 
   GET_WORKSPACE_PATH: 'get-workspace-path',
   WORKSPACE_PATH: 'workspace-path',
+
+  // MCP Server
+  SETUP_MCP: 'setup-mcp',
+  MCP_STATUS: 'mcp-status',
 } as const;
 
 export const SEARCH_CONSTANTS = {

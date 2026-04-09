@@ -8,6 +8,7 @@ import ModelSettings from './settings/ModelSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
 // import CodebaseSettings from './settings/CodebaseSettings';
+import McpSettings from './settings/McpSettings';
 import { SettingsButtonProps } from '../types';
 
 const SettingsButton: React.FC<SettingsButtonProps> = ({
@@ -169,6 +170,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       <br />
 
       <AdoSettings />
+      <br />
+
+      <McpSettings />
       <br />
 
       {/* <CodebaseSettings /> */}

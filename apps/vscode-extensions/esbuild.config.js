@@ -207,6 +207,22 @@ async function ensureWorkersPackageJson() {
   fs.writeFileSync(packageJsonPath, JSON.stringify(workersPackageJson, null, 2));
 }
 
+// Copy the MCP server bundled output
+async function copyMcpServer() {
+  console.log('📦 Copying MCP Server bundle...');
+  const mcpSrcPath = path.join(__dirname, '../workspacegpt-mcp/dist/index.js');
+  const mcpDestPath = path.join(__dirname, 'dist', 'mcp-server.js');
+  
+  if (!fs.existsSync(mcpSrcPath)) {
+    console.warn(`⚠️  MCP Server output not found at ${mcpSrcPath}. Please build @workspace-gpt/mcp-server first.`);
+    return;
+  }
+  
+  await fs.promises.mkdir(path.dirname(mcpDestPath), { recursive: true });
+  await fs.promises.copyFile(mcpSrcPath, mcpDestPath);
+  console.log('✅ MCP Server copied successfully');
+}
+
 // Main build function
 async function build() {
   try {
@@ -229,6 +245,7 @@ async function build() {
     // Copy dependencies and models
     await copyDependencies();
     await copyModels();
+    await copyMcpServer();
 
     console.log('🎉 Build completed successfully');
   } catch (error) {
