@@ -203,8 +203,15 @@
 }
 
 /* Searchable Dropdown Styles */
+.searchable-dropdown-container {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .searchable-dropdown-trigger {
   width: 100%;
+  box-sizing: border-box;
   padding: 8px 12px;
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
@@ -235,6 +242,7 @@
   max-height: 300px;
   overflow-y: auto;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
 }
 
 .searchable-dropdown-input {
@@ -246,6 +254,7 @@
   border: 1px solid var(--vscode-input-border) !important;
   border-radius: 4px !important;
   font-size: 0.85rem !important;
+  box-sizing: border-box !important;
 }
 
 .searchable-dropdown-list {

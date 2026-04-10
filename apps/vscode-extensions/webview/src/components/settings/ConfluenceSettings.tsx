@@ -350,37 +350,14 @@ const ConfluenceSettings: React.FC = () => {
                   </div>
 
                   {isOpen && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: '100%',
-                        left: 0,
-                        right: 0,
-                        zIndex: 100,
-                        background: 'var(--vscode-dropdown-background)',
-                        border: '1px solid var(--vscode-dropdown-border)',
-                        borderRadius: '4px',
-                        marginTop: '4px',
-                        maxHeight: '300px',
-                        overflowY: 'auto',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                      }}
-                    >
+                    <div className="searchable-dropdown-menu">
                       <input
                         type='text'
                         placeholder='Search spaces...'
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         autoFocus
-                        style={{
-                          width: 'calc(100% - 16px)',
-                          margin: '8px',
-                          padding: '6px 8px',
-                          background: 'var(--vscode-input-background)',
-                          color: 'var(--vscode-input-foreground)',
-                          border: '1px solid var(--vscode-input-border)',
-                          borderRadius: '4px',
-                        }}
+                        className="searchable-dropdown-input"
                         onClick={(e) => e.stopPropagation()}
                       />
                       <ul className="searchable-dropdown-list">
