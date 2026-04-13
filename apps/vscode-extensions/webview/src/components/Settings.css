@@ -583,3 +583,37 @@ input:checked + .slider:before {
   font-size: 0.9rem;
   color: var(--vscode-descriptionForeground);
 }
+
+/* Password visibility toggle in inputs */
+.password-input-container {
+  position: relative;
+  display: flex;
+  width: 100%;
+}
+
+.password-input-container input {
+  width: 100%;
+  padding-right: 36px; /* space for the eye icon */
+  box-sizing: border-box;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: 36px;
+  background: none !important;
+  border: none !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--vscode-icon-foreground) !important;
+  padding: 0;
+}
+
+.password-toggle-btn:hover {
+  color: var(--vscode-foreground) !important;
+  background: transparent !important;
+}

@@ -183,6 +183,7 @@ const AdoSettings: React.FC = () => {
   }, []);
 
   const [patInput, setPatInput] = useState('');
+  const [showOrgName, setShowOrgName] = useState(false);
 
   // Auto-detect identity as soon as all required details are available
   useEffect(() => {
@@ -346,12 +347,26 @@ const AdoSettings: React.FC = () => {
             <div className="form-row">
               <div className="form-group">
                 <label>Organization Name</label>
-                <input
-                  type="text"
-                  value={adoConfig.orgName || ''}
-                  onChange={(e) => handleInputChange('ado', 'orgName', e.target.value)}
-                  placeholder="Ex: MyOrganization"
-                />
+                <div className="password-input-container">
+                  <input
+                    type={showOrgName ? "text" : "password"}
+                    value={adoConfig.orgName || ''}
+                    onChange={(e) => handleInputChange('ado', 'orgName', e.target.value)}
+                    placeholder="Ex: MyOrganization"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowOrgName(!showOrgName)}
+                    title={showOrgName ? "Hide organization name" : "Show organization name"}
+                  >
+                    {showOrgName ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+                    )}
+                  </button>
+                </div>
               </div>
               <button 
                 onClick={fetchProjects} 
