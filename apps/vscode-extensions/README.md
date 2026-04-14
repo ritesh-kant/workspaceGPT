@@ -1,9 +1,9 @@
 # WorkspaceGPT VSCode Extension
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/9fe5fd96-b6a4-4671-b095-68abf566b79c" alt="Screenshot 1" width="27%" style="margin-right: 2%" />
-  <img src="https://github.com/user-attachments/assets/e61718ab-254d-4f5e-8565-d1a7630612e7" alt="Screenshot 2" width="27%" style="margin-right: 2%" />
-  <img src="https://github.com/user-attachments/assets/bf43bb68-542e-4e4f-a4e6-b59b5b7852a2" alt="Screenshot 3" width="27%" />
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspacegpt-assets/main/1.png" alt="Screenshot 1" width="27%" style="margin-right: 2%" />
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspacegpt-assets/main/2.png" alt="Screenshot 2" width="27%" style="margin-right: 2%" />
+  <img src="https://raw.githubusercontent.com/ritesh-kant/workspacegpt-assets/main/3.png" alt="Screenshot 3" width="27%" />
 </p>
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
