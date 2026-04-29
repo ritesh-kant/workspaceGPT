@@ -352,6 +352,7 @@ export default function Home() {
             </div>
             
             <div className="flex gap-8 text-sm font-medium">
+              <Link href="/docs" className="text-slate-400 hover:text-white transition-colors">Docs</Link>
               <a href="https://github.com/ritesh-kant/workspaceGPT/issues" className="text-slate-400 hover:text-white transition-colors">GitHub Issues</a>
               <a href="mailto:contact@workspacegpt.in" className="text-slate-400 hover:text-white transition-colors">Contact</a>
               <a href="https://devnotes.tech/tag/workspacegpt/" className="text-slate-400 hover:text-white transition-colors">Blog</a>
