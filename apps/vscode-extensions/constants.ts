@@ -200,6 +200,12 @@ export const MODEL_PROVIDERS = [
     BASE_URL: 'https://openrouter.ai/api/v1',
     DEFAULT_CHAT_MODEL: 'deepseek/deepseek-r1-distill-llama-70b',
   },
+  {
+    MODEL_PROVIDER: 'NVIDIA',
+    requireApiKey: true,
+    BASE_URL: 'https://integrate.api.nvidia.com/v1',
+    DEFAULT_CHAT_MODEL: 'moonshotai/kimi-k2-instruct',
+  },
 ];
 
 export const WORKER_STATUS = {

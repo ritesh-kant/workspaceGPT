@@ -12,6 +12,7 @@ import {
   useSelectedModelProvider,
   useSettingsStore,
 } from './store';
+import { modelDefaultConfig } from './store/modelStore';
 import { MESSAGE_TYPES, STORAGE_KEYS } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
 
@@ -248,6 +249,15 @@ const App: React.FC = () => {
           }
           if (message.key === STORAGE_KEYS.MODEL) {
             if (message.state && message.state.modelProviders) {
+              // Merge any newly added providers that aren't in the persisted state
+              const persisted = message.state.modelProviders as Array<{ provider: string }>;
+              const persistedNames = new Set(persisted.map((p) => p.provider));
+              const missing = modelDefaultConfig.filter(
+                (p: { provider: string }) => !persistedNames.has(p.provider)
+              );
+              if (missing.length > 0) {
+                message.state.modelProviders = [...persisted, ...missing];
+              }
               setModelState(message.state);
               console.log(
                 'restored model state',

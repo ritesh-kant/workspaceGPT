@@ -147,6 +147,22 @@ export const useModelStore = create<ModelState>()(
     {
       name: 'workspaceGPT-model-storage',
       storage: createJSONStorage(() => vscodeStorage),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        // Merge any new providers that were added to MODEL_PROVIDERS
+        // but don't yet exist in the persisted modelProviders array.
+        const existingProviderNames = new Set(
+          state.modelProviders.map((p) => p.provider)
+        );
+        const newProviders = modelDefaultConfig.filter(
+          (p) => !existingProviderNames.has(p.provider)
+        );
+        if (newProviders.length > 0) {
+          useModelStore.setState({
+            modelProviders: [...state.modelProviders, ...newProviders],
+          });
+        }
+      },
     }
   )
 );
