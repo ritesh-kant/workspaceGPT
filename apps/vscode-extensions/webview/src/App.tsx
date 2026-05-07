@@ -146,9 +146,31 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.RETRIEVAL_STATUS:
           setStatusText(message.text || '');
           break;
-        case MESSAGE_TYPES.ERROR_CHAT:
+        case MESSAGE_TYPES.ERROR_CHAT: {
+          const rawError = message.message || 'An unknown error occurred.';
+          let userFacingError: string;
+
+          if (rawError.includes('403') && rawError.includes('subscription')) {
+            // Extract the upgrade URL if present
+            const urlMatch = rawError.match(/https?:\/\/[^\s")]+/);
+            const upgradeUrl = urlMatch ? urlMatch[0] : null;
+            userFacingError = `⚠️ **Access Denied (403):** This model requires a subscription.\n\n`
+              + (upgradeUrl
+                ? `Upgrade here: [${upgradeUrl}](${upgradeUrl})\n\n`
+                : '')
+              + `Please select a different model or upgrade your plan.`;
+          } else if (rawError.includes('401') || rawError.includes('Unauthorized')) {
+            userFacingError = `🔑 **Authentication Error:** Your API key appears to be invalid or expired. Please check your API key in Settings.`;
+          } else if (rawError.includes('429') || rawError.includes('rate limit')) {
+            userFacingError = `⏳ **Rate Limited:** Too many requests. Please wait a moment and try again.`;
+          } else if (rawError.includes('ECONNREFUSED') || rawError.includes('ENOTFOUND')) {
+            userFacingError = `🔌 **Connection Error:** Unable to reach the model provider. Please check that the service is running and your network connection is active.`;
+          } else {
+            userFacingError = `❌ **Error:** ${rawError}`;
+          }
+
           addMessage({
-            content: 'Error occurred. Please restart WorkspaceGPT.',
+            content: userFacingError,
             isUser: false,
             isError: true,
           });
@@ -156,6 +178,7 @@ const App: React.FC = () => {
           setIsLoading(false);
           setIsStreaming(false);
           break;
+        }
         case MESSAGE_TYPES.SHOW_SETTINGS:
           setShowSettings(true);
           setShowHistory(false);
