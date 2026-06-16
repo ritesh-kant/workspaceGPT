@@ -15,6 +15,21 @@ export class ChatMessageHandler {
     private readonly historyService: HistoryService
   ) {}
 
+  /**
+   * Eagerly create the ChatService and warm its search workers, so the first
+   * query lands on an already-warmed worker instead of paying cold-start cost.
+   */
+  public prewarm(): void {
+    if (!this.chatService) {
+      this.chatService = new ChatService(this.webviewView, this.context);
+    }
+    this.chatService.prewarm();
+  }
+
+  public dispose(): void {
+    this.chatService?.dispose();
+  }
+
   public async handleMessage(data: any): Promise<boolean> {
     switch (data.type) {
       case MESSAGE_TYPES.NEW_CHAT:

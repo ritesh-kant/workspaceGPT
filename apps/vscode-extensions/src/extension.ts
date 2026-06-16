@@ -4,13 +4,11 @@ import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { AnalyticsService } from './services/analyticsService';
 import { ConfluenceSyncScheduler } from './services/confluence/confluenceSyncScheduler';
 import { AdoSyncScheduler } from './services/ado/adoSyncScheduler';
-import { ConfluenceEmbeddingService } from './services/confluence/confluenceEmbeddingService';
 import { McpUiManager } from './utils/mcpUiManager';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
 let adoSyncScheduler: AdoSyncScheduler;
-let embeddingService: ConfluenceEmbeddingService;
 let mcpUiManager: McpUiManager;
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -26,9 +24,8 @@ export async function activate(context: vscode.ExtensionContext) {
   adoSyncScheduler = new AdoSyncScheduler(context);
   adoSyncScheduler.start();
 
-  // Eagerly initialize the search worker so the first chat query is fast
-  embeddingService = new ConfluenceEmbeddingService(undefined, context);
-  embeddingService.eagerInit();
+  // Search workers are warmed by the chat webview itself (WebviewMessageHandler → ChatService.prewarm),
+  // so the warmup lands on the exact service instances the chat queries.
 
   // Initialize MCP UI Manager (welcome notification + status bar button)
   mcpUiManager = new McpUiManager(context);
@@ -207,10 +204,7 @@ export async function deactivate() {
     adoSyncScheduler.stop();
   }
 
-  // Clean up search worker process
-  if (embeddingService) {
-    embeddingService.dispose();
-  }
+  // Chat search workers are owned by the webview and disposed on its onDidDispose.
 
   // Flush analytics before deactivating
   await analyticsService?.flush();

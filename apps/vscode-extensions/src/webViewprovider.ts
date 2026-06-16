@@ -35,6 +35,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     webviewView.description = "Close";
     webviewView.title = "WorkspaceGPT";
     webviewView.onDidDispose(() => {
+      this.messageHandler?.dispose();
       this._view = undefined;
     });
 

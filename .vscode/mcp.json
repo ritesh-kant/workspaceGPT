@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "workspacegpt": {
+      "command": "node",
+      "args": [
+        "/Users/ritesh/.vscode/extensions/riteshkant.workspacegpt-extension-1.0.2/dist/mcp-server.js",
+        "--data-dir",
+        "/Users/ritesh/Library/Application Support/Code/User/globalStorage/riteshkant.workspacegpt-extension"
+      ],
+      "type": "stdio"
+    }
+  }
+}

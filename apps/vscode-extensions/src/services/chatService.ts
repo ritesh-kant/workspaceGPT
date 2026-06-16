@@ -52,6 +52,37 @@ export class ChatService {
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
   }
 
+  /**
+   * Eagerly spawns + warms the persistent search worker(s) so the first query is fast.
+   * Only warms a source that is actually authenticated and indexed, so we don't load
+   * the embedding model into memory for a source the user hasn't connected.
+   * Fire-and-forget: safe to call on webview activation.
+   */
+  public prewarm(): void {
+    const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+    const isConfluenceConnected =
+      settings?.state?.config?.confluence?.isAuthenticated &&
+      settings?.state?.config?.confluence?.isIndexingCompleted;
+    const isAdoConnected =
+      settings?.state?.config?.ado?.isAuthenticated &&
+      settings?.state?.config?.ado?.isIndexingCompleted;
+
+    if (isConfluenceConnected) {
+      this.embeddingService.eagerInit();
+    }
+    if (isAdoConnected) {
+      this.adoEmbeddingService.eagerInit();
+    }
+  }
+
+  /**
+   * Tear down the persistent search workers this service owns. Call on reset/deactivation.
+   */
+  public dispose(): void {
+    this.embeddingService.dispose();
+    this.adoEmbeddingService.dispose();
+  }
+
   public async initializeModel(
     modelId: string,
     modelType: ModelType

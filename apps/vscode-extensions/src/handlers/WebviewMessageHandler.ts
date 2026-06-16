@@ -31,6 +31,14 @@ export class WebviewMessageHandler {
     this.chatHandler = new ChatMessageHandler(webviewView, context, this.analyticsService, this.historyService);
     this.codebaseHandler = new CodebaseMessageHandler(webviewView, context, this.analyticsService);
     this.systemHandler = new SystemMessageHandler(webviewView, context, this.analyticsService);
+
+    // Warm the search workers now (webview is opening) so the first chat query is fast.
+    this.chatHandler.prewarm();
+  }
+
+  /** Tear down chat search workers. Called on webview dispose. */
+  public dispose(): void {
+    this.chatHandler.dispose();
   }
 
   public async handleMessage(data: any): Promise<void> {
@@ -56,6 +64,7 @@ export class WebviewMessageHandler {
       await this.adoHandler.reset();
       await this.codebaseHandler.reset();
       await this.systemHandler.reset();
+      this.chatHandler.dispose();
       
       console.log('WorkspaceGPT fully reset.');
     } catch (error) {
