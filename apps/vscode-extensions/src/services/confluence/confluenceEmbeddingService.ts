@@ -10,6 +10,7 @@ import {
 } from 'src/types/types';
 import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../../constants';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
+import { getEmbeddingSettings } from 'src/utils/getEmbeddingSettings';
 
 export class ConfluenceEmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
@@ -109,8 +110,14 @@ export class ConfluenceEmbeddingService {
         this.searchWorker?.removeListener('message', onMessage);
       };
 
+      const embeddingSettings = getEmbeddingSettings(this.context);
       this.searchWorker!.on('message', onMessage);
-      this.searchWorker!.send({ type: 'init', embeddingDirPath });
+      this.searchWorker!.send({
+        type: 'init',
+        embeddingDirPath,
+        provider: embeddingSettings.provider,
+        apiKey: embeddingSettings.apiKey,
+      });
     });
 
     console.log('Search worker initialized and ready.');
@@ -151,8 +158,14 @@ export class ConfluenceEmbeddingService {
         this.searchWorker?.removeListener('message', onMessage);
       };
 
+      const embeddingSettings = getEmbeddingSettings(this.context);
       this.searchWorker!.on('message', onMessage);
-      this.searchWorker!.send({ type: 'reload', embeddingDirPath });
+      this.searchWorker!.send({
+        type: 'reload',
+        embeddingDirPath,
+        provider: embeddingSettings.provider,
+        apiKey: embeddingSettings.apiKey,
+      });
     });
   }
 
@@ -166,6 +179,15 @@ export class ConfluenceEmbeddingService {
       this.stopEmbeddingProcess();
 
       await this.resetStateIfNotResume(resume);
+
+      // Inject the active embedding provider/key so the worker embeds with the
+      // user's selection (local ONNX by default, Gemini when configured).
+      const embeddingSettings = getEmbeddingSettings(this.context);
+      config = {
+        ...config,
+        provider: embeddingSettings.provider,
+        apiKey: embeddingSettings.apiKey,
+      };
 
       const { embeddingDirPath, mdDirPath, processPath } =
         await this.getConfluenceMDAndEmbeddingPath('createEmbeddingForText.js');

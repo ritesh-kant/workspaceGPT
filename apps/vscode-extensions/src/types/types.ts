@@ -2,6 +2,10 @@ export interface EmbeddingConfig {
   modelName: string;
   dimensions: number;
   maxElements: number;
+  /** Which embedding backend to use. Defaults to 'local' when omitted. */
+  provider?: 'local' | 'gemini';
+  /** API key for cloud providers (gemini). */
+  apiKey?: string;
 }
 
 export interface CodebaseConfig {

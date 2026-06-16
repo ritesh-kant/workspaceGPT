@@ -5,9 +5,15 @@ import MarkdownIt from 'markdown-it';
 import { EmbeddingConfig } from 'src/types/types';
 import { MODEL, WORKER_STATUS } from '../../../constants';
 import { initializeEmbeddingModel } from '../utils/initializeEmbeddingModel';
+import { EmbeddingProvider } from '../../embeddings/EmbeddingProvider';
+import { makeEmbeddingProvider } from '../../embeddings/makeProvider';
+import {
+  EmbeddingIndexManifest,
+  EmbeddingProviderId,
+} from '../../types/embeddingManifest';
 
 let md: MarkdownIt;
-let extractor: any;
+let provider: EmbeddingProvider;
 
 interface WorkerData {
   mdDirPath: string;
@@ -95,30 +101,6 @@ function extractFrontmatter(markdownContent: string): {
 }
 
 /**
- * Load the existing binary meta file to check which files have already been embedded.
- * Returns a Map of filename -> true for quick lookup.
- */
-function loadExistingEmbeddingsMeta(): Map<string, boolean> {
-  const metaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
-  const existing = new Map<string, boolean>();
-
-  try {
-    if (fs.existsSync(metaPath)) {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      for (const entry of meta.entries || []) {
-        if (entry.filename) {
-          existing.set(entry.filename, true);
-        }
-      }
-    }
-  } catch {
-    // Ignore errors — treat as no existing embeddings
-  }
-
-  return existing;
-}
-
-/**
  * Write the combined binary file and delete individual JSON embedding files.
  */
 async function writeBinaryAndCleanup(
@@ -173,20 +155,38 @@ async function writeBinaryAndCleanup(
   console.log(`Written binary cache (${entries.length} embeddings). Deleted ${deletedCount} JSON files.`);
 }
 
+/** Progress message helper — keeps the shape the embedding services expect. */
+function reportProcessing(current: number, total: number, lastProcessedFile?: string) {
+  process.send!({
+    type: WORKER_STATUS.PROCESSING,
+    progress: total > 0 ? ((current / total) * 100).toFixed(1) : '0',
+    current,
+    total,
+    lastProcessedFile,
+  });
+}
+
 async function createEmbeddings(): Promise<void> {
   try {
-    // Initialize embedding model first
-    extractor = await initializeEmbeddingModel(
-      MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
-      embeddingDirPath,
-      (progress: any) => {
-        process.send!({
-          type: WORKER_STATUS.PROCESSING,
-          progress: progress.progress || 0,
-          message: progress.message || 'Initializing model...',
-        });
-      }
-    );
+    // Build the embedding provider. Local needs the ONNX model initialized;
+    // Gemini just needs an API key. Defaults to local for back-compat.
+    const providerId: EmbeddingProviderId = config.provider ?? 'local';
+    if (providerId === 'local') {
+      const extractor = await initializeEmbeddingModel(
+        MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
+        embeddingDirPath,
+        (progress: any) => {
+          process.send!({
+            type: WORKER_STATUS.PROCESSING,
+            progress: progress.progress || 0,
+            message: progress.message || 'Initializing model...',
+          });
+        }
+      );
+      provider = makeEmbeddingProvider({ provider: 'local', extractor });
+    } else {
+      provider = makeEmbeddingProvider({ provider: 'gemini', apiKey: config.apiKey });
+    }
 
     const files = fs
       .readdirSync(mdDirPath)
@@ -198,9 +198,6 @@ async function createEmbeddings(): Promise<void> {
       fs.mkdirSync(embeddingDirPath, { recursive: true });
     }
 
-    // Load existing embeddings from binary meta for incremental sync
-    const existingEmbeddings = loadExistingEmbeddingsMeta();
-
     // If resuming, find the starting point
     let startIndex = 0;
     if (resume && lastProcessedFile) {
@@ -210,11 +207,10 @@ async function createEmbeddings(): Promise<void> {
       }
     }
 
-    // Collect all embeddings (existing from binary meta + newly created)
-    // We'll rebuild the full binary at the end
+    // Collect all embeddings (preserved unchanged + newly created); rebuild the binary at the end.
     const allEmbeddings: Array<{ filename: string; text: string; url: string; embedding: number[] }> = [];
 
-    // Load existing embeddings from binary if available (to preserve unchanged ones)
+    // Load existing embeddings from binary (to preserve unchanged ones across syncs)
     const binPath = path.join(embeddingDirPath, 'embeddings.bin');
     const metaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
     let existingData: Map<string, { text: string; url: string; embedding: number[] }> = new Map();
@@ -228,7 +224,7 @@ async function createEmbeddings(): Promise<void> {
 
         for (const entry of meta.entries) {
           const offset = entry.embeddingOffset;
-          const embedding = Array.from(matrix.slice(offset, offset + dim));
+          const embedding = Array.from(matrix.slice(offset, offset + dim)) as number[];
           existingData.set(entry.filename, {
             text: entry.text,
             url: entry.url,
@@ -240,31 +236,26 @@ async function createEmbeddings(): Promise<void> {
       }
     }
 
-    // Process each file
+    // ── Phase 1: classify each file as skip (preserve) or needs-embedding ──
+    const toEmbed: Array<{ filename: string; text: string; url: string; srcFile: string }> = [];
+    let done = startIndex; // files before startIndex were processed in a prior run
+
     for (let i = startIndex; i < files.length; i++) {
       const file = files[i];
       const filePath = path.join(mdDirPath, file);
 
-      // We will save embeddings using a hash of the filename to support incremental updates
       const fileHash = crypto.createHash('sha256').update(file).digest('hex');
       const embeddingFilePath = path.join(embeddingDirPath, `${fileHash}.json`);
 
-      // Check for incremental embedding skipping:
-      // 1. Check individual JSON file (legacy)
-      // 2. Check binary meta (new)
       const markdownContent = fs.readFileSync(filePath, 'utf8');
       const { content: cleanContent, frontmatter } = extractFrontmatter(markdownContent);
       const resolvedFilename = frontmatter?.fileName ?? file;
 
-      // Check if we can skip this file (already embedded and unchanged)
+      // Skip 1 (legacy): individual JSON file exists and is newer than the markdown
       if (fs.existsSync(embeddingFilePath)) {
-        // Legacy: individual JSON file exists
         const mdStat = fs.statSync(filePath);
         const embedStat = fs.statSync(embeddingFilePath);
-
         if (embedStat.mtimeMs > mdStat.mtimeMs) {
-          console.log(`Skipping unchanged file (JSON): ${file}`);
-          // Read existing embedding from JSON to include in the binary
           try {
             const existing = JSON.parse(fs.readFileSync(embeddingFilePath, 'utf8'));
             allEmbeddings.push({
@@ -274,20 +265,12 @@ async function createEmbeddings(): Promise<void> {
               embedding: existing.embedding,
             });
           } catch { /* skip if can't read */ }
-
-          const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
-          process.send!({
-            type: WORKER_STATUS.PROCESSING,
-            progress: ((currentProgress / total) * 100).toFixed(1),
-            current: currentProgress,
-            total,
-            lastProcessedFile: file,
-          });
+          done++;
+          reportProcessing(done, total, file);
           continue;
         }
       } else if (existingData.has(resolvedFilename)) {
-        // New: check binary meta — file was already embedded
-        console.log(`Skipping unchanged file (binary): ${file}`);
+        // Skip 2 (binary): already embedded in a previous sync
         const existing = existingData.get(resolvedFilename)!;
         allEmbeddings.push({
           filename: resolvedFilename,
@@ -295,61 +278,62 @@ async function createEmbeddings(): Promise<void> {
           url: existing.url,
           embedding: existing.embedding,
         });
-
-        const currentProgress = resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
-        process.send!({
-          type: WORKER_STATUS.PROCESSING,
-          progress: ((currentProgress / total) * 100).toFixed(1),
-          current: currentProgress,
-          total,
-          lastProcessedFile: file,
-        });
+        done++;
+        reportProcessing(done, total, file);
         continue;
       }
 
-      // Log metadata if found
-      if (frontmatter && Object.keys(frontmatter).length > 0) {
-        console.log(`Extracted metadata from ${file}:`, frontmatter);
-      }
-
-      // Convert markdown to structured plain text
+      // Needs embedding — convert markdown to structured plain text
       const content = md
         .render(cleanContent)
         .replace(/<[^>]*>/g, '')
         .trim();
-
-      // Create embedding for the content
-      const embedding = await createEmbeddingForText(content);
-
-      // Collect for binary write
-      allEmbeddings.push({
+      toEmbed.push({
         filename: resolvedFilename,
         text: content,
         url: frontmatter?.url ?? '',
-        embedding,
-      });
-
-      // Report progress
-      const currentProgress =
-        resume && processedFiles ? i + 1 - startIndex + processedFiles : i + 1;
-      process.send!({
-        type: WORKER_STATUS.PROCESSING,
-        progress: ((currentProgress / total) * 100).toFixed(1),
-        current: currentProgress,
-        total,
-        lastProcessedFile: file,
+        srcFile: file,
       });
     }
 
-    // Save index metadata
+    // ── Phase 2: embed new content in batches (essential for the Gemini free tier) ──
+    const batchSize = provider.maxBatchSize;
+    for (let i = 0; i < toEmbed.length; i += batchSize) {
+      const batch = toEmbed.slice(i, i + batchSize);
+      const vectors = await provider.embedBatch(batch.map((b) => b.text), 'document');
+      for (let j = 0; j < batch.length; j++) {
+        allEmbeddings.push({
+          filename: batch[j].filename,
+          text: batch[j].text,
+          url: batch[j].url,
+          embedding: vectors[j],
+        });
+        done++;
+      }
+      reportProcessing(done, total, batch[batch.length - 1].srcFile);
+    }
+
+    // Save the index manifest (compatibility contract + provenance)
+    const source = sourceFromPath(embeddingDirPath);
+    const manifest: EmbeddingIndexManifest = {
+      schemaVersion: 1,
+      embedding: provider.identity,
+      docTaskType:
+        provider.identity.provider === 'gemini' ? 'RETRIEVAL_DOCUMENT' : undefined,
+      source,
+      count: allEmbeddings.length,
+      builtAt: new Date().toISOString(),
+      builtBy: 'vscode-extension',
+      shareable: provider.identity.provider === 'gemini',
+      // legacy fields kept for existing readers
+      total,
+      dimensions: provider.identity.dimensions,
+      includesMetadata: true,
+      metadataFields: ['url', 'frontmatter'],
+    };
     fs.writeFileSync(
       path.join(embeddingDirPath, 'index.json'),
-      JSON.stringify({
-        total: total,
-        dimensions: config.dimensions,
-        includesMetadata: true,
-        metadataFields: ['url', 'frontmatter'],
-      })
+      JSON.stringify(manifest)
     );
 
     // Write combined binary and clean up individual JSONs
@@ -365,27 +349,12 @@ async function createEmbeddings(): Promise<void> {
   }
 }
 
-// Create embedding using transformer model
-async function createEmbeddingForText(text: string): Promise<number[]> {
-  try {
-    // console.log(`Generating embedding for text of length ${text.length}...`);
-
-    if (!extractor) {
-      throw new Error('Embedding model not initialized');
-    }
-
-    const startTime = Date.now();
-    const output = await extractor(text, { pooling: 'mean', normalize: true });
-    const duration = Date.now() - startTime;
-
-    // console.log(`Embedding generation completed in ${duration}ms`);
-    // console.log(`Generated embedding with ${output.data.length} dimensions`);
-
-    return Array.from(output.data);
-  } catch (error) {
-    console.error('Error creating embedding:', error);
-    throw error;
-  }
+/** Derive the index source from the embedding directory path (…/confluence/embeddings). */
+function sourceFromPath(embeddingDirPath: string): EmbeddingIndexManifest['source'] {
+  const parent = path.basename(path.dirname(embeddingDirPath)).toLowerCase();
+  if (parent === 'ado') return 'ADO';
+  if (parent === 'codebase') return 'CODEBASE';
+  return 'CONFLUENCE';
 }
 
 // Start processing

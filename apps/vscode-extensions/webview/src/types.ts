@@ -89,6 +89,17 @@ export interface AdoConfig {
   isConnecting?: boolean;
 }
 
+export interface EmbeddingProviderConfig {
+  provider: 'local' | 'gemini';
+  apiKey?: string;
+}
+
+export interface VectorStoreConfig {
+  location: 'local' | 'cloud';
+  qdrantUrl?: string;
+  qdrantApiKey?: string;
+}
+
 export interface AvailableModel {
   id: string;
 }

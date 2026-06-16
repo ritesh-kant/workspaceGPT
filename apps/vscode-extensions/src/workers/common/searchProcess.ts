@@ -2,6 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import { MODEL, SEARCH_CONSTANTS } from '../../../constants';
 import { initializeEmbeddingModel } from '../utils/initializeEmbeddingModel';
+import { EmbeddingProvider, embedOne } from '../../embeddings/EmbeddingProvider';
+import { makeEmbeddingProvider } from '../../embeddings/makeProvider';
+import { checkEmbeddingCompat } from '../../utils/embeddingCompat';
+import { EmbeddingIdentity, EmbeddingProviderId } from '../../types/embeddingManifest';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -25,6 +29,8 @@ interface InitMessage {
   type: 'init';
   embeddingDirPath: string;
   namespace?: string;
+  provider?: EmbeddingProviderId;
+  apiKey?: string;
 }
 
 interface SearchMessage {
@@ -38,6 +44,8 @@ interface ReloadMessage {
   type: 'reload';
   embeddingDirPath: string;
   namespace?: string;
+  provider?: EmbeddingProviderId;
+  apiKey?: string;
 }
 
 type WorkerMessage = InitMessage | SearchMessage | ReloadMessage;
@@ -45,6 +53,10 @@ type WorkerMessage = InitMessage | SearchMessage | ReloadMessage;
 // ── State (lives for the lifetime of this process) ─────────────────────
 
 let extractor: any = null;
+let queryProvider: EmbeddingProvider | null = null;
+let currentProviderId: EmbeddingProviderId | null = null;
+let indexIdentity: EmbeddingIdentity | null = null;
+let compatError: string | null = null;
 let embeddingsMeta: CachedEmbedding[] = [];
 let embeddingsMatrix: Float32Array = new Float32Array(0); // flat array: N embeddings × D dimensions
 let embeddingNorms: Float32Array = new Float32Array(0);   // pre-computed norms
@@ -82,27 +94,61 @@ function dotProduct(
 
 // ── Core Functions ─────────────────────────────────────────────────────
 
-async function initializeModel(embeddingDirPath: string): Promise<void> {
-  if (extractor) {
-    console.log('SearchWorker: Model already initialized, skipping.');
+/**
+ * Build the query embedding provider matching the user's selection. Local lazily
+ * initializes (and warms up) the ONNX model; Gemini just needs the API key.
+ */
+async function initializeProvider(
+  providerId: EmbeddingProviderId,
+  apiKey: string | undefined,
+  embeddingDirPath: string
+): Promise<void> {
+  if (queryProvider && providerId === currentProviderId) {
+    return; // already initialized for this provider
+  }
+  currentProviderId = providerId;
+
+  if (providerId === 'local') {
+    if (!extractor) {
+      console.log('SearchWorker: Initializing local embedding model...');
+      extractor = await initializeEmbeddingModel(
+        MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
+        embeddingDirPath,
+        (progress: any) => console.log('SearchWorker: Model load progress:', progress)
+      );
+      // Warmup — JIT-compile the ONNX runtime so the first query is fast
+      const warmupStart = Date.now();
+      await extractor('warmup', { pooling: 'mean', normalize: true });
+      console.log(`SearchWorker: Model warmup done in ${Date.now() - warmupStart}ms`);
+    }
+    queryProvider = makeEmbeddingProvider({ provider: 'local', extractor });
+  } else {
+    console.log('SearchWorker: Using Gemini for query embeddings.');
+    queryProvider = makeEmbeddingProvider({ provider: 'gemini', apiKey });
+  }
+}
+
+/** Read the index's embedding identity from its manifest (null for legacy/no index). */
+function loadIndexIdentity(embeddingDirPath: string): EmbeddingIdentity | null {
+  try {
+    const p = path.join(embeddingDirPath, 'index.json');
+    if (!fs.existsSync(p)) return null;
+    const manifest = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return manifest.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Compare the query provider against the index identity; set compatError on mismatch. */
+function recomputeCompat(): void {
+  if (!indexIdentity || !queryProvider) {
+    compatError = null; // legacy index (no manifest) — assume compatible
     return;
   }
-
-  console.log('SearchWorker: Initializing embedding model...');
-  extractor = await initializeEmbeddingModel(
-    MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
-    embeddingDirPath,
-    (progress: any) => {
-      console.log('SearchWorker: Model load progress:', progress);
-    }
-  );
-  console.log('SearchWorker: Model initialization complete.');
-
-  // Model warmup — run a dummy embedding to JIT-compile the ONNX runtime
-  console.log('SearchWorker: Warming up model...');
-  const warmupStart = Date.now();
-  await extractor('warmup', { pooling: 'mean', normalize: true });
-  console.log(`SearchWorker: Model warmup done in ${Date.now() - warmupStart}ms`);
+  const result = checkEmbeddingCompat({ embedding: indexIdentity }, queryProvider.identity);
+  compatError = result.ok ? null : (result.reason ?? 'Embedding model mismatch — re-index required.');
+  if (compatError) console.warn('SearchWorker: index/query mismatch:', compatError);
 }
 
 /**
@@ -256,24 +302,19 @@ async function writeCombinedBinaryFile(embeddingDirPath: string): Promise<void> 
   console.log(`SearchWorker: Written combined binary cache. Deleted ${deletedCount} individual JSON files.`);
 }
 
-async function createEmbeddingForText(text: string): Promise<Float32Array> {
-  if (!extractor) {
-    throw new Error('Embedding model not initialized');
-  }
-  const output = await extractor(text, { pooling: 'mean', normalize: true });
-  return new Float32Array(output.data);
-}
-
 async function handleSearch(query: string, topK?: number): Promise<void> {
   try {
-    if (!extractor) {
-      throw new Error('Model not initialized. Send "init" first.');
+    if (compatError) {
+      throw new Error(compatError);
+    }
+    if (!queryProvider) {
+      throw new Error('Provider not initialized. Send "init" first.');
     }
 
     console.log('SearchWorker: Searching for:', query);
 
-    // Generate query embedding as Float32Array
-    const queryEmbedding = await createEmbeddingForText(query);
+    // Generate query embedding (provider-matched to the index) as Float32Array
+    const queryEmbedding = new Float32Array(await embedOne(queryProvider, query, 'query'));
     let queryNorm = 0;
     for (let i = 0; i < queryEmbedding.length; i++) {
       queryNorm += queryEmbedding[i] * queryEmbedding[i];
@@ -351,8 +392,10 @@ process.on('message', async (msg: WorkerMessage) => {
         if (msg.namespace) {
           currentNamespace = msg.namespace as 'CONFLUENCE' | 'CODEBASE' | 'ADO';
         }
-        await initializeModel(msg.embeddingDirPath);
+        await initializeProvider(msg.provider ?? 'local', msg.apiKey, msg.embeddingDirPath);
         await loadAllEmbeddings(msg.embeddingDirPath);
+        indexIdentity = loadIndexIdentity(msg.embeddingDirPath);
+        recomputeCompat();
         process.send!({ type: 'ready' });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -368,7 +411,13 @@ process.on('message', async (msg: WorkerMessage) => {
 
     case 'reload': {
       try {
-        await loadAllEmbeddings(msg.embeddingDirPath || currentEmbeddingDirPath);
+        const dir = msg.embeddingDirPath || currentEmbeddingDirPath;
+        if (msg.provider) {
+          await initializeProvider(msg.provider, msg.apiKey, dir);
+        }
+        await loadAllEmbeddings(dir);
+        indexIdentity = loadIndexIdentity(dir);
+        recomputeCompat();
         process.send!({ type: 'reloaded' });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

@@ -7,6 +7,8 @@ export interface SettingsConfig {
   confluence: ConfluenceConfig;
   codebase: CodebaseConfig;
   ado: AdoConfig;
+  embedding: EmbeddingProviderConfig;
+  vectorStore: VectorStoreConfig;
 }
 
 export const settingsDefaultConfig: SettingsConfig = {
@@ -71,6 +73,15 @@ export const settingsDefaultConfig: SettingsConfig = {
     isSyncCompleted: false,
     isIndexingCompleted: false
   },
+  embedding: {
+    provider: 'local',
+    apiKey: '',
+  },
+  vectorStore: {
+    location: 'local',
+    qdrantUrl: '',
+    qdrantApiKey: '',
+  },
 };
 
 interface SettingsState {
@@ -92,7 +103,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
-import { CodebaseConfig, ConfluenceConfig, AdoConfig } from '../types';
+import { CodebaseConfig, ConfluenceConfig, AdoConfig, EmbeddingProviderConfig, VectorStoreConfig } from '../types';
 
 const vscodeStorage = {
   getItem: () => {
@@ -133,7 +144,8 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       config: settingsDefaultConfig,
       showSettings: false,
-      setConfig: (config) => set({ config }),
+      setConfig: (config) =>
+        set({ config: { ...settingsDefaultConfig, ...config } }),
       updateConfig: (section, field, value) => {
         set((state) => {
           const newConfig = { ...state.config };
@@ -173,6 +185,16 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'workspaceGPT-settings-storage',
       storage: createJSONStorage(() => vscodeStorage),
+      // Merge persisted state over defaults so new config sections (e.g. embedding)
+      // always exist even when older stored settings omit them.
+      merge: (persisted: any, current) => ({
+        ...current,
+        ...(persisted ?? {}),
+        config: {
+          ...settingsDefaultConfig,
+          ...((persisted as any)?.config ?? {}),
+        },
+      }),
     }
   )
 );

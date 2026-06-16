@@ -5,6 +5,8 @@ import { useSettingsStore, useChatStore, useModelActions } from '../store';
 import { MESSAGE_TYPES } from '../constants';
 import { clearStatusMessageAfterDelay } from './settings/utils';
 import ModelSettings from './settings/ModelSettings';
+import EmbeddingSettings from './settings/EmbeddingSettings';
+import VectorStoreSettings from './settings/VectorStoreSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
 // import CodebaseSettings from './settings/CodebaseSettings';
@@ -164,6 +166,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       </div>
 
       <ModelSettings />
+      <br />
+
+      <EmbeddingSettings />
+      <br />
+
+      <VectorStoreSettings />
       <br />
 
       <ConfluenceSettings />
