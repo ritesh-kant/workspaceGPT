@@ -20,6 +20,7 @@ export default defineManifest({
   host_permissions: [
     'https://generativelanguage.googleapis.com/*',
     'https://*.qdrant.io/*',
+    'https://*.vercel.app/*', // proxy mode: WorkspaceGPT proxy deployed on Vercel
     'http://localhost/*',
     'https://api.openai.com/*',
     'https://api.groq.com/*',

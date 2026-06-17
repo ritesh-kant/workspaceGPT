@@ -25,26 +25,68 @@ const Settings: React.FC<Props> = ({ onClose }) => {
     setSaved(true);
   };
 
+  const isProxy = settings.vectorStoreMode === 'proxy';
+
   return (
     <div className='settings'>
-      <div className='field-group-title'>Vector Storage (Qdrant)</div>
+      <div className='field-group-title'>Vector Storage</div>
       <div className='field'>
-        <label>Qdrant URL</label>
-        <input
-          type='text'
-          value={settings.qdrant.url}
-          placeholder='https://your-cluster.qdrant.io:6333'
-          onChange={(e) => update({ qdrant: { ...settings.qdrant, url: e.target.value } })}
-        />
+        <label>Mode</label>
+        <select
+          value={settings.vectorStoreMode}
+          onChange={(e) =>
+            update({ vectorStoreMode: e.target.value as 'direct' | 'proxy' })
+          }
+        >
+          <option value='direct'>Direct (personal — your own Qdrant)</option>
+          <option value='proxy'>Proxy (team — admin-hosted backend)</option>
+        </select>
       </div>
-      <div className='field'>
-        <label>Qdrant API Key (read-only recommended)</label>
-        <input
-          type='password'
-          value={settings.qdrant.apiKey}
-          onChange={(e) => update({ qdrant: { ...settings.qdrant, apiKey: e.target.value } })}
-        />
-      </div>
+
+      {isProxy ? (
+        <>
+          <div className='field'>
+            <label>Proxy URL</label>
+            <input
+              type='text'
+              value={settings.proxy.url}
+              placeholder='https://your-proxy.vercel.app'
+              onChange={(e) => update({ proxy: { ...settings.proxy, url: e.target.value } })}
+            />
+          </div>
+          <div className='field'>
+            <label>Access Token</label>
+            <input
+              type='password'
+              value={settings.proxy.accessToken}
+              placeholder='Token from your admin'
+              onChange={(e) =>
+                update({ proxy: { ...settings.proxy, accessToken: e.target.value } })
+              }
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className='field'>
+            <label>Qdrant URL</label>
+            <input
+              type='text'
+              value={settings.qdrant.url}
+              placeholder='https://your-cluster.qdrant.io:6333'
+              onChange={(e) => update({ qdrant: { ...settings.qdrant, url: e.target.value } })}
+            />
+          </div>
+          <div className='field'>
+            <label>Qdrant API Key (read-only recommended)</label>
+            <input
+              type='password'
+              value={settings.qdrant.apiKey}
+              onChange={(e) => update({ qdrant: { ...settings.qdrant, apiKey: e.target.value } })}
+            />
+          </div>
+        </>
+      )}
 
       <div className='field-group-title'>Embeddings (Gemini)</div>
       <div className='field'>

@@ -1,13 +1,24 @@
 import { GeminiEmbeddingProvider } from './GeminiEmbeddingProvider';
 import { embedOne } from './EmbeddingProvider';
 import { QdrantVectorStore } from './QdrantVectorStore';
-import { SourceName } from './VectorStore';
+import { ProxyVectorStore } from './ProxyVectorStore';
+import { SourceName, VectorStore } from './VectorStore';
 import { ChatMessage, streamChat } from './llm';
 import { ChromeSettings } from './storage';
 
 const SYSTEM_PROMPT = `You are WorkspaceGPT, a helpful assistant. Answer the user's question using ONLY the provided context from their Confluence and Azure DevOps knowledge base. If the context does not contain the answer, say so plainly. Reference the source titles in [brackets] when relevant.`;
 
 const TOP_K = 8;
+
+function buildStore(settings: ChromeSettings): VectorStore {
+  if (settings.vectorStoreMode === 'proxy') {
+    if (!settings.proxy.url) throw new Error('Set the proxy URL in Settings.');
+    if (!settings.proxy.accessToken) throw new Error('Set the proxy access token in Settings.');
+    return new ProxyVectorStore({ url: settings.proxy.url, accessToken: settings.proxy.accessToken });
+  }
+  if (!settings.qdrant.url) throw new Error('Set your Qdrant URL in Settings.');
+  return new QdrantVectorStore({ url: settings.qdrant.url, apiKey: settings.qdrant.apiKey });
+}
 
 /**
  * Full browser-side RAG: embed the query with Gemini, retrieve from Qdrant across
@@ -20,14 +31,10 @@ export async function* answerQuestion(
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
   if (!settings.embedding.apiKey) throw new Error('Set your Gemini API key in Settings.');
-  if (!settings.qdrant.url) throw new Error('Set your Qdrant URL in Settings.');
   if (!settings.llm.apiKey) throw new Error('Set your chat model API key in Settings.');
 
   const provider = new GeminiEmbeddingProvider(settings.embedding.apiKey);
-  const store = new QdrantVectorStore({
-    url: settings.qdrant.url,
-    apiKey: settings.qdrant.apiKey,
-  });
+  const store = buildStore(settings);
 
   const queryVec = await embedOne(provider, question, 'query');
 
