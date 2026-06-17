@@ -136,13 +136,7 @@
     },
     "configuration": {
       "title": "WorkspaceGPT",
-      "properties": {
-        "workspacegpt.shareWorkerUrl": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Base URL of your deployed WorkspaceGPT Cloudflare Worker (e.g. `https://workspacegpt-worker.your-subdomain.workers.dev`). Used by **Share to Chrome Extension**."
-        }
-      }
+      "properties": {}
     }
   },
   "scripts": {

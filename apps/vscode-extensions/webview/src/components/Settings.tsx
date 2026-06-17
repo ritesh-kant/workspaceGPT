@@ -7,6 +7,7 @@ import { clearStatusMessageAfterDelay } from './settings/utils';
 import ModelSettings from './settings/ModelSettings';
 import EmbeddingSettings from './settings/EmbeddingSettings';
 import VectorStoreSettings from './settings/VectorStoreSettings';
+import ShareSettings from './settings/ShareSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
 // import CodebaseSettings from './settings/CodebaseSettings';
@@ -172,6 +173,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       <br />
 
       <VectorStoreSettings />
+      <br />
+
+      <ShareSettings />
       <br />
 
       <ConfluenceSettings />

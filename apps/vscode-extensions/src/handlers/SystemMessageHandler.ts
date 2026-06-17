@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
+import { EXTENSION, MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
 import { clearWorkspaceGPTData } from 'src/utils/clearData';
 import { AnalyticsService } from '../services/analyticsService';
 import { installMcpServer } from '../utils/mcpInstaller';
@@ -35,6 +35,12 @@ export class SystemMessageHandler {
         return true;
       case MESSAGE_TYPES.MCP_STATUS:
         await this.handleMcpStatus();
+        return true;
+      case MESSAGE_TYPES.SHARE_TO_CHROME:
+        await vscode.commands.executeCommand(EXTENSION.COMMAND_SHARE_TO_CHROME);
+        return true;
+      case MESSAGE_TYPES.MANAGE_SHARES:
+        await vscode.commands.executeCommand(EXTENSION.COMMAND_MANAGE_SHARES);
         return true;
     }
     return false;

@@ -109,6 +109,10 @@ export const MESSAGE_TYPES = {
   // MCP Server
   SETUP_MCP: 'setup-mcp',
   MCP_STATUS: 'mcp-status',
+
+  // Share to Chrome
+  SHARE_TO_CHROME: 'share-to-chrome',
+  MANAGE_SHARES: 'manage-shares',
 } as const;
 
 export const SEARCH_CONSTANTS = {

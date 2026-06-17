@@ -100,6 +100,10 @@ export interface VectorStoreConfig {
   qdrantApiKey?: string;
 }
 
+export interface ShareConfig {
+  workerUrl?: string;
+}
+
 export interface AvailableModel {
   id: string;
 }

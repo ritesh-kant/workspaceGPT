@@ -1,14 +1,16 @@
 import * as vscode from 'vscode';
 import { EMBEDDING_PROFILES } from '@workspace-gpt/embedding-core';
+import { STORAGE_KEYS } from '../../constants';
 import { getEmbeddingSettings } from './getEmbeddingSettings';
 import { getVectorStoreSettings } from './getVectorStoreSettings';
 import { getLlmSettings } from './getLlmSettings';
 
 const SECRET_KEY = 'workspacegpt.adminSecret';
 
-/** Read the deployed Worker base URL from settings (workspacegpt.shareWorkerUrl). */
-function getWorkerUrl(): string | undefined {
-  const url = vscode.workspace.getConfiguration('workspacegpt').get<string>('shareWorkerUrl');
+/** Read the deployed Worker base URL from the Settings panel (config.share.workerUrl). */
+function getWorkerUrl(context: vscode.ExtensionContext): string | undefined {
+  const settings = context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+  const url = settings?.state?.config?.share?.workerUrl as string | undefined;
   return url?.trim().replace(/\/+$/, '') || undefined;
 }
 
@@ -55,10 +57,10 @@ export async function shareToChrome(context: vscode.ExtensionContext): Promise<v
     return;
   }
 
-  const workerUrl = getWorkerUrl();
+  const workerUrl = getWorkerUrl(context);
   if (!workerUrl) {
     vscode.window.showErrorMessage(
-      'Set "workspacegpt.shareWorkerUrl" to your deployed Cloudflare Worker URL first.',
+      'Set the Worker URL in WorkspaceGPT Settings → Share to Chrome first.',
     );
     return;
   }
@@ -127,9 +129,9 @@ export async function shareToChrome(context: vscode.ExtensionContext): Promise<v
 
 /** List existing shares and let the admin revoke one. */
 export async function manageShares(context: vscode.ExtensionContext): Promise<void> {
-  const workerUrl = getWorkerUrl();
+  const workerUrl = getWorkerUrl(context);
   if (!workerUrl) {
-    vscode.window.showErrorMessage('Set "workspacegpt.shareWorkerUrl" first.');
+    vscode.window.showErrorMessage('Set the Worker URL in WorkspaceGPT Settings → Share to Chrome first.');
     return;
   }
   const adminSecret = await getAdminSecret(context);
