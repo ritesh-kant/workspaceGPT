@@ -7,7 +7,7 @@ export interface LlmConfig {
 export interface LlmProxyConfig {
   proxyUrl: string;
   accessToken: string;
-  model: string;
+  // model intentionally absent — locked server-side via LLM_MODEL env var
 }
 
 export interface ChatMessage {
@@ -26,14 +26,14 @@ export async function* streamChat(
     ? `${cfg.proxyUrl.replace(/\/+$/, '')}/api/llm-chat`
     : `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const authHeader = isProxy ? `Bearer ${cfg.accessToken}` : `Bearer ${cfg.apiKey}`;
+  const body = isProxy
+    ? { messages }                             // model locked server-side
+    : { model: cfg.model, messages };
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: authHeader,
-    },
-    body: JSON.stringify({ model: cfg.model, messages, stream: true }),
+    headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+    body: JSON.stringify({ ...body, stream: true }),
     signal,
   });
 

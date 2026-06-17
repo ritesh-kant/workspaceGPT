@@ -1,17 +1,20 @@
-export type ProxyMode = 'direct' | 'proxy';
+/**
+ * personal — user manages their own Qdrant, Gemini, and LLM keys.
+ * team     — all retrieval and chat goes through the admin-hosted proxy;
+ *            only proxy URL + access token are needed.
+ */
+export type AppMode = 'personal' | 'team';
 
 export interface ChromeSettings {
-  vectorStoreMode: ProxyMode;
-  llmMode: ProxyMode;
-  qdrant: { url: string; apiKey: string };        // vector store direct mode
-  proxy: { url: string; accessToken: string };    // shared proxy (both Qdrant + LLM)
-  embedding: { apiKey: string };                  // Gemini key (query embeddings — always direct)
-  llm: { baseUrl: string; apiKey: string; model: string };  // llm direct mode
+  mode: AppMode;
+  qdrant: { url: string; apiKey: string };
+  proxy: { url: string; accessToken: string };
+  embedding: { apiKey: string };
+  llm: { baseUrl: string; apiKey: string; model: string };
 }
 
 export const DEFAULT_SETTINGS: ChromeSettings = {
-  vectorStoreMode: 'direct',
-  llmMode: 'direct',
+  mode: 'personal',
   qdrant: { url: '', apiKey: '' },
   proxy: { url: '', accessToken: '' },
   embedding: { apiKey: '' },
@@ -28,8 +31,7 @@ export async function loadSettings(): Promise<ChromeSettings> {
   const stored = await chrome.storage.local.get(KEY);
   const s = stored[KEY] ?? {};
   return {
-    vectorStoreMode: s.vectorStoreMode ?? DEFAULT_SETTINGS.vectorStoreMode,
-    llmMode: s.llmMode ?? DEFAULT_SETTINGS.llmMode,
+    mode: s.mode ?? DEFAULT_SETTINGS.mode,
     qdrant: { ...DEFAULT_SETTINGS.qdrant, ...(s.qdrant ?? {}) },
     proxy: { ...DEFAULT_SETTINGS.proxy, ...(s.proxy ?? {}) },
     embedding: { ...DEFAULT_SETTINGS.embedding, ...(s.embedding ?? {}) },

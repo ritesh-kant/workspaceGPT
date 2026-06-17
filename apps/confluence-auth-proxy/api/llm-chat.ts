@@ -14,6 +14,7 @@
  * Env vars required:
  *   LLM_BASE_URL               — e.g. https://generativelanguage.googleapis.com/v1beta/openai
  *   LLM_API_KEY                — master API key (never sent to the client)
+ *   LLM_MODEL                  — locks the model server-side; client's model field is ignored when set
  *   WORKSPACEGPT_ACCESS_TOKEN  — shared token distributed to team members
  */
 
@@ -55,9 +56,14 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { model, messages, ...rest } = body;
-  if (!model || !Array.isArray(messages)) {
-    return json({ error: 'Missing required fields: model, messages' }, 400);
+  const { messages, ...rest } = body;
+  if (!Array.isArray(messages)) {
+    return json({ error: 'Missing required field: messages' }, 400);
+  }
+  // LLM_MODEL env var locks the model server-side — client's model field is ignored when set.
+  const model = process.env.LLM_MODEL ?? body.model;
+  if (!model) {
+    return json({ error: 'No model configured — set LLM_MODEL on the server or pass model in request.' }, 400);
   }
 
   const upstream = await fetch(

@@ -25,99 +25,24 @@ const Settings: React.FC<Props> = ({ onClose }) => {
     setSaved(true);
   };
 
-  const isVectorProxy = settings.vectorStoreMode === 'proxy';
-  const isLlmProxy = settings.llmMode === 'proxy';
-  // If either mode uses the proxy, show the shared proxy credentials section.
-  const showProxySection = isVectorProxy || isLlmProxy;
+  const isTeam = settings.mode === 'team';
 
   return (
     <div className='settings'>
-      <div className='field-group-title'>Vector Storage</div>
       <div className='field'>
         <label>Mode</label>
         <select
-          value={settings.vectorStoreMode}
-          onChange={(e) => update({ vectorStoreMode: e.target.value as 'direct' | 'proxy' })}
+          value={settings.mode}
+          onChange={(e) => update({ mode: e.target.value as 'personal' | 'team' })}
         >
-          <option value='direct'>Direct (personal — your own Qdrant)</option>
-          <option value='proxy'>Proxy (team — admin-hosted backend)</option>
+          <option value='personal'>Personal — your own API keys</option>
+          <option value='team'>Team — connect to admin proxy</option>
         </select>
       </div>
-      {!isVectorProxy && (
-        <>
-          <div className='field'>
-            <label>Qdrant URL</label>
-            <input
-              type='text'
-              value={settings.qdrant.url}
-              placeholder='https://your-cluster.qdrant.io:6333'
-              onChange={(e) => update({ qdrant: { ...settings.qdrant, url: e.target.value } })}
-            />
-          </div>
-          <div className='field'>
-            <label>Qdrant API Key (read-only recommended)</label>
-            <input
-              type='password'
-              value={settings.qdrant.apiKey}
-              onChange={(e) => update({ qdrant: { ...settings.qdrant, apiKey: e.target.value } })}
-            />
-          </div>
-        </>
-      )}
 
-      <div className='field-group-title'>Embeddings (Gemini)</div>
-      <div className='field'>
-        <label>Gemini API Key</label>
-        <input
-          type='password'
-          value={settings.embedding.apiKey}
-          onChange={(e) => update({ embedding: { apiKey: e.target.value } })}
-        />
-      </div>
-
-      <div className='field-group-title'>Chat Model</div>
-      <div className='field'>
-        <label>Mode</label>
-        <select
-          value={settings.llmMode}
-          onChange={(e) => update({ llmMode: e.target.value as 'direct' | 'proxy' })}
-        >
-          <option value='direct'>Direct (personal — your own API key)</option>
-          <option value='proxy'>Proxy (team — admin-hosted backend)</option>
-        </select>
-      </div>
-      <div className='field'>
-        <label>Model</label>
-        <input
-          type='text'
-          value={settings.llm.model}
-          onChange={(e) => update({ llm: { ...settings.llm, model: e.target.value } })}
-        />
-      </div>
-      {!isLlmProxy && (
+      {isTeam ? (
         <>
-          <div className='field'>
-            <label>Base URL (OpenAI-compatible)</label>
-            <input
-              type='text'
-              value={settings.llm.baseUrl}
-              onChange={(e) => update({ llm: { ...settings.llm, baseUrl: e.target.value } })}
-            />
-          </div>
-          <div className='field'>
-            <label>API Key</label>
-            <input
-              type='password'
-              value={settings.llm.apiKey}
-              onChange={(e) => update({ llm: { ...settings.llm, apiKey: e.target.value } })}
-            />
-          </div>
-        </>
-      )}
-
-      {showProxySection && (
-        <>
-          <div className='field-group-title'>Proxy (shared)</div>
+          <div className='field-group-title'>Proxy</div>
           <div className='field'>
             <label>Proxy URL</label>
             <input
@@ -136,6 +61,63 @@ const Settings: React.FC<Props> = ({ onClose }) => {
               onChange={(e) =>
                 update({ proxy: { ...settings.proxy, accessToken: e.target.value } })
               }
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className='field-group-title'>Vector Storage (Qdrant)</div>
+          <div className='field'>
+            <label>Qdrant URL</label>
+            <input
+              type='text'
+              value={settings.qdrant.url}
+              placeholder='https://your-cluster.qdrant.io:6333'
+              onChange={(e) => update({ qdrant: { ...settings.qdrant, url: e.target.value } })}
+            />
+          </div>
+          <div className='field'>
+            <label>Qdrant API Key (read-only recommended)</label>
+            <input
+              type='password'
+              value={settings.qdrant.apiKey}
+              onChange={(e) => update({ qdrant: { ...settings.qdrant, apiKey: e.target.value } })}
+            />
+          </div>
+
+          <div className='field-group-title'>Embeddings (Gemini)</div>
+          <div className='field'>
+            <label>Gemini API Key</label>
+            <input
+              type='password'
+              value={settings.embedding.apiKey}
+              onChange={(e) => update({ embedding: { apiKey: e.target.value } })}
+            />
+          </div>
+
+          <div className='field-group-title'>Chat Model</div>
+          <div className='field'>
+            <label>Base URL (OpenAI-compatible)</label>
+            <input
+              type='text'
+              value={settings.llm.baseUrl}
+              onChange={(e) => update({ llm: { ...settings.llm, baseUrl: e.target.value } })}
+            />
+          </div>
+          <div className='field'>
+            <label>Model</label>
+            <input
+              type='text'
+              value={settings.llm.model}
+              onChange={(e) => update({ llm: { ...settings.llm, model: e.target.value } })}
+            />
+          </div>
+          <div className='field'>
+            <label>API Key</label>
+            <input
+              type='password'
+              value={settings.llm.apiKey}
+              onChange={(e) => update({ llm: { ...settings.llm, apiKey: e.target.value } })}
             />
           </div>
         </>
