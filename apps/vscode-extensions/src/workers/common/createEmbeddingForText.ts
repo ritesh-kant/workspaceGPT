@@ -7,6 +7,7 @@ import { MODEL, WORKER_STATUS } from '../../../constants';
 import { initializeEmbeddingModel } from '../utils/initializeEmbeddingModel';
 import { EmbeddingProvider } from '../../embeddings/EmbeddingProvider';
 import { makeEmbeddingProvider } from '../../embeddings/makeProvider';
+import { makeVectorStore } from '../../vectorstore/makeVectorStore';
 import {
   EmbeddingIndexManifest,
   EmbeddingProviderId,
@@ -338,6 +339,40 @@ async function createEmbeddings(): Promise<void> {
 
     // Write combined binary and clean up individual JSONs
     await writeBinaryAndCleanup(allEmbeddings);
+
+    // Mirror the full index to the cloud vector store when selected. Upsert is
+    // idempotent (stable ids), so we push everything — preserved + new — to keep
+    // Qdrant complete even when this sync only changed a few files.
+    if (config.vectorStore?.location === 'cloud') {
+      const store = makeVectorStore({
+        location: 'cloud',
+        qdrant: {
+          url: config.vectorStore.qdrantUrl!,
+          apiKey: config.vectorStore.qdrantApiKey,
+        },
+      });
+      if (store) {
+        process.send!({
+          type: WORKER_STATUS.PROCESSING,
+          progress: '100',
+          message: 'Uploading to cloud vector store...',
+        });
+        await store.ensure(provider.identity, source);
+        await store.upsert(
+          allEmbeddings.map((e) => ({
+            id: `${source}:${e.filename}`,
+            vector: e.embedding,
+            payload: {
+              text: e.text,
+              fileName: e.filename,
+              url: e.url,
+              sourceName: source,
+            },
+          })),
+          source
+        );
+      }
+    }
 
     // Complete
     process.send!({ type: WORKER_STATUS.COMPLETED, total: total });

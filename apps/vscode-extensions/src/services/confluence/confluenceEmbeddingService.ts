@@ -11,6 +11,7 @@ import {
 import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../../constants';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 import { getEmbeddingSettings } from 'src/utils/getEmbeddingSettings';
+import { getVectorStoreSettings } from 'src/utils/getVectorStoreSettings';
 
 export class ConfluenceEmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
@@ -117,6 +118,7 @@ export class ConfluenceEmbeddingService {
         embeddingDirPath,
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        vectorStore: getVectorStoreSettings(this.context),
       });
     });
 
@@ -165,6 +167,7 @@ export class ConfluenceEmbeddingService {
         embeddingDirPath,
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        vectorStore: getVectorStoreSettings(this.context),
       });
     });
   }
@@ -187,6 +190,7 @@ export class ConfluenceEmbeddingService {
         ...config,
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        vectorStore: getVectorStoreSettings(this.context),
       };
 
       const { embeddingDirPath, mdDirPath, processPath } =

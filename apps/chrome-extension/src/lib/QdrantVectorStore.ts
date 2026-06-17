@@ -1,20 +1,16 @@
-import { EmbeddingIdentity } from '../types/embeddingManifest';
+import { EmbeddingIdentity } from './embeddingManifest';
 import { SearchHit, SourceName, VectorRecord, VectorStore } from './VectorStore';
 
-const UPSERT_BATCH = 128; // gentle on the 0.5-vCPU free node
-const MANIFEST_ID = 0; // reserved point holding the index identity
+const UPSERT_BATCH = 128;
+const MANIFEST_ID = 0;
 
 export interface QdrantConfig {
-  url: string; // https://xxx.qdrant.io:6333  or  http://localhost:6333
+  url: string;
   apiKey?: string;
-  /** Namespace collections so one cluster can hold multiple users/workspaces. */
   collectionPrefix?: string;
 }
 
-/**
- * Qdrant vector store over the raw REST API (no SDK) so the same module runs in
- * the VS Code worker (Node 18 global fetch) and the future Chrome extension.
- */
+/** Qdrant over raw REST — identical to the VS Code module; runs unchanged in the browser. */
 export class QdrantVectorStore implements VectorStore {
   readonly location = 'cloud' as const;
   private url: string;
@@ -44,10 +40,8 @@ export class QdrantVectorStore implements VectorStore {
 
   async ensure(identity: EmbeddingIdentity, source: SourceName): Promise<void> {
     const name = this.collection(source);
-
     const existing = await this.req('GET', `/collections/${name}`);
     if (existing.ok) {
-      // A collection's vector size is fixed at creation — fail loud on mismatch.
       const info: any = await existing.json();
       const size = info?.result?.config?.params?.vectors?.size;
       if (size && size !== identity.dimensions) {
@@ -58,17 +52,12 @@ export class QdrantVectorStore implements VectorStore {
       }
       return;
     }
-
     const create = await this.req('PUT', `/collections/${name}`, {
       vectors: { size: identity.dimensions, distance: 'Cosine' },
     });
     if (!create.ok) {
       throw new Error(`Qdrant create collection failed: ${create.status} ${await create.text()}`);
     }
-
-    // Store the manifest as a reserved point — the cloud equivalent of index.json.
-    // Use a non-zero placeholder vector: Cosine distance can't normalize a zero
-    // vector. It never surfaces in results (filtered by has_id in search()).
     await this.req('PUT', `/collections/${name}/points?wait=true`, {
       points: [
         {
@@ -132,7 +121,6 @@ export class QdrantVectorStore implements VectorStore {
   }
 }
 
-/** FNV-1a → unsigned 32-bit. Qdrant ids must be uint or UUID; stable so re-sync overwrites. */
 function hashId(s: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {

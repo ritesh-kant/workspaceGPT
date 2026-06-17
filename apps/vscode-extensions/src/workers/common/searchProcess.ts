@@ -6,6 +6,14 @@ import { EmbeddingProvider, embedOne } from '../../embeddings/EmbeddingProvider'
 import { makeEmbeddingProvider } from '../../embeddings/makeProvider';
 import { checkEmbeddingCompat } from '../../utils/embeddingCompat';
 import { EmbeddingIdentity, EmbeddingProviderId } from '../../types/embeddingManifest';
+import { makeVectorStore } from '../../vectorstore/makeVectorStore';
+import { VectorStore } from '../../vectorstore/VectorStore';
+
+interface VectorStoreSettingsMsg {
+  location: 'local' | 'cloud';
+  qdrantUrl?: string;
+  qdrantApiKey?: string;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -31,6 +39,7 @@ interface InitMessage {
   namespace?: string;
   provider?: EmbeddingProviderId;
   apiKey?: string;
+  vectorStore?: VectorStoreSettingsMsg;
 }
 
 interface SearchMessage {
@@ -46,6 +55,7 @@ interface ReloadMessage {
   namespace?: string;
   provider?: EmbeddingProviderId;
   apiKey?: string;
+  vectorStore?: VectorStoreSettingsMsg;
 }
 
 type WorkerMessage = InitMessage | SearchMessage | ReloadMessage;
@@ -57,6 +67,7 @@ let queryProvider: EmbeddingProvider | null = null;
 let currentProviderId: EmbeddingProviderId | null = null;
 let indexIdentity: EmbeddingIdentity | null = null;
 let compatError: string | null = null;
+let vectorStore: VectorStore | null = null; // non-null = cloud (Qdrant); null = local file path
 let embeddingsMeta: CachedEmbedding[] = [];
 let embeddingsMatrix: Float32Array = new Float32Array(0); // flat array: N embeddings × D dimensions
 let embeddingNorms: Float32Array = new Float32Array(0);   // pre-computed norms
@@ -126,6 +137,17 @@ async function initializeProvider(
     console.log('SearchWorker: Using Gemini for query embeddings.');
     queryProvider = makeEmbeddingProvider({ provider: 'gemini', apiKey });
   }
+}
+
+/** Build a cloud (Qdrant) store from init settings, or null for the local file path. */
+function buildVectorStore(vs?: VectorStoreSettingsMsg): VectorStore | null {
+  if (vs?.location === 'cloud' && vs.qdrantUrl) {
+    return makeVectorStore({
+      location: 'cloud',
+      qdrant: { url: vs.qdrantUrl, apiKey: vs.qdrantApiKey },
+    });
+  }
+  return null;
 }
 
 /** Read the index's embedding identity from its manifest (null for legacy/no index). */
@@ -313,8 +335,33 @@ async function handleSearch(query: string, topK?: number): Promise<void> {
 
     console.log('SearchWorker: Searching for:', query);
 
-    // Generate query embedding (provider-matched to the index) as Float32Array
-    const queryEmbedding = new Float32Array(await embedOne(queryProvider, query, 'query'));
+    // Generate query embedding (provider-matched to the index)
+    const queryVec = await embedOne(queryProvider, query, 'query');
+
+    const normalizedQuery = query.toLowerCase().trim();
+    const numberTokens = normalizedQuery.match(/\d+/g) || [];
+
+    // ── Cloud path: Qdrant KNN, then re-apply lexical boosts to preserve hybrid search ──
+    if (vectorStore) {
+      const k = topK ?? SEARCH_CONSTANTS.MAX_SEARCH_RESULTS;
+      // Over-fetch a candidate pool so the lexical boost can reorder meaningfully.
+      const hits = await vectorStore.search(queryVec, Math.max(k * 3, 30), currentNamespace);
+      for (const h of hits) {
+        if (numberTokens.some((num) => h.data.fileName.toLowerCase().includes(num))) {
+          h.score += 0.5;
+        } else if (h.text.toLowerCase().includes(normalizedQuery)) {
+          h.score += 0.2;
+        }
+      }
+      hits.sort((a, b) => b.score - a.score);
+      const results = hits.slice(0, k);
+      console.log(`SearchWorker: Returning ${results.length} results (cloud).`);
+      process.send!({ type: 'results', data: results });
+      return;
+    }
+
+    // ── Local path: in-memory cosine over the loaded matrix ──
+    const queryEmbedding = new Float32Array(queryVec);
     let queryNorm = 0;
     for (let i = 0; i < queryEmbedding.length; i++) {
       queryNorm += queryEmbedding[i] * queryEmbedding[i];
@@ -324,8 +371,6 @@ async function handleSearch(query: string, topK?: number): Promise<void> {
     // Compute similarities — pure typed-array math, no object allocation
     const count = embeddingsMeta.length;
     const scores = new Float32Array(count);
-    const normalizedQuery = query.toLowerCase().trim();
-    const numberTokens = normalizedQuery.match(/\d+/g) || [];
 
     for (let i = 0; i < count; i++) {
       const dot = dotProduct(queryEmbedding, embeddingsMatrix, i * dimensions, dimensions);
@@ -393,9 +438,15 @@ process.on('message', async (msg: WorkerMessage) => {
           currentNamespace = msg.namespace as 'CONFLUENCE' | 'CODEBASE' | 'ADO';
         }
         await initializeProvider(msg.provider ?? 'local', msg.apiKey, msg.embeddingDirPath);
-        await loadAllEmbeddings(msg.embeddingDirPath);
-        indexIdentity = loadIndexIdentity(msg.embeddingDirPath);
-        recomputeCompat();
+        vectorStore = buildVectorStore(msg.vectorStore);
+        if (vectorStore) {
+          // Cloud: Qdrant holds the vectors; dimension match is enforced server-side.
+          compatError = null;
+        } else {
+          await loadAllEmbeddings(msg.embeddingDirPath);
+          indexIdentity = loadIndexIdentity(msg.embeddingDirPath);
+          recomputeCompat();
+        }
         process.send!({ type: 'ready' });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -415,9 +466,14 @@ process.on('message', async (msg: WorkerMessage) => {
         if (msg.provider) {
           await initializeProvider(msg.provider, msg.apiKey, dir);
         }
-        await loadAllEmbeddings(dir);
-        indexIdentity = loadIndexIdentity(dir);
-        recomputeCompat();
+        vectorStore = buildVectorStore(msg.vectorStore);
+        if (vectorStore) {
+          compatError = null;
+        } else {
+          await loadAllEmbeddings(dir);
+          indexIdentity = loadIndexIdentity(dir);
+          recomputeCompat();
+        }
         process.send!({ type: 'reloaded' });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

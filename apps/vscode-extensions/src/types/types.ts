@@ -6,6 +6,12 @@ export interface EmbeddingConfig {
   provider?: 'local' | 'gemini';
   /** API key for cloud providers (gemini). */
   apiKey?: string;
+  /** Where vectors are stored. Defaults to local (file-based) when omitted. */
+  vectorStore?: {
+    location: 'local' | 'cloud';
+    qdrantUrl?: string;
+    qdrantApiKey?: string;
+  };
 }
 
 export interface CodebaseConfig {
