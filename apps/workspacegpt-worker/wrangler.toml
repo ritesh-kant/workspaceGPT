@@ -2,6 +2,11 @@ name = "workspacegpt-worker"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 
+# Publish to <name>.<subdomain>.workers.dev. Preview URLs are disabled — this
+# Worker proxies credentials, so we keep exactly one public endpoint.
+workers_dev = true
+preview_urls = false
+
 # KV namespace holding share configs (token -> ShareConfig JSON).
 # Create it with:  wrangler kv namespace create SHARES
 # then paste the returned id below.
