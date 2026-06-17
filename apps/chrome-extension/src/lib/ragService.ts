@@ -1,21 +1,12 @@
-import { GeminiEmbeddingProvider } from './GeminiEmbeddingProvider';
-import { embedOne } from './EmbeddingProvider';
-import { QdrantVectorStore } from './QdrantVectorStore';
-import { SourceName } from './VectorStore';
-import { ChatMessage, LlmConfig, LlmProxyConfig, streamChat } from './llm';
+import { WORKER_URL } from './config';
 import { ChromeSettings } from './storage';
 
-const SYSTEM_PROMPT = `You are WorkspaceGPT, a helpful assistant. Answer the user's question using ONLY the provided context from their Confluence and Azure DevOps knowledge base. If the context does not contain the answer, say so plainly. Reference the source titles in [brackets] when relevant.`;
-
-const TOP_K = 8;
+export type SourceName = 'CONFLUENCE' | 'ADO' | 'CODEBASE';
 
 /**
- * Full browser-side RAG: embed the query with Gemini, retrieve from Qdrant across
- * the selected sources, then stream an answer from the configured LLM.
- *
- * personal mode — all API calls go directly from the browser using the user's own keys.
- * team mode     — retrieval and chat are proxied through the admin-hosted backend;
- *                 no API keys or model names are needed on the client.
+ * Browser-side RAG, fully proxied. The Chrome extension sends the question and
+ * token to the Worker, which embeds the query, searches Qdrant, and streams the
+ * chat answer — all using credentials the extension never sees.
  */
 export async function* answerQuestion(
   settings: ChromeSettings,
@@ -23,82 +14,82 @@ export async function* answerQuestion(
   sources: SourceName[] = ['CONFLUENCE', 'ADO'],
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
-  if (settings.mode === 'team') {
-    yield* answerTeam(settings, question, sources, signal);
-  } else {
-    yield* answerPersonal(settings, question, sources, signal);
+  if (!settings.shareToken) {
+    throw new Error('Not connected. Paste your share code in Settings.');
   }
-}
 
-async function* answerTeam(
-  settings: ChromeSettings,
-  question: string,
-  sources: SourceName[],
-  signal?: AbortSignal,
-): AsyncGenerator<string> {
-  const { url, accessToken } = settings.proxy;
-  if (!url) throw new Error('Set the proxy URL in Settings.');
-  if (!accessToken) throw new Error('Set the proxy access token in Settings.');
+  const auth = { Authorization: `Bearer ${settings.shareToken}` };
 
-  const base = url.replace(/\/+$/, '');
-
-  // Retrieval — proxy embeds the query and searches Qdrant server-side
-  const searchRes = await fetch(`${base}/api/search`, {
+  // 1. Retrieval — Worker embeds the query and searches Qdrant server-side.
+  const searchRes = await fetch(`${WORKER_URL}/search`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ sources, query: question, topK: TOP_K }),
+    headers: { 'Content-Type': 'application/json', ...auth },
+    body: JSON.stringify({ query: question, sources }),
     signal,
   });
-  if (!searchRes.ok) {
-    const detail = await searchRes.text().catch(() => '');
-    throw new Error(`Search failed: ${searchRes.status} ${detail}`);
+  if (searchRes.status === 401) {
+    throw new Error('Share code is invalid or has been revoked. Get a new one from the admin.');
   }
-  const { hits } = await searchRes.json() as { hits: { text: string; score: number; data: { fileName: string } }[] };
+  if (!searchRes.ok) {
+    throw new Error(`Search failed: ${searchRes.status} ${await searchRes.text().catch(() => '')}`);
+  }
+  const { hits } = (await searchRes.json()) as {
+    hits: { text: string; score: number; data: { fileName: string } }[];
+  };
 
   const context = hits.length
     ? hits.map((h, i) => `[${i + 1}] ${h.data.fileName}\n${h.text}`).join('\n\n')
     : '(no relevant documents found)';
 
-  const messages: ChatMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },
-  ];
+  // 2. Chat — Worker streams the completion back as SSE.
+  const chatRes = await fetch(`${WORKER_URL}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...auth },
+    body: JSON.stringify({
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },
+      ],
+    }),
+    signal,
+  });
+  if (!chatRes.ok || !chatRes.body) {
+    throw new Error(`Chat failed: ${chatRes.status} ${await chatRes.text().catch(() => '')}`);
+  }
 
-  const llmCfg: LlmProxyConfig = { proxyUrl: base, accessToken };
-  yield* streamChat(llmCfg, messages, signal);
+  yield* parseSSE(chatRes.body, signal);
 }
 
-async function* answerPersonal(
-  settings: ChromeSettings,
-  question: string,
-  sources: SourceName[],
-  signal?: AbortSignal,
-): AsyncGenerator<string> {
-  if (!settings.embedding.apiKey) throw new Error('Set your Gemini API key in Settings.');
-  if (!settings.qdrant.url) throw new Error('Set your Qdrant URL in Settings.');
-  if (!settings.llm.apiKey) throw new Error('Set your chat model API key in Settings.');
+const SYSTEM_PROMPT = `You are WorkspaceGPT, a helpful assistant. Answer the user's question using ONLY the provided context from their Confluence and Azure DevOps knowledge base. If the context does not contain the answer, say so plainly. Reference the source titles in [brackets] when relevant.`;
 
-  const provider = new GeminiEmbeddingProvider(settings.embedding.apiKey);
-  const store = new QdrantVectorStore({ url: settings.qdrant.url, apiKey: settings.qdrant.apiKey });
+/** Parse an OpenAI-compatible SSE stream, yielding content deltas. */
+async function* parseSSE(body: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncGenerator<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
 
-  const queryVec = await embedOne(provider, question, 'query');
-  const perSource = await Promise.all(
-    sources.map((s) => store.search(queryVec, TOP_K, s).catch(() => [])),
-  );
-  const hits = perSource
-    .flat()
-    .sort((a, b) => b.score - a.score)
-    .slice(0, TOP_K);
-
-  const context = hits.length
-    ? hits.map((h, i) => `[${i + 1}] ${h.data.fileName}\n${h.text}`).join('\n\n')
-    : '(no relevant documents found)';
-
-  const messages: ChatMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },
-  ];
-
-  const llmCfg: LlmConfig = settings.llm;
-  yield* streamChat(llmCfg, messages, signal);
+  while (true) {
+    if (signal?.aborted) {
+      await reader.cancel();
+      return;
+    }
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const data = trimmed.slice(5).trim();
+      if (data === '[DONE]') return;
+      try {
+        const json = JSON.parse(data);
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) yield delta;
+      } catch {
+        // partial JSON across chunk boundary — ignore, next read completes it
+      }
+    }
+  }
 }

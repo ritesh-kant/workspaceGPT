@@ -15,16 +15,10 @@ export default defineManifest({
     default_path: 'sidepanel.html',
   },
   permissions: ['sidePanel', 'storage'],
-  // Hosts the extension calls directly. Qdrant Cloud uses *.qdrant.io; localhost
-  // covers self-hosted Qdrant. The rest are the supported LLM/embedding endpoints.
+  // The extension only ever talks to the WorkspaceGPT Worker, which proxies all
+  // retrieval + chat. No direct calls to Qdrant / Gemini / LLM providers.
   host_permissions: [
-    'https://generativelanguage.googleapis.com/*',
-    'https://*.qdrant.io/*',
-    'https://*.vercel.app/*', // proxy mode: WorkspaceGPT proxy deployed on Vercel
-    'http://localhost/*',
-    'https://api.openai.com/*',
-    'https://api.groq.com/*',
-    'https://openrouter.ai/*',
-    'https://integrate.api.nvidia.com/*',
+    'https://*.workers.dev/*',
+    'http://localhost/*', // wrangler dev
   ],
 });

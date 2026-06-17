@@ -145,3 +145,10 @@ body {
   font-weight: 700;
   margin-top: 6px;
 }
+
+.settings-hint {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  opacity: 0.7;
+  line-height: 1.4;
+}
