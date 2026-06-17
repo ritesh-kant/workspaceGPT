@@ -4,6 +4,12 @@ export interface LlmConfig {
   model: string;
 }
 
+export interface LlmProxyConfig {
+  proxyUrl: string;
+  accessToken: string;
+  model: string;
+}
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -11,15 +17,21 @@ export interface ChatMessage {
 
 /** Stream an OpenAI-compatible chat completion, yielding content deltas. */
 export async function* streamChat(
-  cfg: LlmConfig,
+  cfg: LlmConfig | LlmProxyConfig,
   messages: ChatMessage[],
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
-  const res = await fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+  const isProxy = 'proxyUrl' in cfg;
+  const url = isProxy
+    ? `${cfg.proxyUrl.replace(/\/+$/, '')}/api/llm-chat`
+    : `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const authHeader = isProxy ? `Bearer ${cfg.accessToken}` : `Bearer ${cfg.apiKey}`;
+
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.apiKey}`,
+      Authorization: authHeader,
     },
     body: JSON.stringify({ model: cfg.model, messages, stream: true }),
     signal,
@@ -50,7 +62,7 @@ export async function* streamChat(
         const delta = json.choices?.[0]?.delta?.content;
         if (delta) yield delta;
       } catch {
-        // partial JSON across chunk boundary — ignore, next read completes it
+        // partial JSON across chunk boundary — ignore
       }
     }
   }

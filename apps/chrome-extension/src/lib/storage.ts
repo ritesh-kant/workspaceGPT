@@ -1,15 +1,17 @@
-export type VectorStoreMode = 'direct' | 'proxy';
+export type ProxyMode = 'direct' | 'proxy';
 
 export interface ChromeSettings {
-  vectorStoreMode: VectorStoreMode;
-  qdrant: { url: string; apiKey: string };        // direct mode
-  proxy: { url: string; accessToken: string };    // proxy mode
-  embedding: { apiKey: string };                  // Gemini key (query embeddings)
-  llm: { baseUrl: string; apiKey: string; model: string };
+  vectorStoreMode: ProxyMode;
+  llmMode: ProxyMode;
+  qdrant: { url: string; apiKey: string };        // vector store direct mode
+  proxy: { url: string; accessToken: string };    // shared proxy (both Qdrant + LLM)
+  embedding: { apiKey: string };                  // Gemini key (query embeddings — always direct)
+  llm: { baseUrl: string; apiKey: string; model: string };  // llm direct mode
 }
 
 export const DEFAULT_SETTINGS: ChromeSettings = {
   vectorStoreMode: 'direct',
+  llmMode: 'direct',
   qdrant: { url: '', apiKey: '' },
   proxy: { url: '', accessToken: '' },
   embedding: { apiKey: '' },
@@ -27,6 +29,7 @@ export async function loadSettings(): Promise<ChromeSettings> {
   const s = stored[KEY] ?? {};
   return {
     vectorStoreMode: s.vectorStoreMode ?? DEFAULT_SETTINGS.vectorStoreMode,
+    llmMode: s.llmMode ?? DEFAULT_SETTINGS.llmMode,
     qdrant: { ...DEFAULT_SETTINGS.qdrant, ...(s.qdrant ?? {}) },
     proxy: { ...DEFAULT_SETTINGS.proxy, ...(s.proxy ?? {}) },
     embedding: { ...DEFAULT_SETTINGS.embedding, ...(s.embedding ?? {}) },

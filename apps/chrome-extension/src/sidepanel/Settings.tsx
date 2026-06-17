@@ -25,7 +25,10 @@ const Settings: React.FC<Props> = ({ onClose }) => {
     setSaved(true);
   };
 
-  const isProxy = settings.vectorStoreMode === 'proxy';
+  const isVectorProxy = settings.vectorStoreMode === 'proxy';
+  const isLlmProxy = settings.llmMode === 'proxy';
+  // If either mode uses the proxy, show the shared proxy credentials section.
+  const showProxySection = isVectorProxy || isLlmProxy;
 
   return (
     <div className='settings'>
@@ -34,39 +37,13 @@ const Settings: React.FC<Props> = ({ onClose }) => {
         <label>Mode</label>
         <select
           value={settings.vectorStoreMode}
-          onChange={(e) =>
-            update({ vectorStoreMode: e.target.value as 'direct' | 'proxy' })
-          }
+          onChange={(e) => update({ vectorStoreMode: e.target.value as 'direct' | 'proxy' })}
         >
           <option value='direct'>Direct (personal — your own Qdrant)</option>
           <option value='proxy'>Proxy (team — admin-hosted backend)</option>
         </select>
       </div>
-
-      {isProxy ? (
-        <>
-          <div className='field'>
-            <label>Proxy URL</label>
-            <input
-              type='text'
-              value={settings.proxy.url}
-              placeholder='https://your-proxy.vercel.app'
-              onChange={(e) => update({ proxy: { ...settings.proxy, url: e.target.value } })}
-            />
-          </div>
-          <div className='field'>
-            <label>Access Token</label>
-            <input
-              type='password'
-              value={settings.proxy.accessToken}
-              placeholder='Token from your admin'
-              onChange={(e) =>
-                update({ proxy: { ...settings.proxy, accessToken: e.target.value } })
-              }
-            />
-          </div>
-        </>
-      ) : (
+      {!isVectorProxy && (
         <>
           <div className='field'>
             <label>Qdrant URL</label>
@@ -100,12 +77,14 @@ const Settings: React.FC<Props> = ({ onClose }) => {
 
       <div className='field-group-title'>Chat Model</div>
       <div className='field'>
-        <label>Base URL (OpenAI-compatible)</label>
-        <input
-          type='text'
-          value={settings.llm.baseUrl}
-          onChange={(e) => update({ llm: { ...settings.llm, baseUrl: e.target.value } })}
-        />
+        <label>Mode</label>
+        <select
+          value={settings.llmMode}
+          onChange={(e) => update({ llmMode: e.target.value as 'direct' | 'proxy' })}
+        >
+          <option value='direct'>Direct (personal — your own API key)</option>
+          <option value='proxy'>Proxy (team — admin-hosted backend)</option>
+        </select>
       </div>
       <div className='field'>
         <label>Model</label>
@@ -115,14 +94,52 @@ const Settings: React.FC<Props> = ({ onClose }) => {
           onChange={(e) => update({ llm: { ...settings.llm, model: e.target.value } })}
         />
       </div>
-      <div className='field'>
-        <label>API Key</label>
-        <input
-          type='password'
-          value={settings.llm.apiKey}
-          onChange={(e) => update({ llm: { ...settings.llm, apiKey: e.target.value } })}
-        />
-      </div>
+      {!isLlmProxy && (
+        <>
+          <div className='field'>
+            <label>Base URL (OpenAI-compatible)</label>
+            <input
+              type='text'
+              value={settings.llm.baseUrl}
+              onChange={(e) => update({ llm: { ...settings.llm, baseUrl: e.target.value } })}
+            />
+          </div>
+          <div className='field'>
+            <label>API Key</label>
+            <input
+              type='password'
+              value={settings.llm.apiKey}
+              onChange={(e) => update({ llm: { ...settings.llm, apiKey: e.target.value } })}
+            />
+          </div>
+        </>
+      )}
+
+      {showProxySection && (
+        <>
+          <div className='field-group-title'>Proxy (shared)</div>
+          <div className='field'>
+            <label>Proxy URL</label>
+            <input
+              type='text'
+              value={settings.proxy.url}
+              placeholder='https://your-proxy.vercel.app'
+              onChange={(e) => update({ proxy: { ...settings.proxy, url: e.target.value } })}
+            />
+          </div>
+          <div className='field'>
+            <label>Access Token</label>
+            <input
+              type='password'
+              value={settings.proxy.accessToken}
+              placeholder='Token from your admin'
+              onChange={(e) =>
+                update({ proxy: { ...settings.proxy, accessToken: e.target.value } })
+              }
+            />
+          </div>
+        </>
+      )}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
         <button className='primary-button' onClick={save} style={{ padding: '8px 14px' }}>

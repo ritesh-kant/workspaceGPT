@@ -3,7 +3,7 @@ import { embedOne } from './EmbeddingProvider';
 import { QdrantVectorStore } from './QdrantVectorStore';
 import { ProxyVectorStore } from './ProxyVectorStore';
 import { SourceName, VectorStore } from './VectorStore';
-import { ChatMessage, streamChat } from './llm';
+import { ChatMessage, LlmConfig, LlmProxyConfig, streamChat } from './llm';
 import { ChromeSettings } from './storage';
 
 const SYSTEM_PROMPT = `You are WorkspaceGPT, a helpful assistant. Answer the user's question using ONLY the provided context from their Confluence and Azure DevOps knowledge base. If the context does not contain the answer, say so plainly. Reference the source titles in [brackets] when relevant.`;
@@ -31,7 +31,16 @@ export async function* answerQuestion(
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
   if (!settings.embedding.apiKey) throw new Error('Set your Gemini API key in Settings.');
-  if (!settings.llm.apiKey) throw new Error('Set your chat model API key in Settings.');
+
+  let llmCfg: LlmConfig | LlmProxyConfig;
+  if (settings.llmMode === 'proxy') {
+    if (!settings.proxy.url) throw new Error('Set the proxy URL in Settings.');
+    if (!settings.proxy.accessToken) throw new Error('Set the proxy access token in Settings.');
+    llmCfg = { proxyUrl: settings.proxy.url, accessToken: settings.proxy.accessToken, model: settings.llm.model };
+  } else {
+    if (!settings.llm.apiKey) throw new Error('Set your chat model API key in Settings.');
+    llmCfg = settings.llm;
+  }
 
   const provider = new GeminiEmbeddingProvider(settings.embedding.apiKey);
   const store = buildStore(settings);
@@ -55,5 +64,5 @@ export async function* answerQuestion(
     { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },
   ];
 
-  yield* streamChat(settings.llm, messages, signal);
+  yield* streamChat(llmCfg, messages, signal);
 }
