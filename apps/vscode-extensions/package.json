@@ -56,8 +56,26 @@
           "light": "resources/history-dark.svg",
           "dark": "resources/history-light.svg"
         }
+      },
+      {
+        "command": "workspacegpt.shareToChrome",
+        "title": "WorkspaceGPT: Share to Chrome Extension"
+      },
+      {
+        "command": "workspacegpt.manageShares",
+        "title": "WorkspaceGPT: Manage Shares"
       }
     ],
+    "configuration": {
+      "title": "WorkspaceGPT",
+      "properties": {
+        "workspacegpt.shareWorkerUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Base URL of your deployed WorkspaceGPT Cloudflare Worker (e.g. `https://workspacegpt-worker.your-subdomain.workers.dev`). Used by **Share to Chrome Extension**."
+        }
+      }
+    },
     "mcpServerDefinitionProviders": [
       {
         "id": "workspacegpt.mcpServer",

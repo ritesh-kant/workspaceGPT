@@ -149,6 +149,8 @@ export const EXTENSION = {
   COMMAND_SETTINGS: 'workspacegpt.settings',
   COMMAND_HISTORY: 'workspacegpt.history',
   COMMAND_CLEAR_DATA: 'workspacegpt.clearData',
+  COMMAND_SHARE_TO_CHROME: 'workspacegpt.shareToChrome',
+  COMMAND_MANAGE_SHARES: 'workspacegpt.manageShares',
   VIEW_CONTAINER: 'workspacegpt-sidebar',
 };
 

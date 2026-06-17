@@ -187,6 +187,28 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(setupMcpDisposable);
+
+  // Register Share-to-Chrome command
+  let shareDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_SHARE_TO_CHROME,
+    async () => {
+      analyticsService.trackEvent('command_share_to_chrome_triggered');
+      const { shareToChrome } = await import('./utils/shareToChrome');
+      await shareToChrome(context);
+    }
+  );
+  context.subscriptions.push(shareDisposable);
+
+  // Register Manage-Shares command
+  let manageSharesDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_MANAGE_SHARES,
+    async () => {
+      analyticsService.trackEvent('command_manage_shares_triggered');
+      const { manageShares } = await import('./utils/shareToChrome');
+      await manageShares(context);
+    }
+  );
+  context.subscriptions.push(manageSharesDisposable);
 }
 
 export async function deactivate() {
