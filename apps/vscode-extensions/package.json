@@ -66,16 +66,6 @@
         "title": "WorkspaceGPT: Manage Shares"
       }
     ],
-    "configuration": {
-      "title": "WorkspaceGPT",
-      "properties": {
-        "workspacegpt.shareWorkerUrl": {
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Base URL of your deployed WorkspaceGPT Cloudflare Worker (e.g. `https://workspacegpt-worker.your-subdomain.workers.dev`). Used by **Share to Chrome Extension**."
-        }
-      }
-    },
     "mcpServerDefinitionProviders": [
       {
         "id": "workspacegpt.mcpServer",
@@ -131,12 +121,28 @@
           "command": "workspacegpt.settings",
           "when": "view == workspacegpt.chatView",
           "group": "navigation@3"
+        },
+        {
+          "command": "workspacegpt.shareToChrome",
+          "when": "view == workspacegpt.chatView",
+          "group": "1_share@1"
+        },
+        {
+          "command": "workspacegpt.manageShares",
+          "when": "view == workspacegpt.chatView",
+          "group": "1_share@2"
         }
       ]
     },
     "configuration": {
       "title": "WorkspaceGPT",
-      "properties": {}
+      "properties": {
+        "workspacegpt.shareWorkerUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Base URL of your deployed WorkspaceGPT Cloudflare Worker (e.g. `https://workspacegpt-worker.your-subdomain.workers.dev`). Used by **Share to Chrome Extension**."
+        }
+      }
     }
   },
   "scripts": {
