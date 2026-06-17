@@ -23,6 +23,9 @@ importers:
 
   apps/chrome-extension:
     dependencies:
+      '@workspace-gpt/embedding-core':
+        specifier: workspace:*
+        version: link:../../packages/embedding-core
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -106,6 +109,9 @@ importers:
       '@workspace-gpt/confluence-utils':
         specifier: workspace:*
         version: link:../../packages/confluence-utils
+      '@workspace-gpt/embedding-core':
+        specifier: workspace:*
+        version: link:../../packages/embedding-core
       '@xenova/transformers':
         specifier: ^2.17.2
         version: 2.17.2
@@ -248,6 +254,12 @@ importers:
       tsup:
         specifier: ^8.0.2
         version: 8.4.0(jiti@2.4.2)(postcss@8.5.3)(typescript@5.7.3)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.7.3
+
+  packages/embedding-core:
+    devDependencies:
       typescript:
         specifier: ^5.0.0
         version: 5.7.3
