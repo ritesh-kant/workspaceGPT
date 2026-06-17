@@ -1,0 +1,47 @@
+name: Deploy Worker
+
+# Deploys the WorkspaceGPT Cloudflare Worker (apps/workspacegpt-worker).
+# Runs on pushes to main that touch the worker, and can be triggered manually.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN   — token with "Edit Cloudflare Workers" permission
+#   CLOUDFLARE_ACCOUNT_ID  — your Cloudflare account id
+#
+# One-time setup (KV namespace + ADMIN_SECRET) must be done before the first
+# run — see apps/workspacegpt-worker/README.md. Worker secrets persist across
+# deploys, so CI never needs them.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/workspacegpt-worker/**'
+      - '.github/workflows/deploy-worker.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck worker
+        run: pnpm --filter workspacegpt-worker typecheck
+
+      - name: Deploy worker
+        run: pnpm --filter workspacegpt-worker exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
