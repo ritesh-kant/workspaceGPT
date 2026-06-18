@@ -39,9 +39,6 @@ export class SystemMessageHandler {
       case MESSAGE_TYPES.SHARE_TO_CHROME:
         await vscode.commands.executeCommand(EXTENSION.COMMAND_SHARE_TO_CHROME);
         return true;
-      case MESSAGE_TYPES.MANAGE_SHARES:
-        await vscode.commands.executeCommand(EXTENSION.COMMAND_MANAGE_SHARES);
-        return true;
     }
     return false;
   }

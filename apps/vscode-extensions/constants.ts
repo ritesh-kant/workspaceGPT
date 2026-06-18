@@ -112,7 +112,6 @@ export const MESSAGE_TYPES = {
 
   // Share to Chrome
   SHARE_TO_CHROME: 'share-to-chrome',
-  MANAGE_SHARES: 'manage-shares',
 } as const;
 
 export const SEARCH_CONSTANTS = {
@@ -154,7 +153,6 @@ export const EXTENSION = {
   COMMAND_HISTORY: 'workspacegpt.history',
   COMMAND_CLEAR_DATA: 'workspacegpt.clearData',
   COMMAND_SHARE_TO_CHROME: 'workspacegpt.shareToChrome',
-  COMMAND_MANAGE_SHARES: 'workspacegpt.manageShares',
   VIEW_CONTAINER: 'workspacegpt-sidebar',
 };
 

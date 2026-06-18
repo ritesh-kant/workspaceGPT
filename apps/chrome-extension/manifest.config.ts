@@ -15,10 +15,15 @@ export default defineManifest({
     default_path: 'sidepanel.html',
   },
   permissions: ['sidePanel', 'storage'],
-  // The extension only ever talks to the WorkspaceGPT Worker, which proxies all
-  // retrieval + chat. No direct calls to Qdrant / Gemini / LLM providers.
+  // The extension talks directly to Gemini (query embedding), Qdrant (search),
+  // and the configured LLM — all using credentials from the share code.
   host_permissions: [
-    'https://*.workers.dev/*',
-    'http://localhost/*', // wrangler dev
+    'https://generativelanguage.googleapis.com/*',
+    'https://*.qdrant.io/*',
+    'https://api.openai.com/*',
+    'https://api.groq.com/*',
+    'https://openrouter.ai/*',
+    'https://integrate.api.nvidia.com/*',
+    'http://localhost/*',
   ],
 });

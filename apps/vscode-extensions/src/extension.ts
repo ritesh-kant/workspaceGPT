@@ -198,17 +198,6 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(shareDisposable);
-
-  // Register Manage-Shares command
-  let manageSharesDisposable = vscode.commands.registerCommand(
-    EXTENSION.COMMAND_MANAGE_SHARES,
-    async () => {
-      analyticsService.trackEvent('command_manage_shares_triggered');
-      const { manageShares } = await import('./utils/shareToChrome');
-      await manageShares(context);
-    }
-  );
-  context.subscriptions.push(manageSharesDisposable);
 }
 
 export async function deactivate() {

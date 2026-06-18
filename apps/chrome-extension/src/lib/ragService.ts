@@ -1,12 +1,16 @@
-import { WORKER_URL } from './config';
-import { ChromeSettings } from './storage';
+import { GeminiEmbeddingProvider, QdrantVectorStore, embedOne } from '@workspace-gpt/embedding-core';
+import { ChromeSettings, isConfigured } from './storage';
 
 export type SourceName = 'CONFLUENCE' | 'ADO' | 'CODEBASE';
 
+const SYSTEM_PROMPT = `You are WorkspaceGPT, a helpful assistant. Answer the user's question using ONLY the provided context from their Confluence and Azure DevOps knowledge base. If the context does not contain the answer, say so plainly. Reference the source titles in [brackets] when relevant.`;
+
+const TOP_K = 8;
+
 /**
- * Browser-side RAG, fully proxied. The Chrome extension sends the question and
- * token to the Worker, which embeds the query, searches Qdrant, and streams the
- * chat answer — all using credentials the extension never sees.
+ * Full browser-side RAG: embed the query with Gemini, retrieve from Qdrant across
+ * the selected sources, then stream an answer from the configured LLM — all using
+ * the credentials carried in the share code. No server in between.
  */
 export async function* answerQuestion(
   settings: ChromeSettings,
@@ -14,38 +18,40 @@ export async function* answerQuestion(
   sources: SourceName[] = ['CONFLUENCE', 'ADO'],
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
-  if (!settings.shareToken) {
+  if (!isConfigured(settings)) {
     throw new Error('Not connected. Paste your share code in Settings.');
   }
 
-  const auth = { Authorization: `Bearer ${settings.shareToken}` };
-
-  // 1. Retrieval — Worker embeds the query and searches Qdrant server-side.
-  const searchRes = await fetch(`${WORKER_URL}/search`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...auth },
-    body: JSON.stringify({ query: question, sources }),
-    signal,
+  const provider = new GeminiEmbeddingProvider(settings.gemini.apiKey);
+  const store = new QdrantVectorStore({
+    url: settings.qdrant.url,
+    apiKey: settings.qdrant.apiKey,
+    collectionPrefix: settings.qdrant.collectionPrefix,
   });
-  if (searchRes.status === 401) {
-    throw new Error('Share code is invalid or has been revoked. Get a new one from the admin.');
-  }
-  if (!searchRes.ok) {
-    throw new Error(`Search failed: ${searchRes.status} ${await searchRes.text().catch(() => '')}`);
-  }
-  const { hits } = (await searchRes.json()) as {
-    hits: { text: string; score: number; data: { fileName: string } }[];
-  };
+
+  const queryVec = await embedOne(provider, question, 'query');
+
+  const perSource = await Promise.all(
+    sources.map((s) => store.search(queryVec, TOP_K, s).catch(() => [])),
+  );
+  const hits = perSource
+    .flat()
+    .sort((a, b) => b.score - a.score)
+    .slice(0, TOP_K);
 
   const context = hits.length
     ? hits.map((h, i) => `[${i + 1}] ${h.data.fileName}\n${h.text}`).join('\n\n')
     : '(no relevant documents found)';
 
-  // 2. Chat — Worker streams the completion back as SSE.
-  const chatRes = await fetch(`${WORKER_URL}/chat`, {
+  const res = await fetch(`${settings.llm.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...auth },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${settings.llm.apiKey}`,
+    },
     body: JSON.stringify({
+      model: settings.llm.model,
+      stream: true,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },
@@ -53,14 +59,12 @@ export async function* answerQuestion(
     }),
     signal,
   });
-  if (!chatRes.ok || !chatRes.body) {
-    throw new Error(`Chat failed: ${chatRes.status} ${await chatRes.text().catch(() => '')}`);
+  if (!res.ok || !res.body) {
+    throw new Error(`Chat failed: ${res.status} ${await res.text().catch(() => '')}`);
   }
 
-  yield* parseSSE(chatRes.body, signal);
+  yield* parseSSE(res.body, signal);
 }
-
-const SYSTEM_PROMPT = `You are WorkspaceGPT, a helpful assistant. Answer the user's question using ONLY the provided context from their Confluence and Azure DevOps knowledge base. If the context does not contain the answer, say so plainly. Reference the source titles in [brackets] when relevant.`;
 
 /** Parse an OpenAI-compatible SSE stream, yielding content deltas. */
 async function* parseSSE(body: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncGenerator<string> {

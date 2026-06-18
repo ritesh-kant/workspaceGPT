@@ -9,7 +9,6 @@ export interface SettingsConfig {
   ado: AdoConfig;
   embedding: EmbeddingProviderConfig;
   vectorStore: VectorStoreConfig;
-  share: ShareConfig;
 }
 
 export const settingsDefaultConfig: SettingsConfig = {
@@ -83,9 +82,6 @@ export const settingsDefaultConfig: SettingsConfig = {
     qdrantUrl: '',
     qdrantApiKey: '',
   },
-  share: {
-    workerUrl: '',
-  },
 };
 
 interface SettingsState {
@@ -107,7 +103,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
-import { CodebaseConfig, ConfluenceConfig, AdoConfig, EmbeddingProviderConfig, VectorStoreConfig, ShareConfig } from '../types';
+import { CodebaseConfig, ConfluenceConfig, AdoConfig, EmbeddingProviderConfig, VectorStoreConfig } from '../types';
 
 const vscodeStorage = {
   getItem: () => {

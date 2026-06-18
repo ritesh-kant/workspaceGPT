@@ -60,10 +60,6 @@
       {
         "command": "workspacegpt.shareToChrome",
         "title": "WorkspaceGPT: Share to Chrome Extension"
-      },
-      {
-        "command": "workspacegpt.manageShares",
-        "title": "WorkspaceGPT: Manage Shares"
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -126,11 +122,6 @@
           "command": "workspacegpt.shareToChrome",
           "when": "view == workspacegpt.chatView",
           "group": "1_share@1"
-        },
-        {
-          "command": "workspacegpt.manageShares",
-          "when": "view == workspacegpt.chatView",
-          "group": "1_share@2"
         }
       ]
     },
