@@ -1,16 +1,19 @@
-import { GeminiEmbeddingProvider, QdrantVectorStore, embedOne } from '@workspace-gpt/embedding-core';
+import { GeminiEmbeddingProvider, QdrantVectorStore, SearchHit, SourceName, embedOne } from '@workspace-gpt/embedding-core';
 import { ChromeSettings, isConfigured } from './storage';
+import { buildPlan, classifyQuery, expandQuery, rerank } from './retrieval';
+import { buildChatMessages, isGreeting } from './prompt';
 
-export type SourceName = 'CONFLUENCE' | 'ADO' | 'CODEBASE';
-
-const SYSTEM_PROMPT = `You are WorkspaceGPT, a helpful assistant. Answer the user's question using ONLY the provided context from their Confluence and Azure DevOps knowledge base. If the context does not contain the answer, say so plainly. Reference the source titles in [brackets] when relevant.`;
-
-const TOP_K = 8;
+export type { SourceName };
 
 /**
- * Full browser-side RAG: embed the query with Gemini, retrieve from Qdrant across
- * the selected sources, then stream an answer from the configured LLM — all using
- * the credentials carried in the share code. No server in between.
+ * Full browser-side RAG: classify the query, embed it with Gemini, retrieve from
+ * Qdrant across the planned sources, rerank + threshold-filter the hits, then
+ * stream a grounded answer from the configured LLM — all using the credentials
+ * carried in the share code. No server in between.
+ *
+ * Mirrors the VS Code extension's pipeline (queryClassifier → queryPlanner →
+ * reranker → grounded prompt) so answers match. Greetings and low-relevance
+ * queries retrieve no context instead of dumping nearest-neighbour noise.
  */
 export async function* answerQuestion(
   settings: ChromeSettings,
@@ -22,26 +25,44 @@ export async function* answerQuestion(
     throw new Error('Not connected. Paste your share code in Settings.');
   }
 
-  const provider = new GeminiEmbeddingProvider(settings.gemini.apiKey);
-  const store = new QdrantVectorStore({
-    url: settings.qdrant.url,
-    apiKey: settings.qdrant.apiKey,
-    collectionPrefix: settings.qdrant.collectionPrefix,
-  });
+  // ── Classify + plan. Greetings/chitchat skip retrieval entirely. ──
+  const classification = classifyQuery(question, sources);
+  const plan = buildPlan(classification);
 
-  const queryVec = await embedOne(provider, question, 'query');
+  let hits: SearchHit[] = [];
+  if (!isGreeting(question) && plan.sources.length > 0 && plan.topKPerPass > 0) {
+    const provider = new GeminiEmbeddingProvider(settings.gemini.apiKey);
+    const store = new QdrantVectorStore({
+      url: settings.qdrant.url,
+      apiKey: settings.qdrant.apiKey,
+      collectionPrefix: settings.qdrant.collectionPrefix,
+    });
 
-  const perSource = await Promise.all(
-    sources.map((s) => store.search(queryVec, TOP_K, s).catch(() => [])),
-  );
-  const hits = perSource
-    .flat()
-    .sort((a, b) => b.score - a.score)
-    .slice(0, TOP_K);
+    const search = async (vec: number[], topK: number): Promise<SearchHit[]> => {
+      const perSource = await Promise.all(
+        plan.sources.map((s) => store.search(vec, topK, s).catch(() => [] as SearchHit[])),
+      );
+      return perSource.flat();
+    };
 
-  const context = hits.length
-    ? hits.map((h, i) => `[${i + 1}] ${h.data.fileName}\n${h.text}`).join('\n\n')
-    : '(no relevant documents found)';
+    const queryVec = await embedOne(provider, question, 'query');
+    let allResults = await search(queryVec, plan.topKPerPass);
+
+    // Pass 2 (semantic only): if the best pass-1 hit is weak, widen the query.
+    if (plan.maxPasses === 2 && allResults.length > 0) {
+      const bestScore = Math.max(...allResults.map((r) => r.score));
+      if (bestScore < plan.passThreshold) {
+        const enriched = expandQuery(question, allResults);
+        if (enriched !== question) {
+          const pass2Vec = await embedOne(provider, enriched, 'query');
+          allResults = [...allResults, ...(await search(pass2Vec, plan.topKPerPass))];
+        }
+      }
+    }
+
+    // Rerank (BM25 + cosine) and drop anything below the per-intent threshold.
+    hits = rerank(question, allResults, plan);
+  }
 
   const res = await fetch(`${settings.llm.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
@@ -52,10 +73,7 @@ export async function* answerQuestion(
     body: JSON.stringify({
       model: settings.llm.model,
       stream: true,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },
-      ],
+      messages: buildChatMessages(question, hits),
     }),
     signal,
   });
