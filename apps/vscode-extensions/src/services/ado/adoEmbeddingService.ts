@@ -11,6 +11,7 @@ import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../../constants';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 import { getEmbeddingSettings } from 'src/utils/getEmbeddingSettings';
 import { getVectorStoreSettings } from 'src/utils/getVectorStoreSettings';
+import { deleteDirectory } from 'src/utils/deleteDirectory';
 
 export class AdoEmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
@@ -280,6 +281,19 @@ export class AdoEmbeddingService {
       STORAGE_KEYS.EMBEDDING_PROGRESS,
       undefined
     );
+  }
+
+  /**
+   * Delete the on-disk embedding index (vectors + manifest + legacy JSON) so
+   * the next createEmbeddings() rebuilds it from scratch instead of preserving
+   * vectors from a previous sync. Used when the embedding provider changes and
+   * the old vectors are no longer compatible with the new provider.
+   */
+  public async clearEmbeddingIndex(): Promise<void> {
+    this.stopSearchWorker();
+    const { embeddingDirPath } =
+      await this.getAdoMDAndEmbeddingPath('searchProcess.js');
+    await deleteDirectory(embeddingDirPath);
   }
 
   public stopEmbeddingProcess(): void {

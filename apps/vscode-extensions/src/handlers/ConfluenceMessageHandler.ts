@@ -78,6 +78,27 @@ export class ConfluenceMessageHandler {
     await this.embeddingService.resetEmbeddingProgress();
   }
 
+  /**
+   * Rebuild the Confluence index from scratch after the embedding provider
+   * changed. The already-synced markdown is kept (the source content is
+   * unchanged); only the vectors are dropped and re-embedded with the new
+   * provider. Returns false when Confluence isn't connected, i.e. there's
+   * nothing to re-index.
+   */
+  public async reindexAfterProviderChange(): Promise<boolean> {
+    const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    if (!config?.state?.config?.confluence?.isConnected) {
+      return false;
+    }
+
+    this.confluenceService.stopSync();
+    this.embeddingService.stopEmbeddingProcess();
+    await this.embeddingService.clearEmbeddingIndex();
+    await this.embeddingService.resetEmbeddingProgress();
+    await this.handleCompleteConfluenceSync();
+    return true;
+  }
+
   private async getConfluenceConfig(): Promise<ConfluenceConfig> {
     const accessToken = await this.confluenceAuthService.getValidAccessToken();
     const site = this.confluenceAuthService.getStoredSite();

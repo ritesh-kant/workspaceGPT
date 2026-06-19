@@ -81,6 +81,27 @@ export class AdoMessageHandler {
     await this.adoEmbeddingService.resetEmbeddingProgress();
   }
 
+  /**
+   * Rebuild the Azure DevOps index from scratch after the embedding provider
+   * changed. The already-synced markdown is kept (the source content is
+   * unchanged); only the vectors are dropped and re-embedded with the new
+   * provider. Returns false when ADO isn't connected, i.e. there's nothing
+   * to re-index.
+   */
+  public async reindexAfterProviderChange(): Promise<boolean> {
+    const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    if (!config?.state?.config?.ado?.config?.isAdoConnected) {
+      return false;
+    }
+
+    this.adoService.stopSync();
+    this.adoEmbeddingService.stopEmbeddingProcess();
+    await this.adoEmbeddingService.clearEmbeddingIndex();
+    await this.adoEmbeddingService.resetEmbeddingProgress();
+    await this.handleCompleteAdoSync();
+    return true;
+  }
+
   private async handleSaveAdoPat(pat: string): Promise<void> {
     try {
       if (!pat || pat.trim() === '') {

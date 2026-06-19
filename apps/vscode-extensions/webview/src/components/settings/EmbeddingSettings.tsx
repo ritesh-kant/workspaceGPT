@@ -27,7 +27,7 @@ const EmbeddingSettings: React.FC = () => {
           </select>
           <small className='form-text'>
             Local runs fully on-device. Gemini is required to share your index.
-            Switching providers requires re-indexing your sources.
+            Switching providers will prompt you to re-index your connected sources.
           </small>
         </div>
 

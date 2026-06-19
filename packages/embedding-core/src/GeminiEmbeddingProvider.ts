@@ -131,20 +131,31 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (res.status === 429 && attempt < MAX_RETRIES) {
-      // Prefer the server-advertised retryDelay; per-minute quotas need ~60s,
-      // far longer than a plain exponential cap, so honor it when present.
+    if (res.status === 429) {
       const text = await res.text();
-      const serverDelay = parseRetryDelayMs(text);
-      const backoff = Math.min(2 ** attempt * 1000, 32_000); // 1,2,4,8,16,32s
-      const waitMs = Math.max(serverDelay, backoff);
-      console.log(
-        `[workspaceGPT][gemini] 429 quota hit (attempt ${attempt + 1}/${MAX_RETRIES}) — ` +
-          `retrying in ${Math.round(waitMs / 1000)}s` +
-          (serverDelay ? ' (server retryDelay)' : ''),
-      );
-      await delay(waitMs);
-      return this.fetchWithRetry(url, body, attempt + 1);
+
+      // A per-DAY free-tier quota (e.g. 1000 embed requests/day) only resets at
+      // midnight Pacific — retrying for minutes is futile. Fail fast with an
+      // actionable message instead of burning the retry budget.
+      if (isDailyQuota(text)) {
+        console.log('[workspaceGPT][gemini] daily free-tier quota exhausted — not retrying.');
+        throw new Error(dailyQuotaMessage(text));
+      }
+
+      if (attempt < MAX_RETRIES) {
+        // Per-minute quota: prefer the server-advertised retryDelay (~60s),
+        // which is far longer than a plain exponential cap.
+        const serverDelay = parseRetryDelayMs(text);
+        const backoff = Math.min(2 ** attempt * 1000, 32_000); // 1,2,4,8,16,32s
+        const waitMs = Math.max(serverDelay, backoff);
+        console.log(
+          `[workspaceGPT][gemini] 429 per-minute quota (attempt ${attempt + 1}/${MAX_RETRIES}) — ` +
+            `retrying in ${Math.round(waitMs / 1000)}s` +
+            (serverDelay ? ' (server retryDelay)' : ''),
+        );
+        await delay(waitMs);
+        return this.fetchWithRetry(url, body, attempt + 1);
+      }
     }
     if (!res.ok) {
       throw new Error(`Gemini embed failed: ${res.status} ${await res.text()}`);
@@ -157,6 +168,24 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
 function parseRetryDelayMs(body: string): number {
   const m = body.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
   return m ? Math.ceil(parseFloat(m[1]) * 1000) : 0;
+}
+
+/** True when the 429 is a per-day free-tier cap (resets daily, not in seconds). */
+function isDailyQuota(body: string): boolean {
+  return /PerDay/i.test(body) || /_free_tier_requests/i.test(body);
+}
+
+/** Friendly, actionable message for a daily-quota exhaustion. */
+function dailyQuotaMessage(body: string): string {
+  const limit = body.match(/"quotaValue"\s*:\s*"(\d+)"/)?.[1];
+  return (
+    `Gemini free-tier daily quota exhausted` +
+    (limit ? ` (${limit} embed requests/day)` : '') +
+    `. This resets at midnight Pacific time. ` +
+    `To finish indexing today, switch Embedding provider to "Local" in Settings, ` +
+    `or upgrade the Gemini API key to a paid tier. ` +
+    `Note: each document counts as one request, so large spaces can exceed the free daily cap.`
+  );
 }
 
 function truncate(t: string): string {

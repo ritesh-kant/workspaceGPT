@@ -101,12 +101,14 @@ function extractFrontmatter(markdownContent: string): {
   }
 }
 
+type EmbeddingRow = { filename: string; text: string; url: string; embedding: number[] };
+
 /**
- * Write the combined binary file and delete individual JSON embedding files.
+ * Write the combined binary file (embeddings.bin + embeddings_meta.json).
+ * Safe to call repeatedly mid-run for checkpointing — it rewrites the whole
+ * cache from the in-memory array each time.
  */
-async function writeBinaryAndCleanup(
-  allEmbeddings: Array<{ filename: string; text: string; url: string; embedding: number[] }>
-): Promise<void> {
+async function writeBinary(allEmbeddings: EmbeddingRow[]): Promise<void> {
   if (allEmbeddings.length === 0) return;
 
   const dimensions = allEmbeddings[0].embedding.length;
@@ -137,8 +139,10 @@ async function writeBinaryAndCleanup(
   // Write metadata
   const metaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
   await fs.promises.writeFile(metaPath, JSON.stringify({ dimensions, count: entries.length, entries }));
+}
 
-  // Delete individual JSON files
+/** Delete leftover individual JSON embedding files (legacy format). */
+async function cleanupJsonFiles(): Promise<void> {
   const keepFiles = new Set(['index.json', 'embeddings_meta.json']);
   const files = await fs.promises.readdir(embeddingDirPath);
   const jsonFiles = files.filter(f => f.endsWith('.json') && !keepFiles.has(f));
@@ -152,8 +156,14 @@ async function writeBinaryAndCleanup(
       } catch { /* ignore */ }
     })
   );
+  if (deletedCount > 0) console.log(`Deleted ${deletedCount} legacy JSON files.`);
+}
 
-  console.log(`Written binary cache (${entries.length} embeddings). Deleted ${deletedCount} JSON files.`);
+/** Write the binary cache and clean up legacy JSONs (final write at end of run). */
+async function writeBinaryAndCleanup(allEmbeddings: EmbeddingRow[]): Promise<void> {
+  await writeBinary(allEmbeddings);
+  await cleanupJsonFiles();
+  console.log(`Written binary cache (${allEmbeddings.length} embeddings).`);
 }
 
 /** Progress message helper — keeps the shape the embedding services expect. */
@@ -343,8 +353,89 @@ async function createEmbeddings(): Promise<void> {
         `(provider.maxBatchSize=${provider.maxBatchSize}, dims=${provider.identity.dimensions})`,
     );
 
-    // ── Phase 2: embed new content in batches (essential for the Gemini free tier) ──
+    const source = sourceFromPath(embeddingDirPath);
+
+    // Helper: persist the manifest (compatibility contract + provenance).
+    const writeManifest = () => {
+      const manifest: EmbeddingIndexManifest = {
+        schemaVersion: 1,
+        embedding: provider.identity,
+        docTaskType:
+          provider.identity.provider === 'gemini' ? 'RETRIEVAL_DOCUMENT' : undefined,
+        source,
+        count: allEmbeddings.length,
+        builtAt: new Date().toISOString(),
+        builtBy: 'vscode-extension',
+        shareable: provider.identity.provider === 'gemini',
+        // legacy fields kept for existing readers
+        total,
+        dimensions: provider.identity.dimensions,
+        includesMetadata: true,
+        metadataFields: ['url', 'frontmatter'],
+      };
+      fs.writeFileSync(
+        path.join(embeddingDirPath, 'index.json'),
+        JSON.stringify(manifest)
+      );
+    };
+
+    // ── Cloud setup (once) ──
+    // When cloud-backed, create/verify the collection up front and push any
+    // preserved embeddings so Qdrant stays complete even if this run dies early.
+    let store: ReturnType<typeof makeVectorStore> = null;
+    let cloudUpserted = 0; // how many of allEmbeddings are already in Qdrant
+    const toRecords = (rows: EmbeddingRow[]) =>
+      rows.map((e) => ({
+        id: `${source}:${e.filename}`,
+        vector: e.embedding,
+        payload: { text: e.text, fileName: e.filename, url: e.url, sourceName: source },
+      }));
+
+    if (config.vectorStore?.location === 'cloud') {
+      if (!config.vectorStore.qdrantUrl) {
+        diag('  ⚠ qdrantUrl is empty — cannot upload to Qdrant. Check Settings.');
+      }
+      store = makeVectorStore({
+        location: 'cloud',
+        qdrant: {
+          url: config.vectorStore.qdrantUrl!,
+          apiKey: config.vectorStore.qdrantApiKey,
+        },
+      });
+      if (store) {
+        diag(`CLOUD: ensuring collection for source="${source}" (dims=${provider.identity.dimensions}) …`);
+        await store.ensure(provider.identity, source);
+        if (allEmbeddings.length > 0) {
+          diag(`CLOUD: upserting ${allEmbeddings.length} preserved points …`);
+          await store.upsert(toRecords(allEmbeddings), source);
+          cloudUpserted = allEmbeddings.length;
+        }
+      } else {
+        diag('  ⚠ makeVectorStore returned null — nothing will be uploaded to Qdrant.');
+      }
+    } else {
+      diag('LOCAL storage only — Qdrant will NOT be touched.');
+    }
+
+    // Checkpoint: flush local binary + manifest, then mirror new rows to cloud.
+    // Local is written BEFORE cloud so on-disk progress survives a cloud failure.
+    const checkpoint = async () => {
+      writeManifest();
+      await writeBinary(allEmbeddings);
+      if (store && allEmbeddings.length > cloudUpserted) {
+        const fresh = allEmbeddings.slice(cloudUpserted);
+        await store.upsert(toRecords(fresh), source);
+        cloudUpserted = allEmbeddings.length;
+      }
+    };
+
+    // ── Phase 2: embed new content in batches, checkpointing after each batch ──
+    // Per-batch checkpointing means a quota cut-off (e.g. Gemini's 1000/day free
+    // limit) keeps everything embedded so far; the next run skips it and resumes.
     const batchSize = provider.maxBatchSize;
+    if (toEmbed.length === 0) {
+      diag('nothing new to embed — finalizing.');
+    }
     for (let i = 0; i < toEmbed.length; i += batchSize) {
       const batch = toEmbed.slice(i, i + batchSize);
       const vectors = await provider.embedBatch(batch.map((b) => b.text), 'document');
@@ -357,91 +448,21 @@ async function createEmbeddings(): Promise<void> {
         });
         done++;
       }
+      await checkpoint();
+      diag(`checkpoint: ${allEmbeddings.length} embeddings persisted` + (store ? ` (${cloudUpserted} in Qdrant)` : ''));
       reportProcessing(done, total, batch[batch.length - 1].srcFile);
     }
 
-    // Save the index manifest (compatibility contract + provenance)
-    const source = sourceFromPath(embeddingDirPath);
-    const manifest: EmbeddingIndexManifest = {
-      schemaVersion: 1,
-      embedding: provider.identity,
-      docTaskType:
-        provider.identity.provider === 'gemini' ? 'RETRIEVAL_DOCUMENT' : undefined,
-      source,
-      count: allEmbeddings.length,
-      builtAt: new Date().toISOString(),
-      builtBy: 'vscode-extension',
-      shareable: provider.identity.provider === 'gemini',
-      // legacy fields kept for existing readers
-      total,
-      dimensions: provider.identity.dimensions,
-      includesMetadata: true,
-      metadataFields: ['url', 'frontmatter'],
-    };
-    fs.writeFileSync(
-      path.join(embeddingDirPath, 'index.json'),
-      JSON.stringify(manifest)
-    );
-
-    // Write combined binary and clean up individual JSONs
+    // Final write: ensure manifest/binary reflect the full set and drop legacy JSONs.
+    writeManifest();
     await writeBinaryAndCleanup(allEmbeddings);
 
-    // Mirror the full index to the cloud vector store when selected. Upsert is
-    // idempotent (stable ids), so we push everything — preserved + new — to keep
-    // Qdrant complete even when this sync only changed a few files.
-    if (config.vectorStore?.location === 'cloud') {
-      diag(
-        `CLOUD upload: pushing ${allEmbeddings.length} vectors to Qdrant ` +
-          `(source="${source}", url=${config.vectorStore.qdrantUrl}) …`,
-      );
-      if (!config.vectorStore.qdrantUrl) {
-        diag('  ⚠ qdrantUrl is empty — cannot upload. Check Settings.');
-      }
-      const store = makeVectorStore({
-        location: 'cloud',
-        qdrant: {
-          url: config.vectorStore.qdrantUrl!,
-          apiKey: config.vectorStore.qdrantApiKey,
-        },
-      });
-      if (store) {
-        process.send!({
-          type: WORKER_STATUS.PROCESSING,
-          progress: '100',
-          message: 'Uploading to cloud vector store...',
-        });
-        diag(`  ensuring collection for source="${source}" (dims=${provider.identity.dimensions}) …`);
-        await store.ensure(provider.identity, source);
-        diag(`  upserting ${allEmbeddings.length} points …`);
-        await store.upsert(
-          allEmbeddings.map((e) => ({
-            id: `${source}:${e.filename}`,
-            vector: e.embedding,
-            payload: {
-              text: e.text,
-              fileName: e.filename,
-              url: e.url,
-              sourceName: source,
-            },
-          })),
-          source
-        );
-        diag(`  ✓ CLOUD upload complete (${allEmbeddings.length} points to Qdrant).`);
-      } else {
-        diag('  ⚠ makeVectorStore returned null — no Qdrant client created, nothing uploaded.');
-      }
-    } else {
-      diag(
-        `LOCAL storage only: wrote ${allEmbeddings.length} embeddings to ` +
-          `${path.join(embeddingDirPath, 'embeddings.bin')} — Qdrant was NOT touched.`,
-      );
-    }
-
     // Complete
-    diag('done.');
+    diag(`done — ${allEmbeddings.length} embeddings total` + (store ? `, ${cloudUpserted} in Qdrant.` : '.'));
     process.send!({ type: WORKER_STATUS.COMPLETED, total: total });
   } catch (error) {
-    diag('✗ ERROR:', error instanceof Error ? error.stack || error.message : String(error));
+    diag('✗ ERROR (progress checkpointed up to last completed batch):',
+      error instanceof Error ? error.stack || error.message : String(error));
     process.send!({
       type: WORKER_STATUS.ERROR,
       message: error instanceof Error ? error.message : String(error),

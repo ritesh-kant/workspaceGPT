@@ -30,6 +30,16 @@ export class ChatMessageHandler {
     this.chatService?.dispose();
   }
 
+  /**
+   * Drop and re-warm the search workers. Used after the embedding provider
+   * changes so queries stop hitting a worker that was initialized with the old
+   * provider; workers lazily re-spawn (with the new provider) on the next query.
+   */
+  public refreshSearchWorkers(): void {
+    this.chatService?.dispose();
+    this.chatService?.prewarm();
+  }
+
   public async handleMessage(data: any): Promise<boolean> {
     switch (data.type) {
       case MESSAGE_TYPES.NEW_CHAT:
