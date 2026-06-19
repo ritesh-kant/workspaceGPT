@@ -167,11 +167,51 @@ function reportProcessing(current: number, total: number, lastProcessedFile?: st
   });
 }
 
+/** Greppable diagnostic logger so we can trace local-vs-cloud decisions. */
+function diag(...args: any[]) {
+  console.log('[workspaceGPT][embedding]', ...args);
+}
+
+/** Mask a secret for safe logging (keep first/last few chars). */
+function mask(secret?: string): string {
+  if (!secret) return '(none)';
+  if (secret.length <= 8) return '***';
+  return `${secret.slice(0, 4)}…${secret.slice(-4)} (len=${secret.length})`;
+}
+
 async function createEmbeddings(): Promise<void> {
   try {
     // Build the embedding provider. Local needs the ONNX model initialized;
     // Gemini just needs an API key. Defaults to local for back-compat.
     const providerId: EmbeddingProviderId = config.provider ?? 'local';
+
+    // ── Diagnostics: what did this worker actually receive? ──
+    diag('────────────────────────────────────────────────────');
+    diag(`mdDirPath=${mdDirPath}`);
+    diag(`embeddingDirPath=${embeddingDirPath}`);
+    diag(
+      `EMBEDDING provider = ${providerId.toUpperCase()} ` +
+        `(${providerId === 'local' ? 'LOCAL ONNX / Xenova' : 'CLOUD / Gemini API'})`,
+    );
+    if (providerId === 'gemini') {
+      diag(`  gemini apiKey = ${mask(config.apiKey)}`);
+    }
+    diag(
+      `VECTOR STORE location = ${(config.vectorStore?.location ?? 'local').toUpperCase()} ` +
+        `(${config.vectorStore?.location === 'cloud' ? 'CLOUD / Qdrant' : 'LOCAL file-based .bin'})`,
+    );
+    if (config.vectorStore?.location === 'cloud') {
+      diag(`  qdrant url    = ${config.vectorStore.qdrantUrl || '(MISSING!)'}`);
+      diag(`  qdrant apiKey = ${mask(config.vectorStore.qdrantApiKey)}`);
+    } else {
+      diag(
+        '  ⚠ vectorStore.location is NOT "cloud" — embeddings will be written to ' +
+          'the local .bin file ONLY and nothing will be pushed to Qdrant. ' +
+          'If you expect data in Qdrant, check the Settings panel (vector store = Cloud) ' +
+          'and that the setting was saved before syncing.',
+      );
+    }
+
     if (providerId === 'local') {
       const extractor = await initializeEmbeddingModel(
         MODEL.DEFAULT_TEXT_EMBEDDING_MODEL,
@@ -297,6 +337,12 @@ async function createEmbeddings(): Promise<void> {
       });
     }
 
+    diag(
+      `classified ${files.length} md files → ${toEmbed.length} need embedding, ` +
+        `${allEmbeddings.length} preserved from previous sync ` +
+        `(provider.maxBatchSize=${provider.maxBatchSize}, dims=${provider.identity.dimensions})`,
+    );
+
     // ── Phase 2: embed new content in batches (essential for the Gemini free tier) ──
     const batchSize = provider.maxBatchSize;
     for (let i = 0; i < toEmbed.length; i += batchSize) {
@@ -344,6 +390,13 @@ async function createEmbeddings(): Promise<void> {
     // idempotent (stable ids), so we push everything — preserved + new — to keep
     // Qdrant complete even when this sync only changed a few files.
     if (config.vectorStore?.location === 'cloud') {
+      diag(
+        `CLOUD upload: pushing ${allEmbeddings.length} vectors to Qdrant ` +
+          `(source="${source}", url=${config.vectorStore.qdrantUrl}) …`,
+      );
+      if (!config.vectorStore.qdrantUrl) {
+        diag('  ⚠ qdrantUrl is empty — cannot upload. Check Settings.');
+      }
       const store = makeVectorStore({
         location: 'cloud',
         qdrant: {
@@ -357,7 +410,9 @@ async function createEmbeddings(): Promise<void> {
           progress: '100',
           message: 'Uploading to cloud vector store...',
         });
+        diag(`  ensuring collection for source="${source}" (dims=${provider.identity.dimensions}) …`);
         await store.ensure(provider.identity, source);
+        diag(`  upserting ${allEmbeddings.length} points …`);
         await store.upsert(
           allEmbeddings.map((e) => ({
             id: `${source}:${e.filename}`,
@@ -371,12 +426,22 @@ async function createEmbeddings(): Promise<void> {
           })),
           source
         );
+        diag(`  ✓ CLOUD upload complete (${allEmbeddings.length} points to Qdrant).`);
+      } else {
+        diag('  ⚠ makeVectorStore returned null — no Qdrant client created, nothing uploaded.');
       }
+    } else {
+      diag(
+        `LOCAL storage only: wrote ${allEmbeddings.length} embeddings to ` +
+          `${path.join(embeddingDirPath, 'embeddings.bin')} — Qdrant was NOT touched.`,
+      );
     }
 
     // Complete
+    diag('done.');
     process.send!({ type: WORKER_STATUS.COMPLETED, total: total });
   } catch (error) {
+    diag('✗ ERROR:', error instanceof Error ? error.stack || error.message : String(error));
     process.send!({
       type: WORKER_STATUS.ERROR,
       message: error instanceof Error ? error.message : String(error),

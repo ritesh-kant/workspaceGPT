@@ -44,8 +44,13 @@ export class QdrantVectorStore implements VectorStore {
 
   async ensure(identity: EmbeddingIdentity, source: SourceName): Promise<void> {
     const name = this.collection(source);
+    console.log(
+      `[workspaceGPT][qdrant] ensure collection="${name}" at ${this.url} ` +
+        `(model=${identity.model}, dims=${identity.dimensions})`,
+    );
 
     const existing = await this.req('GET', `/collections/${name}`);
+    console.log(`[workspaceGPT][qdrant]   GET /collections/${name} → ${existing.status}`);
     if (existing.ok) {
       // A collection's vector size is fixed at creation — fail loud on mismatch.
       const info: any = await existing.json();
@@ -59,12 +64,14 @@ export class QdrantVectorStore implements VectorStore {
       return;
     }
 
+    console.log(`[workspaceGPT][qdrant]   collection missing → creating "${name}"`);
     const create = await this.req('PUT', `/collections/${name}`, {
       vectors: { size: identity.dimensions, distance: 'Cosine' },
     });
     if (!create.ok) {
       throw new Error(`Qdrant create collection failed: ${create.status} ${await create.text()}`);
     }
+    console.log(`[workspaceGPT][qdrant]   created collection "${name}" (${create.status})`);
 
     // Store the manifest as a reserved point — the cloud equivalent of index.json.
     // Use a non-zero placeholder vector: Cosine distance can't normalize a zero
@@ -82,6 +89,11 @@ export class QdrantVectorStore implements VectorStore {
 
   async upsert(records: VectorRecord[], source: SourceName): Promise<void> {
     const name = this.collection(source);
+    console.log(
+      `[workspaceGPT][qdrant] upsert ${records.length} points into "${name}" ` +
+        `in batches of ${UPSERT_BATCH}`,
+    );
+    let uploaded = 0;
     for (let i = 0; i < records.length; i += UPSERT_BATCH) {
       const slice = records.slice(i, i + UPSERT_BATCH);
       const res = await this.req('PUT', `/collections/${name}/points?wait=true`, {
@@ -94,7 +106,10 @@ export class QdrantVectorStore implements VectorStore {
       if (!res.ok) {
         throw new Error(`Qdrant upsert failed: ${res.status} ${await res.text()}`);
       }
+      uploaded += slice.length;
+      console.log(`[workspaceGPT][qdrant]   batch ok (${res.status}) — ${uploaded}/${records.length}`);
     }
+    console.log(`[workspaceGPT][qdrant] ✓ upsert complete: ${uploaded} points in "${name}"`);
   }
 
   async search(queryVector: number[], topK: number, source: SourceName): Promise<SearchHit[]> {

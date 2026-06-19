@@ -4,10 +4,25 @@ import { EmbeddingIdentity } from './embeddingManifest';
 
 const API = 'https://generativelanguage.googleapis.com/v1beta';
 const MODEL = 'models/gemini-embedding-001';
-const MAX_BATCH = 100; // batchEmbedContents hard limit
+const MAX_BATCH = 100; // batchEmbedContents hard limit (max items the API accepts per call)
 const MAX_INPUT_CHARS = 7500; // ~2048-token cap, conservative (~3.6 chars/token)
-const MIN_INTERVAL_MS = 650; // ~92 req/min — under the ~100 RPM free ceiling
-const MAX_RETRIES = 5;
+const MAX_RETRIES = 6;
+
+// ── Free-tier pacing ──────────────────────────────────────────────────────
+// The binding free-tier limits are tokens-per-minute and items-per-minute, NOT
+// HTTP-calls-per-minute. A single full 100-item batch can carry ~200k tokens,
+// which is many times over the free TPM ceiling → instant 429. So we (a) cap how
+// much each call carries and (b) pace by a rolling 60-second token+item budget.
+const WINDOW_MS = 60_000;
+const TPM_BUDGET = 28_000; // tokens/min — safety margin under the ~30k free ceiling
+const RPM_BUDGET = 90; // items/min — under the ~100 RPM free ceiling (each item counts)
+const MAX_CALL_TOKENS = 12_000; // never let one HTTP call exceed this (well under TPM)
+const CHARS_PER_TOKEN = 3.6; // matches the MAX_INPUT_CHARS heuristic above
+
+/** Rough token estimate for a chunk of text (chars ÷ ~3.6). */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
 
 const TASK: Record<EmbeddingTask, string> = {
   document: 'RETRIEVAL_DOCUMENT',
@@ -22,7 +37,8 @@ const TASK: Record<EmbeddingTask, string> = {
 export class GeminiEmbeddingProvider implements EmbeddingProvider {
   readonly identity: EmbeddingIdentity = EMBEDDING_PROFILES.gemini;
   readonly maxBatchSize = MAX_BATCH;
-  private lastCall = 0;
+  // Rolling window of recent calls for token+item pacing.
+  private recent: Array<{ at: number; tokens: number; items: number }> = [];
 
   constructor(private apiKey: string) {}
 
@@ -32,29 +48,81 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
       throw new Error(`Batch ${texts.length} exceeds ${MAX_BATCH}; chunk before calling.`);
     }
 
-    await this.throttle();
+    // Split the incoming batch into token-bounded sub-batches so a single HTTP
+    // call never blows past the per-minute token ceiling on its own.
+    const truncated = texts.map(truncate);
+    const subBatches = this.splitByTokenBudget(truncated);
 
-    const body = {
-      requests: texts.map((t) => ({
-        model: MODEL,
-        content: { parts: [{ text: truncate(t) }] },
-        taskType: TASK[task],
-        outputDimensionality: this.identity.dimensions,
-      })),
-    };
+    const out: number[][] = [];
+    for (const sub of subBatches) {
+      const tokens = sub.reduce((sum, t) => sum + estimateTokens(t), 0);
+      await this.throttle(tokens, sub.length);
 
-    const res = await this.fetchWithRetry(
-      `${API}/${MODEL}:batchEmbedContents?key=${this.apiKey}`,
-      body,
-    );
-    const json: any = await res.json();
-    return json.embeddings.map((e: any) => e.values as number[]);
+      const body = {
+        requests: sub.map((t) => ({
+          model: MODEL,
+          content: { parts: [{ text: t }] },
+          taskType: TASK[task],
+          outputDimensionality: this.identity.dimensions,
+        })),
+      };
+
+      const res = await this.fetchWithRetry(
+        `${API}/${MODEL}:batchEmbedContents?key=${this.apiKey}`,
+        body,
+      );
+      const json: any = await res.json();
+      for (const e of json.embeddings) out.push(e.values as number[]);
+    }
+    return out;
   }
 
-  private async throttle(): Promise<void> {
-    const wait = MIN_INTERVAL_MS - (Date.now() - this.lastCall);
-    if (wait > 0) await delay(wait);
-    this.lastCall = Date.now();
+  /** Group already-truncated texts so each group stays under MAX_CALL_TOKENS. */
+  private splitByTokenBudget(texts: string[]): string[][] {
+    const groups: string[][] = [];
+    let cur: string[] = [];
+    let curTokens = 0;
+    for (const t of texts) {
+      const tk = estimateTokens(t);
+      if (cur.length > 0 && curTokens + tk > MAX_CALL_TOKENS) {
+        groups.push(cur);
+        cur = [];
+        curTokens = 0;
+      }
+      cur.push(t);
+      curTokens += tk;
+    }
+    if (cur.length > 0) groups.push(cur);
+    return groups;
+  }
+
+  /**
+   * Token+item-aware pacing over a rolling 60s window. Waits until sending
+   * `tokens`/`items` would keep both under the free-tier budgets.
+   */
+  private async throttle(tokens: number, items: number): Promise<void> {
+    // Loop because a single sleep may not be enough once other entries also age out.
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const now = Date.now();
+      this.recent = this.recent.filter((r) => now - r.at < WINDOW_MS);
+      const usedTokens = this.recent.reduce((s, r) => s + r.tokens, 0);
+      const usedItems = this.recent.reduce((s, r) => s + r.items, 0);
+
+      if (usedTokens + tokens <= TPM_BUDGET && usedItems + items <= RPM_BUDGET) {
+        this.recent.push({ at: now, tokens, items });
+        return;
+      }
+
+      // Wait until the oldest entry leaves the window, then re-check.
+      const oldest = this.recent[0];
+      const wait = oldest ? WINDOW_MS - (now - oldest.at) + 50 : WINDOW_MS;
+      console.log(
+        `[workspaceGPT][gemini] pacing: ${usedTokens}/${TPM_BUDGET} tok, ` +
+          `${usedItems}/${RPM_BUDGET} items in window — waiting ${Math.round(Math.max(wait, 250) / 1000)}s`,
+      );
+      await delay(Math.max(wait, 250));
+    }
   }
 
   private async fetchWithRetry(url: string, body: unknown, attempt = 0): Promise<Response> {
@@ -64,7 +132,18 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
       body: JSON.stringify(body),
     });
     if (res.status === 429 && attempt < MAX_RETRIES) {
-      await delay(2 ** attempt * 1000); // 1, 2, 4, 8, 16s
+      // Prefer the server-advertised retryDelay; per-minute quotas need ~60s,
+      // far longer than a plain exponential cap, so honor it when present.
+      const text = await res.text();
+      const serverDelay = parseRetryDelayMs(text);
+      const backoff = Math.min(2 ** attempt * 1000, 32_000); // 1,2,4,8,16,32s
+      const waitMs = Math.max(serverDelay, backoff);
+      console.log(
+        `[workspaceGPT][gemini] 429 quota hit (attempt ${attempt + 1}/${MAX_RETRIES}) — ` +
+          `retrying in ${Math.round(waitMs / 1000)}s` +
+          (serverDelay ? ' (server retryDelay)' : ''),
+      );
+      await delay(waitMs);
       return this.fetchWithRetry(url, body, attempt + 1);
     }
     if (!res.ok) {
@@ -72,6 +151,12 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
     }
     return res;
   }
+}
+
+/** Pull the RetryInfo.retryDelay (e.g. "37s") out of a 429 error body, in ms. */
+function parseRetryDelayMs(body: string): number {
+  const m = body.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+  return m ? Math.ceil(parseFloat(m[1]) * 1000) : 0;
 }
 
 function truncate(t: string): string {

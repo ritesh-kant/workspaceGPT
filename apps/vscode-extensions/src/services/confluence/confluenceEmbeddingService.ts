@@ -186,11 +186,26 @@ export class ConfluenceEmbeddingService {
       // Inject the active embedding provider/key so the worker embeds with the
       // user's selection (local ONNX by default, Gemini when configured).
       const embeddingSettings = getEmbeddingSettings(this.context);
+      const vectorStoreSettings = getVectorStoreSettings(this.context);
+      console.log(
+        '[workspaceGPT][confluence] starting embedding sync with resolved settings: ' +
+          `embedding.provider=${embeddingSettings.provider}, ` +
+          `vectorStore.location=${vectorStoreSettings.location}, ` +
+          `qdrantUrl=${vectorStoreSettings.qdrantUrl || '(none)'}, ` +
+          `qdrantApiKey=${vectorStoreSettings.qdrantApiKey ? 'set' : '(none)'}`,
+      );
+      if (vectorStoreSettings.location !== 'cloud') {
+        console.warn(
+          '[workspaceGPT][confluence] vectorStore.location is NOT "cloud" — ' +
+            'nothing will be written to Qdrant. Set the vector store to Cloud in Settings ' +
+            'and re-sync if you expect Qdrant to be populated.',
+        );
+      }
       config = {
         ...config,
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
-        vectorStore: getVectorStoreSettings(this.context),
+        vectorStore: vectorStoreSettings,
       };
 
       const { embeddingDirPath, mdDirPath, processPath } =
@@ -210,6 +225,15 @@ export class ConfluenceEmbeddingService {
         },
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       });
+
+      // Forward the worker's stdout/stderr to the extension host console so the
+      // [workspaceGPT][embedding] / [workspaceGPT][qdrant] diagnostics are visible.
+      this.embeddingProcess.stdout?.on('data', (chunk) =>
+        process.stdout.write(`[confluence-embed-worker] ${chunk}`)
+      );
+      this.embeddingProcess.stderr?.on('data', (chunk) =>
+        process.stderr.write(`[confluence-embed-worker] ${chunk}`)
+      );
 
       // Handle messages from the process
       this.embeddingProcess.on('message', async (data) => {
