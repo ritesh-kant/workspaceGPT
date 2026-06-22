@@ -137,6 +137,23 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(historyDisposable);
 
+  // Register the releases command
+  let releasesDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_RELEASES,
+    () => {
+      analyticsService.trackEvent('command_releases_triggered');
+      vscode.commands.executeCommand(
+        `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
+      );
+
+      const webviewView = webViewProvider.getWebviewView();
+      if (webviewView) {
+        webviewView.webview.postMessage({ type: MESSAGE_TYPES.SHOW_RELEASES });
+      }
+    }
+  );
+  context.subscriptions.push(releasesDisposable);
+
   // Register the clear data command
   let clearDataDisposable = vscode.commands.registerCommand(
     EXTENSION.COMMAND_CLEAR_DATA,

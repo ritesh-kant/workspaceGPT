@@ -9,7 +9,7 @@ import { ModelConfig } from '../../types';
 const vscode = VSCodeAPI();
 
 export const clearStatusMessageAfterDelay = (
-  section: 'confluence' | 'codebase' | 'ado',
+  section: 'confluence' | 'codebase' | 'ado' | 'deployment',
   field: 'statusMessage' | 'messageType',
   value?: string | 'unknown',
   delay: number = 2000

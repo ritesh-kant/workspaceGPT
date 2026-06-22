@@ -1,0 +1,19 @@
+{
+  "name": "@workspace-gpt/release-core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "tsc -p tsconfig.json --module CommonJS --moduleResolution Node --outDir .test-build && echo '{\"type\":\"commonjs\"}' > .test-build/package.json && node --test .test-build",
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.2"
+  }
+}

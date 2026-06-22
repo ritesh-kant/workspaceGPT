@@ -112,7 +112,62 @@ export const MESSAGE_TYPES = {
 
   // Share to Chrome
   SHARE_TO_CHROME: 'share-to-chrome',
+
+  // Deployment automation — provider connections (write-scoped, VS Code only)
+  CHECK_GITHUB_CONNECTION: 'check-github-connection',
+  START_GITHUB_INSTALL: 'start-github-install',
+  CANCEL_GITHUB_INSTALL: 'cancel-github-install',
+  GITHUB_CONNECTION_STATUS: 'github-connection-status',
+  GITHUB_INSTALL_SUCCESS: 'github-install-success',
+  GITHUB_INSTALL_ERROR: 'github-install-error',
+  DISCONNECT_GITHUB: 'disconnect-github',
+
+  CHECK_VERCEL_CONNECTION: 'check-vercel-connection',
+  START_VERCEL_OAUTH: 'start-vercel-oauth',
+  CANCEL_VERCEL_OAUTH: 'cancel-vercel-oauth',
+  VERCEL_CONNECTION_STATUS: 'vercel-connection-status',
+  VERCEL_OAUTH_SUCCESS: 'vercel-oauth-success',
+  VERCEL_OAUTH_ERROR: 'vercel-oauth-error',
+  DISCONNECT_VERCEL: 'disconnect-vercel',
+
+  TEST_DEPLOYMENT_CONNECTIONS: 'test-deployment-connections',
+  TEST_DEPLOYMENT_CONNECTIONS_RESULT: 'test-deployment-connections-result',
+
+  // Releases view
+  SHOW_RELEASES: 'show-releases',
+  RESOLVE_RELEASE: 'resolve-release',
+  RESOLVE_RELEASE_RESPONSE: 'resolve-release-response',
+  GET_RELEASE_RUNS: 'get-release-runs',
+  GET_RELEASE_RUNS_RESPONSE: 'get-release-runs-response',
+
+  // Vector store (Qdrant) connection test
+  TEST_QDRANT_CONNECTION: 'test-qdrant-connection',
+  TEST_QDRANT_CONNECTION_RESULT: 'test-qdrant-connection-result',
 } as const;
+
+/**
+ * Normalize a Qdrant connection URL. Qdrant Cloud's dashboard shows the cluster
+ * endpoint *without* a port, but its REST API listens on 6333 — pasting the bare
+ * URL makes every request hit :443 and come back as Go's "404 page not found".
+ * So we: ensure a scheme, default Qdrant Cloud hosts to :6333 when no port is
+ * given, and strip trailing slashes. localhost, explicit ports, and non-cloud
+ * hosts are left untouched; unparseable input is returned as-is (we never mangle).
+ */
+export function normalizeQdrantUrl(raw: string | undefined): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return '';
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let u: URL;
+  try {
+    u = new URL(withScheme);
+  } catch {
+    return trimmed;
+  }
+  if (!u.port && /\.cloud\.qdrant\.io$/i.test(u.hostname)) {
+    u.port = '6333';
+  }
+  return `${u.protocol}//${u.host}${u.pathname}`.replace(/\/+$/, '');
+}
 
 export const SEARCH_CONSTANTS = {
   MAX_SEARCH_RESULTS: 15, // Number of nearest neighbors to retrieve
@@ -142,6 +197,12 @@ export const STORAGE_KEYS = {
   CONFLUENCE_OAUTH_TOKENS: 'confluence-oauth-tokens',
   ADO_SYNC_PROGRESS: 'ado-sync-progress',
   ADO_OAUTH_TOKENS: 'ado-oauth-tokens',
+  // Deployment automation — write-scoped creds (SecretStorage), never shared to Chrome
+  GITHUB_OAUTH_TOKENS: 'github-oauth-tokens',
+  // (Optional GitHub App mode — see GitHubAppAuthService)
+  GITHUB_APP_INSTALLATION: 'github-app-installation',
+  GITHUB_INSTALLATION_TOKEN_CACHE: 'github-installation-token-cache',
+  VERCEL_OAUTH_TOKENS: 'vercel-oauth-tokens',
 };
 
 // Extension Constants
@@ -153,6 +214,7 @@ export const EXTENSION = {
   COMMAND_HISTORY: 'workspacegpt.history',
   COMMAND_CLEAR_DATA: 'workspacegpt.clearData',
   COMMAND_SHARE_TO_CHROME: 'workspacegpt.shareToChrome',
+  COMMAND_RELEASES: 'workspacegpt.releases',
   VIEW_CONTAINER: 'workspacegpt-sidebar',
 };
 
@@ -252,6 +314,81 @@ export const ADO_OAUTH = {
     'vso.code'
   ],
   CALLBACK_PORT: 32324, // Use a different port than Confluence
+  CALLBACK_PATH: '/callback',
+};
+
+/**
+ * GitHub OAuth App configuration (deployment automation — write access).
+ *
+ * The "Authorize WorkspaceGPT" consent flow — same shape as the Confluence
+ * OAuth flow: open the authorize URL, capture `code` on the loopback callback,
+ * exchange it for a user access token via the proxy (which holds the
+ * client_secret). No private key, no install dance.
+ *
+ * Required GitHub OAuth App settings when registering:
+ *   - Authorization callback URL: http://127.0.0.1:32325/callback
+ *   - (Optional) enable token expiration to get refresh tokens.
+ *
+ * Note: OAuth scopes are coarse — `repo` grants write to all repos the user can
+ * access. For per-repo scoping use a fine-grained PAT or the GitHub App mode.
+ */
+export const GITHUB_OAUTH = {
+  CLIENT_ID: 'Ov23liuwYl36ZVETh3Nk',
+  AUTH_URL: 'https://github.com/login/oauth/authorize',
+  TOKEN_PROXY_URL:
+    'https://workspace-gpt-confluence-auth-proxy.vercel.app/api/github/oauth-token',
+  API_BASE: 'https://api.github.com',
+  SCOPES: ['repo', 'workflow'],
+  CALLBACK_PORT: 32325,
+  CALLBACK_PATH: '/callback',
+};
+
+/**
+ * GitHub App configuration (OPTIONAL hardening mode — bot identity + per-repo
+ * scoping + short-lived tokens). Not the active path; the OAuth App above is.
+ *
+ * Server-to-server model: the App is installed on the target repos by an admin,
+ * and the proxy mints short-lived installation tokens from the App private key.
+ * The extension never holds the key.
+ *
+ * Required GitHub App settings when registering:
+ *   - Callback URL:  http://127.0.0.1:32325/callback
+ *   - "Request user authorization (OAuth) during installation": ENABLED
+ *     (so the post-install redirect carries `installation_id` + `state` to the
+ *     local callback server).
+ *   - Repository permissions: Contents (read/write), Pull requests (read/write),
+ *     Workflows (read/write) — for mach config commits/PRs, tags, releases.
+ */
+export const GITHUB_APP = {
+  // Public slug from github.com/apps/<slug>. Set after registering the App.
+  APP_SLUG: 'REPLACE_WITH_GITHUB_APP_SLUG',
+  INSTALL_BASE_URL: 'https://github.com/apps',
+  // Proxy that holds the private key and mints installation tokens.
+  INSTALLATION_TOKEN_PROXY_URL:
+    'https://workspace-gpt-confluence-auth-proxy.vercel.app/api/github/installation-token',
+  API_BASE: 'https://api.github.com',
+  CALLBACK_PORT: 32325,
+  CALLBACK_PATH: '/callback',
+};
+
+/**
+ * Vercel OAuth integration configuration (deployment automation — frontend env).
+ *
+ * Standard OAuth code flow; the proxy holds the integration client_secret.
+ * Integration access tokens are long-lived per install (no refresh grant).
+ *
+ * Required Vercel integration settings when registering:
+ *   - Redirect URL: http://127.0.0.1:32326/callback
+ */
+export const VERCEL_OAUTH = {
+  CLIENT_ID: 'REPLACE_WITH_VERCEL_INTEGRATION_CLIENT_ID',
+  // Integration slug from vercel.com/integrations/<slug>.
+  INTEGRATION_SLUG: 'REPLACE_WITH_VERCEL_INTEGRATION_SLUG',
+  AUTH_BASE_URL: 'https://vercel.com/integrations',
+  TOKEN_PROXY_URL:
+    'https://workspace-gpt-confluence-auth-proxy.vercel.app/api/vercel/token',
+  API_BASE: 'https://api.vercel.com',
+  CALLBACK_PORT: 32326,
   CALLBACK_PATH: '/callback',
 };
 

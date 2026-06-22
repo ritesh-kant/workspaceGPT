@@ -7,6 +7,7 @@ export interface SettingsConfig {
   confluence: ConfluenceConfig;
   codebase: CodebaseConfig;
   ado: AdoConfig;
+  deployment: DeploymentConfig;
   embedding: EmbeddingProviderConfig;
   vectorStore: VectorStoreConfig;
 }
@@ -73,6 +74,16 @@ export const settingsDefaultConfig: SettingsConfig = {
     isSyncCompleted: false,
     isIndexingCompleted: false
   },
+  deployment: {
+    isDeploymentEnabled: false,
+    githubConnected: false,
+    vercelConnected: false,
+    isConnectingGithub: false,
+    isConnectingVercel: false,
+    isTesting: false,
+    messageType: 'success',
+    statusMessage: '',
+  },
   embedding: {
     provider: 'local',
     apiKey: '',
@@ -103,7 +114,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
-import { CodebaseConfig, ConfluenceConfig, AdoConfig, EmbeddingProviderConfig, VectorStoreConfig } from '../types';
+import { CodebaseConfig, ConfluenceConfig, AdoConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig } from '../types';
 
 const vscodeStorage = {
   getItem: () => {

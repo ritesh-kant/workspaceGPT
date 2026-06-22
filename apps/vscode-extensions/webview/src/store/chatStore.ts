@@ -25,6 +25,7 @@ interface ChatState {
   currentSessionId: string | null;
   historyList: ChatSessionPreview[];
   showHistory: boolean;
+  showReleases: boolean;
   contextSelection: string;
   statusText: string;
   setMessages: (messages: Message[]) => void;
@@ -38,6 +39,7 @@ interface ChatState {
   setCurrentSessionId: (id: string | null) => void;
   setHistoryList: (list: ChatSessionPreview[]) => void;
   setShowHistory: (show: boolean) => void;
+  setShowReleases: (show: boolean) => void;
   setContextSelection: (selection: string) => void;
   setStatusText: (text: string) => void;
   resetStore: () => void;
@@ -72,6 +74,7 @@ export const chatDefaultState = {
   currentSessionId: null,
   historyList: [],
   showHistory: false,
+  showReleases: false,
   contextSelection: 'Auto',
   statusText: '',
 };
@@ -99,6 +102,7 @@ export const useChatStore = create<ChatState>()(
       setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
       setHistoryList: (historyList) => set({ historyList }),
       setShowHistory: (showHistory) => set({ showHistory }),
+      setShowReleases: (showReleases) => set({ showReleases }),
       setContextSelection: (contextSelection) => set({ contextSelection }),
       setStatusText: (statusText) => set({ statusText }),
       resetStore: () => {

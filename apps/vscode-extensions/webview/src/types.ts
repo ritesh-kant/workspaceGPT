@@ -89,6 +89,25 @@ export interface AdoConfig {
   isConnecting?: boolean;
 }
 
+export interface DeploymentConnectionTest {
+  ok: boolean;
+  detail?: string;
+}
+
+export interface DeploymentConfig {
+  isDeploymentEnabled?: boolean;
+  githubConnected: boolean;
+  githubInstallationId?: string;
+  vercelConnected: boolean;
+  vercelTeamId?: string;
+  isConnectingGithub: boolean;
+  isConnectingVercel: boolean;
+  isTesting: boolean;
+  testResults?: Record<string, DeploymentConnectionTest>;
+  messageType: 'success' | 'error';
+  statusMessage: string;
+}
+
 export interface EmbeddingProviderConfig {
   provider: 'local' | 'gemini';
   apiKey?: string;

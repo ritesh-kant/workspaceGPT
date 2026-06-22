@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { STORAGE_KEYS } from '../../constants';
+import { STORAGE_KEYS, normalizeQdrantUrl } from '../../constants';
 
 export interface VectorStoreSettings {
   location: 'local' | 'cloud';
@@ -18,7 +18,9 @@ export function getVectorStoreSettings(
   const vs = settings?.state?.config?.vectorStore;
   return {
     location: vs?.location === 'cloud' ? 'cloud' : 'local',
-    qdrantUrl: vs?.qdrantUrl || undefined,
+    // Normalize defensively so a bare Qdrant Cloud URL (missing :6333) still
+    // reaches the REST API regardless of what's persisted in settings.
+    qdrantUrl: vs?.qdrantUrl ? normalizeQdrantUrl(vs.qdrantUrl) : undefined,
     qdrantApiKey: vs?.qdrantApiKey || undefined,
   };
 }

@@ -1,0 +1,231 @@
+import React, { useEffect } from 'react';
+import { useSettingsStore } from '../../store';
+import { VSCodeAPI } from '../../vscode';
+import { clearStatusMessageAfterDelay } from './utils';
+import { DeploymentConfig } from '../../types';
+import { MESSAGE_TYPES } from '../../constants';
+
+/**
+ * Settings → Deployment: connect the write-scoped providers used by deployment
+ * automation (GitHub App for mach PRs/tags/releases, Vercel for frontend env).
+ * These credentials live only in the VS Code master and are never shared to the
+ * Chrome extension.
+ */
+const DeploymentSettings: React.FC = () => {
+  const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
+  const vscode = VSCodeAPI();
+  const dep = config.deployment || ({} as DeploymentConfig);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data;
+      switch (message.type) {
+        case MESSAGE_TYPES.GITHUB_CONNECTION_STATUS:
+          batchUpdateConfig('deployment', {
+            githubConnected: !!message.connected,
+            githubInstallationId: message.installationId,
+            isConnectingGithub: false,
+          });
+          break;
+        case MESSAGE_TYPES.GITHUB_INSTALL_SUCCESS:
+          batchUpdateConfig('deployment', {
+            githubConnected: true,
+            githubInstallationId: message.installationId,
+            isConnectingGithub: false,
+            messageType: 'success',
+            statusMessage: 'GitHub App connected',
+          });
+          clearStatusMessageAfterDelay('deployment', 'statusMessage');
+          break;
+        case MESSAGE_TYPES.GITHUB_INSTALL_ERROR:
+          batchUpdateConfig('deployment', {
+            isConnectingGithub: false,
+            messageType: 'error',
+            statusMessage: message.error || 'GitHub connection failed',
+          });
+          clearStatusMessageAfterDelay('deployment', 'statusMessage');
+          break;
+
+        case MESSAGE_TYPES.VERCEL_CONNECTION_STATUS:
+          batchUpdateConfig('deployment', {
+            vercelConnected: !!message.connected,
+            vercelTeamId: message.teamId,
+            isConnectingVercel: false,
+          });
+          break;
+        case MESSAGE_TYPES.VERCEL_OAUTH_SUCCESS:
+          batchUpdateConfig('deployment', {
+            vercelConnected: true,
+            vercelTeamId: message.teamId,
+            isConnectingVercel: false,
+            messageType: 'success',
+            statusMessage: 'Vercel connected',
+          });
+          clearStatusMessageAfterDelay('deployment', 'statusMessage');
+          break;
+        case MESSAGE_TYPES.VERCEL_OAUTH_ERROR:
+          batchUpdateConfig('deployment', {
+            isConnectingVercel: false,
+            messageType: 'error',
+            statusMessage: message.error || 'Vercel connection failed',
+          });
+          clearStatusMessageAfterDelay('deployment', 'statusMessage');
+          break;
+
+        case MESSAGE_TYPES.TEST_DEPLOYMENT_CONNECTIONS_RESULT:
+          batchUpdateConfig('deployment', {
+            isTesting: false,
+            testResults: message.results || {},
+          });
+          break;
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  // Ask the extension for the current connection state when the section opens.
+  useEffect(() => {
+    if (dep.isDeploymentEnabled) {
+      vscode.postMessage({ type: MESSAGE_TYPES.CHECK_GITHUB_CONNECTION });
+      vscode.postMessage({ type: MESSAGE_TYPES.CHECK_VERCEL_CONNECTION });
+    }
+  }, [dep.isDeploymentEnabled]);
+
+  const connectGithub = () => {
+    batchUpdateConfig('deployment', {
+      isConnectingGithub: true,
+      statusMessage: 'Opening GitHub App install…',
+      messageType: 'success',
+    });
+    vscode.postMessage({ type: MESSAGE_TYPES.START_GITHUB_INSTALL });
+  };
+
+  const disconnectGithub = () => {
+    vscode.postMessage({ type: MESSAGE_TYPES.DISCONNECT_GITHUB });
+  };
+
+  const connectVercel = () => {
+    batchUpdateConfig('deployment', {
+      isConnectingVercel: true,
+      statusMessage: 'Opening Vercel authorization…',
+      messageType: 'success',
+    });
+    vscode.postMessage({ type: MESSAGE_TYPES.START_VERCEL_OAUTH });
+  };
+
+  const disconnectVercel = () => {
+    vscode.postMessage({ type: MESSAGE_TYPES.DISCONNECT_VERCEL });
+  };
+
+  const testConnections = () => {
+    batchUpdateConfig('deployment', { isTesting: true, testResults: undefined });
+    vscode.postMessage({ type: MESSAGE_TYPES.TEST_DEPLOYMENT_CONNECTIONS });
+  };
+
+  const handleToggleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateConfig('deployment', 'isDeploymentEnabled', e.target.checked);
+  };
+
+  const renderProvider = (
+    label: string,
+    subtitle: string,
+    connected: boolean,
+    connecting: boolean,
+    onConnect: () => void,
+    onDisconnect: () => void,
+    testKey: string,
+  ) => {
+    const test = dep.testResults?.[testKey];
+    return (
+      <div className="form-group" style={{ marginBottom: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+          <div>
+            <div style={{ fontWeight: 500 }}>{label}</div>
+            <div style={{ fontSize: '0.8em', color: '#888' }}>{subtitle}</div>
+          </div>
+          {connected ? (
+            <button onClick={onDisconnect} className="disconnect-button">Disconnect</button>
+          ) : (
+            <button onClick={onConnect} disabled={connecting}>
+              {connecting ? '⏳ Connecting…' : '🔗 Connect'}
+            </button>
+          )}
+        </div>
+        <div style={{ fontSize: '0.82em', marginTop: '4px' }}>
+          {connected ? (
+            <span style={{ color: '#4ecca3' }}>✅ Connected</span>
+          ) : (
+            <span style={{ color: '#888' }}>Not connected</span>
+          )}
+          {test && (
+            <span style={{ marginLeft: '10px', color: test.ok ? '#4ecca3' : '#e74c3c' }}>
+              {test.ok ? '• test passed' : `• test failed${test.detail ? `: ${test.detail}` : ''}`}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="settings-section">
+      <div className="section-header">
+        <h3>Deployment Automation</h3>
+        <label className="toggle-switch">
+          <input
+            type="checkbox"
+            checked={!!dep.isDeploymentEnabled}
+            onChange={handleToggleChange}
+          />
+          <span className="slider round"></span>
+        </label>
+      </div>
+
+      {dep.isDeploymentEnabled && (
+        <div className="settings-form">
+          <p style={{ color: '#a0a0a0', margin: '0 0 12px 0', fontSize: '0.85em', lineHeight: 1.6 }}>
+            Write-scoped credentials, held only here in VS Code — never included in the
+            Chrome share code.
+          </p>
+
+          {renderProvider(
+            'GitHub App',
+            'mach PRs, tags & releases',
+            !!dep.githubConnected,
+            !!dep.isConnectingGithub,
+            connectGithub,
+            disconnectGithub,
+            'github',
+          )}
+
+          {renderProvider(
+            'Vercel',
+            'frontend env vars',
+            !!dep.vercelConnected,
+            !!dep.isConnectingVercel,
+            connectVercel,
+            disconnectVercel,
+            'vercel',
+          )}
+
+          <button
+            onClick={testConnections}
+            disabled={dep.isTesting || (!dep.githubConnected && !dep.vercelConnected)}
+            style={{ marginTop: '4px' }}
+          >
+            {dep.isTesting ? '⏳ Testing…' : '🔌 Test all connections'}
+          </button>
+
+          {dep.statusMessage && (
+            <div className={`status-message ${dep.messageType === 'success' ? 'success' : 'error'}`}>
+              {dep.statusMessage}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default DeploymentSettings;

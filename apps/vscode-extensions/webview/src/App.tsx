@@ -3,6 +3,7 @@ import './App.css';
 import ChatMessage from './components/ChatMessage';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import SettingsButton from './components/Settings';
+import Releases from './components/Releases';
 import { VSCodeAPI } from './vscode';
 import {
   setModelState,
@@ -53,6 +54,8 @@ const App: React.FC = () => {
     setCurrentSessionId,
     setHistoryList,
     setShowHistory,
+    showReleases,
+    setShowReleases,
     setMessages,
     contextSelection,
     setContextSelection,
@@ -183,6 +186,7 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.SHOW_SETTINGS:
           setShowSettings(true);
           setShowHistory(false);
+          setShowReleases(false);
           break;
         case MESSAGE_TYPES.NEW_CHAT:
           handleNewChat();
@@ -190,10 +194,16 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.SHOW_HISTORY:
           setShowHistory(true);
           setShowSettings(false);
+          setShowReleases(false);
           // Refresh history list when opened
           vscode.postMessage({
             type: MESSAGE_TYPES.GET_CHAT_HISTORY_LIST,
           });
+          break;
+        case MESSAGE_TYPES.SHOW_RELEASES:
+          setShowReleases(true);
+          setShowSettings(false);
+          setShowHistory(false);
           break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
@@ -709,6 +719,7 @@ const App: React.FC = () => {
           </div>
         </div>
         <SettingsButton isVisible={showSettings} onBack={hideSettings} />
+        <Releases isVisible={showReleases} onBack={() => setShowReleases(false)} />
         <ChatHistorySidebar
           isVisible={showHistory}
           historyList={historyList}

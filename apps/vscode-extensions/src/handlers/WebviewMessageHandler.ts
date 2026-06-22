@@ -6,6 +6,7 @@ import { AdoMessageHandler } from './AdoMessageHandler';
 import { ChatMessageHandler } from './ChatMessageHandler';
 import { CodebaseMessageHandler } from './CodebaseMessageHandler';
 import { SystemMessageHandler } from './SystemMessageHandler';
+import { DeploymentMessageHandler } from './DeploymentMessageHandler';
 import { HistoryService } from '../services/historyService';
 import { getEmbeddingSettings, EmbeddingSettings } from '../utils/getEmbeddingSettings';
 
@@ -36,6 +37,7 @@ export class WebviewMessageHandler {
   private chatHandler: ChatMessageHandler;
   private codebaseHandler: CodebaseMessageHandler;
   private systemHandler: SystemMessageHandler;
+  private deploymentHandler: DeploymentMessageHandler;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -50,6 +52,7 @@ export class WebviewMessageHandler {
     this.chatHandler = new ChatMessageHandler(webviewView, context, this.analyticsService, this.historyService);
     this.codebaseHandler = new CodebaseMessageHandler(webviewView, context, this.analyticsService);
     this.systemHandler = new SystemMessageHandler(webviewView, context, this.analyticsService);
+    this.deploymentHandler = new DeploymentMessageHandler(webviewView, context, this.analyticsService);
 
     // Warm the search workers now (webview is opening) so the first chat query is fast.
     this.chatHandler.prewarm();
@@ -58,6 +61,7 @@ export class WebviewMessageHandler {
   /** Tear down chat search workers. Called on webview dispose. */
   public dispose(): void {
     this.chatHandler.dispose();
+    this.deploymentHandler.dispose();
   }
 
   public async handleMessage(data: any): Promise<void> {
@@ -81,6 +85,7 @@ export class WebviewMessageHandler {
     if (await this.adoHandler.handleMessage(data)) return;
     if (await this.chatHandler.handleMessage(data)) return;
     if (await this.codebaseHandler.handleMessage(data)) return;
+    if (await this.deploymentHandler.handleMessage(data)) return;
     if (await this.systemHandler.handleMessage(data)) {
       if (isSettingsUpdate) {
         const providerAfter = resolvedEmbeddingProvider(

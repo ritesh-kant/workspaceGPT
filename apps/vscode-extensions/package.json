@@ -60,6 +60,14 @@
       {
         "command": "workspacegpt.shareToChrome",
         "title": "WorkspaceGPT: Share to Chrome Extension"
+      },
+      {
+        "command": "workspacegpt.releases",
+        "title": "WorkspaceGPT: Releases",
+        "icon": {
+          "light": "resources/rocket-dark.svg",
+          "dark": "resources/rocket-light.svg"
+        }
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -114,9 +122,14 @@
           "group": "navigation@2"
         },
         {
-          "command": "workspacegpt.settings",
+          "command": "workspacegpt.releases",
           "when": "view == workspacegpt.chatView",
           "group": "navigation@3"
+        },
+        {
+          "command": "workspacegpt.settings",
+          "when": "view == workspacegpt.chatView",
+          "group": "navigation@4"
         },
         {
           "command": "workspacegpt.shareToChrome",
