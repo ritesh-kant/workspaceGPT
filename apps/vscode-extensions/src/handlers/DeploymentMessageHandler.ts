@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
-import { MESSAGE_TYPES } from '../../constants';
+import { MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
 import { AnalyticsService } from '../services/analyticsService';
 import { GitHubOAuthService } from '../services/deployment/githubOAuthService';
 import { VercelAuthService } from '../services/deployment/vercelAuthService';
+import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
+import { ConfluenceReleaseSource } from '../services/deployment/confluenceReleaseSource';
 
 /**
  * Handles the deployment-automation provider connections (GitHub App + Vercel)
@@ -12,6 +14,7 @@ import { VercelAuthService } from '../services/deployment/vercelAuthService';
 export class DeploymentMessageHandler {
   private githubAuth: GitHubOAuthService;
   private vercelAuth: VercelAuthService;
+  private confluenceAuth: ConfluenceAuthService;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -20,6 +23,7 @@ export class DeploymentMessageHandler {
   ) {
     this.githubAuth = new GitHubOAuthService(this.context);
     this.vercelAuth = new VercelAuthService(this.context);
+    this.confluenceAuth = new ConfluenceAuthService(this.context);
   }
 
   /** Cancel any in-flight connect flow so its callback server releases the port. */
@@ -72,29 +76,101 @@ export class DeploymentMessageHandler {
       case MESSAGE_TYPES.GET_RELEASE_RUNS:
         await this.handleGetReleaseRuns();
         return true;
+      case MESSAGE_TYPES.PREPARE_CONFIG_SYNC:
+        this.analyticsService.trackEvent('config_sync_prepared');
+        await this.handlePrepareConfigSync(data);
+        return true;
     }
     return false;
   }
 
   /**
-   * Resolve "today's release" for the Releases view.
-   *
-   * Stub: a real `ReleaseSource` (Confluence roster + release page) lands in a
-   * later milestone (blocked on the open data items in the design doc). Until
-   * then this reports `configured: false` so the UI shows the empty state rather
-   * than fabricating release data.
+   * Resolve "today's release" for the Releases view via the Confluence
+   * `ReleaseSource` (roster page → today's date → version + env + pilot). This
+   * is read-only and touches nothing live. Reports `configured: false` with a
+   * `reason` whenever it can't resolve, so the UI shows an honest empty state
+   * instead of fabricating data.
    */
   private async handleResolveRelease(): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
-    this.post(MESSAGE_TYPES.RESOLVE_RELEASE_RESPONSE, {
-      configured: false,
-      date: today,
-    });
+    const notConfigured = (reason: string) =>
+      this.post(MESSAGE_TYPES.RESOLVE_RELEASE_RESPONSE, { configured: false, date: today, reason });
+
+    try {
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const rosterPageUrl: string | undefined = settings?.state?.config?.deployment?.rosterPageUrl;
+
+      // Source of truth for "Confluence connected" is the stored OAuth tokens +
+      // site (the webview `confluence.isConnected` flag isn't reliably set).
+      const confluenceConnected =
+        (await this.confluenceAuth.isAuthenticated()) && !!this.confluenceAuth.getStoredSite();
+
+      if (!confluenceConnected) {
+        return notConfigured('Connect Confluence (Settings → Confluence) to resolve releases.');
+      }
+      if (!rosterPageUrl) {
+        return notConfigured('Set the Release Roster page URL in Settings → Deployment Automation.');
+      }
+
+      const source = new ConfluenceReleaseSource(this.confluenceAuth, { rosterPageUrl });
+      const resolved = await source.resolveRelease(today);
+      if (!resolved) {
+        return notConfigured(`No release scheduled for ${today} on the roster.`);
+      }
+
+      this.post(MESSAGE_TYPES.RESOLVE_RELEASE_RESPONSE, {
+        configured: true,
+        date: resolved.date ?? today,
+        version: resolved.version,
+        environment: resolved.environment,
+        pilot: resolved.pilot,
+        pageUrl: resolved.pageUrl,
+      });
+    } catch (error) {
+      notConfigured(errMessage(error));
+    }
   }
 
   /** Recent release runs from the audit log. Empty until the apply flow exists. */
   private async handleGetReleaseRuns(): Promise<void> {
     this.post(MESSAGE_TYPES.GET_RELEASE_RUNS_RESPONSE, { runs: [] });
+  }
+
+  /**
+   * Extract + preview the desired config for a resolved release. This is the
+   * read-only first half of step d: it parses the release page's Configurations
+   * table into desired config vars and returns them for review. It performs NO
+   * live reads of Vercel/mach and writes nothing — the diff/apply targets land
+   * in a later increment (open items #1/#3/#4).
+   */
+  private async handlePrepareConfigSync(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.PREPARE_CONFIG_SYNC_RESPONSE, { ok: false, error });
+
+    try {
+      const version: string | undefined = data?.version;
+      const environment: string = data?.environment || 'stage';
+      if (!version) return fail('No release version to prepare. Resolve a release first.');
+
+      const connected =
+        (await this.confluenceAuth.isAuthenticated()) && !!this.confluenceAuth.getStoredSite();
+      if (!connected) return fail('Connect Confluence (Settings → Confluence) first.');
+
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const rosterPageUrl: string = settings?.state?.config?.deployment?.rosterPageUrl ?? '';
+
+      const source = new ConfluenceReleaseSource(this.confluenceAuth, { rosterPageUrl });
+      const vars = await source.fetchDesiredConfig(version, environment);
+
+      this.post(MESSAGE_TYPES.PREPARE_CONFIG_SYNC_RESPONSE, {
+        ok: true,
+        version,
+        environment,
+        vars,
+      });
+    } catch (error) {
+      fail(errMessage(error));
+    }
   }
 
   private post(type: string, payload: Record<string, unknown> = {}): void {
@@ -175,8 +251,16 @@ export class DeploymentMessageHandler {
 
     if (await this.vercelAuth.isConnected()) {
       try {
+        const tokens = await this.vercelAuth.getStoredTokens();
         const token = await this.vercelAuth.getValidAccessToken();
-        const res = await fetch('https://api.vercel.com/v2/user', {
+        // Integration tokens are scoped to a team/installation and have no
+        // personal-user context, so `/v2/user` 404s. Probe `/v9/projects`
+        // (scoped by teamId when present) — the access this feature actually
+        // uses to write frontend env vars.
+        const url = new URL('https://api.vercel.com/v9/projects');
+        url.searchParams.set('limit', '1');
+        if (tokens?.teamId) url.searchParams.set('teamId', tokens.teamId);
+        const res = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` },
         });
         results.vercel = res.ok

@@ -18,7 +18,8 @@
     "baseUrl": ".",
     "paths": {
       "@workspace-gpt/confluence-utils": ["../../packages/confluence-utils/src"],
-      "@workspace-gpt/embedding-core": ["../../packages/embedding-core/src/index.ts"]
+      "@workspace-gpt/embedding-core": ["../../packages/embedding-core/src/index.ts"],
+      "@workspace-gpt/release-core": ["../../packages/release-core/src/index.ts"]
     }
   },
   "exclude": ["node_modules", ".vscode-test", "webview"]

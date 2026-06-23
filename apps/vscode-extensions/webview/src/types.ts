@@ -96,6 +96,8 @@ export interface DeploymentConnectionTest {
 
 export interface DeploymentConfig {
   isDeploymentEnabled?: boolean;
+  /** Confluence Release Roster page URL — source for resolving today's release. */
+  rosterPageUrl?: string;
   githubConnected: boolean;
   githubInstallationId?: string;
   vercelConnected: boolean;

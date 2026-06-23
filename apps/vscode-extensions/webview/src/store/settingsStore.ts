@@ -76,6 +76,7 @@ export const settingsDefaultConfig: SettingsConfig = {
   },
   deployment: {
     isDeploymentEnabled: false,
+    rosterPageUrl: '',
     githubConnected: false,
     vercelConnected: false,
     isConnectingGithub: false,

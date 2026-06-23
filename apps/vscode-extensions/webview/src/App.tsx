@@ -90,6 +90,16 @@ const App: React.FC = () => {
   // When true, discard incoming response chunks that belong to a previous request.
   // useRef so it's always current inside the stale useEffect message-handler closure.
   const ignoringStreamRef = useRef(false);
+
+  // Typewriter streaming buffer. Network chunk size varies wildly by provider —
+  // some (Ollama, Gemini) emit token-sized deltas, others (NVIDIA) ship the whole
+  // completion in one or two large SSE chunks, which renders as a single flash.
+  // We buffer all incoming text here and drain it to the UI at a steady rate so
+  // streaming looks smooth regardless of how the provider chunks the response.
+  const pendingTextRef = useRef('');
+  const streamDoneRef = useRef(false);
+  const pumpRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
   // Debounced save: to avoid writing to disk on every keystroke / rapid message
@@ -110,6 +120,47 @@ const App: React.FC = () => {
     },
     [vscode]
   );
+
+  // Drains pendingTextRef into the last message a few chars per tick so the
+  // response "types out" smoothly. Pauses itself when the buffer empties (and
+  // restarts on the next chunk); finalizes streaming state once the stream is
+  // done and fully drained. The slice scales with the backlog, so a provider
+  // that delivers the whole response in one chunk still finishes in ~0.5s
+  // rather than typing for tens of seconds.
+  const startStreamPump = useCallback(() => {
+    if (pumpRef.current !== null) return; // already running
+    pumpRef.current = setInterval(() => {
+      const pending = pendingTextRef.current;
+      if (pending.length === 0) {
+        if (pumpRef.current !== null) {
+          clearInterval(pumpRef.current);
+          pumpRef.current = null;
+        }
+        if (streamDoneRef.current) {
+          streamDoneRef.current = false;
+          setIsStreaming(false);
+        }
+        return;
+      }
+      const count = Math.max(2, Math.ceil(pending.length / 30));
+      pendingTextRef.current = pending.slice(count);
+      appendToLastMessage(pending.slice(0, count));
+    }, 16);
+  }, [appendToLastMessage, setIsStreaming]);
+
+  // Stops the pump and discards any buffered text — used when a stream is
+  // abandoned (new chat, new message, stop, error).
+  const resetStreamBuffer = useCallback(() => {
+    if (pumpRef.current !== null) {
+      clearInterval(pumpRef.current);
+      pumpRef.current = null;
+    }
+    pendingTextRef.current = '';
+    streamDoneRef.current = false;
+  }, []);
+
+  // Clean up the pump on unmount.
+  useEffect(() => () => resetStreamBuffer(), [resetStreamBuffer]);
 
   useEffect(() => {
     vscode.postMessage({
@@ -136,16 +187,21 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK:
           if (ignoringStreamRef.current) break;
-          appendToLastMessage(message.content);
+          // Buffer the chunk; the pump drains it to the UI at a steady rate.
+          pendingTextRef.current += message.content || '';
           setStatusText('');
           setIsLoading(false); // Stop loading animation since we're streaming now
           setIsStreaming(true);
+          startStreamPump();
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
           ignoringStreamRef.current = false;
           setStatusText('');
           setIsLoading(false);
-          setIsStreaming(false);
+          // Don't clear isStreaming yet — let the pump finish draining the
+          // buffer first, then it flips isStreaming off itself.
+          streamDoneRef.current = true;
+          startStreamPump();
           break;
         case MESSAGE_TYPES.RETRIEVAL_STATUS:
           setStatusText(message.text || '');
@@ -173,6 +229,7 @@ const App: React.FC = () => {
             userFacingError = `❌ **Error:** ${rawError}`;
           }
 
+          resetStreamBuffer();
           addMessage({
             content: userFacingError,
             isUser: false,
@@ -341,6 +398,7 @@ const App: React.FC = () => {
     // ignoringStreamRef is read synchronously in the message handler closure,
     // so this takes effect immediately even before the worker is terminated.
     ignoringStreamRef.current = true;
+    resetStreamBuffer();
 
     // Best-effort: also tell the extension host to terminate the worker.
     if (isLoading || isStreaming) {
@@ -370,6 +428,7 @@ const App: React.FC = () => {
   const handleSendMessage = () => {
     if (inputValue.trim() === '' || isLoading) return;
     ignoringStreamRef.current = false; // Accept chunks for this new request
+    resetStreamBuffer(); // Discard any leftover buffer from a prior stream
 
     // Check if model is currently downloading
     if (!selectedModelProvider?.selectedModel) {
@@ -414,6 +473,7 @@ const App: React.FC = () => {
     vscode.postMessage({
       type: MESSAGE_TYPES.STOP_MESSAGE,
     });
+    resetStreamBuffer();
     setIsLoading(false);
     setIsStreaming(false);
   };
@@ -440,6 +500,8 @@ const App: React.FC = () => {
         });
         return;
       }
+      ignoringStreamRef.current = false; // Accept chunks for this new request
+      resetStreamBuffer(); // Discard any leftover buffer from a prior stream
       let sessionId = currentSessionId;
       if (!sessionId) {
         sessionId = generateSessionId();

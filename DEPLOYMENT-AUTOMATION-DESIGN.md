@@ -227,8 +227,8 @@ new targets (GitHub App, Vercel, mach path) need setup.
 |---|---|---|---|
 | a | proxy endpoints + GitHub-App install flow + Vercel OAuth + `SecretStorage` wiring + Settings UI | nothing (fully specified) | **done** (type-checks + webview builds; needs provider registration to connect) |
 | b | `packages/release-core`: `ReleasePlan` schema + adapter interfaces + audit log | nothing | **done** (type-checks + 8 unit tests green) |
-| c | Read/extract: `ConfluenceRosterSource`, `ConfluenceReleasePageSource`, table parser | Open item #2 | not started |
-| d | Diff/apply: `VercelTarget`, `GitRepoTarget`, approval gate UI | Open items #1, #3, #4 | not started |
+| c | Read/extract: `ConfluenceRosterSource`, `ConfluenceReleasePageSource`, table parser | Open item #2 | **resolve done** — `ConfluenceReleaseSource` (`resolveRelease` wired to the Releases view; `fetchDesiredConfig` implemented with default target/env mapping pending open items #2/#3); digit-preserving `parseStorageTables` in `confluence-utils`; 14 parse assertions green |
+| d | Diff/apply: `VercelTarget`, `GitRepoTarget`, approval gate UI | Open items #1, #3, #4 | **extract/preview done** — `Prepare config sync` wired to a read-only preview (`PREPARE_CONFIG_SYNC` → `fetchDesiredConfig` → desired vars grouped by target, sensitive values masked, "nothing read or written" badge). No live reads/writes yet; diff + `VercelTarget`/`GitRepoTarget` + Plan Review/apply still pending the open items |
 | e | Hotfix flow (see §9) | after config-sync is solid | not started |
 | f | MCP action-tools + decoupling audit (no org strings in `release-core`) | after d | not started |
 

@@ -139,6 +139,8 @@ export const MESSAGE_TYPES = {
   RESOLVE_RELEASE_RESPONSE: 'resolve-release-response',
   GET_RELEASE_RUNS: 'get-release-runs',
   GET_RELEASE_RUNS_RESPONSE: 'get-release-runs-response',
+  PREPARE_CONFIG_SYNC: 'prepare-config-sync',
+  PREPARE_CONFIG_SYNC_RESPONSE: 'prepare-config-sync-response',
 
   // Vector store (Qdrant) connection test
   TEST_QDRANT_CONNECTION: 'test-qdrant-connection',

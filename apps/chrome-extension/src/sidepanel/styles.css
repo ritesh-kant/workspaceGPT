@@ -75,6 +75,17 @@ body {
   color: #ef4444;
 }
 
+.message.pending {
+  color: rgba(127, 127, 127, 0.9);
+  font-style: italic;
+  animation: pending-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pending-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
 .empty {
   color: rgba(127, 127, 127, 0.8);
   text-align: center;

@@ -6,6 +6,17 @@ import { buildChatMessages, isGreeting } from './prompt';
 export type { SourceName };
 
 /**
+ * Pass 1 already produced at least this many hits above the relevance threshold,
+ * so the second embed+search (~1–2s of extra serial round-trips) would only
+ * reorder good context, not find missing context. Skip it. Pass 2 still runs
+ * when pass 1 comes back thin (weak or empty), which is when widening helps.
+ */
+const PASS2_MIN_HITS = 3;
+
+/** Progress phases surfaced to the UI so the unavoidable network waits feel responsive. */
+export type RagStatus = 'searching' | 'searching-deeper' | 'generating';
+
+/**
  * Full browser-side RAG: classify the query, embed it with Gemini, retrieve from
  * Qdrant across the planned sources, rerank + threshold-filter the hits, then
  * stream a grounded answer from the configured LLM — all using the credentials
@@ -14,12 +25,16 @@ export type { SourceName };
  * Mirrors the VS Code extension's pipeline (queryClassifier → queryPlanner →
  * reranker → grounded prompt) so answers match. Greetings and low-relevance
  * queries retrieve no context instead of dumping nearest-neighbour noise.
+ *
+ * `onStatus` reports the current phase (the steps are sequential network hops,
+ * 1–6s total); the caller clears it when the first token streams in.
  */
 export async function* answerQuestion(
   settings: ChromeSettings,
   question: string,
   sources: SourceName[] = ['CONFLUENCE', 'ADO'],
   signal?: AbortSignal,
+  onStatus?: (status: RagStatus) => void,
 ): AsyncGenerator<string> {
   if (!isConfigured(settings)) {
     throw new Error('Not connected. Paste your share code in Settings.');
@@ -45,25 +60,28 @@ export async function* answerQuestion(
       return perSource.flat();
     };
 
+    onStatus?.('searching');
     const queryVec = await embedOne(provider, question, 'query');
-    let allResults = await search(queryVec, plan.topKPerPass);
+    const allResults = await search(queryVec, plan.topKPerPass);
 
-    // Pass 2 (semantic only): if the best pass-1 hit is weak, widen the query.
-    if (plan.maxPasses === 2 && allResults.length > 0) {
-      const bestScore = Math.max(...allResults.map((r) => r.score));
-      if (bestScore < plan.passThreshold) {
-        const enriched = expandQuery(question, allResults);
-        if (enriched !== question) {
-          const pass2Vec = await embedOne(provider, enriched, 'query');
-          allResults = [...allResults, ...(await search(pass2Vec, plan.topKPerPass))];
-        }
+    // Rerank (BM25 + cosine), dropping anything below the per-intent threshold.
+    hits = rerank(question, allResults, plan);
+
+    // Pass 2 (semantic only): only pay for the second embed+search when pass 1
+    // came back thin. If pass 1 already cleared the threshold with enough hits,
+    // widening just reorders good context — not worth the extra ~1–2s of waiting.
+    if (plan.maxPasses === 2 && hits.length < PASS2_MIN_HITS) {
+      const enriched = expandQuery(question, allResults);
+      if (enriched !== question) {
+        onStatus?.('searching-deeper');
+        const pass2Vec = await embedOne(provider, enriched, 'query');
+        const pass2Results = await search(pass2Vec, plan.topKPerPass);
+        hits = rerank(question, [...allResults, ...pass2Results], plan);
       }
     }
-
-    // Rerank (BM25 + cosine) and drop anything below the per-intent threshold.
-    hits = rerank(question, allResults, plan);
   }
 
+  onStatus?.('generating');
   const res = await fetch(`${settings.llm.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {

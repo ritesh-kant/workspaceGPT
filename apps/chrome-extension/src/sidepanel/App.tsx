@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { answerQuestion } from '../lib/ragService';
+import { answerQuestion, RagStatus } from '../lib/ragService';
 import { loadSettings } from '../lib/storage';
 import Settings from './Settings';
 
@@ -8,10 +8,17 @@ interface ChatMessage {
   content: string;
 }
 
+const STATUS_LABEL: Record<RagStatus, string> = {
+  searching: 'Searching your workspace…',
+  'searching-deeper': 'Searching more deeply…',
+  generating: 'Generating answer…',
+};
+
 const App: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<RagStatus | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -21,13 +28,22 @@ const App: React.FC = () => {
     setInput('');
     setMessages((m) => [...m, { role: 'user', content: question }, { role: 'assistant', content: '' }]);
     setBusy(true);
+    setStatus(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
       const settings = await loadSettings();
-      for await (const chunk of answerQuestion(settings, question, ['CONFLUENCE', 'ADO'], controller.signal)) {
+      for await (const chunk of answerQuestion(
+        settings,
+        question,
+        ['CONFLUENCE', 'ADO'],
+        controller.signal,
+        setStatus,
+      )) {
+        // First token arrived — retrieval/generation phase is over.
+        setStatus(null);
         setMessages((m) => {
           const next = [...m];
           next[next.length - 1] = {
@@ -47,6 +63,7 @@ const App: React.FC = () => {
       });
     } finally {
       setBusy(false);
+      setStatus(null);
       abortRef.current = null;
     }
   };
@@ -81,11 +98,21 @@ const App: React.FC = () => {
                 Ask a question about your Confluence or Azure DevOps knowledge.
               </div>
             )}
-            {messages.map((m, i) => (
-              <div key={i} className={`message ${m.role}`}>
-                {m.content || (busy && i === messages.length - 1 ? '…' : '')}
-              </div>
-            ))}
+            {messages.map((m, i) => {
+              const isLast = i === messages.length - 1;
+              if (!m.content && busy && isLast) {
+                return (
+                  <div key={i} className={`message ${m.role} pending`}>
+                    {status ? STATUS_LABEL[status] : '…'}
+                  </div>
+                );
+              }
+              return (
+                <div key={i} className={`message ${m.role}`}>
+                  {m.content}
+                </div>
+              );
+            })}
           </div>
 
           <div className='composer'>

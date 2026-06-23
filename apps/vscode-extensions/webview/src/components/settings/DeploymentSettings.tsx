@@ -38,12 +38,13 @@ const DeploymentSettings: React.FC = () => {
           clearStatusMessageAfterDelay('deployment', 'statusMessage');
           break;
         case MESSAGE_TYPES.GITHUB_INSTALL_ERROR:
+          // Errors persist (no auto-clear) so a failed connect is actually
+          // readable; the next connect attempt overwrites it.
           batchUpdateConfig('deployment', {
             isConnectingGithub: false,
             messageType: 'error',
             statusMessage: message.error || 'GitHub connection failed',
           });
-          clearStatusMessageAfterDelay('deployment', 'statusMessage');
           break;
 
         case MESSAGE_TYPES.VERCEL_CONNECTION_STATUS:
@@ -64,12 +65,12 @@ const DeploymentSettings: React.FC = () => {
           clearStatusMessageAfterDelay('deployment', 'statusMessage');
           break;
         case MESSAGE_TYPES.VERCEL_OAUTH_ERROR:
+          // Errors persist (no auto-clear); the next connect attempt clears it.
           batchUpdateConfig('deployment', {
             isConnectingVercel: false,
             messageType: 'error',
             statusMessage: message.error || 'Vercel connection failed',
           });
-          clearStatusMessageAfterDelay('deployment', 'statusMessage');
           break;
 
         case MESSAGE_TYPES.TEST_DEPLOYMENT_CONNECTIONS_RESULT:
@@ -189,6 +190,23 @@ const DeploymentSettings: React.FC = () => {
             Chrome share code.
           </p>
 
+          <div className="form-group" style={{ marginBottom: '14px' }}>
+            <label style={{ fontWeight: 500, display: 'block', marginBottom: '4px' }}>
+              Release Roster page
+            </label>
+            <input
+              type="text"
+              value={dep.rosterPageUrl || ''}
+              placeholder="https://your-site.atlassian.net/wiki/spaces/REL/pages/123456/Roster"
+              onChange={(e) => updateConfig('deployment', 'rosterPageUrl', e.target.value)}
+              style={{ width: '100%' }}
+            />
+            <div style={{ fontSize: '0.8em', color: '#888', marginTop: '4px' }}>
+              Confluence page mapping each date → release version. Used to resolve “today’s
+              release”. Requires Confluence connected under Settings → Confluence.
+            </div>
+          </div>
+
           {renderProvider(
             'GitHub App',
             'mach PRs, tags & releases',
@@ -218,8 +236,23 @@ const DeploymentSettings: React.FC = () => {
           </button>
 
           {dep.statusMessage && (
-            <div className={`status-message ${dep.messageType === 'success' ? 'success' : 'error'}`}>
-              {dep.statusMessage}
+            <div
+              className={`status-message ${dep.messageType === 'success' ? 'success' : 'error'}`}
+              style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}
+            >
+              <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{dep.statusMessage}</span>
+              {dep.messageType === 'error' && (
+                <button
+                  onClick={() => updateConfig('deployment', 'statusMessage', '')}
+                  aria-label="Dismiss"
+                  style={{
+                    background: 'none', border: 'none', color: 'inherit',
+                    cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: '1.1em', flexShrink: 0,
+                  }}
+                >
+                  ✕
+                </button>
+              )}
             </div>
           )}
         </div>
