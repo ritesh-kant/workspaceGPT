@@ -381,9 +381,9 @@ export const GITHUB_APP = {
  *   - Redirect URL: http://127.0.0.1:32326/callback
  */
 export const VERCEL_OAUTH = {
-  CLIENT_ID: 'REPLACE_WITH_VERCEL_INTEGRATION_CLIENT_ID',
+  CLIENT_ID: 'oac_HBVNdJktT9K9b7IJDEf3D1Kv',
   // Integration slug from vercel.com/integrations/<slug>.
-  INTEGRATION_SLUG: 'REPLACE_WITH_VERCEL_INTEGRATION_SLUG',
+  INTEGRATION_SLUG: 'workspacegpt-deploy',
   AUTH_BASE_URL: 'https://vercel.com/integrations',
   TOKEN_PROXY_URL:
     'https://workspace-gpt-confluence-auth-proxy.vercel.app/api/vercel/token',
