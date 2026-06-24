@@ -149,8 +149,11 @@
     "vscode:prepublish": "pnpm run download-models && pnpm run build",
     "build": "pnpm build-webview && node esbuild.config.js",
     "watch": "pnpm watch-webview && node esbuild.config.js --watch",
+    "vscode:package": "vsce package --no-dependencies",
     "vscode:publish": "vsce publish --no-dependencies && pnpm create-tag",
     "vscode:publish-pre-release": "vsce publish --no-dependencies --pre-release && pnpm create-tag",
+    "vscode:publish-ovsx": "ovsx publish workspacegpt-extension-${npm_package_version}.vsix --no-dependencies -p $OVSX_TOKEN",
+    "vscode:publish-all": "pnpm run vscode:package && vsce publish --packagePath workspacegpt-extension-${npm_package_version}.vsix --no-dependencies && pnpm run vscode:publish-ovsx && pnpm create-tag",
     "vscode:test": "vsce package --no-dependencies && code --install-extension workspacegpt-extension-${npm_package_version}.vsix",
     "build-webview": "cd webview && pnpm install --ignore-workspace && pnpm run build",
     "lint": "eslint src --ext ts",
@@ -181,6 +184,7 @@
     "@typescript-eslint/parser": "^6.15.0",
     "esbuild": "^0.20.1",
     "eslint": "^8.56.0",
+    "ovsx": "^0.10.1",
     "typescript": "^5.3.3"
   },
   "preview": false

@@ -83,6 +83,29 @@ pnpm run dev
 - `pnpm run lint` - Run ESLint
 - `pnpm run test` - Run test suite
 
+## 📦 Publishing
+
+The extension is distributed through two registries:
+
+- **VS Code Marketplace** (`vsce`) — used by Microsoft VS Code.
+- **Open VSX** (`ovsx`) — used by VS Code forks such as **Antigravity**, Cursor, Windsurf, and VSCodium. The Microsoft Marketplace cannot be used by these forks, so the extension must be on Open VSX to be discoverable there.
+
+Commands:
+
+- `pnpm run vscode:package` — build and package a `.vsix`.
+- `pnpm run vscode:publish` — publish to the VS Code Marketplace only.
+- `pnpm run vscode:publish-ovsx` — publish the packaged `.vsix` to Open VSX (requires `OVSX_TOKEN`).
+- `pnpm run vscode:publish-all` — package once and publish the **same** artifact to both registries, then tag the release.
+
+Setup for Open VSX (one-time): create a publisher namespace matching `Riteshkant` at [open-vsx.org](https://open-vsx.org), generate an access token, and export it before publishing:
+
+```bash
+export OVSX_TOKEN=ovsxat_57055b5c-fd39-432b-85cb-49b940395cb7
+pnpm run vscode:publish-all
+```
+
+> Manual install (any fork): `pnpm run vscode:package`, then use the IDE's **Install from VSIX** action.
+
 ## 📄 License
 
 This software is proprietary. See the [LICENSE.md](LICENSE.md) file for more details.
