@@ -141,6 +141,12 @@ export const MESSAGE_TYPES = {
   GET_RELEASE_RUNS_RESPONSE: 'get-release-runs-response',
   PREPARE_CONFIG_SYNC: 'prepare-config-sync',
   PREPARE_CONFIG_SYNC_RESPONSE: 'prepare-config-sync-response',
+  GET_VERCEL_PROJECTS: 'get-vercel-projects',
+  GET_VERCEL_PROJECTS_RESPONSE: 'get-vercel-projects-response',
+  PLAN_CONFIG_SYNC: 'plan-config-sync',
+  PLAN_CONFIG_SYNC_RESPONSE: 'plan-config-sync-response',
+  APPLY_CONFIG_SYNC: 'apply-config-sync',
+  APPLY_CONFIG_SYNC_RESPONSE: 'apply-config-sync-response',
 
   // Vector store (Qdrant) connection test
   TEST_QDRANT_CONNECTION: 'test-qdrant-connection',

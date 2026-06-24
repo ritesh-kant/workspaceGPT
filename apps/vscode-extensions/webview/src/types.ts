@@ -102,6 +102,14 @@ export interface DeploymentConfig {
   githubInstallationId?: string;
   vercelConnected: boolean;
   vercelTeamId?: string;
+  /** Vercel project (config-sync target) chosen from the live project list. */
+  vercelProjectId?: string;
+  vercelProjectName?: string;
+  /** Maps the release environment to a Vercel environment (e.g. preview/production). */
+  vercelEnvStage?: string;
+  vercelEnvProd?: string;
+  /** Split a variable shared across envs into a per-env record instead of updating all linked envs. */
+  vercelPerEnvValues?: boolean;
   isConnectingGithub: boolean;
   isConnectingVercel: boolean;
   isTesting: boolean;

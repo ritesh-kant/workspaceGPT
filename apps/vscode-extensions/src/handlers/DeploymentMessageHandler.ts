@@ -5,6 +5,15 @@ import { GitHubOAuthService } from '../services/deployment/githubOAuthService';
 import { VercelAuthService } from '../services/deployment/vercelAuthService';
 import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
 import { ConfluenceReleaseSource } from '../services/deployment/confluenceReleaseSource';
+import * as path from 'path';
+import { VercelTarget, OPAQUE_VALUE } from '../services/deployment/vercelTarget';
+import {
+  buildPlan,
+  applicableChanges,
+  hasUnresolvedConflicts,
+  FileAuditLog,
+  type ConfigVarDiff,
+} from '@workspace-gpt/release-core';
 
 /**
  * Handles the deployment-automation provider connections (GitHub App + Vercel)
@@ -66,6 +75,10 @@ export class DeploymentMessageHandler {
         await this.postVercelStatus();
         return true;
 
+      case MESSAGE_TYPES.GET_VERCEL_PROJECTS:
+        await this.handleGetVercelProjects();
+        return true;
+
       case MESSAGE_TYPES.TEST_DEPLOYMENT_CONNECTIONS:
         await this.handleTestConnections();
         return true;
@@ -80,8 +93,21 @@ export class DeploymentMessageHandler {
         this.analyticsService.trackEvent('config_sync_prepared');
         await this.handlePrepareConfigSync(data);
         return true;
+      case MESSAGE_TYPES.PLAN_CONFIG_SYNC:
+        this.analyticsService.trackEvent('config_sync_planned');
+        await this.handlePlanConfigSync(data);
+        return true;
+      case MESSAGE_TYPES.APPLY_CONFIG_SYNC:
+        this.analyticsService.trackEvent('config_sync_applied');
+        await this.handleApplyConfigSync(data);
+        return true;
     }
     return false;
+  }
+
+  /** JSONL audit log for config-sync runs, under the extension's global storage. */
+  private auditLog(): FileAuditLog {
+    return new FileAuditLog(path.join(this.context.globalStorageUri.fsPath, 'deployment-runs.jsonl'));
   }
 
   /**
@@ -131,9 +157,25 @@ export class DeploymentMessageHandler {
     }
   }
 
-  /** Recent release runs from the audit log. Empty until the apply flow exists. */
+  /** Recent config-sync runs, newest first, from the per-run audit summaries. */
   private async handleGetReleaseRuns(): Promise<void> {
-    this.post(MESSAGE_TYPES.GET_RELEASE_RUNS_RESPONSE, { runs: [] });
+    try {
+      const entries = await this.auditLog().list();
+      const runs = entries
+        .filter((e) => !e.key && (e.action === 'applied' || e.action === 'failed')) // run summaries
+        .slice(-10)
+        .reverse()
+        .map((e) => ({
+          release: e.release,
+          environment: e.environment,
+          status: e.action as 'applied' | 'failed',
+          at: e.at,
+          detail: e.detail,
+        }));
+      this.post(MESSAGE_TYPES.GET_RELEASE_RUNS_RESPONSE, { runs });
+    } catch {
+      this.post(MESSAGE_TYPES.GET_RELEASE_RUNS_RESPONSE, { runs: [] });
+    }
   }
 
   /**
@@ -167,6 +209,177 @@ export class DeploymentMessageHandler {
         version,
         environment,
         vars,
+      });
+    } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
+  /**
+   * Compute a read-only plan for the Vercel half of a release: parse desired
+   * config, read live Vercel env vars for the mapped environment, and diff. No
+   * writes. mach-targeted vars are returned as `skipped` (their GitRepoTarget
+   * doesn't exist yet) rather than mis-classified as `add`.
+   */
+  private async handlePlanConfigSync(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.PLAN_CONFIG_SYNC_RESPONSE, { ok: false, error });
+
+    try {
+      const version: string | undefined = data?.version;
+      const environment: string = data?.environment || 'stage';
+      if (!version) return fail('No release version to plan. Resolve a release first.');
+
+      const { plan, target, vercelEnv, skipped, perEnvValues } = await this.buildVercelPlan(
+        version,
+        environment,
+      );
+
+      // When values are opaque (integration tokens can't decrypt), a present var
+      // surfaces as an opaque update rather than a (meaningless) ciphertext diff.
+      // Annotate vars whose live record is shared across environments so the UI
+      // can show whether the change updates all of them or splits per-env.
+      const valuesOpaque = !target.valuesDecrypted;
+      const configVars = plan.configVars.map((r) => {
+        const out: any = r.current === OPAQUE_VALUE ? { ...r, current: null, opaque: true } : { ...r };
+        const linkedEnvs = target.linkedEnvCount(r.key);
+        if (linkedEnvs > 1) {
+          out.linkedEnvs = linkedEnvs;
+          out.willSplit = perEnvValues;
+        }
+        return out;
+      });
+
+      this.post(MESSAGE_TYPES.PLAN_CONFIG_SYNC_RESPONSE, {
+        ok: true,
+        plan: { ...plan, configVars },
+        skipped,
+        vercelEnv,
+        valuesOpaque,
+        perEnvValues,
+      });
+    } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
+  /**
+   * Shared read-only plan builder for the Vercel half: validate connections +
+   * settings, parse desired config, read live Vercel state, diff. Throws with an
+   * actionable message on any gap. Used by both plan (preview) and apply.
+   */
+  private async buildVercelPlan(version: string, environment: string) {
+    const connected =
+      (await this.confluenceAuth.isAuthenticated()) && !!this.confluenceAuth.getStoredSite();
+    if (!connected) throw new Error('Connect Confluence (Settings → Confluence) first.');
+    if (!(await this.vercelAuth.isConnected())) throw new Error('Connect Vercel first.');
+
+    const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    const dep = settings?.state?.config?.deployment ?? {};
+    const projectId: string = dep.vercelProjectId ?? '';
+    if (!projectId) throw new Error('Select a Vercel project in Settings → Deployment Automation.');
+
+    const vercelEnv: string =
+      environment === 'prod'
+        ? dep.vercelEnvProd || 'production'
+        : dep.vercelEnvStage || 'preview';
+
+    const source = new ConfluenceReleaseSource(this.confluenceAuth, {
+      rosterPageUrl: dep.rosterPageUrl ?? '',
+    });
+    const desired = await source.fetchDesiredConfig(version, environment);
+
+    const vercelDesired = desired.filter((v) => v.target === 'vercel');
+    const skipped = desired
+      .filter((v) => v.target !== 'vercel')
+      .map((v) => ({ key: v.key, target: v.target }));
+
+    const perEnvValues = !!dep.vercelPerEnvValues;
+    const target = new VercelTarget(this.vercelAuth, { projectId, vercelEnv, perEnvValues });
+    const plan = await buildPlan({
+      release: version,
+      environment,
+      desired: vercelDesired,
+      targets: [target],
+      now: new Date().toISOString(),
+      source: `Vercel project ${dep.vercelProjectName || projectId} · ${vercelEnv}`,
+    });
+
+    return { plan, target, vercelEnv, skipped, perEnvValues };
+  }
+
+  /**
+   * Apply the approved changes to Vercel. Recomputes the plan server-side (never
+   * trusts a client-supplied diff), refuses if any conflict is unresolved, then
+   * applies only add/update rows — optionally narrowed to `keys` (Retry failed).
+   * Idempotent; every outcome is written to the audit log.
+   */
+  private async handleApplyConfigSync(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.APPLY_CONFIG_SYNC_RESPONSE, { ok: false, error });
+
+    try {
+      const version: string | undefined = data?.version;
+      const environment: string = data?.environment || 'stage';
+      const onlyKeys: string[] | undefined = Array.isArray(data?.keys) ? data.keys : undefined;
+      if (!version) return fail('No release version to apply.');
+
+      const { plan, target } = await this.buildVercelPlan(version, environment);
+
+      if (hasUnresolvedConflicts(plan.configVars)) {
+        return fail('Plan has unresolved conflicts — resolve them before applying.');
+      }
+
+      let changes: ConfigVarDiff[] = applicableChanges(plan.configVars);
+      if (onlyKeys) changes = changes.filter((c) => onlyKeys.includes(c.key));
+      if (changes.length === 0) {
+        this.post(MESSAGE_TYPES.APPLY_CONFIG_SYNC_RESPONSE, {
+          ok: true,
+          results: [],
+          summary: { applied: 0, failed: 0, total: 0 },
+          version,
+          environment,
+        });
+        return;
+      }
+
+      const results = await target.apply(environment, changes);
+      const applied = results.filter((r) => r.status === 'applied').length;
+      const failed = results.filter((r) => r.status === 'failed').length;
+
+      // Audit: one entry per variable, plus a single run summary (no `key`).
+      const audit = this.auditLog();
+      const at = new Date().toISOString();
+      const actor = this.context.globalState.get<string>('userEmail') || undefined;
+      await Promise.all(
+        results.map((r) =>
+          audit.record({
+            at,
+            release: version,
+            environment,
+            action: r.status === 'applied' ? 'applied' : r.status === 'failed' ? 'failed' : 'skipped',
+            target: r.target,
+            key: r.key,
+            detail: r.error,
+            actor,
+          }),
+        ),
+      );
+      await audit.record({
+        at,
+        release: version,
+        environment,
+        action: failed > 0 ? 'failed' : 'applied',
+        actor,
+        detail: `${applied}/${results.length} applied${failed ? `, ${failed} failed` : ''}`,
+      });
+
+      this.post(MESSAGE_TYPES.APPLY_CONFIG_SYNC_RESPONSE, {
+        ok: true,
+        results,
+        summary: { applied, failed, total: results.length },
+        version,
+        environment,
       });
     } catch (error) {
       fail(errMessage(error));
@@ -217,6 +430,35 @@ export class DeploymentMessageHandler {
       teamId: tokens?.teamId,
       connectedAt: tokens?.connectedAt,
     });
+  }
+
+  /**
+   * List the connected account's Vercel projects so the user can pick the
+   * config-sync target from a dropdown (rather than typing an id). Scoped by the
+   * integration's team when present.
+   */
+  private async handleGetVercelProjects(): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.GET_VERCEL_PROJECTS_RESPONSE, { ok: false, error });
+
+    try {
+      if (!(await this.vercelAuth.isConnected())) return fail('Connect Vercel first.');
+      const token = await this.vercelAuth.getValidAccessToken();
+      const tokens = await this.vercelAuth.getStoredTokens();
+
+      const url = new URL('https://api.vercel.com/v9/projects');
+      url.searchParams.set('limit', '100');
+      if (tokens?.teamId) url.searchParams.set('teamId', tokens.teamId);
+
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return fail(`Vercel API ${res.status}`);
+
+      const data: any = await res.json();
+      const projects = (data?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name }));
+      this.post(MESSAGE_TYPES.GET_VERCEL_PROJECTS_RESPONSE, { ok: true, projects });
+    } catch (error) {
+      fail(errMessage(error));
+    }
   }
 
   // --- Test all connections ---

@@ -77,6 +77,11 @@ export const settingsDefaultConfig: SettingsConfig = {
   deployment: {
     isDeploymentEnabled: false,
     rosterPageUrl: '',
+    vercelProjectId: '',
+    vercelProjectName: '',
+    vercelEnvStage: 'preview',
+    vercelEnvProd: 'production',
+    vercelPerEnvValues: false,
     githubConnected: false,
     vercelConnected: false,
     isConnectingGithub: false,

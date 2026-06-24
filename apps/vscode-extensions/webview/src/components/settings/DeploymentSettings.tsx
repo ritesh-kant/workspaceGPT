@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../store';
 import { VSCodeAPI } from '../../vscode';
 import { clearStatusMessageAfterDelay } from './utils';
@@ -15,6 +15,10 @@ const DeploymentSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
   const vscode = VSCodeAPI();
   const dep = config.deployment || ({} as DeploymentConfig);
+
+  const [vercelProjects, setVercelProjects] = useState<{ id: string; name: string }[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [projectsError, setProjectsError] = useState<string | undefined>();
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -79,6 +83,16 @@ const DeploymentSettings: React.FC = () => {
             testResults: message.results || {},
           });
           break;
+
+        case MESSAGE_TYPES.GET_VERCEL_PROJECTS_RESPONSE:
+          setProjectsLoading(false);
+          if (message.ok) {
+            setVercelProjects(message.projects || []);
+            setProjectsError(undefined);
+          } else {
+            setProjectsError(message.error || 'Failed to load Vercel projects');
+          }
+          break;
       }
     };
     window.addEventListener('message', handleMessage);
@@ -92,6 +106,19 @@ const DeploymentSettings: React.FC = () => {
       vscode.postMessage({ type: MESSAGE_TYPES.CHECK_VERCEL_CONNECTION });
     }
   }, [dep.isDeploymentEnabled]);
+
+  const loadVercelProjects = () => {
+    setProjectsLoading(true);
+    setProjectsError(undefined);
+    vscode.postMessage({ type: MESSAGE_TYPES.GET_VERCEL_PROJECTS });
+  };
+
+  // Populate the project dropdown once Vercel is connected.
+  useEffect(() => {
+    if (dep.isDeploymentEnabled && dep.vercelConnected) {
+      loadVercelProjects();
+    }
+  }, [dep.isDeploymentEnabled, dep.vercelConnected]);
 
   const connectGithub = () => {
     batchUpdateConfig('deployment', {
@@ -225,6 +252,95 @@ const DeploymentSettings: React.FC = () => {
             connectVercel,
             disconnectVercel,
             'vercel',
+          )}
+
+          {dep.vercelConnected && (
+            <div
+              className="form-group"
+              style={{ margin: '4px 0 14px', paddingLeft: 10, borderLeft: '2px solid #2a2a3e' }}
+            >
+              <label style={{ fontWeight: 500, display: 'block', marginBottom: '4px' }}>
+                Vercel project
+              </label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select
+                  value={dep.vercelProjectId || ''}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const name = vercelProjects.find((p) => p.id === id)?.name || '';
+                    batchUpdateConfig('deployment', { vercelProjectId: id, vercelProjectName: name });
+                  }}
+                  disabled={projectsLoading || vercelProjects.length === 0}
+                  style={{ flex: 1 }}
+                >
+                  <option value="">
+                    {projectsLoading
+                      ? 'Loading projects…'
+                      : vercelProjects.length === 0
+                        ? 'No projects found'
+                        : 'Select a project…'}
+                  </option>
+                  {vercelProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={loadVercelProjects} disabled={projectsLoading} title="Refresh project list">
+                  ↻
+                </button>
+              </div>
+              {projectsError && (
+                <div style={{ fontSize: '0.8em', color: '#e74c3c', marginTop: 4 }}>{projectsError}</div>
+              )}
+
+              <label style={{ fontWeight: 500, display: 'block', margin: '12px 0 4px' }}>
+                Environment mapping
+              </label>
+              <div style={{ fontSize: '0.8em', color: '#888', marginBottom: 6 }}>
+                Which Vercel environment each release environment writes to (e.g. <code>preview</code>,{' '}
+                <code>production</code>, or a custom environment name).
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>stage →</div>
+                  <input
+                    type="text"
+                    value={dep.vercelEnvStage ?? ''}
+                    placeholder="preview"
+                    onChange={(e) => updateConfig('deployment', 'vercelEnvStage', e.target.value)}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>prod →</div>
+                  <input
+                    type="text"
+                    value={dep.vercelEnvProd ?? ''}
+                    placeholder="production"
+                    onChange={(e) => updateConfig('deployment', 'vercelEnvProd', e.target.value)}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={!!dep.vercelPerEnvValues}
+                  onChange={(e) => updateConfig('deployment', 'vercelPerEnvValues', e.target.checked)}
+                  style={{ marginTop: 3 }}
+                />
+                <span style={{ fontSize: '0.82em' }}>
+                  Per-environment values
+                  <div style={{ fontSize: '0.92em', color: '#888' }}>
+                    When a variable is shared across multiple environments, split it into a dedicated
+                    record for this environment instead of updating all linked environments. Otherwise
+                    an update changes the value everywhere it's linked.
+                  </div>
+                </span>
+              </label>
+            </div>
           )}
 
           <button
