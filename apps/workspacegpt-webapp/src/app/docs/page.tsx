@@ -166,7 +166,7 @@ export default function DocsPage() {
             </div>
             <SectionTitle>WorkspaceGPT Extension Docs</SectionTitle>
             <SectionSubtitle>
-              Everything you need to install, configure, and get the most out of WorkspaceGPT inside VS Code or Cursor.
+              Everything you need to install, configure, and get the most out of WorkspaceGPT inside VS Code, Cursor, or Antigravity.
             </SectionSubtitle>
 
             <div className="grid sm:grid-cols-3 gap-4">
@@ -186,11 +186,11 @@ export default function DocsPage() {
           <SectionAnchor id="installation" />
           <section className="mb-16">
             <SectionTitle>Installation</SectionTitle>
-            <SectionSubtitle>Available in the VS Code and Cursor marketplaces.</SectionSubtitle>
+            <SectionSubtitle>Available in the VS Code and Cursor marketplaces, and on Open VSX for Antigravity.</SectionSubtitle>
 
             <div className="space-y-0">
               <Step number={1} title="Via Extensions Marketplace">
-                <p>Open VS Code or Cursor and navigate to the Extensions view:</p>
+                <p>Open VS Code, Cursor, or Antigravity and navigate to the Extensions view:</p>
                 <p>
                   <kbd className="bg-white/10 text-slate-200 px-2 py-0.5 rounded text-xs font-mono">Ctrl+Shift+X</kbd>
                   {" "}&nbsp;or{" "}&nbsp;
@@ -212,6 +212,16 @@ export default function DocsPage() {
                     VS Code Marketplace page
                   </a>{" "}
                   and click <strong className="text-white">Install</strong>.
+                </p>
+              </Step>
+
+              <Step number={4} title="On Antigravity (or other VS Code forks)">
+                <p>
+                  Antigravity, Windsurf, and VSCodium install from{" "}
+                  <a href="https://open-vsx.org/extension/Riteshkant/workspacegpt-extension" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                    Open VSX
+                  </a>{" "}
+                  instead of the Microsoft Marketplace. Search <strong className="text-white">WorkspaceGPT</strong> in the Extensions view, or open the Open VSX page and click <strong className="text-white">Download</strong>.
                 </p>
               </Step>
             </div>

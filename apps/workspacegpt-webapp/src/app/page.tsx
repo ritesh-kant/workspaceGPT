@@ -7,10 +7,12 @@ import { useState } from "react";
 export default function Home() {
   const [showVSCodeOpenedMessage, setShowVSCodeOpenedMessage] = useState(false);
   const [showCursorOpenedMessage, setShowCursorOpenedMessage] = useState(false);
+  const [showAntigravityOpenedMessage, setShowAntigravityOpenedMessage] = useState(false);
   const [showInstallModal, setShowInstallModal] = useState(false);
 
   const [showFallbackLink, setShowFallbackLink] = useState(false);
   const [showCursorFallbackLink, setShowCursorFallbackLink] = useState(false);
+  const [showAntigravityFallbackLink, setShowAntigravityFallbackLink] = useState(false);
 
   const openInstallModal = () => setShowInstallModal(true);
   const closeInstallModal = () => setShowInstallModal(false);
@@ -29,6 +31,18 @@ export default function Home() {
     setShowCursorFallbackLink(true);
     setShowInstallModal(false);
     setTimeout(() => setShowCursorOpenedMessage(false), 5000);
+  };
+
+  const openAntigravity = () => {
+    // Antigravity is a VS Code fork; the IDE registers the "antigravity-ide" protocol
+    // (the bare "antigravity" scheme belongs to the separate Antigravity agent app).
+    // It resolves the extension from Open VSX (not the MS Marketplace). If the protocol
+    // handler isn't registered, the fallback link below points to the Open VSX page.
+    window.open('antigravity-ide:extension/Riteshkant.workspacegpt-extension');
+    setShowAntigravityOpenedMessage(true);
+    setShowAntigravityFallbackLink(true);
+    setShowInstallModal(false);
+    setTimeout(() => setShowAntigravityOpenedMessage(false), 5000);
   };
 
   return (
@@ -80,6 +94,23 @@ export default function Home() {
                   Install
                 </button>
               </div>
+
+              <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-white/10 transition-all duration-300">
+                <div className="flex items-center gap-4">
+                  <div className="bg-slate-800 p-2 rounded-lg border border-white/5 flex items-center justify-center" style={{ width: 44, height: 44 }}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-brand">
+                      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
+                      <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
+                      <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+                      <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+                    </svg>
+                  </div>
+                  <span className="font-semibold text-white">Antigravity</span>
+                </div>
+                <button onClick={openAntigravity} className="bg-brand-blue hover:bg-blue-500 text-white font-medium py-2 px-5 rounded-lg transition-colors text-sm">
+                  Install
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -104,6 +135,16 @@ export default function Home() {
                 {showCursorFallbackLink && (
                 <p className="mt-2 text-xs">
                     <a href="https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Or open directly in browser →</a>
+                </p>
+                )}
+            </div>
+            )}
+            {showAntigravityOpenedMessage && (
+            <div className="bg-slate-800/90 backdrop-blur border border-brand/30 text-white px-6 py-4 rounded-xl shadow-2xl text-center">
+                <p className="text-sm">Attempting to open WorkspaceGPT in Antigravity. Please ensure Antigravity is installed.</p>
+                {showAntigravityFallbackLink && (
+                <p className="mt-2 text-xs">
+                    <a href="https://open-vsx.org/extension/Riteshkant/workspacegpt-extension" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Or install from Open VSX →</a>
                 </p>
                 )}
             </div>
@@ -265,7 +306,7 @@ export default function Home() {
                     <h3 className="text-2xl font-semibold text-white">Installation</h3>
                   </div>
                   <div className="pl-12 space-y-4 text-slate-300">
-                    <p>WorkspaceGPT is available directly through the marketplace. Install it for VS Code or Cursor.</p>
+                    <p>WorkspaceGPT is available directly through the marketplace. Install it for VS Code, Cursor, or Antigravity.</p>
                     <div className="bg-slate-900 border border-white/10 rounded-xl p-4 font-mono text-sm text-brand-blue flex justify-between items-center">
                       <span>ext install Riteshkant.workspacegpt-extension</span>
                       <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>

@@ -100,7 +100,7 @@ Commands:
 Setup for Open VSX (one-time): create a publisher namespace matching `Riteshkant` at [open-vsx.org](https://open-vsx.org), generate an access token, and export it before publishing:
 
 ```bash
-export OVSX_TOKEN=ovsxat_57055b5c-fd39-432b-85cb-49b940395cb7
+export OVSX_TOKEN=<token>
 pnpm run vscode:publish-all
 ```
 
