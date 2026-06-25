@@ -163,11 +163,13 @@ export class MachSyncTarget {
   }
 
   /**
-   * Trigger the sync workflow. Returns immediately after the dispatch is
-   * accepted and the new run is located (the PR appears ~5 min later — poll with
-   * {@link findPullRequest}). Never auto-merges to stage.
+   * Dispatch the sync workflow. `workflow_dispatch` returns 204 with no run id
+   * and the run takes a few seconds to register, so we do NOT block on finding
+   * it — we return the workflow id + dispatch time and a best-effort `run` (often
+   * null right after dispatch). The caller polls {@link findRun} →
+   * {@link findPullRequest} from there. Never auto-merges to stage.
    */
-  async triggerSync(sinceIso: string): Promise<MachRunRef> {
+  async dispatchSync(sinceIso: string): Promise<{ workflowId: number; run: MachRunRef | null }> {
     const headers = await this.headers();
     const id = await this.resolveWorkflowId();
 
@@ -193,12 +195,9 @@ export class MachSyncTarget {
       throw new Error(`workflow_dispatch failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
     }
 
-    // Dispatch returns 204 with no run id — find the run we just created.
+    // Best-effort: the run usually isn't queryable yet; null is expected here.
     const run = await this.findRun(id, sinceIso);
-    if (!run) {
-      throw new Error('Dispatch accepted, but the run did not appear yet. Check the Actions tab and retry status.');
-    }
-    return run;
+    return { workflowId: id, run };
   }
 
   /** Find the workflow run created on/after `sinceIso` (a few tries, short waits). */

@@ -592,7 +592,7 @@ export class DeploymentMessageHandler {
       const { target, opts } = await this.buildMachTarget(environment, data?.overrides);
 
       const at = new Date().toISOString();
-      const run = await target.triggerSync(at);
+      const { workflowId, run } = await target.dispatchSync(at);
 
       const actor = this.context.globalState.get<string>('userEmail') || undefined;
       await this.auditLog().record({
@@ -602,7 +602,7 @@ export class DeploymentMessageHandler {
         action: 'applied',
         target: 'mach',
         actor,
-        detail: `dispatched sync ${opts.from}→${opts.to} (run ${run.runId})`,
+        detail: `dispatched sync ${opts.from}→${opts.to}${run ? ` (run ${run.runId})` : ''}`,
       });
 
       this.post(MESSAGE_TYPES.APPLY_MACH_SYNC_RESPONSE, {
@@ -611,6 +611,8 @@ export class DeploymentMessageHandler {
         from: opts.from,
         to: opts.to,
         brand: opts.brand,
+        workflowId,
+        dispatchedAt: at,
         run,
       });
     } catch (error) {
@@ -627,13 +629,19 @@ export class DeploymentMessageHandler {
       this.post(MESSAGE_TYPES.CHECK_MACH_RUN_RESPONSE, { ok: false, error });
     try {
       const runId: number | undefined = data?.runId;
+      const workflowId: number | undefined = data?.workflowId;
+      const dispatchedAt: string | undefined = data?.dispatchedAt;
       const environment: string = data?.environment || 'stage';
-      if (!runId) return fail('No run id to check.');
+      if (!runId && !dispatchedAt) return fail('Nothing to check yet.');
       const { target } = await this.buildMachTarget(environment, data?.overrides);
 
-      const status = await target.getRunStatus(runId);
-      const pr = await target.findPullRequest(runId);
-      this.post(MESSAGE_TYPES.CHECK_MACH_RUN_RESPONSE, { ok: true, run: status, pr });
+      // Once we have a run id, query it directly; until then, keep trying to
+      // locate the run created by our dispatch (the 204 gives us no id).
+      const run = runId
+        ? await target.getRunStatus(runId)
+        : await target.findRun(workflowId, dispatchedAt!);
+      const pr = run ? await target.findPullRequest(run.runId) : null;
+      this.post(MESSAGE_TYPES.CHECK_MACH_RUN_RESPONSE, { ok: true, run: run ?? null, pr });
     } catch (error) {
       fail(errMessage(error));
     }

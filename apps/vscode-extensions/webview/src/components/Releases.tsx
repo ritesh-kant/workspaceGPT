@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './Settings.css';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
@@ -335,12 +335,17 @@ interface MachPull {
 
 interface MachApplyState {
   loading: boolean;
-  run?: MachRun;
+  run?: MachRun | null;
   pr?: MachPull | null;
+  /** Workflow id + dispatch time, used to locate the run before it has an id. */
+  workflowId?: number;
+  dispatchedAt?: string;
   /** Captured trigger context so polling rebuilds the same target. */
   ctx?: { environment: string; from: string; to: string; brand: string };
   error?: string;
 }
+
+const MACH_POLL_SECONDS = 20;
 
 const MACH_ACTION_COLOR: Record<MachAction, string> = {
   update: '#e0a93b',
@@ -444,6 +449,10 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const [apply, setApply] = useState<ApplyState | null>(null);
   const [machPlan, setMachPlan] = useState<MachPlanState | null>(null);
   const [machApply, setMachApply] = useState<MachApplyState | null>(null);
+  const [machCountdown, setMachCountdown] = useState(MACH_POLL_SECONDS);
+  // Latest apply state, so the poll interval reads current ids without resubscribing.
+  const machApplyRef = useRef<MachApplyState | null>(null);
+  machApplyRef.current = machApply;
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideVersion, setOverrideVersion] = useState('');
   const [overrideEnv, setOverrideEnv] = useState('stage');
@@ -519,8 +528,10 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
           if (message.ok) {
             setMachApply({
               loading: false,
-              run: message.run,
+              run: message.run ?? null,
               pr: null,
+              workflowId: message.workflowId,
+              dispatchedAt: message.dispatchedAt,
               ctx: {
                 environment: message.environment,
                 from: message.from,
@@ -559,25 +570,48 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
     }
   }, [isVisible]);
 
-  // Poll a triggered mach run until its PR appears or the run ends (~5 min).
-  const machRunId = machApply?.run?.runId;
+  // One status check: query by run id once known, else locate the run from the
+  // dispatch. Reads the ref so it stays current inside the interval closure.
+  const sendMachCheck = () => {
+    const m = machApplyRef.current;
+    if (!m || m.error) return;
+    vscode.postMessage({
+      type: MESSAGE_TYPES.CHECK_MACH_RUN,
+      runId: m.run?.runId,
+      workflowId: m.workflowId,
+      dispatchedAt: m.dispatchedAt,
+      environment: m.ctx?.environment || 'stage',
+      overrides: m.ctx ? { from: m.ctx.from, to: m.ctx.to, brand: m.ctx.brand } : undefined,
+    });
+  };
+
+  const recheckMach = () => {
+    setMachCountdown(MACH_POLL_SECONDS);
+    sendMachCheck();
+  };
+
+  // Poll a triggered mach run until its PR appears or the run completes (~5 min),
+  // ticking a 1s countdown so the user sees when the next check fires.
   const machHasPr = !!machApply?.pr;
-  const machRunDone =
-    machApply?.run?.status === 'completed' || machApply?.run?.status === 'failure';
+  const machRunCompleted = machApply?.run?.status === 'completed';
+  const machPollActive =
+    !!machApply && !machApply.loading && !machApply.error && !machHasPr && !machRunCompleted;
+  const machRunId = machApply?.run?.runId;
   useEffect(() => {
-    if (!machRunId || machHasPr || (machRunDone && machHasPr)) return;
-    const ctx = machApply?.ctx;
-    const tick = () =>
-      vscode.postMessage({
-        type: MESSAGE_TYPES.CHECK_MACH_RUN,
-        runId: machRunId,
-        environment: ctx?.environment || 'stage',
-        overrides: ctx ? { from: ctx.from, to: ctx.to, brand: ctx.brand } : undefined,
+    if (!machPollActive) return;
+    setMachCountdown(MACH_POLL_SECONDS);
+    sendMachCheck(); // check straight away (the run may already be queryable)
+    const id = setInterval(() => {
+      setMachCountdown((c) => {
+        if (c <= 1) {
+          sendMachCheck();
+          return MACH_POLL_SECONDS;
+        }
+        return c - 1;
       });
-    tick();
-    const id = setInterval(tick, 20000);
+    }, 1000);
     return () => clearInterval(id);
-  }, [machRunId, machHasPr, machRunDone]);
+  }, [machPollActive, machRunId]);
 
   if (!isVisible) return null;
 
@@ -882,12 +916,12 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
               {machPlan && !machPlan.loading && !machPlan.error && (
                 <button
                   onClick={applyMachSync}
-                  disabled={!!machApply?.loading || !!machApply?.run}
+                  disabled={!!machApply?.loading || (!!machApply && !machApply.error)}
                   style={{ marginTop: 12, width: '100%' }}
                 >
                   {machApply?.loading
                     ? '⏳ Dispatching workflow…'
-                    : machApply?.run
+                    : machApply && !machApply.error
                       ? 'Workflow dispatched'
                       : `Trigger mach sync (${machPlan.from} → ${machPlan.to})`}
                 </button>
@@ -901,16 +935,21 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                     </div>
                   ) : (
                     <div style={{ fontSize: '0.82em', lineHeight: 1.7 }}>
-                      <div>
-                        Run{' '}
-                        <a href={machApply.run?.runUrl} style={{ color: '#85b7eb' }}>
-                          #{machApply.run?.runId}
-                        </a>{' '}
-                        ·{' '}
-                        <span style={{ color: machApply.run?.conclusion === 'success' ? '#4ecca3' : machApply.run?.conclusion === 'failure' ? '#e74c3c' : '#e0a93b' }}>
-                          {machApply.run?.conclusion || machApply.run?.status}
-                        </span>
-                      </div>
+                      {machApply.run ? (
+                        <div>
+                          Run{' '}
+                          <a href={machApply.run.runUrl} style={{ color: '#85b7eb' }}>
+                            #{machApply.run.runId}
+                          </a>{' '}
+                          ·{' '}
+                          <span style={{ color: machApply.run.conclusion === 'success' ? '#4ecca3' : machApply.run.conclusion === 'failure' ? '#e74c3c' : '#e0a93b' }}>
+                            {machApply.run.conclusion || machApply.run.status}
+                          </span>
+                        </div>
+                      ) : (
+                        <div style={{ color: '#888' }}>⏳ Locating the dispatched run…</div>
+                      )}
+
                       {machApply.pr ? (
                         <div style={{ color: '#4ecca3' }}>
                           ✅ PR opened:{' '}
@@ -920,8 +959,24 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                           {machApply.pr.merged ? '(merged)' : `(${machApply.pr.state})`} — review &amp; merge
                         </div>
                       ) : (
-                        <div style={{ color: '#888' }}>
-                          ⏳ Waiting for the PR (~5 min)… checking automatically.
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#888', marginTop: 2 }}>
+                          {machPollActive ? (
+                            <span>
+                              ⏳ Waiting for the PR (~5 min) — next check in{' '}
+                              <strong style={{ color: '#a0a0a0' }}>{machCountdown}s</strong>
+                            </span>
+                          ) : machRunCompleted ? (
+                            <span>Run finished without a PR (empty diff, or check the Actions tab).</span>
+                          ) : (
+                            <span>Waiting…</span>
+                          )}
+                          <button
+                            onClick={recheckMach}
+                            style={{ padding: '2px 8px', fontSize: '0.92em' }}
+                            title="Check run & PR status now"
+                          >
+                            ↻ Recheck
+                          </button>
                         </div>
                       )}
                     </div>

@@ -1,0 +1,63 @@
+name: Publish Chrome Extension
+
+# Publishes the Chrome extension to the Chrome Web Store.
+#   - Manual run (workflow_dispatch): choose draft-only or full publish.
+#   - On a tag like `chrome-v0.1.1`: uploads and submits for publishing.
+# The extension must already exist in the Web Store (first submission is manual).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'draft = upload only, publish = upload + submit for review'
+        type: choice
+        default: draft
+        options: [draft, publish]
+  push:
+    tags:
+      - 'chrome-v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/chrome-extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # Install at the repo root so workspace deps (embedding-core) resolve.
+      - name: Install dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      - name: Package
+        run: pnpm run package
+
+      - name: Publish to Chrome Web Store
+        env:
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        # Tag pushes always publish; manual runs honour the chosen mode.
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.mode }}" = "publish" ]; then
+            pnpm run publish:store
+          else
+            pnpm run publish:draft
+          fi
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-extension-zip
+          path: apps/chrome-extension/release/*.zip
