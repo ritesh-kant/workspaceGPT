@@ -300,6 +300,134 @@ interface ApplyState {
   error?: string;
 }
 
+type MachAction = 'update' | 'match' | 'manual' | 'skip';
+
+interface MachChangeRow {
+  component: string;
+  current: string | null;
+  desired: string;
+  action: MachAction;
+}
+
+interface MachPlanState {
+  loading: boolean;
+  changes?: MachChangeRow[];
+  from?: string;
+  to?: string;
+  brand?: string;
+  updateMainYml?: boolean;
+  error?: string;
+}
+
+interface MachRun {
+  runId: number;
+  runUrl: string;
+  status: string;
+  conclusion?: string | null;
+}
+
+interface MachPull {
+  url: string;
+  number: number;
+  state: string;
+  merged: boolean;
+}
+
+interface MachApplyState {
+  loading: boolean;
+  run?: MachRun;
+  pr?: MachPull | null;
+  /** Captured trigger context so polling rebuilds the same target. */
+  ctx?: { environment: string; from: string; to: string; brand: string };
+  error?: string;
+}
+
+const MACH_ACTION_COLOR: Record<MachAction, string> = {
+  update: '#e0a93b',
+  match: '#6b7280',
+  manual: '#85b7eb',
+  skip: '#6b7280',
+};
+
+/**
+ * Read-only preview of the mach component-version promotion: the exact version
+ * changes the workflow would write into the destination repo's components.yml.
+ * `manual` = new in source (workflow leaves for a human); `skip` = @skipdeploy.
+ */
+const MachPlanReview: React.FC<{ state: MachPlanState }> = ({ state }) => {
+  if (state.error) {
+    return (
+      <div className="status-message error" style={{ marginTop: 12, whiteSpace: 'pre-wrap' }}>
+        {state.error}
+      </div>
+    );
+  }
+  if (!state.changes) return null;
+
+  const updates = state.changes.filter((c) => c.action === 'update');
+  const manual = state.changes.filter((c) => c.action === 'manual');
+  const skipped = state.changes.filter((c) => c.action === 'skip');
+  const matched = state.changes.filter((c) => c.action === 'match');
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div
+        style={{
+          display: 'inline-block', fontSize: '0.72em', textTransform: 'uppercase', letterSpacing: 0.5,
+          color: '#e0a93b', border: '1px solid #6b531a', background: '#2a2410',
+          borderRadius: 6, padding: '2px 8px', marginBottom: 10,
+        }}
+      >
+        Dry run — nothing dispatched
+      </div>
+
+      <div style={{ fontSize: '0.82em', color: '#a0a0a0', marginBottom: 8 }}>
+        <strong>{state.from}</strong> → <strong>{state.to}</strong> ({state.brand}) ·{' '}
+        <span style={{ color: MACH_ACTION_COLOR.update }}>{updates.length} update</span>
+        {manual.length > 0 && <span style={{ color: MACH_ACTION_COLOR.manual, marginLeft: 8 }}>{manual.length} manual</span>}
+        {matched.length > 0 && <span style={{ color: '#6b7280', marginLeft: 8 }}>{matched.length} match</span>}
+        {skipped.length > 0 && <span style={{ color: '#6b7280', marginLeft: 8 }}>{skipped.length} skip</span>}
+      </div>
+
+      {state.changes
+        .filter((c) => c.action !== 'match')
+        .map((c, i) => (
+          <div key={`${c.component}-${i}`} style={{ padding: '6px 0', borderBottom: '1px solid #23233a' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ fontFamily: 'monospace', fontSize: '0.82em', wordBreak: 'break-all' }}>
+                {c.component}
+              </span>
+              <span style={{ fontSize: '0.72em', textTransform: 'uppercase', color: MACH_ACTION_COLOR[c.action], flexShrink: 0 }}>
+                {c.action}
+              </span>
+            </div>
+            {c.action === 'update' && (
+              <div style={{ fontSize: '0.78em', color: '#a0a0a0', fontFamily: 'monospace', marginTop: 2 }}>
+                {c.current ?? '(none)'} → {c.desired}
+              </div>
+            )}
+            {c.action === 'manual' && (
+              <div style={{ fontSize: '0.74em', color: '#85b7eb', marginTop: 2 }}>
+                ↳ new in {state.from} ({c.desired}) — add to {state.to} manually; not in the PR
+              </div>
+            )}
+          </div>
+        ))}
+
+      {updates.length === 0 && manual.length === 0 && (
+        <div style={{ fontSize: '0.82em', color: '#888', marginTop: 6 }}>
+          Component versions already match — the workflow would produce an empty PR.
+        </div>
+      )}
+      {state.updateMainYml && (
+        <div style={{ fontSize: '0.76em', color: '#888', marginTop: 8 }}>
+          main.yml env-var sync is enabled — its changes aren't previewed here yet.
+        </div>
+      )}
+    </div>
+  );
+};
+
 /**
  * Releases home (sidebar overlay). Resolves "today's release" and lists recent
  * runs. The resolve/runs data comes from the extension; until a release source
@@ -314,6 +442,8 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const [preview, setPreview] = useState<PreparePreview | null>(null);
   const [plan, setPlan] = useState<PlanState | null>(null);
   const [apply, setApply] = useState<ApplyState | null>(null);
+  const [machPlan, setMachPlan] = useState<MachPlanState | null>(null);
+  const [machApply, setMachApply] = useState<MachApplyState | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideVersion, setOverrideVersion] = useState('');
   const [overrideEnv, setOverrideEnv] = useState('stage');
@@ -371,6 +501,45 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
           // Refresh the runs list so the new run appears.
           vscode.postMessage({ type: MESSAGE_TYPES.GET_RELEASE_RUNS });
           break;
+        case MESSAGE_TYPES.PLAN_MACH_SYNC_RESPONSE:
+          setMachPlan(
+            message.ok
+              ? {
+                  loading: false,
+                  changes: message.changes || [],
+                  from: message.from,
+                  to: message.to,
+                  brand: message.brand,
+                  updateMainYml: message.updateMainYml,
+                }
+              : { loading: false, error: message.error || 'Failed to plan mach sync.' }
+          );
+          break;
+        case MESSAGE_TYPES.APPLY_MACH_SYNC_RESPONSE:
+          if (message.ok) {
+            setMachApply({
+              loading: false,
+              run: message.run,
+              pr: null,
+              ctx: {
+                environment: message.environment,
+                from: message.from,
+                to: message.to,
+                brand: message.brand || '',
+              },
+            });
+          } else {
+            setMachApply({ loading: false, error: message.error || 'Dispatch failed.' });
+          }
+          vscode.postMessage({ type: MESSAGE_TYPES.GET_RELEASE_RUNS });
+          break;
+        case MESSAGE_TYPES.CHECK_MACH_RUN_RESPONSE:
+          if (message.ok) {
+            setMachApply((prev) =>
+              prev ? { ...prev, run: message.run || prev.run, pr: message.pr ?? prev.pr } : prev
+            );
+          }
+          break;
       }
     };
     window.addEventListener('message', handleMessage);
@@ -383,10 +552,32 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
       setPreview(null);
       setPlan(null);
       setApply(null);
+      setMachPlan(null);
+      setMachApply(null);
       vscode.postMessage({ type: MESSAGE_TYPES.RESOLVE_RELEASE });
       vscode.postMessage({ type: MESSAGE_TYPES.GET_RELEASE_RUNS });
     }
   }, [isVisible]);
+
+  // Poll a triggered mach run until its PR appears or the run ends (~5 min).
+  const machRunId = machApply?.run?.runId;
+  const machHasPr = !!machApply?.pr;
+  const machRunDone =
+    machApply?.run?.status === 'completed' || machApply?.run?.status === 'failure';
+  useEffect(() => {
+    if (!machRunId || machHasPr || (machRunDone && machHasPr)) return;
+    const ctx = machApply?.ctx;
+    const tick = () =>
+      vscode.postMessage({
+        type: MESSAGE_TYPES.CHECK_MACH_RUN,
+        runId: machRunId,
+        environment: ctx?.environment || 'stage',
+        overrides: ctx ? { from: ctx.from, to: ctx.to, brand: ctx.brand } : undefined,
+      });
+    tick();
+    const id = setInterval(tick, 20000);
+    return () => clearInterval(id);
+  }, [machRunId, machHasPr, machRunDone]);
 
   if (!isVisible) return null;
 
@@ -428,6 +619,24 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
       version: effectiveVersion,
       environment: effectiveEnv || 'stage',
       ...(keys ? { keys } : {}),
+    });
+  };
+
+  const planMachSync = () => {
+    setMachPlan({ loading: true });
+    setMachApply(null);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.PLAN_MACH_SYNC,
+      environment: effectiveEnv || 'stage',
+    });
+  };
+
+  const applyMachSync = () => {
+    setMachApply({ loading: true });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.APPLY_MACH_SYNC,
+      version: effectiveVersion,
+      environment: effectiveEnv || 'stage',
     });
   };
 
@@ -649,6 +858,75 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                     </button>
                   )}
                 </>
+              )}
+            </div>
+          )}
+
+          {canPrepare && (
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #23233a' }}>
+              <div style={{ fontSize: '0.85em', fontWeight: 600, color: '#85b7eb', marginBottom: 4 }}>
+                mach backend sync
+              </div>
+              <div style={{ fontSize: '0.8em', color: '#888', marginBottom: 8, lineHeight: 1.5 }}>
+                Promote component versions from the source env into{' '}
+                {effectiveEnv || 'stage'} via the sync workflow. Opens a PR for review — never
+                auto-merged.
+              </div>
+
+              <button onClick={planMachSync} disabled={!!machPlan?.loading} style={{ width: '100%' }}>
+                {machPlan?.loading ? '⏳ Reading components.yml…' : 'Plan mach sync →'}
+              </button>
+
+              {machPlan && !machPlan.loading && <MachPlanReview state={machPlan} />}
+
+              {machPlan && !machPlan.loading && !machPlan.error && (
+                <button
+                  onClick={applyMachSync}
+                  disabled={!!machApply?.loading || !!machApply?.run}
+                  style={{ marginTop: 12, width: '100%' }}
+                >
+                  {machApply?.loading
+                    ? '⏳ Dispatching workflow…'
+                    : machApply?.run
+                      ? 'Workflow dispatched'
+                      : `Trigger mach sync (${machPlan.from} → ${machPlan.to})`}
+                </button>
+              )}
+
+              {machApply && !machApply.loading && (
+                <div style={{ marginTop: 12 }}>
+                  {machApply.error ? (
+                    <div className="status-message error" style={{ whiteSpace: 'pre-wrap' }}>
+                      {machApply.error}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.82em', lineHeight: 1.7 }}>
+                      <div>
+                        Run{' '}
+                        <a href={machApply.run?.runUrl} style={{ color: '#85b7eb' }}>
+                          #{machApply.run?.runId}
+                        </a>{' '}
+                        ·{' '}
+                        <span style={{ color: machApply.run?.conclusion === 'success' ? '#4ecca3' : machApply.run?.conclusion === 'failure' ? '#e74c3c' : '#e0a93b' }}>
+                          {machApply.run?.conclusion || machApply.run?.status}
+                        </span>
+                      </div>
+                      {machApply.pr ? (
+                        <div style={{ color: '#4ecca3' }}>
+                          ✅ PR opened:{' '}
+                          <a href={machApply.pr.url} style={{ color: '#85b7eb' }}>
+                            #{machApply.pr.number}
+                          </a>{' '}
+                          {machApply.pr.merged ? '(merged)' : `(${machApply.pr.state})`} — review &amp; merge
+                        </div>
+                      ) : (
+                        <div style={{ color: '#888' }}>
+                          ⏳ Waiting for the PR (~5 min)… checking automatically.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

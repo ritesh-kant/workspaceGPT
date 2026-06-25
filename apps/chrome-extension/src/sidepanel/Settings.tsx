@@ -33,10 +33,23 @@ const Settings: React.FC<Props> = ({ onClose }) => {
   return (
     <div className='settings'>
       <div className='field-group-title'>Connection</div>
+      <ol className='settings-steps'>
+        <li>
+          Continue the setup in the <strong>WorkspaceGPT VS Code extension</strong> and
+          finish connecting your knowledge base.
+        </li>
+        <li>
+          There, open <em>Settings → Share to Chrome → “Create share code”</em>.
+        </li>
+        <li>Paste your share code below and hit Connect.</li>
+      </ol>
       <p className='settings-hint'>
-        In VS Code, open WorkspaceGPT Settings → Share to Chrome → “Create share
-        code”, then paste it here. It connects this extension to that knowledge
-        base — no API keys to enter manually.
+        This links the extension to that knowledge base — no API keys to enter
+        manually. New here? Get started at{' '}
+        <a href='https://www.workspacegpt.in' target='_blank' rel='noopener noreferrer'>
+          workspacegpt.in
+        </a>
+        .
       </p>
 
       {connected && (

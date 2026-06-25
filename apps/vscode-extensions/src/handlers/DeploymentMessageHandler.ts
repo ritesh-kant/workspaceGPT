@@ -5,6 +5,8 @@ import { GitHubOAuthService } from '../services/deployment/githubOAuthService';
 import { VercelAuthService } from '../services/deployment/vercelAuthService';
 import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
 import { ConfluenceReleaseSource } from '../services/deployment/confluenceReleaseSource';
+import { MachAuthService } from '../services/deployment/machAuthService';
+import { MachSyncTarget, type MachSyncOptions } from '../services/deployment/machSyncTarget';
 import * as path from 'path';
 import { VercelTarget, OPAQUE_VALUE } from '../services/deployment/vercelTarget';
 import {
@@ -24,6 +26,7 @@ export class DeploymentMessageHandler {
   private githubAuth: GitHubOAuthService;
   private vercelAuth: VercelAuthService;
   private confluenceAuth: ConfluenceAuthService;
+  private machAuth: MachAuthService;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -33,6 +36,7 @@ export class DeploymentMessageHandler {
     this.githubAuth = new GitHubOAuthService(this.context);
     this.vercelAuth = new VercelAuthService(this.context);
     this.confluenceAuth = new ConfluenceAuthService(this.context);
+    this.machAuth = new MachAuthService(this.context);
   }
 
   /** Cancel any in-flight connect flow so its callback server releases the port. */
@@ -77,6 +81,30 @@ export class DeploymentMessageHandler {
 
       case MESSAGE_TYPES.GET_VERCEL_PROJECTS:
         await this.handleGetVercelProjects();
+        return true;
+
+      case MESSAGE_TYPES.CHECK_MACH_TOKEN:
+        await this.postMachStatus();
+        return true;
+      case MESSAGE_TYPES.SET_MACH_TOKEN:
+        this.analyticsService.trackEvent('mach_token_set');
+        await this.handleSetMachToken(data);
+        return true;
+      case MESSAGE_TYPES.CLEAR_MACH_TOKEN:
+        this.analyticsService.trackEvent('mach_token_cleared');
+        await this.machAuth.clear();
+        await this.postMachStatus();
+        return true;
+      case MESSAGE_TYPES.PLAN_MACH_SYNC:
+        this.analyticsService.trackEvent('mach_sync_planned');
+        await this.handlePlanMachSync(data);
+        return true;
+      case MESSAGE_TYPES.APPLY_MACH_SYNC:
+        this.analyticsService.trackEvent('mach_sync_applied');
+        await this.handleApplyMachSync(data);
+        return true;
+      case MESSAGE_TYPES.CHECK_MACH_RUN:
+        await this.handleCheckMachRun(data);
         return true;
 
       case MESSAGE_TYPES.TEST_DEPLOYMENT_CONNECTIONS:
@@ -461,6 +489,156 @@ export class DeploymentMessageHandler {
     }
   }
 
+  // --- mach (classic PAT) ---
+
+  /**
+   * Store a user-supplied classic PAT for mach in SecretStorage, then validate
+   * it against both mach repos. The token is never echoed back to the webview;
+   * only a boolean/validated status is posted.
+   */
+  private async handleSetMachToken(data: any): Promise<void> {
+    try {
+      const token: string = typeof data?.token === 'string' ? data.token : '';
+      if (!token.trim()) {
+        this.post(MESSAGE_TYPES.MACH_TOKEN_STATUS, {
+          connected: false,
+          detail: 'Paste a token to save.',
+        });
+        return;
+      }
+      await this.machAuth.setToken(token);
+      await this.postMachStatus();
+    } catch (error) {
+      this.post(MESSAGE_TYPES.MACH_TOKEN_STATUS, { connected: false, detail: errMessage(error) });
+    }
+  }
+
+  private async postMachStatus(): Promise<void> {
+    if (!(await this.machAuth.isConnected())) {
+      this.post(MESSAGE_TYPES.MACH_TOKEN_STATUS, { connected: false });
+      return;
+    }
+    const status = await this.machAuth.validate();
+    this.post(MESSAGE_TYPES.MACH_TOKEN_STATUS, { ...status });
+  }
+
+  /**
+   * Build a mach sync target from settings + the resolved release environment.
+   * `from`/brand/branch are user settings (overridable per-run); `to` is mapped
+   * from the release environment (stage/prod). Throws with an actionable message
+   * when the token isn't set or the source env is unconfigured.
+   */
+  private async buildMachTarget(environment: string, overrides: any = {}) {
+    if (!(await this.machAuth.isConnected())) {
+      throw new Error('Set a mach GitHub token in Settings → Deployment Automation first.');
+    }
+    const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    const dep = settings?.state?.config?.deployment ?? {};
+
+    const brand: string = overrides.brand || dep.machBrand || 'mms';
+    const from: string = overrides.from || dep.machSourceEnv || '';
+    if (!from) {
+      throw new Error('Set the mach source environment (e.g. test01) in Settings → Deployment Automation.');
+    }
+    const to: string =
+      overrides.to ||
+      (environment === 'prod' ? dep.machEnvProd || 'prod' : dep.machEnvStage || 'stage');
+    const fromBranch: string = overrides.fromBranch || dep.machFromBranch || 'main';
+    const updateMainYml: boolean =
+      typeof overrides.updateMainYml === 'boolean'
+        ? overrides.updateMainYml
+        : dep.machUpdateMainYml !== false;
+
+    const opts: MachSyncOptions = { brand, from, to, fromBranch, updateMainYml };
+    return { target: new MachSyncTarget(this.machAuth, opts), opts };
+  }
+
+  /**
+   * Read-only preview of the mach component-version promotion: fetch the source
+   * and destination `components.yml` and compute exactly the changes the workflow
+   * would make. Writes nothing.
+   */
+  private async handlePlanMachSync(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.PLAN_MACH_SYNC_RESPONSE, { ok: false, error });
+    try {
+      const environment: string = data?.environment || 'stage';
+      const { target, opts } = await this.buildMachTarget(environment, data?.overrides);
+      const changes = await target.planComponentDiff();
+      this.post(MESSAGE_TYPES.PLAN_MACH_SYNC_RESPONSE, {
+        ok: true,
+        environment,
+        from: opts.from,
+        to: opts.to,
+        brand: opts.brand,
+        updateMainYml: opts.updateMainYml,
+        changes,
+      });
+    } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
+  /**
+   * Trigger the mach sync workflow. Returns once the run is located; the PR lands
+   * ~5 min later (poll via CHECK_MACH_RUN). Records the trigger in the audit log.
+   */
+  private async handleApplyMachSync(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.APPLY_MACH_SYNC_RESPONSE, { ok: false, error });
+    try {
+      const version: string | undefined = data?.version;
+      const environment: string = data?.environment || 'stage';
+      const { target, opts } = await this.buildMachTarget(environment, data?.overrides);
+
+      const at = new Date().toISOString();
+      const run = await target.triggerSync(at);
+
+      const actor = this.context.globalState.get<string>('userEmail') || undefined;
+      await this.auditLog().record({
+        at,
+        release: version || `${opts.from}→${opts.to}`,
+        environment,
+        action: 'applied',
+        target: 'mach',
+        actor,
+        detail: `dispatched sync ${opts.from}→${opts.to} (run ${run.runId})`,
+      });
+
+      this.post(MESSAGE_TYPES.APPLY_MACH_SYNC_RESPONSE, {
+        ok: true,
+        environment,
+        from: opts.from,
+        to: opts.to,
+        brand: opts.brand,
+        run,
+      });
+    } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
+  /**
+   * Poll a previously-triggered mach run: current status + the PR once it opens.
+   * The webview calls this on an interval until the PR appears or the run fails.
+   */
+  private async handleCheckMachRun(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.CHECK_MACH_RUN_RESPONSE, { ok: false, error });
+    try {
+      const runId: number | undefined = data?.runId;
+      const environment: string = data?.environment || 'stage';
+      if (!runId) return fail('No run id to check.');
+      const { target } = await this.buildMachTarget(environment, data?.overrides);
+
+      const status = await target.getRunStatus(runId);
+      const pr = await target.findPullRequest(runId);
+      this.post(MESSAGE_TYPES.CHECK_MACH_RUN_RESPONSE, { ok: true, run: status, pr });
+    } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
   // --- Test all connections ---
 
   /**
@@ -513,6 +691,16 @@ export class DeploymentMessageHandler {
       }
     } else {
       results.vercel = { ok: false, detail: 'Not connected' };
+    }
+
+    if (await this.machAuth.isConnected()) {
+      const status = await this.machAuth.validate();
+      results.mach =
+        status.repos?.monorepo && status.repos?.stage
+          ? { ok: true }
+          : { ok: false, detail: status.detail ?? 'Cannot reach both mach repos' };
+    } else {
+      results.mach = { ok: false, detail: 'Not connected' };
     }
 
     this.post(MESSAGE_TYPES.TEST_DEPLOYMENT_CONNECTIONS_RESULT, { results });

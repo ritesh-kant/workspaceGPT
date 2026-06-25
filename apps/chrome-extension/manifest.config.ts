@@ -6,7 +6,21 @@ export default defineManifest({
   version: '0.1.0',
   description:
     'Ask questions about your Confluence & Azure DevOps knowledge, in the browser.',
-  action: { default_title: 'WorkspaceGPT' },
+  icons: {
+    '16': 'icon.png',
+    '32': 'icon.png',
+    '48': 'icon.png',
+    '128': 'icon.png',
+  },
+  action: {
+    default_title: 'WorkspaceGPT',
+    default_icon: {
+      '16': 'icon.png',
+      '32': 'icon.png',
+      '48': 'icon.png',
+      '128': 'icon.png',
+    },
+  },
   background: {
     service_worker: 'src/background.ts',
     type: 'module',
@@ -24,6 +38,5 @@ export default defineManifest({
     'https://api.groq.com/*',
     'https://openrouter.ai/*',
     'https://integrate.api.nvidia.com/*',
-    'http://localhost/*',
   ],
 });

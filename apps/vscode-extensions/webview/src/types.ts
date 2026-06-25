@@ -110,6 +110,17 @@ export interface DeploymentConfig {
   vercelEnvProd?: string;
   /** Split a variable shared across envs into a per-env record instead of updating all linked envs. */
   vercelPerEnvValues?: boolean;
+  /** mach (backend) sync settings — drive the component-promotion workflow. */
+  machBrand?: string;
+  /** Source environment to promote from (e.g. test01). */
+  machSourceEnv?: string;
+  /** Branch of the source mach repo to read components.yml from. */
+  machFromBranch?: string;
+  /** Maps the release environment to a destination mach environment. */
+  machEnvStage?: string;
+  machEnvProd?: string;
+  /** Also sync main.yml env vars when running the workflow. */
+  machUpdateMainYml?: boolean;
   isConnectingGithub: boolean;
   isConnectingVercel: boolean;
   isTesting: boolean;

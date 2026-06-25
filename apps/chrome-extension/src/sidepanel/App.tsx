@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { answerQuestion, RagStatus } from '../lib/ragService';
 import { loadSettings } from '../lib/storage';
+import Markdown from './Markdown';
 import Settings from './Settings';
 
 interface ChatMessage {
@@ -21,6 +22,12 @@ const App: React.FC = () => {
   const [status, setStatus] = useState<RagStatus | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  // Keep the latest content in view as tokens stream in.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages, status]);
 
   const send = async () => {
     const question = input.trim();
@@ -78,7 +85,10 @@ const App: React.FC = () => {
   return (
     <div className='app'>
       <div className='header'>
-        <h1>WorkspaceGPT</h1>
+        <h1>
+          <img className='logo' src='/icon.png' alt='' />
+          WorkspaceGPT
+        </h1>
         <button
           className='icon-button'
           onClick={() => setShowSettings((s) => !s)}
@@ -109,10 +119,11 @@ const App: React.FC = () => {
               }
               return (
                 <div key={i} className={`message ${m.role}`}>
-                  {m.content}
+                  {m.role === 'assistant' ? <Markdown>{m.content}</Markdown> : m.content}
                 </div>
               );
             })}
+            <div ref={endRef} />
           </div>
 
           <div className='composer'>

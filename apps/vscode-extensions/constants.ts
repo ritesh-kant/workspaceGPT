@@ -133,6 +133,12 @@ export const MESSAGE_TYPES = {
   TEST_DEPLOYMENT_CONNECTIONS: 'test-deployment-connections',
   TEST_DEPLOYMENT_CONNECTIONS_RESULT: 'test-deployment-connections-result',
 
+  // mach backend — classic PAT (set/clear/check), validated against both repos
+  CHECK_MACH_TOKEN: 'check-mach-token',
+  SET_MACH_TOKEN: 'set-mach-token',
+  CLEAR_MACH_TOKEN: 'clear-mach-token',
+  MACH_TOKEN_STATUS: 'mach-token-status',
+
   // Releases view
   SHOW_RELEASES: 'show-releases',
   RESOLVE_RELEASE: 'resolve-release',
@@ -147,6 +153,13 @@ export const MESSAGE_TYPES = {
   PLAN_CONFIG_SYNC_RESPONSE: 'plan-config-sync-response',
   APPLY_CONFIG_SYNC: 'apply-config-sync',
   APPLY_CONFIG_SYNC_RESPONSE: 'apply-config-sync-response',
+  // mach backend sync (component-version promotion via workflow_dispatch)
+  PLAN_MACH_SYNC: 'plan-mach-sync',
+  PLAN_MACH_SYNC_RESPONSE: 'plan-mach-sync-response',
+  APPLY_MACH_SYNC: 'apply-mach-sync',
+  APPLY_MACH_SYNC_RESPONSE: 'apply-mach-sync-response',
+  CHECK_MACH_RUN: 'check-mach-run',
+  CHECK_MACH_RUN_RESPONSE: 'check-mach-run-response',
 
   // Vector store (Qdrant) connection test
   TEST_QDRANT_CONNECTION: 'test-qdrant-connection',
@@ -211,6 +224,8 @@ export const STORAGE_KEYS = {
   GITHUB_APP_INSTALLATION: 'github-app-installation',
   GITHUB_INSTALLATION_TOKEN_CACHE: 'github-installation-token-cache',
   VERCEL_OAUTH_TOKENS: 'vercel-oauth-tokens',
+  // Classic PAT for mach (workflow_dispatch + PR), SSO-authorized by the user.
+  GITHUB_MACH_PAT: 'github-mach-pat',
 };
 
 // Extension Constants
@@ -377,6 +392,50 @@ export const GITHUB_APP = {
   API_BASE: 'https://api.github.com',
   CALLBACK_PORT: 32325,
   CALLBACK_PATH: '/callback',
+};
+
+/**
+ * mach (backend config) target configuration.
+ *
+ * Unlike Vercel/Confluence (OAuth via the proxy), the mach flow authenticates
+ * with a **classic Personal Access Token** the user creates and SSO-authorizes
+ * for both orgs themselves — org admins won't approve an OAuth App for these
+ * repos. The PAT (scopes `repo` + `workflow`) lives in SecretStorage and is used
+ * ONLY for these mach API calls; it is never included in the Chrome share bundle.
+ *
+ * Topology: config writes don't touch the mach repo directly. They trigger a
+ * `workflow_dispatch` in the monorepo (where all the Actions live), which after
+ * ~5 min opens a PR in the stage-mach repo. We never auto-merge (branch
+ * protection); the apply surfaces the PR URL for human review.
+ */
+export const MACH = {
+  API_BASE: 'https://api.github.com',
+  /** Monorepo that hosts the Actions we dispatch. */
+  MONOREPO_OWNER: 'Mars-Incorporated',
+  MONOREPO_REPO: 'phoenix-mach-component-monorepo',
+  /** Branch the workflow is dispatched against. */
+  MONOREPO_REF: 'main',
+  /**
+   * Org that owns the per-environment mach repos. The actual repo is derived as
+   * `aws-<brand>-phoenix-<env>-mach`, so the dispatched workflow opens its PR in
+   * `${MACH_ENV_OWNER}/aws-<brand>-phoenix-<to>-mach` (~5 min later).
+   */
+  MACH_ENV_OWNER: 'Mars-Cloud-CoE',
+  /** A representative repo in that org, used only to validate token reachability. */
+  STAGE_OWNER: 'Mars-Cloud-CoE',
+  STAGE_REPO: 'aws-mms-phoenix-stage-mach',
+  /**
+   * The config-sync workflow's display `name:` (resolved to its id at dispatch
+   * time, so we don't hardcode/guess the bracketed filename).
+   */
+  WORKFLOW_NAME: '[deploy] Sync Components Across Environments',
+  /** Defaults for the workflow_dispatch inputs; overridable in Settings/per-run. */
+  DEFAULT_BRAND: 'mms',
+  DEFAULT_FROM_BRANCH: 'main',
+  /** Derive the per-environment mach repo name from brand + env. */
+  envRepo(brand: string, env: string): string {
+    return `aws-${brand}-phoenix-${env}-mach`;
+  },
 };
 
 /**

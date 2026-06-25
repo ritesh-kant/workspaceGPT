@@ -20,6 +20,16 @@ const DeploymentSettings: React.FC = () => {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | undefined>();
 
+  // mach backend uses a classic PAT (not OAuth). We never receive the token
+  // back from the extension — only a connected/validated status.
+  const [machToken, setMachToken] = useState('');
+  const [machSaving, setMachSaving] = useState(false);
+  const [machStatus, setMachStatus] = useState<{
+    connected: boolean;
+    repos?: { monorepo: boolean; stage: boolean };
+    detail?: string;
+  }>({ connected: false });
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
@@ -84,6 +94,17 @@ const DeploymentSettings: React.FC = () => {
           });
           break;
 
+        case MESSAGE_TYPES.MACH_TOKEN_STATUS:
+          setMachSaving(false);
+          setMachStatus({
+            connected: !!message.connected,
+            repos: message.repos,
+            detail: message.detail,
+          });
+          // Clear the input once a token is saved — we never display it.
+          if (message.connected) setMachToken('');
+          break;
+
         case MESSAGE_TYPES.GET_VERCEL_PROJECTS_RESPONSE:
           setProjectsLoading(false);
           if (message.ok) {
@@ -104,6 +125,7 @@ const DeploymentSettings: React.FC = () => {
     if (dep.isDeploymentEnabled) {
       vscode.postMessage({ type: MESSAGE_TYPES.CHECK_GITHUB_CONNECTION });
       vscode.postMessage({ type: MESSAGE_TYPES.CHECK_VERCEL_CONNECTION });
+      vscode.postMessage({ type: MESSAGE_TYPES.CHECK_MACH_TOKEN });
     }
   }, [dep.isDeploymentEnabled]);
 
@@ -144,6 +166,16 @@ const DeploymentSettings: React.FC = () => {
 
   const disconnectVercel = () => {
     vscode.postMessage({ type: MESSAGE_TYPES.DISCONNECT_VERCEL });
+  };
+
+  const saveMachToken = () => {
+    if (!machToken.trim()) return;
+    setMachSaving(true);
+    vscode.postMessage({ type: MESSAGE_TYPES.SET_MACH_TOKEN, token: machToken });
+  };
+
+  const clearMachToken = () => {
+    vscode.postMessage({ type: MESSAGE_TYPES.CLEAR_MACH_TOKEN });
   };
 
   const testConnections = () => {
@@ -243,6 +275,135 @@ const DeploymentSettings: React.FC = () => {
             disconnectGithub,
             'github',
           )}
+
+          <div
+            className="form-group"
+            style={{ margin: '4px 0 14px', paddingLeft: 10, borderLeft: '2px solid #2a2a3e' }}
+          >
+            <div style={{ fontWeight: 500 }}>mach backend</div>
+            <div style={{ fontSize: '0.8em', color: '#888', marginBottom: 6 }}>
+              Classic GitHub PAT (scopes <code>repo</code> + <code>workflow</code>), SSO-authorized for
+              both Mars orgs. Triggers the config-sync workflow that opens a PR in the stage-mach repo.
+              Stored only here — never shared to Chrome.
+            </div>
+
+            {machStatus.connected ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ fontSize: '0.82em', color: '#4ecca3' }}>
+                  ✅ Token saved
+                  {machStatus.repos && (
+                    <span style={{ color: machStatus.repos.monorepo && machStatus.repos.stage ? '#4ecca3' : '#e0a458', marginLeft: 8 }}>
+                      {machStatus.repos.monorepo && machStatus.repos.stage
+                        ? '• both repos reachable'
+                        : '• repo access incomplete'}
+                    </span>
+                  )}
+                </span>
+                <button onClick={clearMachToken} className="disconnect-button">Clear</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  type="password"
+                  value={machToken}
+                  placeholder="ghp_… (classic PAT)"
+                  onChange={(e) => setMachToken(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveMachToken(); }}
+                  autoComplete="off"
+                  style={{ flex: 1 }}
+                />
+                <button onClick={saveMachToken} disabled={machSaving || !machToken.trim()}>
+                  {machSaving ? '⏳' : 'Save'}
+                </button>
+              </div>
+            )}
+            {machStatus.detail && (
+              <div style={{ fontSize: '0.8em', color: '#e0a458', marginTop: 4, lineHeight: 1.5 }}>
+                {machStatus.detail}
+              </div>
+            )}
+
+            {machStatus.connected && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>Brand</div>
+                    <input
+                      type="text"
+                      value={dep.machBrand ?? ''}
+                      placeholder="mms"
+                      onChange={(e) => updateConfig('deployment', 'machBrand', e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>Source env (from)</div>
+                    <input
+                      type="text"
+                      value={dep.machSourceEnv ?? ''}
+                      placeholder="test01"
+                      onChange={(e) => updateConfig('deployment', 'machSourceEnv', e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>Source branch</div>
+                    <input
+                      type="text"
+                      value={dep.machFromBranch ?? ''}
+                      placeholder="main"
+                      onChange={(e) => updateConfig('deployment', 'machFromBranch', e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '0.78em', color: '#a0a0a0', margin: '10px 0 2px' }}>
+                  Destination env mapping (to)
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.74em', color: '#888', marginBottom: 2 }}>stage →</div>
+                    <input
+                      type="text"
+                      value={dep.machEnvStage ?? ''}
+                      placeholder="stage"
+                      onChange={(e) => updateConfig('deployment', 'machEnvStage', e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.74em', color: '#888', marginBottom: 2 }}>prod →</div>
+                    <input
+                      type="text"
+                      value={dep.machEnvProd ?? ''}
+                      placeholder="prod"
+                      onChange={(e) => updateConfig('deployment', 'machEnvProd', e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.78em', color: '#888', marginTop: 4 }}>
+                  Destination repo resolves to <code>aws-&lt;brand&gt;-phoenix-&lt;to&gt;-mach</code>.
+                </div>
+
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={dep.machUpdateMainYml !== false}
+                    onChange={(e) => updateConfig('deployment', 'machUpdateMainYml', e.target.checked)}
+                    style={{ marginTop: 3 }}
+                  />
+                  <span style={{ fontSize: '0.82em' }}>
+                    Update main.yml env vars
+                    <div style={{ fontSize: '0.92em', color: '#888' }}>
+                      Run the workflow's main.yml sync step in addition to component versions.
+                    </div>
+                  </span>
+                </label>
+              </div>
+            )}
+          </div>
 
           {renderProvider(
             'Vercel',
@@ -345,7 +506,7 @@ const DeploymentSettings: React.FC = () => {
 
           <button
             onClick={testConnections}
-            disabled={dep.isTesting || (!dep.githubConnected && !dep.vercelConnected)}
+            disabled={dep.isTesting || (!dep.githubConnected && !dep.vercelConnected && !machStatus.connected)}
             style={{ marginTop: '4px' }}
           >
             {dep.isTesting ? '⏳ Testing…' : '🔌 Test all connections'}
