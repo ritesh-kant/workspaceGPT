@@ -160,6 +160,8 @@ export const MESSAGE_TYPES = {
   APPLY_MACH_SYNC_RESPONSE: 'apply-mach-sync-response',
   CHECK_MACH_RUN: 'check-mach-run',
   CHECK_MACH_RUN_RESPONSE: 'check-mach-run-response',
+  INJECT_WEBAPP_VERSION: 'inject-webapp-version',
+  INJECT_WEBAPP_VERSION_RESPONSE: 'inject-webapp-version-response',
 
   // Vector store (Qdrant) connection test
   TEST_QDRANT_CONNECTION: 'test-qdrant-connection',

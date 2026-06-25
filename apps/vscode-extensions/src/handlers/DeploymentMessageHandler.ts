@@ -6,7 +6,8 @@ import { VercelAuthService } from '../services/deployment/vercelAuthService';
 import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
 import { ConfluenceReleaseSource } from '../services/deployment/confluenceReleaseSource';
 import { MachAuthService } from '../services/deployment/machAuthService';
-import { MachSyncTarget, type MachSyncOptions } from '../services/deployment/machSyncTarget';
+import { MachSyncTarget, setComponentVersion, type MachSyncOptions } from '../services/deployment/machSyncTarget';
+import { readVercelDeployedVersion } from '../services/deployment/vercelDeployments';
 import * as path from 'path';
 import { VercelTarget, OPAQUE_VALUE } from '../services/deployment/vercelTarget';
 import {
@@ -105,6 +106,10 @@ export class DeploymentMessageHandler {
         return true;
       case MESSAGE_TYPES.CHECK_MACH_RUN:
         await this.handleCheckMachRun(data);
+        return true;
+      case MESSAGE_TYPES.INJECT_WEBAPP_VERSION:
+        this.analyticsService.trackEvent('mach_webapp_version_injected');
+        await this.handleInjectWebappVersion(data);
         return true;
 
       case MESSAGE_TYPES.TEST_DEPLOYMENT_CONNECTIONS:
@@ -414,6 +419,84 @@ export class DeploymentMessageHandler {
     }
   }
 
+  /**
+   * Set the `webapp` component's version in the open mach PR to the version
+   * Vercel has deployed for the source environment (parsed from the latest READY
+   * deployment's commit message). `webapp` is normally `@skipdeploy` because it
+   * ships via Vercel, so we inject its real deployed version into the PR branch's
+   * components.yml. Idempotent — a no-op when the version already matches.
+   */
+  private async handleInjectWebappVersion(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.INJECT_WEBAPP_VERSION_RESPONSE, { ok: false, error });
+    try {
+      const runId: number | undefined = data?.runId;
+      const environment: string = data?.environment || 'stage';
+      const component: string = data?.component || 'webapp';
+      if (!runId) return fail('No run id — trigger the sync first.');
+      if (!(await this.vercelAuth.isConnected())) return fail('Connect Vercel first.');
+
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const projectId: string = settings?.state?.config?.deployment?.vercelProjectId ?? '';
+      if (!projectId) return fail('Select the mms-webapp Vercel project in Settings → Deployment Automation.');
+
+      const { target, opts } = await this.buildMachTarget(environment, data?.overrides);
+
+      // 1. Version Vercel actually deployed to the source env.
+      const deployed = await readVercelDeployedVersion(this.vercelAuth, projectId, opts.from);
+
+      // 2. Read the PR branch's components.yml and splice the webapp version in.
+      const branch = target.syncBranch(runId);
+      const file = await target.readDestFile(branch, 'components.yml');
+      if (!file) return fail(`components.yml not found on ${branch}.`);
+
+      const result = setComponentVersion(file.content, component, deployed.version);
+      if (!result.changed) {
+        this.post(MESSAGE_TYPES.INJECT_WEBAPP_VERSION_RESPONSE, {
+          ok: true,
+          changed: false,
+          component,
+          version: deployed.version,
+          oldValue: result.oldValue,
+          commitMessage: deployed.commitMessage,
+        });
+        return;
+      }
+
+      // 3. Commit to the PR branch (the PR updates itself).
+      await target.commitDestFile(
+        branch,
+        'components.yml',
+        result.text,
+        file.sha,
+        `Set ${component} to ${deployed.version} (deployed on ${opts.from})`,
+      );
+
+      await this.auditLog().record({
+        at: new Date().toISOString(),
+        release: data?.version || `${opts.from}→${opts.to}`,
+        environment,
+        action: 'applied',
+        target: 'mach',
+        key: component,
+        detail: `webapp ${result.oldValue ?? '(none)'} → ${result.newValue} from Vercel (${opts.from})`,
+        actor: this.context.globalState.get<string>('userEmail') || undefined,
+      });
+
+      this.post(MESSAGE_TYPES.INJECT_WEBAPP_VERSION_RESPONSE, {
+        ok: true,
+        changed: true,
+        component,
+        version: deployed.version,
+        oldValue: result.oldValue,
+        newValue: result.newValue,
+        commitMessage: deployed.commitMessage,
+      });
+    } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
   private post(type: string, payload: Record<string, unknown> = {}): void {
     this.webviewView.webview.postMessage({ type, ...payload });
   }
@@ -611,6 +694,7 @@ export class DeploymentMessageHandler {
         from: opts.from,
         to: opts.to,
         brand: opts.brand,
+        version,
         workflowId,
         dispatchedAt: at,
         run,
@@ -632,6 +716,7 @@ export class DeploymentMessageHandler {
       const workflowId: number | undefined = data?.workflowId;
       const dispatchedAt: string | undefined = data?.dispatchedAt;
       const environment: string = data?.environment || 'stage';
+      const releaseTitle: string | undefined = data?.version;
       if (!runId && !dispatchedAt) return fail('Nothing to check yet.');
       const { target } = await this.buildMachTarget(environment, data?.overrides);
 
@@ -640,7 +725,19 @@ export class DeploymentMessageHandler {
       const run = runId
         ? await target.getRunStatus(runId)
         : await target.findRun(workflowId, dispatchedAt!);
-      const pr = run ? await target.findPullRequest(run.runId) : null;
+      let pr = run ? await target.findPullRequest(run.runId) : null;
+
+      // Rename the PR to the release version (e.g. mms-2026-6.2-rc.8) once it
+      // exists. Idempotent: only patch when the title actually differs.
+      if (pr && releaseTitle && pr.title !== releaseTitle) {
+        try {
+          await target.updatePullRequestTitle(pr.number, releaseTitle);
+          pr = { ...pr, title: releaseTitle };
+        } catch {
+          /* non-fatal — leave the workflow's default title */
+        }
+      }
+
       this.post(MESSAGE_TYPES.CHECK_MACH_RUN_RESPONSE, { ok: true, run: run ?? null, pr });
     } catch (error) {
       fail(errMessage(error));

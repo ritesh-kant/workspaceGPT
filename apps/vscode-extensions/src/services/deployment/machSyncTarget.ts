@@ -43,6 +43,7 @@ export interface MachPullRef {
   number: number;
   state: string;
   merged: boolean;
+  title: string;
 }
 
 /**
@@ -250,7 +251,68 @@ export class MachSyncTarget {
     const list: any[] = await res.json();
     const pr = list[0];
     if (!pr) return null;
-    return { url: pr.html_url, number: pr.number, state: pr.state, merged: !!pr.merged_at };
+    return { url: pr.html_url, number: pr.number, state: pr.state, merged: !!pr.merged_at, title: pr.title ?? '' };
+  }
+
+  /** The branch the workflow pushes for a given run. */
+  syncBranch(runId: number): string {
+    return `sync-from-${this.opts.from}-to-${this.opts.to}-${runId}`;
+  }
+
+  /** Read a file from the destination repo at a branch, with its blob sha. */
+  async readDestFile(branch: string, filePath: string): Promise<{ content: string; sha: string } | null> {
+    const headers = await this.headers();
+    const url = `${MACH.API_BASE}/repos/${MACH.MACH_ENV_OWNER}/${this.destRepo()}/contents/${filePath}?ref=${encodeURIComponent(branch)}`;
+    const res = await fetch(url, { headers });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      throw new Error(`Read ${this.destRepo()}/${filePath}@${branch} failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+    }
+    const data: any = await res.json();
+    if (typeof data?.content !== 'string' || !data?.sha) return null;
+    return {
+      content: Buffer.from(data.content, data.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8'),
+      sha: data.sha,
+    };
+  }
+
+  /** Commit a file update to a branch in the destination repo (PR updates itself). */
+  async commitDestFile(
+    branch: string,
+    filePath: string,
+    content: string,
+    sha: string,
+    message: string,
+  ): Promise<void> {
+    const headers = await this.headers();
+    const url = `${MACH.API_BASE}/repos/${MACH.MACH_ENV_OWNER}/${this.destRepo()}/contents/${filePath}`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        content: Buffer.from(content, 'utf8').toString('base64'),
+        sha,
+        branch,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Commit ${filePath}@${branch} failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+    }
+  }
+
+  /** Rename a PR (e.g. to the release version). Idempotent — caller checks diff. */
+  async updatePullRequestTitle(prNumber: number, title: string): Promise<void> {
+    const headers = await this.headers();
+    const url = `${MACH.API_BASE}/repos/${MACH.MACH_ENV_OWNER}/${this.destRepo()}/pulls/${prNumber}`;
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    if (!res.ok) {
+      throw new Error(`PR title update failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+    }
   }
 }
 
@@ -302,4 +364,51 @@ function parseComponents(text: string): {
 
 function stripQuotes(s: string): string {
   return s.replace(/^["']|["']$/g, '').trim();
+}
+
+const SEMVER_TOKEN = /v?\d+\.\d+\.\d+[\w.-]*/i;
+
+/**
+ * Set a component's version in a `components.yml`, editing only the `version:`
+ * line that belongs to `component`. When the existing value carries a semver
+ * token (e.g. `@phoenix/mms-webapp-v4.751.0`), only that token is swapped so any
+ * prefix/suffix is preserved; otherwise the whole value is replaced. Returns the
+ * new text plus whether anything changed (so callers can stay idempotent).
+ */
+export function setComponentVersion(
+  text: string,
+  component: string,
+  newVersion: string,
+): { text: string; changed: boolean; oldValue?: string; newValue?: string } {
+  const lines = text.split(/\r?\n/);
+  const nameRe = /^\s*-?\s*name:\s*(.+?)\s*$/;
+  const versionRe = /^(\s*-?\s*version:\s*)(.+?)(\s*)$/;
+  const numberOnly = newVersion.replace(/^v/i, '');
+
+  for (let i = 0; i < lines.length; i++) {
+    const nm = lines[i].match(nameRe);
+    if (!nm || stripQuotes(nm[1]) !== component) continue;
+
+    for (let j = i + 1; j < lines.length; j++) {
+      if (nameRe.test(lines[j])) break; // next component, no version found
+      const vm = lines[j].match(versionRe);
+      if (!vm) continue;
+
+      const [, prefix, rawValue, trailing] = vm;
+      const oldValue = stripQuotes(rawValue);
+      let newValue: string;
+      const tok = rawValue.match(SEMVER_TOKEN);
+      if (tok) {
+        const keepV = /^v/i.test(tok[0]);
+        newValue = rawValue.replace(SEMVER_TOKEN, keepV ? `v${numberOnly}` : numberOnly);
+      } else {
+        newValue = newVersion;
+      }
+      if (newValue === rawValue) return { text, changed: false, oldValue, newValue: stripQuotes(newValue) };
+      lines[j] = `${prefix}${newValue}${trailing}`;
+      return { text: lines.join('\n'), changed: true, oldValue, newValue: stripQuotes(newValue) };
+    }
+    break;
+  }
+  return { text, changed: false };
 }

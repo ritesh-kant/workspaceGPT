@@ -331,6 +331,7 @@ interface MachPull {
   number: number;
   state: string;
   merged: boolean;
+  title: string;
 }
 
 interface MachApplyState {
@@ -340,6 +341,8 @@ interface MachApplyState {
   /** Workflow id + dispatch time, used to locate the run before it has an id. */
   workflowId?: number;
   dispatchedAt?: string;
+  /** Release version — applied as the PR title once the PR opens. */
+  version?: string;
   /** Captured trigger context so polling rebuilds the same target. */
   ctx?: { environment: string; from: string; to: string; brand: string };
   error?: string;
@@ -450,6 +453,15 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const [machPlan, setMachPlan] = useState<MachPlanState | null>(null);
   const [machApply, setMachApply] = useState<MachApplyState | null>(null);
   const [machCountdown, setMachCountdown] = useState(MACH_POLL_SECONDS);
+  const [machWebapp, setMachWebapp] = useState<{
+    loading?: boolean;
+    done?: boolean;
+    changed?: boolean;
+    version?: string;
+    oldValue?: string;
+    newValue?: string;
+    error?: string;
+  } | null>(null);
   // Latest apply state, so the poll interval reads current ids without resubscribing.
   const machApplyRef = useRef<MachApplyState | null>(null);
   machApplyRef.current = machApply;
@@ -532,6 +544,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
               pr: null,
               workflowId: message.workflowId,
               dispatchedAt: message.dispatchedAt,
+              version: message.version,
               ctx: {
                 environment: message.environment,
                 from: message.from,
@@ -551,6 +564,20 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
             );
           }
           break;
+        case MESSAGE_TYPES.INJECT_WEBAPP_VERSION_RESPONSE:
+          setMachWebapp(
+            message.ok
+              ? {
+                  loading: false,
+                  done: true,
+                  changed: !!message.changed,
+                  version: message.version,
+                  oldValue: message.oldValue,
+                  newValue: message.newValue,
+                }
+              : { loading: false, error: message.error || 'Failed to set webapp version.' }
+          );
+          break;
       }
     };
     window.addEventListener('message', handleMessage);
@@ -565,6 +592,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
       setApply(null);
       setMachPlan(null);
       setMachApply(null);
+      setMachWebapp(null);
       vscode.postMessage({ type: MESSAGE_TYPES.RESOLVE_RELEASE });
       vscode.postMessage({ type: MESSAGE_TYPES.GET_RELEASE_RUNS });
     }
@@ -580,6 +608,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
       runId: m.run?.runId,
       workflowId: m.workflowId,
       dispatchedAt: m.dispatchedAt,
+      version: m.version,
       environment: m.ctx?.environment || 'stage',
       overrides: m.ctx ? { from: m.ctx.from, to: m.ctx.to, brand: m.ctx.brand } : undefined,
     });
@@ -592,10 +621,12 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
 
   // Poll a triggered mach run until its PR appears or the run completes (~5 min),
   // ticking a 1s countdown so the user sees when the next check fires.
-  const machHasPr = !!machApply?.pr;
   const machRunCompleted = machApply?.run?.status === 'completed';
+  // Keep polling until the RUN finishes (not just until the PR appears) — the PR
+  // is created a few seconds before the run flips to `completed`, so stopping on
+  // the PR would freeze the status display at `in_progress`.
   const machPollActive =
-    !!machApply && !machApply.loading && !machApply.error && !machHasPr && !machRunCompleted;
+    !!machApply && !machApply.loading && !machApply.error && !machRunCompleted;
   const machRunId = machApply?.run?.runId;
   useEffect(() => {
     if (!machPollActive) return;
@@ -671,6 +702,19 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
       type: MESSAGE_TYPES.APPLY_MACH_SYNC,
       version: effectiveVersion,
       environment: effectiveEnv || 'stage',
+    });
+  };
+
+  const injectWebappVersion = () => {
+    const m = machApplyRef.current;
+    if (!m?.run?.runId) return;
+    setMachWebapp({ loading: true });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.INJECT_WEBAPP_VERSION,
+      runId: m.run.runId,
+      version: m.version,
+      environment: m.ctx?.environment || 'stage',
+      overrides: m.ctx ? { from: m.ctx.from, to: m.ctx.to, brand: m.ctx.brand } : undefined,
     });
   };
 
@@ -945,6 +989,9 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                           <span style={{ color: machApply.run.conclusion === 'success' ? '#4ecca3' : machApply.run.conclusion === 'failure' ? '#e74c3c' : '#e0a93b' }}>
                             {machApply.run.conclusion || machApply.run.status}
                           </span>
+                          {!machRunCompleted && machPollActive && (
+                            <span style={{ color: '#888' }}> · refreshing in {machCountdown}s</span>
+                          )}
                         </div>
                       ) : (
                         <div style={{ color: '#888' }}>⏳ Locating the dispatched run…</div>
@@ -957,6 +1004,38 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                             #{machApply.pr.number}
                           </a>{' '}
                           {machApply.pr.merged ? '(merged)' : `(${machApply.pr.state})`} — review &amp; merge
+                          {machApply.pr.title && (
+                            <div style={{ color: '#a0a0a0', fontFamily: 'monospace', fontSize: '0.92em', marginTop: 1 }}>
+                              {machApply.pr.title}
+                            </div>
+                          )}
+                          {!machApply.pr.merged && (
+                            <div style={{ marginTop: 8 }}>
+                              <button
+                                onClick={injectWebappVersion}
+                                disabled={!!machWebapp?.loading}
+                                style={{ fontSize: '0.92em' }}
+                                title="Read the webapp version Vercel deployed to the source env and commit it into this PR"
+                              >
+                                {machWebapp?.loading ? '⏳ Reading Vercel…' : 'Set webapp version from Vercel'}
+                              </button>
+                              {machWebapp && !machWebapp.loading && (
+                                <div style={{ marginTop: 4, fontSize: '0.92em' }}>
+                                  {machWebapp.error ? (
+                                    <span style={{ color: '#e74c3c' }}>{machWebapp.error}</span>
+                                  ) : machWebapp.changed ? (
+                                    <span style={{ color: '#4ecca3' }}>
+                                      ✅ webapp → {machWebapp.newValue} (was {machWebapp.oldValue || '—'}) — committed to PR
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: '#888' }}>
+                                      webapp already at {machWebapp.version} — no change
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#888', marginTop: 2 }}>
