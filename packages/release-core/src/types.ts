@@ -171,6 +171,93 @@ export interface TicketProvider {
 }
 
 /* ------------------------------------------------------------------ */
+/* Pipeline actions — the universal deployment-step interface          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The category of a pipeline action. Inspired by the common industry rollout
+ * strategies, but deliberately open-ended: only `deploy` is implemented today
+ * (config push + triggered promotion). The rest are RESERVED names so the model
+ * can be extended to those strategies later without reshaping the core — they
+ * carry no implementation yet.
+ *
+ * - `deploy`      — converge config or trigger a promotion (rolling, recreate,
+ *                   GitOps, feature-flag push all reduce to this).
+ * - `switch`      — atomic traffic cutover (blue-green). RESERVED.
+ * - `progressive` — percentage/bake-window rollout (canary). RESERVED.
+ * - `verify`      — health/observability gate. RESERVED.
+ * - `rollback`    — revert a prior action. RESERVED.
+ */
+export type ActionCategory =
+  | 'deploy'
+  | 'switch'
+  | 'progressive'
+  | 'verify'
+  | 'rollback';
+
+/** A reference to out-of-band work an action started (a PR, a CI run, …). */
+export interface ActionRef {
+  /** Discriminator, e.g. `github-run`, `pull-request`. */
+  kind: string;
+  id: string | number;
+  url?: string;
+  [k: string]: unknown;
+}
+
+/** Everything an action needs to plan/apply, supplied by the pipeline runner. */
+export interface ActionContext {
+  release: string;
+  environment: Environment;
+  /** ISO-8601 timestamp; injected so action logic stays pure/testable. */
+  now: string;
+  /** Desired config (convergent actions filter this by their target id). */
+  desired?: DesiredConfigVar[];
+}
+
+/** A reviewable preview of what an action would do. */
+export interface ActionPlan {
+  actionId: string;
+  category: ActionCategory;
+  /** Populated by convergent actions (key/value config diff). */
+  plan?: ReleasePlan;
+  /** Freeform preview rows for triggered actions (e.g. component-version deltas). */
+  preview?: unknown[];
+  summary?: string;
+}
+
+/** The outcome of applying an action. */
+export interface ActionOutcome {
+  actionId: string;
+  /** `pending` covers triggered actions whose real result arrives via {@link PipelineAction.poll}. */
+  status: 'applied' | 'skipped' | 'failed' | 'pending';
+  results?: ApplyResult[];
+  refs?: ActionRef[];
+  error?: string;
+}
+
+/**
+ * The universal deployment-step interface. Every target — convergent config
+ * push (Vercel, SSM, a repo file), a triggered promotion workflow (mach), and
+ * any future switch/canary/rollback — implements this, so the runner and UI
+ * treat them uniformly. `rollback`/`verify` are optional and unimplemented for
+ * the current (Mars) actions; they're the seams the reserved categories use.
+ */
+export interface PipelineAction {
+  readonly id: string;
+  readonly category: ActionCategory;
+  /** Read-only preview. Convergent actions use `ctx.desired`; triggered ones ignore it. */
+  plan(ctx: ActionContext): Promise<ActionPlan>;
+  /** Execute approved changes; returns the outcome and any out-of-band refs. */
+  apply(ctx: ActionContext, approved?: ConfigVarDiff[]): Promise<ActionOutcome>;
+  /** Poll an async/triggered action to completion. Optional. */
+  poll?(ref: ActionRef): Promise<ActionOutcome>;
+  /** Revert a prior apply. RESERVED — not implemented for current actions. */
+  rollback?(ctx: ActionContext, ref?: ActionRef): Promise<ActionOutcome>;
+  /** Health/verify gate. RESERVED — not implemented for current actions. */
+  verify?(ctx: ActionContext): Promise<{ ok: boolean; detail?: string }>;
+}
+
+/* ------------------------------------------------------------------ */
 /* Audit                                                               */
 /* ------------------------------------------------------------------ */
 

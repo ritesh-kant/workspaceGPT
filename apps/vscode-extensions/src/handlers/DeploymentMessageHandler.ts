@@ -1,10 +1,22 @@
 import * as vscode from 'vscode';
-import { MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
+import {
+  MESSAGE_TYPES,
+  STORAGE_KEYS,
+  MARS_MACH_PRESET,
+  legacyToDescriptor,
+  type MachRepoConfig,
+  type PipelineDescriptor,
+  type PipelineSource,
+  type ActionProvider,
+} from '../../constants';
 import { AnalyticsService } from '../services/analyticsService';
 import { GitHubOAuthService } from '../services/deployment/githubOAuthService';
 import { VercelAuthService } from '../services/deployment/vercelAuthService';
 import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
 import { ConfluenceReleaseSource } from '../services/deployment/confluenceReleaseSource';
+import { AiReleaseSource } from '../services/deployment/aiReleaseSource';
+import { FileReleaseSource } from '../services/deployment/fileReleaseSource';
+import { getLlmSettings } from '../utils/getLlmSettings';
 import { MachAuthService } from '../services/deployment/machAuthService';
 import { MachSyncTarget, setComponentVersion, type MachSyncOptions } from '../services/deployment/machSyncTarget';
 import { readVercelDeployedVersion } from '../services/deployment/vercelDeployments';
@@ -16,6 +28,7 @@ import {
   hasUnresolvedConflicts,
   FileAuditLog,
   type ConfigVarDiff,
+  type ReleaseSource,
 } from '@workspace-gpt/release-core';
 
 /**
@@ -82,6 +95,14 @@ export class DeploymentMessageHandler {
 
       case MESSAGE_TYPES.GET_VERCEL_PROJECTS:
         await this.handleGetVercelProjects();
+        return true;
+
+      case MESSAGE_TYPES.DISCOVER_GITHUB:
+        await this.handleDiscoverGithub(data);
+        return true;
+
+      case MESSAGE_TYPES.DISCOVER_ROSTER_COLUMNS:
+        await this.handleDiscoverRosterColumns();
         return true;
 
       case MESSAGE_TYPES.CHECK_MACH_TOKEN:
@@ -157,7 +178,8 @@ export class DeploymentMessageHandler {
 
     try {
       const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      const rosterPageUrl: string | undefined = settings?.state?.config?.deployment?.rosterPageUrl;
+      const dep = settings?.state?.config?.deployment ?? {};
+      const rosterPageUrl: string | undefined = this.sourceConfig(dep).rosterPageUrl;
 
       // Source of truth for "Confluence connected" is the stored OAuth tokens +
       // site (the webview `confluence.isConnected` flag isn't reliably set).
@@ -171,7 +193,7 @@ export class DeploymentMessageHandler {
         return notConfigured('Set the Release Roster page URL in Settings → Deployment Automation.');
       }
 
-      const source = new ConfluenceReleaseSource(this.confluenceAuth, { rosterPageUrl });
+      const source = this.buildReleaseSource(dep);
       const resolved = await source.resolveRelease(today);
       if (!resolved) {
         return notConfigured(`No release scheduled for ${today} on the roster.`);
@@ -232,9 +254,9 @@ export class DeploymentMessageHandler {
       if (!connected) return fail('Connect Confluence (Settings → Confluence) first.');
 
       const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      const rosterPageUrl: string = settings?.state?.config?.deployment?.rosterPageUrl ?? '';
+      const dep = settings?.state?.config?.deployment ?? {};
 
-      const source = new ConfluenceReleaseSource(this.confluenceAuth, { rosterPageUrl });
+      const source = this.buildReleaseSource(dep);
       const vars = await source.fetchDesiredConfig(version, environment);
 
       this.post(MESSAGE_TYPES.PREPARE_CONFIG_SYNC_RESPONSE, {
@@ -297,6 +319,121 @@ export class DeploymentMessageHandler {
   }
 
   /**
+   * Resolve an engine environment name to its declared {@link DeploymentEnvironment}.
+   *
+   * Prefers the configured `environments` list (N-ary, org-agnostic). Falls back
+   * to the legacy binary `stage`/`prod` fields so existing configs keep working
+   * unchanged — the fallback never enables auto-merge (Mars-safe). This is the
+   * single seam that removes the hardcoded stage/prod assumption from the
+   * env→target mapping.
+   */
+  /**
+   * Build the Confluence release source from settings — roster URL plus any
+   * configured column overrides (from the discover-and-select dropdowns). One
+   * place so every caller stays consistent.
+   */
+  private buildConfluenceSource(dep: any): ConfluenceReleaseSource {
+    const src = this.sourceConfig(dep);
+    return new ConfluenceReleaseSource(this.confluenceAuth, {
+      rosterPageUrl: src.rosterPageUrl ?? '',
+      columns: src.rosterColumns,
+    });
+  }
+
+  /**
+   * The release source for resolve/fetch. When AI-assisted parsing is opted in
+   * (and a chat model is configured), wrap the deterministic source so it falls
+   * back to the LLM on a parse failure — AI proposes, the source validates, and
+   * the existing plan→approve gate is the human backstop. Otherwise pure
+   * deterministic, so an unconfigured install is unchanged.
+   */
+  private buildReleaseSource(dep: any): ReleaseSource {
+    const src = this.sourceConfig(dep);
+
+    if (src.provider === 'file') {
+      const apiBase =
+        this.actionConfig(dep, 'github-workflow-dispatch').repo?.apiBase || MARS_MACH_PRESET.apiBase;
+      return new FileReleaseSource(this.machAuth, {
+        apiBase,
+        owner: src.fileRepoOwner ?? '',
+        repo: src.fileRepoName ?? '',
+        path: src.filePath ?? '',
+        ref: src.fileRef ?? 'main',
+      });
+    }
+
+    // manual / none / jira — no automatic source; resolve/fetch return empty.
+    if (src.provider !== 'confluence-roster') {
+      return {
+        async resolveRelease() {
+          return null;
+        },
+        async fetchDesiredConfig() {
+          return [];
+        },
+      };
+    }
+
+    const deterministic = this.buildConfluenceSource(dep);
+    if (src.aiAssistParsing && this.hasLlm()) {
+      return new AiReleaseSource(deterministic, (prompt) => this.aiComplete(prompt));
+    }
+    return deterministic;
+  }
+
+  /** Whether a chat model is configured (Settings → Model) for AI-assisted parsing. */
+  private hasLlm(): boolean {
+    const s = getLlmSettings(this.context);
+    return !!(s.provider && s.baseUrl && s.model);
+  }
+
+  /** One-shot LLM completion via the configured OpenAI-compatible provider. */
+  private async aiComplete(prompt: string): Promise<string> {
+    const s = getLlmSettings(this.context);
+    if (!s.provider || !s.baseUrl || !s.model) {
+      throw new Error('Select a chat model (Settings → Model) to use AI-assisted parsing.');
+    }
+    const OpenAI = (await import('openai')).default;
+    const client = new OpenAI({ apiKey: s.apiKey || 'local', baseURL: s.baseUrl });
+    const res = await client.chat.completions.create({
+      model: s.model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      max_tokens: 2048,
+    });
+    return res.choices[0]?.message?.content?.trim() || '';
+  }
+
+  /** The pipeline descriptor (single config source). Migrates legacy flat
+   *  settings into a descriptor when none is saved yet. */
+  private getPipeline(dep: any): PipelineDescriptor {
+    return dep?.pipeline ?? legacyToDescriptor(dep ?? {});
+  }
+
+  /** Config of the first action with the given provider, or `{}` if none. */
+  private actionConfig(dep: any, provider: ActionProvider): Record<string, any> {
+    const desc = this.getPipeline(dep);
+    for (const stage of desc.stages) {
+      for (const action of stage.actions) {
+        if (action.provider === provider) return action.config ?? {};
+      }
+    }
+    return {};
+  }
+
+  /** The pipeline's source config. */
+  private sourceConfig(dep: any): PipelineSource {
+    return this.getPipeline(dep).source;
+  }
+
+  /** Per-environment policy (auto-merge) from the declared environments. */
+  private resolveEnv(dep: any, environment: string): { autoMerge: boolean } {
+    const envs = this.getPipeline(dep).environments ?? [];
+    const found = envs.find((e) => e?.name === environment);
+    return { autoMerge: found?.autoMerge === true };
+  }
+
+  /**
    * Shared read-only plan builder for the Vercel half: validate connections +
    * settings, parse desired config, read live Vercel state, diff. Throws with an
    * actionable message on any gap. Used by both plan (preview) and apply.
@@ -309,17 +446,14 @@ export class DeploymentMessageHandler {
 
     const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
     const dep = settings?.state?.config?.deployment ?? {};
-    const projectId: string = dep.vercelProjectId ?? '';
+    const v = this.actionConfig(dep, 'vercel-config');
+    const projectId: string = v.projectId ?? '';
     if (!projectId) throw new Error('Select a Vercel project in Settings → Deployment Automation.');
 
     const vercelEnv: string =
-      environment === 'prod'
-        ? dep.vercelEnvProd || 'production'
-        : dep.vercelEnvStage || 'preview';
+      environment === 'prod' ? v.envProd || 'production' : v.envStage || 'preview';
 
-    const source = new ConfluenceReleaseSource(this.confluenceAuth, {
-      rosterPageUrl: dep.rosterPageUrl ?? '',
-    });
+    const source = this.buildReleaseSource(dep);
     const desired = await source.fetchDesiredConfig(version, environment);
 
     const vercelDesired = desired.filter((v) => v.target === 'vercel');
@@ -327,7 +461,7 @@ export class DeploymentMessageHandler {
       .filter((v) => v.target !== 'vercel')
       .map((v) => ({ key: v.key, target: v.target }));
 
-    const perEnvValues = !!dep.vercelPerEnvValues;
+    const perEnvValues = !!v.perEnvValues;
     const target = new VercelTarget(this.vercelAuth, { projectId, vercelEnv, perEnvValues });
     const plan = await buildPlan({
       release: version,
@@ -335,7 +469,7 @@ export class DeploymentMessageHandler {
       desired: vercelDesired,
       targets: [target],
       now: new Date().toISOString(),
-      source: `Vercel project ${dep.vercelProjectName || projectId} · ${vercelEnv}`,
+      source: `Vercel project ${v.projectName || projectId} · ${vercelEnv}`,
     });
 
     return { plan, target, vercelEnv, skipped, perEnvValues };
@@ -437,7 +571,9 @@ export class DeploymentMessageHandler {
       if (!(await this.vercelAuth.isConnected())) return fail('Connect Vercel first.');
 
       const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      const projectId: string = settings?.state?.config?.deployment?.vercelProjectId ?? '';
+      const dep = settings?.state?.config?.deployment ?? {};
+      const m = this.actionConfig(dep, 'github-workflow-dispatch');
+      const projectId: string = m.webappVercelProjectId || this.actionConfig(dep, 'vercel-config').projectId || '';
       if (!projectId) return fail('Select the mms-webapp Vercel project in Settings → Deployment Automation.');
 
       const { target, opts } = await this.buildMachTarget(environment, data?.overrides);
@@ -572,6 +708,103 @@ export class DeploymentMessageHandler {
     }
   }
 
+  /**
+   * Discover-and-select for the mach repo topology: list GitHub orgs / repos /
+   * workflows / branches the mach PAT can see, so the Settings dropdowns are
+   * populated from live data instead of asking the user to type ids. One endpoint
+   * keyed by `kind`; the UI passes `owner`/`repo` as the selection narrows.
+   */
+  private async handleDiscoverGithub(data: any): Promise<void> {
+    const kind: string = data?.kind ?? '';
+    const reply = (payload: any) =>
+      this.post(MESSAGE_TYPES.DISCOVER_GITHUB_RESPONSE, { kind, owner: data?.owner, repo: data?.repo, ...payload });
+
+    try {
+      if (!(await this.machAuth.isConnected())) return reply({ ok: false, error: 'Set the mach GitHub token first.' });
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const dep = settings?.state?.config?.deployment ?? {};
+      const apiBase: string =
+        this.actionConfig(dep, 'github-workflow-dispatch').repo?.apiBase || MARS_MACH_PRESET.apiBase;
+      const token = await this.machAuth.requireToken();
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'workspacegpt',
+        'X-GitHub-Api-Version': '2022-11-28',
+      };
+      const getJson = async (url: string): Promise<any> => {
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error(`GitHub API ${res.status}: ${(await res.text()).slice(0, 150)}`);
+        return res.json();
+      };
+
+      if (kind === 'orgs') {
+        const [me, orgs] = await Promise.all([
+          getJson(`${apiBase}/user`),
+          getJson(`${apiBase}/user/orgs?per_page=100`),
+        ]);
+        const logins = [me?.login, ...(orgs ?? []).map((o: any) => o?.login)].filter(Boolean);
+        return reply({ ok: true, items: Array.from(new Set(logins)) });
+      }
+
+      if (kind === 'repos') {
+        const owner: string = data?.owner ?? '';
+        if (!owner) return reply({ ok: false, error: 'No owner.' });
+        // Org repos first; fall back to the user-repos endpoint for personal accounts.
+        let repos: any[] = [];
+        try {
+          repos = await getJson(`${apiBase}/orgs/${owner}/repos?per_page=100&sort=full_name`);
+        } catch {
+          repos = await getJson(`${apiBase}/users/${owner}/repos?per_page=100&sort=full_name`);
+        }
+        return reply({ ok: true, items: (repos ?? []).map((r: any) => r?.name).filter(Boolean) });
+      }
+
+      if (kind === 'workflows') {
+        const { owner, repo } = data ?? {};
+        if (!owner || !repo) return reply({ ok: false, error: 'No owner/repo.' });
+        const wf = await getJson(`${apiBase}/repos/${owner}/${repo}/actions/workflows?per_page=100`);
+        return reply({ ok: true, items: (wf?.workflows ?? []).map((w: any) => w?.name).filter(Boolean) });
+      }
+
+      if (kind === 'branches') {
+        const { owner, repo } = data ?? {};
+        if (!owner || !repo) return reply({ ok: false, error: 'No owner/repo.' });
+        const branches = await getJson(`${apiBase}/repos/${owner}/${repo}/branches?per_page=100`);
+        return reply({ ok: true, items: (branches ?? []).map((b: any) => b?.name).filter(Boolean) });
+      }
+
+      return reply({ ok: false, error: `Unknown discovery kind: ${kind}` });
+    } catch (error) {
+      reply({ ok: false, error: errMessage(error) });
+    }
+  }
+
+  /**
+   * Detect the roster page's column headers (+ a best-guess mapping) so the
+   * column-mapping dropdowns are populated from the real page rather than the
+   * user typing header names. Read-only.
+   */
+  private async handleDiscoverRosterColumns(): Promise<void> {
+    const reply = (payload: any) =>
+      this.post(MESSAGE_TYPES.DISCOVER_ROSTER_COLUMNS_RESPONSE, payload);
+    try {
+      const connected =
+        (await this.confluenceAuth.isAuthenticated()) && !!this.confluenceAuth.getStoredSite();
+      if (!connected) return reply({ ok: false, error: 'Connect Confluence first.' });
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const dep = settings?.state?.config?.deployment ?? {};
+      if (!this.sourceConfig(dep).rosterPageUrl) {
+        return reply({ ok: false, error: 'Set the Release Roster page URL first.' });
+      }
+
+      const { headers, guess } = await this.buildConfluenceSource(dep).describeRoster();
+      reply({ ok: true, headers, guess });
+    } catch (error) {
+      reply({ ok: false, error: errMessage(error) });
+    }
+  }
+
   // --- mach (classic PAT) ---
 
   /**
@@ -618,21 +851,25 @@ export class DeploymentMessageHandler {
     const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
     const dep = settings?.state?.config?.deployment ?? {};
 
-    const brand: string = overrides.brand || dep.machBrand || 'mms';
-    const from: string = overrides.from || dep.machSourceEnv || '';
+    const m = this.actionConfig(dep, 'github-workflow-dispatch');
+    const brand: string = overrides.brand || m.brand || 'mms';
+    const from: string = overrides.from || m.sourceEnv || '';
     if (!from) {
       throw new Error('Set the mach source environment (e.g. test01) in Settings → Deployment Automation.');
     }
     const to: string =
-      overrides.to ||
-      (environment === 'prod' ? dep.machEnvProd || 'prod' : dep.machEnvStage || 'stage');
-    const fromBranch: string = overrides.fromBranch || dep.machFromBranch || 'main';
+      overrides.to || (environment === 'prod' ? m.envProd || 'prod' : m.envStage || 'stage');
+    const fromBranch: string = overrides.fromBranch || m.fromBranch || 'main';
     const updateMainYml: boolean =
       typeof overrides.updateMainYml === 'boolean'
         ? overrides.updateMainYml
-        : dep.machUpdateMainYml !== false;
+        : m.updateMainYml !== false;
+    // Per-env policy, defaulting to never auto-merge (Mars-safe).
+    const autoMerge: boolean = this.resolveEnv(dep, environment).autoMerge === true;
+    // Repo topology from the action config, defaulting to the Mars preset.
+    const repo: MachRepoConfig = { ...MARS_MACH_PRESET, ...(m.repo ?? {}) };
 
-    const opts: MachSyncOptions = { brand, from, to, fromBranch, updateMainYml };
+    const opts: MachSyncOptions = { repo, brand, from, to, fromBranch, updateMainYml, autoMerge };
     return { target: new MachSyncTarget(this.machAuth, opts), opts };
   }
 

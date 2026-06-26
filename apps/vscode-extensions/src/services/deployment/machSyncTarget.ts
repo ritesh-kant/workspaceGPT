@@ -1,7 +1,20 @@
-import { MACH } from '../../../constants';
+import type {
+  ActionContext,
+  ActionOutcome,
+  ActionPlan,
+  ActionRef,
+  ConfigVarDiff,
+  PipelineAction,
+} from '@workspace-gpt/release-core';
+import {
+  type MachRepoConfig,
+  renderRepoName,
+} from '../../../constants';
 import { MachAuthService } from './machAuthService';
 
 export interface MachSyncOptions {
+  /** Repo topology (monorepo/workflow/repo-naming). Defaults to MARS_MACH_PRESET. */
+  repo: MachRepoConfig;
   brand: string;
   /** Source environment (e.g. test01) — read from here. */
   from: string;
@@ -11,6 +24,12 @@ export interface MachSyncOptions {
   fromBranch: string;
   /** Whether the workflow should also sync `main.yml` env vars. */
   updateMainYml: boolean;
+  /**
+   * Whether the promotion PR may auto-merge. Per-environment policy (declared in
+   * settings), defaulting to false. Auto-merge is force-disabled for `stage`
+   * regardless, so it's never silently merged into the pre-prod env.
+   */
+  autoMerge?: boolean;
 }
 
 /** One component's version delta between source and destination `components.yml`. */
@@ -57,14 +76,63 @@ export interface MachPullRef {
  * `workflow_dispatch` (never auto-merged — and `to == stage` forces auto-merge
  * off regardless). We surface a faithful read-only diff first, then the PR URL.
  */
-export class MachSyncTarget {
+export class MachSyncTarget implements PipelineAction {
   readonly id = 'mach';
+  /** Triggered promotion, but still a `deploy` step from the pipeline's view. */
+  readonly category = 'deploy' as const;
   private workflowId?: number;
 
   constructor(
     private readonly auth: MachAuthService,
     private readonly opts: MachSyncOptions,
   ) {}
+
+  /* --------------------------------------------------------------- */
+  /* PipelineAction conformance — thin wrappers over the mach-native  */
+  /* methods below, so the runner can treat mach like any other       */
+  /* deploy action. The richer handler flow (PR rename, webapp inject)*/
+  /* still calls the native methods directly.                         */
+  /* --------------------------------------------------------------- */
+
+  /** Read-only preview: the component-version diff the workflow would apply. */
+  async plan(_ctx: ActionContext): Promise<ActionPlan> {
+    const changes = await this.planComponentDiff();
+    const updates = changes.filter((c) => c.action === 'update').length;
+    return {
+      actionId: this.id,
+      category: this.category,
+      preview: changes,
+      summary: `${updates} component version change(s) ${this.opts.from} → ${this.opts.to}`,
+    };
+  }
+
+  /** Trigger the promotion. The PR/run arrives asynchronously — poll via {@link poll}. */
+  async apply(ctx: ActionContext, _approved?: ConfigVarDiff[]): Promise<ActionOutcome> {
+    const { workflowId, run } = await this.dispatchSync(ctx.now);
+    const refs: ActionRef[] = run
+      ? [{ kind: 'github-run', id: run.runId, url: run.runUrl }]
+      : [{ kind: 'github-workflow', id: workflowId }];
+    return { actionId: this.id, status: 'pending', refs };
+  }
+
+  /** Poll a dispatched run to completion, surfacing the opened PR when present. */
+  async poll(ref: ActionRef): Promise<ActionOutcome> {
+    if (ref.kind !== 'github-run') {
+      return { actionId: this.id, status: 'pending', refs: [ref] };
+    }
+    const runId = Number(ref.id);
+    const run = await this.getRunStatus(runId);
+    const pr = await this.findPullRequest(runId);
+    const refs: ActionRef[] = [{ kind: 'github-run', id: run.runId, url: run.runUrl }];
+    if (pr) refs.push({ kind: 'pull-request', id: pr.number, url: pr.url });
+    const status: ActionOutcome['status'] =
+      run.status === 'completed'
+        ? run.conclusion === 'success'
+          ? 'applied'
+          : 'failed'
+        : 'pending';
+    return { actionId: this.id, status, refs };
+  }
 
   private async headers(): Promise<Record<string, string>> {
     const token = await this.auth.requireToken();
@@ -78,11 +146,11 @@ export class MachSyncTarget {
 
   /** Destination repo name, derived as `aws-<brand>-phoenix-<to>-mach`. */
   private destRepo(): string {
-    return MACH.envRepo(this.opts.brand, this.opts.to);
+    return renderRepoName(this.opts.repo.repoTemplate, this.opts.brand, this.opts.to);
   }
 
   private srcRepo(): string {
-    return MACH.envRepo(this.opts.brand, this.opts.from);
+    return renderRepoName(this.opts.repo.repoTemplate, this.opts.brand, this.opts.from);
   }
 
   /** Resolve the workflow's numeric id by its display name (paginated list). */
@@ -90,27 +158,27 @@ export class MachSyncTarget {
     if (this.workflowId) return this.workflowId;
     const headers = await this.headers();
     for (let page = 1; page <= 10; page++) {
-      const url = `${MACH.API_BASE}/repos/${MACH.MONOREPO_OWNER}/${MACH.MONOREPO_REPO}/actions/workflows?per_page=100&page=${page}`;
+      const url = `${this.opts.repo.apiBase}/repos/${this.opts.repo.monorepoOwner}/${this.opts.repo.monorepoRepo}/actions/workflows?per_page=100&page=${page}`;
       const res = await fetch(url, { headers });
       if (!res.ok) {
         throw new Error(`Could not list monorepo workflows (${res.status}): ${(await res.text()).slice(0, 200)}`);
       }
       const data: any = await res.json();
       const list: any[] = data?.workflows ?? [];
-      const found = list.find((w) => w.name === MACH.WORKFLOW_NAME);
+      const found = list.find((w) => w.name === this.opts.repo.workflowName);
       if (found?.id) {
         this.workflowId = found.id;
         return found.id;
       }
       if (list.length < 100) break; // last page
     }
-    throw new Error(`Workflow "${MACH.WORKFLOW_NAME}" not found in ${MACH.MONOREPO_REPO}.`);
+    throw new Error(`Workflow "${this.opts.repo.workflowName}" not found in ${this.opts.repo.monorepoRepo}.`);
   }
 
   /** Fetch and decode a text file from a repo at a ref (null if absent). */
   private async fetchFile(owner: string, repo: string, filePath: string, ref: string): Promise<string | null> {
     const headers = await this.headers();
-    const url = `${MACH.API_BASE}/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`;
+    const url = `${this.opts.repo.apiBase}/repos/${owner}/${repo}/contents/${filePath}?ref=${encodeURIComponent(ref)}`;
     const res = await fetch(url, { headers });
     if (res.status === 404) return null;
     if (!res.ok) {
@@ -129,7 +197,7 @@ export class MachSyncTarget {
    */
   async planComponentDiff(): Promise<MachComponentChange[]> {
     const srcText = await this.fetchFile(
-      MACH.MACH_ENV_OWNER,
+      this.opts.repo.destOwner,
       this.srcRepo(),
       'components.yml',
       this.opts.fromBranch,
@@ -137,7 +205,7 @@ export class MachSyncTarget {
     if (srcText === null) {
       throw new Error(`Source ${this.srcRepo()} has no components.yml on "${this.opts.fromBranch}".`);
     }
-    const destText = await this.fetchFile(MACH.MACH_ENV_OWNER, this.destRepo(), 'components.yml', 'main');
+    const destText = await this.fetchFile(this.opts.repo.destOwner, this.destRepo(), 'components.yml', 'main');
     if (destText === null) {
       throw new Error(`Destination ${this.destRepo()} has no components.yml on main.`);
     }
@@ -174,14 +242,14 @@ export class MachSyncTarget {
     const headers = await this.headers();
     const id = await this.resolveWorkflowId();
 
-    const dispatchUrl = `${MACH.API_BASE}/repos/${MACH.MONOREPO_OWNER}/${MACH.MONOREPO_REPO}/actions/workflows/${id}/dispatches`;
-    // stage never auto-merges; force the flag off so it's explicit here too.
-    const autoMerge = this.opts.to === 'stage' ? false : false;
+    const dispatchUrl = `${this.opts.repo.apiBase}/repos/${this.opts.repo.monorepoOwner}/${this.opts.repo.monorepoRepo}/actions/workflows/${id}/dispatches`;
+    // Per-env policy (default off), but stage is never auto-merged regardless.
+    const autoMerge = this.opts.to === 'stage' ? false : this.opts.autoMerge === true;
     const res = await fetch(dispatchUrl, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ref: MACH.MONOREPO_REF,
+        ref: this.opts.repo.monorepoRef,
         inputs: {
           brand: this.opts.brand,
           from: this.opts.from,
@@ -206,7 +274,7 @@ export class MachSyncTarget {
     const headers = await this.headers();
     const id = workflowId ?? (await this.resolveWorkflowId());
     const since = Date.parse(sinceIso) - 5000; // small buffer for clock skew
-    const url = `${MACH.API_BASE}/repos/${MACH.MONOREPO_OWNER}/${MACH.MONOREPO_REPO}/actions/workflows/${id}/runs?event=workflow_dispatch&per_page=10`;
+    const url = `${this.opts.repo.apiBase}/repos/${this.opts.repo.monorepoOwner}/${this.opts.repo.monorepoRepo}/actions/workflows/${id}/runs?event=workflow_dispatch&per_page=10`;
     const res = await fetch(url, { headers });
     if (!res.ok) return null;
     const data: any = await res.json();
@@ -226,7 +294,7 @@ export class MachSyncTarget {
   /** Current status of a known run. */
   async getRunStatus(runId: number): Promise<MachRunRef> {
     const headers = await this.headers();
-    const url = `${MACH.API_BASE}/repos/${MACH.MONOREPO_OWNER}/${MACH.MONOREPO_REPO}/actions/runs/${runId}`;
+    const url = `${this.opts.repo.apiBase}/repos/${this.opts.repo.monorepoOwner}/${this.opts.repo.monorepoRepo}/actions/runs/${runId}`;
     const res = await fetch(url, { headers });
     if (!res.ok) {
       throw new Error(`Run status failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
@@ -244,8 +312,8 @@ export class MachSyncTarget {
     const headers = await this.headers();
     const branch = `sync-from-${this.opts.from}-to-${this.opts.to}-${runId}`;
     const url =
-      `${MACH.API_BASE}/repos/${MACH.MACH_ENV_OWNER}/${this.destRepo()}/pulls` +
-      `?head=${MACH.MACH_ENV_OWNER}:${encodeURIComponent(branch)}&state=all&per_page=5`;
+      `${this.opts.repo.apiBase}/repos/${this.opts.repo.destOwner}/${this.destRepo()}/pulls` +
+      `?head=${this.opts.repo.destOwner}:${encodeURIComponent(branch)}&state=all&per_page=5`;
     const res = await fetch(url, { headers });
     if (!res.ok) return null;
     const list: any[] = await res.json();
@@ -262,7 +330,7 @@ export class MachSyncTarget {
   /** Read a file from the destination repo at a branch, with its blob sha. */
   async readDestFile(branch: string, filePath: string): Promise<{ content: string; sha: string } | null> {
     const headers = await this.headers();
-    const url = `${MACH.API_BASE}/repos/${MACH.MACH_ENV_OWNER}/${this.destRepo()}/contents/${filePath}?ref=${encodeURIComponent(branch)}`;
+    const url = `${this.opts.repo.apiBase}/repos/${this.opts.repo.destOwner}/${this.destRepo()}/contents/${filePath}?ref=${encodeURIComponent(branch)}`;
     const res = await fetch(url, { headers });
     if (res.status === 404) return null;
     if (!res.ok) {
@@ -285,7 +353,7 @@ export class MachSyncTarget {
     message: string,
   ): Promise<void> {
     const headers = await this.headers();
-    const url = `${MACH.API_BASE}/repos/${MACH.MACH_ENV_OWNER}/${this.destRepo()}/contents/${filePath}`;
+    const url = `${this.opts.repo.apiBase}/repos/${this.opts.repo.destOwner}/${this.destRepo()}/contents/${filePath}`;
     const res = await fetch(url, {
       method: 'PUT',
       headers: { ...headers, 'Content-Type': 'application/json' },
@@ -304,7 +372,7 @@ export class MachSyncTarget {
   /** Rename a PR (e.g. to the release version). Idempotent — caller checks diff. */
   async updatePullRequestTitle(prNumber: number, title: string): Promise<void> {
     const headers = await this.headers();
-    const url = `${MACH.API_BASE}/repos/${MACH.MACH_ENV_OWNER}/${this.destRepo()}/pulls/${prNumber}`;
+    const url = `${this.opts.repo.apiBase}/repos/${this.opts.repo.destOwner}/${this.destRepo()}/pulls/${prNumber}`;
     const res = await fetch(url, {
       method: 'PATCH',
       headers: { ...headers, 'Content-Type': 'application/json' },

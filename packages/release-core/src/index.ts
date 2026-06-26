@@ -16,6 +16,12 @@ export type {
   CommitRef,
   AuditEntry,
   AuditLog,
+  ActionCategory,
+  ActionRef,
+  ActionContext,
+  ActionPlan,
+  ActionOutcome,
+  PipelineAction,
 } from './types';
 
 export {
@@ -31,6 +37,8 @@ export {
 
 export { buildPlan, type BuildPlanInput } from './plan/buildPlan';
 export { applyPlan, type ApplyPlanInput, type ApplyPlanOutcome } from './apply/applyPlan';
+
+export { ConvergentDeployAction } from './actions/convergentDeployAction';
 
 export { InMemoryAuditLog } from './audit/auditLog';
 export { FileAuditLog } from './audit/fileAuditLog';

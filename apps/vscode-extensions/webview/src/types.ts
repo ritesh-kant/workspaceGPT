@@ -1,3 +1,6 @@
+import type { PipelineDescriptor, DeploymentEnvironment } from './constants';
+export type { DeploymentEnvironment };
+
 export interface SettingsButtonProps {
   isVisible: boolean;
   onBack: () => void;
@@ -95,9 +98,35 @@ export interface DeploymentConnectionTest {
 }
 
 export interface DeploymentConfig {
+  /**
+   * The pipeline descriptor — the single source of truth for the generic,
+   * CodePipeline-shaped config (source + stages + actions). When present it
+   * supersedes the legacy flat fields below; the handler migrates legacy
+   * installs into one automatically.
+   */
+  pipeline?: PipelineDescriptor;
   isDeploymentEnabled?: boolean;
   /** Confluence Release Roster page URL — source for resolving today's release. */
   rosterPageUrl?: string;
+  /**
+   * Explicit roster column mapping (from the discover-and-select dropdowns).
+   * Any omitted column falls back to header auto-detection, so an unset mapping
+   * behaves exactly as before — this just lets non-standard rosters work.
+   */
+  rosterColumns?: { date?: string; version?: string; env?: string; pilot?: string };
+  /**
+   * Opt-in: when the deterministic roster/release-page parse fails, fall back to
+   * the configured chat model to read the page. AI output is validated and still
+   * gated by the plan→approve review, so it never auto-applies a wrong value.
+   */
+  aiAssistParsing?: boolean;
+  /**
+   * Declared environments (N-ary). When present, drives env→target mapping and
+   * per-env policy. When absent, the handler falls back to the legacy
+   * `vercelEnv{Stage,Prod}` / `machEnv{Stage,Prod}` fields so existing configs
+   * keep working unchanged.
+   */
+  environments?: DeploymentEnvironment[];
   githubConnected: boolean;
   githubInstallationId?: string;
   vercelConnected: boolean;
@@ -110,6 +139,20 @@ export interface DeploymentConfig {
   vercelEnvProd?: string;
   /** Split a variable shared across envs into a per-env record instead of updating all linked envs. */
   vercelPerEnvValues?: boolean;
+  /**
+   * Overrides for the mach repo topology (monorepo/workflow/repo naming),
+   * populated by the discover-and-select dropdowns. Absent fields fall back to
+   * the Mars preset, so an unconfigured install behaves exactly as before.
+   */
+  machRepo?: {
+    apiBase?: string;
+    monorepoOwner?: string;
+    monorepoRepo?: string;
+    monorepoRef?: string;
+    workflowName?: string;
+    destOwner?: string;
+    repoTemplate?: string;
+  };
   /** mach (backend) sync settings — drive the component-promotion workflow. */
   machBrand?: string;
   /** Source environment to promote from (e.g. test01). */

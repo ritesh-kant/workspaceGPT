@@ -24,6 +24,13 @@ export interface ConfluenceReleaseSourceOptions {
    * (Open item #2 in the design doc — refine once the real mapping is known.)
    */
   targetFor?: (appSystem: string) => string;
+  /**
+   * Explicit roster column names, overriding header auto-detection. Set via the
+   * discover-and-select dropdowns so an org whose roster uses non-standard
+   * headers works without code changes. Any omitted column falls back to the
+   * fuzzy auto-detect, so an unset mapping behaves exactly as before.
+   */
+  columns?: { date?: string; version?: string; env?: string; pilot?: string };
 }
 
 /** Resolve a Confluence page id out of a page URL or a bare id. */
@@ -96,8 +103,8 @@ export class ConfluenceReleaseSource implements ReleaseSource {
     return /vercel/i.test(appSystem) ? 'vercel' : 'mach';
   }
 
-  /** GET a page's storage-format body, parsed into tables. */
-  private async fetchTables(pageId: string): Promise<ParsedTable[]> {
+  /** GET a page's raw storage-format HTML body. */
+  private async fetchPageHtml(pageId: string): Promise<string> {
     const token = await this.auth.getValidAccessToken();
     const site = this.auth.getStoredSite();
     if (!site) throw new Error('No Confluence site connected.');
@@ -111,8 +118,42 @@ export class ConfluenceReleaseSource implements ReleaseSource {
       throw new Error(`Confluence page ${pageId} fetch failed (${res.status}): ${body.slice(0, 200)}`);
     }
     const data: any = await res.json();
-    const html: string = data?.body?.storage?.value ?? '';
-    return parseStorageTables(html);
+    return data?.body?.storage?.value ?? '';
+  }
+
+  /** GET a page's storage-format body, parsed into tables. */
+  private async fetchTables(pageId: string): Promise<ParsedTable[]> {
+    return parseStorageTables(await this.fetchPageHtml(pageId));
+  }
+
+  /** Strip storage-format tags to plain text, preserving digits (unlike the
+   * RAG text extractor). A coarse fallback signal for the AI source when a page
+   * has no parseable tables. */
+  private stripHtml(html: string): string {
+    return html
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /** Raw content of the roster page for AI extraction (tables + plain text). */
+  async getRosterContent(): Promise<{ tables: ParsedTable[]; text: string }> {
+    const pageId = pageIdFromUrl(this.opts.rosterPageUrl);
+    if (!pageId) throw new Error('Could not read a page id from the Release Roster URL.');
+    const html = await this.fetchPageHtml(pageId);
+    return { tables: parseStorageTables(html), text: this.stripHtml(html) };
+  }
+
+  /** Raw content of the release page for a version (tables + plain text). */
+  async getReleasePageContent(version: string): Promise<{ tables: ParsedTable[]; text: string }> {
+    const pageId = await this.findReleasePageId(version);
+    if (!pageId) throw new Error(`Could not find a Confluence release page for "${version}".`);
+    const html = await this.fetchPageHtml(pageId);
+    return { tables: parseStorageTables(html), text: this.stripHtml(html) };
   }
 
   /** Run a CQL query and return the first matching page id, or null. */
@@ -152,6 +193,31 @@ export class ConfluenceReleaseSource implements ReleaseSource {
     return null;
   }
 
+  /**
+   * Introspect the roster page for the column-mapping dropdowns: return the
+   * detected roster table's headers plus a best-guess mapping. Read-only.
+   */
+  async describeRoster(): Promise<{
+    headers: string[];
+    guess: { date?: string; version?: string; env?: string; pilot?: string };
+  }> {
+    const pageId = pageIdFromUrl(this.opts.rosterPageUrl);
+    if (!pageId) throw new Error('Could not read a page id from the Release Roster URL.');
+    const tables = await this.fetchTables(pageId);
+    const roster = tables.find((t) => findCol(t.headers, /date|day|schedule/)) ?? tables[0];
+    if (!roster) return { headers: [], guess: {} };
+    const g = (re: RegExp) => roster.headers.find((h) => re.test(h.toLowerCase()));
+    return {
+      headers: roster.headers,
+      guess: {
+        date: g(/date|day|schedule/),
+        version: g(/version|build|rc\b/) ?? g(/^release$|release(?!.*date)/),
+        env: g(/\benv|environment/),
+        pilot: g(/pilot|owner|engineer|on.?call|lead|responsible/),
+      },
+    };
+  }
+
   async resolveRelease(date: string): Promise<ResolvedRelease | null> {
     const pageId = pageIdFromUrl(this.opts.rosterPageUrl);
     if (!pageId) {
@@ -165,12 +231,21 @@ export class ConfluenceReleaseSource implements ReleaseSource {
       throw new Error('No date column found on the Release Roster page.');
     }
 
-    const dateCol = findCol(roster.headers, /date|day|schedule/)!;
+    // Prefer an explicit (configured) column when it actually exists on the page;
+    // otherwise fall back to the fuzzy auto-detect.
+    const col = (override: string | undefined, re: RegExp): string | null => {
+      const o = override?.toLowerCase().trim();
+      if (o && roster.headers.some((h) => h.toLowerCase().trim() === o)) return o;
+      return findCol(roster.headers, re);
+    };
+    const cols = this.opts.columns ?? {};
+    const dateCol = col(cols.date, /date|day|schedule/);
+    if (!dateCol) throw new Error('No date column found on the Release Roster page.');
     const versionCol =
-      findCol(roster.headers, /version|build|rc\b/) ??
+      col(cols.version, /version|build|rc\b/) ??
       findCol(roster.headers, /^release$|release(?!.*date)/);
-    const envCol = findCol(roster.headers, /\benv|environment/);
-    const pilotCol = findCol(roster.headers, /pilot|owner|engineer|on.?call|lead|responsible/);
+    const envCol = col(cols.env, /\benv|environment/);
+    const pilotCol = col(cols.pilot, /pilot|owner|engineer|on.?call|lead|responsible/);
 
     const row = roster.records.find((r) => normalizeDate(r[dateCol]) === date);
     if (!row) return null; // No release scheduled today — not an error.

@@ -1,5 +1,10 @@
 import * as vscode from 'vscode';
-import { MACH, STORAGE_KEYS } from '../../../constants';
+import {
+  MARS_MACH_PRESET,
+  STORAGE_KEYS,
+  renderRepoName,
+  type MachRepoConfig,
+} from '../../../constants';
 
 export interface MachTokenStatus {
   connected: boolean;
@@ -56,7 +61,11 @@ export class MachAuthService {
    * that isn't SSO-authorized for an org returns 404 (not 403) on its repos, so
    * a clean 200 on both is the real liveness signal we need before a release.
    */
-  async validate(): Promise<MachTokenStatus> {
+  async validate(
+    cfg: MachRepoConfig = MARS_MACH_PRESET,
+    brand = 'mms',
+    sampleEnv = 'stage',
+  ): Promise<MachTokenStatus> {
     const token = await this.getToken();
     if (!token) return { connected: false, detail: 'No token set.' };
 
@@ -67,14 +76,16 @@ export class MachAuthService {
       'X-GitHub-Api-Version': '2022-11-28',
     };
     const reach = async (owner: string, repo: string): Promise<{ ok: boolean; status: number }> => {
-      const res = await fetch(`${MACH.API_BASE}/repos/${owner}/${repo}`, { headers });
+      const res = await fetch(`${cfg.apiBase}/repos/${owner}/${repo}`, { headers });
       return { ok: res.ok, status: res.status };
     };
 
+    // A representative per-environment repo, to prove the env org is reachable.
+    const sampleRepo = renderRepoName(cfg.repoTemplate, brand, sampleEnv);
     try {
       const [mono, stage] = await Promise.all([
-        reach(MACH.MONOREPO_OWNER, MACH.MONOREPO_REPO),
-        reach(MACH.STAGE_OWNER, MACH.STAGE_REPO),
+        reach(cfg.monorepoOwner, cfg.monorepoRepo),
+        reach(cfg.destOwner, sampleRepo),
       ]);
       const repos = { monorepo: mono.ok, stage: stage.ok };
       if (mono.ok && stage.ok) return { connected: true, repos };
@@ -82,8 +93,8 @@ export class MachAuthService {
       // 404 on a private repo a valid token can't see almost always means the
       // PAT isn't SSO-authorized for that org — call it out specifically.
       const unreachable = [
-        !mono.ok ? `${MACH.MONOREPO_OWNER} (${mono.status})` : null,
-        !stage.ok ? `${MACH.STAGE_OWNER} (${stage.status})` : null,
+        !mono.ok ? `${cfg.monorepoOwner} (${mono.status})` : null,
+        !stage.ok ? `${cfg.destOwner} (${stage.status})` : null,
       ].filter(Boolean);
       return {
         connected: true,
