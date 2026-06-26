@@ -9,10 +9,12 @@ const sections = [
   { id: "installation", label: "Installation" },
   { id: "ai-providers", label: "AI Providers" },
   { id: "codebase", label: "Codebase Indexing" },
+  { id: "embeddings", label: "Embeddings & Vector Storage" },
   { id: "confluence", label: "Confluence Integration" },
   { id: "ado", label: "Azure DevOps" },
   { id: "deployment", label: "Deployment Automation" },
   { id: "mcp", label: "MCP Server" },
+  { id: "chrome", label: "Chrome Extension" },
   { id: "commands", label: "Commands & Shortcuts" },
   { id: "reset", label: "Reset & Clear Data" },
   { id: "troubleshooting", label: "Troubleshooting" },
@@ -320,6 +322,67 @@ ollama pull mistral`}</CodeBlock>
             </div>
           </section>
 
+          {/* ── Embeddings & Vector Storage ──────────────────────── */}
+          <SectionAnchor id="embeddings" />
+          <section className="mb-16">
+            <SectionTitle>Embeddings &amp; Vector Storage</SectionTitle>
+            <SectionSubtitle>
+              Every connected source (codebase, Confluence, ADO) is turned into vector embeddings and stored so
+              WorkspaceGPT can retrieve the right context. You control both halves: which model makes the embeddings,
+              and where the vectors live.
+            </SectionSubtitle>
+
+            <h3 className="text-lg font-semibold text-white mb-4">Embedding provider</h3>
+            <div className="overflow-x-auto rounded-2xl border border-white/10 mb-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 bg-slate-900">
+                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">Provider</th>
+                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">Model</th>
+                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">API key</th>
+                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">Best for</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  <tr className="bg-slate-950 align-top">
+                    <td className="px-5 py-3 font-medium text-white">Local <Badge color="green">Default</Badge></td>
+                    <td className="px-5 py-3 text-slate-400">Xenova/all-MiniLM-L6-v2 (384-dim)</td>
+                    <td className="px-5 py-3 text-slate-400">Not needed</td>
+                    <td className="px-5 py-3 text-slate-400">Full privacy — runs on-device, nothing leaves your machine. First run downloads ~200&nbsp;MB.</td>
+                  </tr>
+                  <tr className="bg-slate-950 align-top">
+                    <td className="px-5 py-3 font-medium text-white">Google Gemini</td>
+                    <td className="px-5 py-3 text-slate-400">gemini-embedding-001 (768-dim)</td>
+                    <td className="px-5 py-3 text-slate-400">Required</td>
+                    <td className="px-5 py-3 text-slate-400">Faster, higher quality, and required for sharing to the Chrome extension.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-slate-400 text-sm mb-8">
+              Configure under <code className="bg-white/10 px-1 rounded text-xs">Settings → Embeddings</code>. Keys are stored in VS Code&apos;s encrypted secret storage.
+            </p>
+
+            <h3 className="text-lg font-semibold text-white mb-4">Vector storage</h3>
+            <div className="grid sm:grid-cols-2 gap-4 mb-4">
+              <Card icon="💾" title="Local (on this machine)" accent="green">
+                <p>Vectors are written to binary files in the extension&apos;s storage. Nothing leaves your machine. The default — ideal for solo, privacy-critical use.</p>
+              </Card>
+              <Card icon="☁️" title="Cloud — Qdrant" accent="blue">
+                <p>Vectors live in a Qdrant cluster (self-hosted or Qdrant Cloud). Provide the cluster <strong className="text-white">URL</strong> and <strong className="text-white">API key</strong>, then click <strong className="text-white">Test connection</strong>. Enables sharing and larger datasets.</p>
+              </Card>
+            </div>
+            <p className="text-slate-400 text-sm mb-4">
+              Configure under <code className="bg-white/10 px-1 rounded text-xs">Settings → Vector Storage</code>. Cloud-Qdrant URLs from the dashboard are auto-normalized to include the <code className="bg-white/10 px-1 rounded text-xs">:6333</code> port.
+            </p>
+
+            <div className="p-5 bg-slate-900 border border-yellow-500/20 rounded-2xl text-sm text-slate-300">
+              <span className="text-yellow-400 font-semibold">Re-index when you switch:</span> changing the embedding
+              provider or the storage location means existing vectors no longer match — WorkspaceGPT will prompt you to
+              re-index your connected sources. (Different models also produce different vector dimensions.)
+            </div>
+          </section>
+
           {/* ── Confluence ─────────────────────────────────────── */}
           <SectionAnchor id="confluence" />
           <section className="mb-16">
@@ -446,6 +509,77 @@ ollama pull mistral`}</CodeBlock>
 
             <div className="mt-4 p-5 bg-slate-900 border border-brand/20 rounded-2xl text-sm text-slate-300">
               <span className="text-brand font-semibold">Status bar indicator:</span> After connecting, a WorkspaceGPT button appears in the VS Code status bar showing MCP connection health.
+            </div>
+          </section>
+
+          {/* ── Chrome Extension ─────────────────────────────────── */}
+          <SectionAnchor id="chrome" />
+          <section className="mb-16">
+            <div className="mb-4"><Badge color="purple">Companion app</Badge></div>
+            <SectionTitle>Chrome Extension</SectionTitle>
+            <SectionSubtitle>
+              A browser side-panel that lets you (or a teammate) chat with your indexed Confluence pages and Azure DevOps
+              work items — without opening VS Code. It runs entirely in the browser, talking directly to your providers;
+              there&apos;s no WorkspaceGPT server in between.
+            </SectionSubtitle>
+
+            <div className="grid sm:grid-cols-3 gap-4 mb-8">
+              <Card icon="🧭" title="Side panel" accent="purple">
+                <p>Ask questions and read grounded answers from a panel docked in Chrome.</p>
+              </Card>
+              <Card icon="🔗" title="One share code" accent="brand">
+                <p>Connect by pasting a single code generated in VS Code — no separate setup.</p>
+              </Card>
+              <Card icon="🚫" title="No server" accent="green">
+                <p>Calls go browser → Gemini / Qdrant / your chat model directly. Nothing is proxied.</p>
+              </Card>
+            </div>
+
+            <h3 className="text-lg font-semibold text-white mb-3">Prerequisites</h3>
+            <p className="text-slate-300 text-sm leading-relaxed mb-4">
+              Because the browser needs cloud-reachable services, the share flow requires:{" "}
+              <strong className="text-white">Gemini embeddings</strong>, a{" "}
+              <strong className="text-white">Qdrant Cloud</strong> vector store, and a{" "}
+              <strong className="text-white">chat model</strong> with an API key — all configured in VS Code first
+              (see <a href="#embeddings" className="text-brand hover:underline">Embeddings &amp; Vector Storage</a>).
+            </p>
+
+            <h3 className="text-lg font-semibold text-white mb-4">Setup</h3>
+            <div className="space-y-0">
+              <Step number={1} title="Install from the Chrome Web Store">
+                <p>
+                  Add{" "}
+                  <a href="https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                    WorkspaceGPT for Chrome
+                  </a>{" "}
+                  to your browser.
+                </p>
+              </Step>
+              <Step number={2} title="Create a share code in VS Code">
+                <p>In the WorkspaceGPT sidebar, open <code className="bg-white/10 px-1 rounded text-xs">Settings → Share to Chrome</code> and click <strong className="text-white">Create share code</strong>. It&apos;s copied to your clipboard.</p>
+                <p className="text-slate-400">If a prerequisite is missing, the button tells you exactly what to fix first.</p>
+              </Step>
+              <Step number={3} title="Paste it into the extension">
+                <p>Open the Chrome side panel → <strong className="text-white">Settings</strong> → paste the code → <strong className="text-white">Connect</strong>. You&apos;ll see a confirmation with your Qdrant URL.</p>
+              </Step>
+              <Step number={4} title="Ask away">
+                <p>Close settings and chat. The extension mirrors VS Code&apos;s retrieval, so answers stay consistent across Confluence and ADO.</p>
+              </Step>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4 mt-4">
+              <div className="p-5 bg-slate-900 border border-red-500/20 rounded-2xl text-sm">
+                <p className="text-red-400 font-semibold mb-1">Treat the share code like a password</p>
+                <p className="text-slate-400">It contains your real Qdrant, Gemini, and chat-model API keys in plain form. Anyone with it can query your data and incur API costs. Share only with people you trust.</p>
+              </div>
+              <div className="p-5 bg-slate-900 border border-emerald-500/20 rounded-2xl text-sm">
+                <p className="text-emerald-400 font-semibold mb-1">Write creds are never shared</p>
+                <p className="text-slate-400">GitHub, Vercel, Confluence, and ADO tokens stay in VS Code secret storage and are excluded from the bundle. The share is read-only knowledge access.</p>
+              </div>
+            </div>
+
+            <div className="mt-4 p-5 bg-slate-900 border border-white/5 rounded-2xl text-sm text-slate-300">
+              <span className="text-slate-200 font-semibold">Scope:</span> the extension covers <strong className="text-white">Confluence</strong> and <strong className="text-white">Azure DevOps</strong> knowledge. Local codebase indexing stays in VS Code and is not part of the share. Regenerate the code if you rotate your keys.
             </div>
           </section>
 

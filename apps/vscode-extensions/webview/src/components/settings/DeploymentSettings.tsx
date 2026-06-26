@@ -3,6 +3,7 @@ import { useSettingsStore } from '../../store';
 import { VSCodeAPI } from '../../vscode';
 import { clearStatusMessageAfterDelay } from './utils';
 import { DeploymentConfig } from '../../types';
+import SearchableDropdown from './SearchableDropdown';
 import {
   MESSAGE_TYPES,
   MARS_MACH_PRESET,
@@ -44,8 +45,6 @@ const SOURCE_LABEL: Record<PipelineSource['provider'], string> = {
   manual: 'Manual entry',
   none: 'None',
 };
-
-const lbl = { fontSize: '0.74em', color: '#888', marginBottom: 2 } as const;
 
 /**
  * Settings → Deployment pipeline. A generic, CodePipeline-shaped editor: a
@@ -351,10 +350,10 @@ const DeploymentSettings: React.FC = () => {
     const test = dep.testResults?.[testKey];
     return (
       <div className="form-group" style={{ marginBottom: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+        <div className="dep-connection">
           <div>
-            <div style={{ fontWeight: 500 }}>{label}</div>
-            <div style={{ fontSize: '0.8em', color: '#888' }}>{subtitle}</div>
+            <div className="dep-connection-title">{label}</div>
+            <div className="dep-field-label" style={{ marginBottom: 0 }}>{subtitle}</div>
           </div>
           {connected ? (
             <button onClick={onDisconnect} className="disconnect-button">Disconnect</button>
@@ -362,10 +361,10 @@ const DeploymentSettings: React.FC = () => {
             <button onClick={onConnect} disabled={connecting}>{connecting ? '⏳ Connecting…' : '🔗 Connect'}</button>
           )}
         </div>
-        <div style={{ fontSize: '0.82em', marginTop: '4px' }}>
-          {connected ? <span style={{ color: '#4ecca3' }}>✅ Connected</span> : <span style={{ color: '#888' }}>Not connected</span>}
+        <div className="dep-status-line">
+          {connected ? <span className="dep-ok">✅ Connected</span> : <span className="dep-muted">Not connected</span>}
           {test && (
-            <span style={{ marginLeft: '10px', color: test.ok ? '#4ecca3' : '#e74c3c' }}>
+            <span style={{ marginLeft: '10px' }} className={test.ok ? 'dep-ok' : 'dep-err'}>
               {test.ok ? '• test passed' : `• test failed${test.detail ? `: ${test.detail}` : ''}`}
             </span>
           )}
@@ -379,109 +378,121 @@ const DeploymentSettings: React.FC = () => {
       field === 'monorepoOwner' || field === 'destOwner' ? 'orgs' : field === 'monorepoRepo' ? 'repos' : field === 'workflowName' ? 'workflows' : 'branches'
     ];
     const current = (repoCfg as Record<string, string>)[field] || '';
+    const options = [
+      ...(current && !list.includes(current) ? [{ value: current, label: `${current} (current)` }] : []),
+      ...list.map((o) => ({ value: o, label: o })),
+    ];
     return (
-      <div style={{ marginBottom: 8 }}>
-        <div style={lbl}>{label}</div>
-        <select value={current} onChange={(e) => setRepoField(field, e.target.value)} style={{ width: '100%' }}>
-          <option value="">{list.length ? 'Select…' : 'Connect token / loading…'}</option>
-          {current && !list.includes(current) && <option value={current}>{current} (current)</option>}
-          {list.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
+      <div className="dep-field">
+        <div className="dep-field-label">{label}</div>
+        <SearchableDropdown
+          value={current}
+          options={options}
+          onChange={(v) => setRepoField(field, v)}
+          placeholder={list.length ? 'Select…' : 'Connect token / loading…'}
+          disabled={list.length === 0 && !current}
+          searchPlaceholder="Search…"
+        />
       </div>
     );
   };
 
-  const renderVercelAction = (si: number, ai: number, cfg: Record<string, any>) => (
-    <>
-      <div style={{ marginBottom: 8 }}>
-        <div style={lbl}>Vercel project</div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <select
-            value={cfg.projectId || ''}
-            onChange={(e) => {
-              const id = e.target.value;
-              const name = vercelProjects.find((p) => p.id === id)?.name || '';
-              setActionConfig(si, ai, { projectId: id, projectName: name });
-            }}
-            disabled={projectsLoading || vercelProjects.length === 0}
-            style={{ flex: 1 }}
-          >
-            <option value="">{projectsLoading ? 'Loading…' : vercelProjects.length === 0 ? 'Connect Vercel' : 'Select project'}</option>
-            {cfg.projectId && !vercelProjects.some((p) => p.id === cfg.projectId) && (
-              <option value={cfg.projectId}>{cfg.projectName || cfg.projectId} (current)</option>
-            )}
-            {vercelProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <button onClick={loadVercelProjects} disabled={projectsLoading} title="Refresh">↻</button>
+  const renderVercelAction = (si: number, ai: number, cfg: Record<string, any>) => {
+    const projectOptions = [
+      ...(cfg.projectId && !vercelProjects.some((p) => p.id === cfg.projectId)
+        ? [{ value: cfg.projectId, label: `${cfg.projectName || cfg.projectId} (current)` }]
+        : []),
+      ...vercelProjects.map((p) => ({ value: p.id, label: p.name })),
+    ];
+    return (
+      <>
+        <div className="dep-field">
+          <div className="dep-field-label">Vercel project</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <SearchableDropdown
+                value={cfg.projectId || ''}
+                options={projectOptions}
+                onChange={(id) => {
+                  const name = vercelProjects.find((p) => p.id === id)?.name || '';
+                  setActionConfig(si, ai, { projectId: id, projectName: name });
+                }}
+                disabled={projectsLoading || vercelProjects.length === 0}
+                placeholder={projectsLoading ? 'Loading…' : vercelProjects.length === 0 ? 'Connect Vercel' : 'Select project'}
+                searchPlaceholder="Search projects…"
+              />
+            </div>
+            <button className="dep-icon-button" onClick={loadVercelProjects} disabled={projectsLoading} title="Refresh">↻</button>
+          </div>
+          {projectsError && <div className="dep-inline-note dep-err">{projectsError}</div>}
         </div>
-        {projectsError && <div style={{ fontSize: '0.8em', color: '#e74c3c', marginTop: 4 }}>{projectsError}</div>}
-      </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          <div style={lbl}>stage → vercel env</div>
-          <input value={cfg.envStage ?? ''} placeholder="preview" onChange={(e) => setActionConfig(si, ai, { envStage: e.target.value })} style={{ width: '100%' }} />
+        <div className="dep-row">
+          <div>
+            <div className="dep-field-label">stage → vercel env</div>
+            <input value={cfg.envStage ?? ''} placeholder="preview" onChange={(e) => setActionConfig(si, ai, { envStage: e.target.value })} style={{ width: '100%' }} />
+          </div>
+          <div>
+            <div className="dep-field-label">prod → vercel env</div>
+            <input value={cfg.envProd ?? ''} placeholder="production" onChange={(e) => setActionConfig(si, ai, { envProd: e.target.value })} style={{ width: '100%' }} />
+          </div>
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={lbl}>prod → vercel env</div>
-          <input value={cfg.envProd ?? ''} placeholder="production" onChange={(e) => setActionConfig(si, ai, { envProd: e.target.value })} style={{ width: '100%' }} />
-        </div>
-      </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, cursor: 'pointer', fontSize: '0.82em' }}>
-        <input type="checkbox" checked={!!cfg.perEnvValues} onChange={(e) => setActionConfig(si, ai, { perEnvValues: e.target.checked })} />
-        Per-environment values (split shared vars)
-      </label>
-    </>
-  );
+        <label className="dep-checkbox">
+          <input type="checkbox" checked={!!cfg.perEnvValues} onChange={(e) => setActionConfig(si, ai, { perEnvValues: e.target.checked })} />
+          Per-environment values (split shared vars)
+        </label>
+      </>
+    );
+  };
 
   const renderMachAction = (si: number, ai: number, cfg: Record<string, any>) => (
     <>
-      <div style={{ fontSize: '0.78em', color: machStatus.connected ? '#4ecca3' : '#e0a458', marginBottom: 8 }}>
+      <div className={`dep-inline-note ${machStatus.connected ? 'dep-ok' : 'dep-warn'}`} style={{ marginTop: 0, marginBottom: 8 }}>
         {machStatus.connected ? '✅ token reaches both repos' : 'Set a GitHub PAT below (Connections) to enable.'}
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          <div style={lbl}>Brand</div>
+      <div className="dep-row">
+        <div>
+          <div className="dep-field-label">Brand</div>
           <input value={cfg.brand ?? ''} placeholder="mms" onChange={(e) => setActionConfig(si, ai, { brand: e.target.value })} style={{ width: '100%' }} />
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={lbl}>Source env (from)</div>
+        <div>
+          <div className="dep-field-label">Source env (from)</div>
           <input value={cfg.sourceEnv ?? ''} placeholder="test01" onChange={(e) => setActionConfig(si, ai, { sourceEnv: e.target.value })} style={{ width: '100%' }} />
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={lbl}>Source branch</div>
+        <div>
+          <div className="dep-field-label">Source branch</div>
           <input value={cfg.fromBranch ?? ''} placeholder="main" onChange={(e) => setActionConfig(si, ai, { fromBranch: e.target.value })} style={{ width: '100%' }} />
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-        <div style={{ flex: 1 }}>
-          <div style={lbl}>stage → dest env</div>
+      <div className="dep-row" style={{ marginTop: 10 }}>
+        <div>
+          <div className="dep-field-label">stage → dest env</div>
           <input value={cfg.envStage ?? ''} placeholder="stage" onChange={(e) => setActionConfig(si, ai, { envStage: e.target.value })} style={{ width: '100%' }} />
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={lbl}>prod → dest env</div>
+        <div>
+          <div className="dep-field-label">prod → dest env</div>
           <input value={cfg.envProd ?? ''} placeholder="prod" onChange={(e) => setActionConfig(si, ai, { envProd: e.target.value })} style={{ width: '100%' }} />
         </div>
       </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, cursor: 'pointer', fontSize: '0.82em' }}>
+      <label className="dep-checkbox">
         <input type="checkbox" checked={cfg.updateMainYml !== false} onChange={(e) => setActionConfig(si, ai, { updateMainYml: e.target.checked })} />
         Update main.yml env vars
       </label>
       {si === machSi && ai === machAi && (
-        <details style={{ marginTop: 10 }}>
-          <summary style={{ cursor: 'pointer', fontSize: '0.8em', color: '#a0a0a0' }}>Repo topology (auto-detected · defaults to preset)</summary>
-          <div style={{ marginTop: 8 }}>
+        <details className="dep-details">
+          <summary>Repo topology (auto-detected · defaults to preset)</summary>
+          <div className="dep-details-body">
             {topoSelect('Monorepo owner (org)', 'monorepoOwner')}
             {topoSelect('Monorepo repo', 'monorepoRepo')}
             {topoSelect('Sync workflow', 'workflowName')}
             {topoSelect('Workflow branch (ref)', 'monorepoRef')}
             {topoSelect('Env repos owner', 'destOwner')}
-            <div style={{ marginBottom: 8 }}>
-              <div style={lbl}>Env repo name template</div>
+            <div className="dep-field">
+              <div className="dep-field-label">Env repo name template</div>
               <input value={repoCfg.repoTemplate || ''} placeholder="aws-{brand}-phoenix-{env}-mach" onChange={(e) => setRepoField('repoTemplate', e.target.value)} style={{ width: '100%' }} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button onClick={() => discover('orgs')} disabled={!!ghLoading}>{ghLoading ? `Loading ${ghLoading}…` : '↻ Re-detect'}</button>
-              {ghError && <span style={{ fontSize: '0.78em', color: '#e0a458' }}>{ghError}</span>}
+              {ghError && <span className="dep-warn" style={{ fontSize: '0.78em' }}>{ghError}</span>}
             </div>
           </div>
         </details>
@@ -503,28 +514,37 @@ const DeploymentSettings: React.FC = () => {
 
       {dep.isDeploymentEnabled && (
         <div className="settings-form">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
-            <p style={{ color: '#a0a0a0', margin: 0, fontSize: '0.85em', lineHeight: 1.6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
+            <p className="dep-hint" style={{ flex: 1 }}>
               Build from a preset or from blank. No provider is hardwired — write creds stay in VS Code only.
             </p>
-            <select value="" onChange={(e) => applyPreset(e.target.value)} title="Load a preset">
-              <option value="">{pipeline.name || 'Custom'}</option>
-              <option value="mars">Load: Mars MMS</option>
-              <option value="blank">Load: Blank</option>
-            </select>
+            <div style={{ flex: '0 0 150px' }}>
+              <SearchableDropdown
+                value=""
+                triggerLabel={`Preset: ${pipeline.name || 'Custom'}`}
+                options={[
+                  { value: 'mars', label: 'Mars MMS', subtitle: 'Load the full Mars preset' },
+                  { value: 'blank', label: 'Blank', subtitle: 'Start from an empty pipeline' },
+                ]}
+                onChange={applyPreset}
+              />
+            </div>
           </div>
 
           {/* SOURCE */}
-          <div style={{ fontSize: '0.72em', letterSpacing: '.04em', color: '#777', marginBottom: 6 }}>SOURCE</div>
-          <div className="form-group" style={{ marginBottom: 16 }}>
-            <select value={source.provider} onChange={(e) => setSource({ provider: e.target.value as PipelineSource['provider'] })} style={{ width: '100%' }}>
-              {(Object.keys(SOURCE_LABEL) as PipelineSource['provider'][]).map((p) => (
-                <option key={p} value={p}>{SOURCE_LABEL[p]}</option>
-              ))}
-            </select>
+          <div className="dep-group-label">Source</div>
+          <div className="form-group" style={{ marginBottom: 4 }}>
+            <SearchableDropdown
+              value={source.provider}
+              options={(Object.keys(SOURCE_LABEL) as PipelineSource['provider'][]).map((p) => ({
+                value: p,
+                label: SOURCE_LABEL[p],
+              }))}
+              onChange={(v) => setSource({ provider: v as PipelineSource['provider'] })}
+            />
 
             {source.provider === 'confluence-roster' && (
-              <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 10 }}>
                 <input
                   type="text"
                   value={source.rosterPageUrl || ''}
@@ -532,38 +552,46 @@ const DeploymentSettings: React.FC = () => {
                   onChange={(e) => setSource({ rosterPageUrl: e.target.value })}
                   style={{ width: '100%' }}
                 />
-                <div style={{ fontSize: '0.8em', color: '#888', marginTop: 4 }}>
+                <div className="dep-inline-note dep-muted">
                   Confluence page mapping date → release version. Requires Confluence connected under Settings → Confluence.
                 </div>
                 {source.rosterPageUrl && (
-                  <details style={{ marginTop: 10 }}>
-                    <summary style={{ cursor: 'pointer', fontSize: '0.8em', color: '#a0a0a0' }}>Column mapping (auto-detected)</summary>
-                    <div style={{ marginTop: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <details className="dep-details">
+                    <summary>Column mapping (auto-detected)</summary>
+                    <div className="dep-details-body">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                         <button onClick={detectRosterColumns} disabled={rosterColsLoading}>{rosterColsLoading ? 'Detecting…' : '↻ Detect columns'}</button>
-                        {rosterColsError && <span style={{ fontSize: '0.78em', color: '#e0a458' }}>{rosterColsError}</span>}
+                        {rosterColsError && <span className="dep-warn" style={{ fontSize: '0.78em' }}>{rosterColsError}</span>}
                       </div>
                       {(['date', 'version', 'env', 'pilot'] as const).map((field) => {
                         const current = (source.rosterColumns?.[field] ?? rosterCols.guess[field]) || '';
+                        const options = [
+                          ...(current && !rosterCols.headers.includes(current) ? [{ value: current, label: `${current} (current)` }] : []),
+                          ...rosterCols.headers.map((h) => ({ value: h, label: h })),
+                        ];
                         return (
-                          <div key={field} style={{ marginBottom: 8 }}>
-                            <div style={lbl}>{field} column</div>
-                            <select value={current} onChange={(e) => setRosterCol(field, e.target.value)} style={{ width: '100%' }} disabled={rosterCols.headers.length === 0}>
-                              <option value="">{rosterCols.headers.length ? 'Auto-detect' : 'Detect first…'}</option>
-                              {current && !rosterCols.headers.includes(current) && <option value={current}>{current} (current)</option>}
-                              {rosterCols.headers.map((h) => <option key={h} value={h}>{h}</option>)}
-                            </select>
+                          <div key={field} className="dep-field">
+                            <div className="dep-field-label">{field} column</div>
+                            <SearchableDropdown
+                              value={current}
+                              options={options}
+                              onChange={(v) => setRosterCol(field, v)}
+                              disabled={rosterCols.headers.length === 0}
+                              placeholder={rosterCols.headers.length ? 'Auto-detect' : 'Detect first…'}
+                              clearable
+                              clearLabel="-- Auto-detect --"
+                            />
                           </div>
                         );
                       })}
                     </div>
                   </details>
                 )}
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={!!source.aiAssistParsing} onChange={(e) => setSource({ aiAssistParsing: e.target.checked })} style={{ marginTop: 3 }} />
-                  <span style={{ fontSize: '0.82em' }}>
+                <label className="dep-checkbox">
+                  <input type="checkbox" checked={!!source.aiAssistParsing} onChange={(e) => setSource({ aiAssistParsing: e.target.checked })} />
+                  <span>
                     AI-assisted page reading (fallback)
-                    <div style={{ fontSize: '0.92em', color: '#888' }}>
+                    <div className="dep-muted" style={{ fontSize: '0.92em', marginTop: 2 }}>
                       If header matching fails, use your chat model (Settings → Model) to read the page. Validated and shown for approval before apply.
                     </div>
                   </span>
@@ -571,92 +599,98 @@ const DeploymentSettings: React.FC = () => {
               </div>
             )}
             {source.provider === 'file' && (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={lbl}>Repo owner</div>
+              <div style={{ marginTop: 10 }}>
+                <div className="dep-row">
+                  <div>
+                    <div className="dep-field-label">Repo owner</div>
                     <input type="text" value={source.fileRepoOwner || ''} placeholder="my-org" onChange={(e) => setSource({ fileRepoOwner: e.target.value })} style={{ width: '100%' }} />
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={lbl}>Repo</div>
+                  <div>
+                    <div className="dep-field-label">Repo</div>
                     <input type="text" value={source.fileRepoName || ''} placeholder="release-config" onChange={(e) => setSource({ fileRepoName: e.target.value })} style={{ width: '100%' }} />
                   </div>
-                  <div style={{ width: 90 }}>
-                    <div style={lbl}>Branch</div>
+                  <div style={{ flex: '0 0 90px' }}>
+                    <div className="dep-field-label">Branch</div>
                     <input type="text" value={source.fileRef || ''} placeholder="main" onChange={(e) => setSource({ fileRef: e.target.value })} style={{ width: '100%' }} />
                   </div>
                 </div>
-                <div style={{ marginTop: 8 }}>
-                  <div style={lbl}>File path</div>
+                <div style={{ marginTop: 10 }}>
+                  <div className="dep-field-label">File path</div>
                   <input type="text" value={source.filePath || ''} placeholder="releases.json" onChange={(e) => setSource({ filePath: e.target.value })} style={{ width: '100%' }} />
                 </div>
-                <div style={{ fontSize: '0.8em', color: '#888', marginTop: 4 }}>
+                <div className="dep-inline-note dep-muted">
                   JSON file with a <code>releases[]</code> array (date, version, environment, config[]). Read via the GitHub PAT below.
                 </div>
               </div>
             )}
             {(source.provider === 'manual' || source.provider === 'none' || source.provider === 'jira') && (
-              <div style={{ fontSize: '0.8em', color: '#888', marginTop: 8 }}>
+              <div className="dep-inline-note dep-muted">
                 {source.provider === 'jira' ? 'Jira source is a reserved provider — not yet wired.' : source.provider === 'manual' ? 'You’ll enter the version/environment at run time in the Releases view.' : 'No source — desired state comes from the actions themselves (e.g. component promotion).'}
               </div>
             )}
           </div>
 
           {/* STAGES */}
-          <div style={{ fontSize: '0.72em', letterSpacing: '.04em', color: '#777', marginBottom: 6 }}>STAGES</div>
+          <div className="dep-group-label">Stages</div>
           {pipeline.stages.map((stage, si) => (
-            <div key={si} style={{ background: '#1e1e2e', borderRadius: 10, padding: 10, marginBottom: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <div key={si} className="dep-card">
+              <div className="dep-card-header">
                 <input value={stage.name} onChange={(e) => setStage(si, { name: e.target.value })} style={{ flex: 1, fontWeight: 500 }} />
-                <select value={stage.gate} onChange={(e) => setStage(si, { gate: e.target.value })} title="Gate">
-                  <option value="manual">manual gate</option>
-                  <option value="auto">auto</option>
-                </select>
+                <div style={{ flex: '0 0 130px' }}>
+                  <SearchableDropdown
+                    value={stage.gate}
+                    options={[
+                      { value: 'manual', label: 'Manual gate' },
+                      { value: 'auto', label: 'Auto' },
+                    ]}
+                    onChange={(v) => setStage(si, { gate: v })}
+                  />
+                </div>
                 <button onClick={() => removeStage(si)} className="disconnect-button" title="Remove stage">✕</button>
               </div>
 
               {stage.actions.map((action, ai) => (
-                <div key={action.id} style={{ background: '#252537', border: '0.5px solid #33334a', borderRadius: 8, padding: 10, marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <span style={{ fontSize: '0.85em', fontWeight: 500 }}>{PROVIDER_LABEL[action.provider]}</span>
-                    <span style={{ fontSize: '0.74em', color: '#777' }}>
+                <div key={action.id} className="dep-action-card">
+                  <div className="dep-action-card-header">
+                    <span className="dep-action-title">{PROVIDER_LABEL[action.provider]}</span>
+                    <span className="dep-action-badge">
                       {action.category}
-                      <button onClick={() => removeAction(si, ai)} className="disconnect-button" style={{ marginLeft: 8 }} title="Remove action">✕</button>
+                      <button onClick={() => removeAction(si, ai)} className="disconnect-button" title="Remove action">✕</button>
                     </span>
                   </div>
                   {action.provider === 'vercel-config' && renderVercelAction(si, ai, action.config)}
                   {action.provider === 'github-workflow-dispatch' && renderMachAction(si, ai, action.config)}
                   {action.provider === 'repo-file-patch' && (
-                    <div style={{ fontSize: '0.8em', color: '#888' }}>
+                    <div className="dep-muted" style={{ fontSize: '0.8em' }}>
                       File-patch action (e.g. main.yml env merge) — provider scaffold; commit wiring pending the action spec.
                     </div>
                   )}
                 </div>
               ))}
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.78em', color: '#888' }}>+ action:</span>
+              <div className="dep-add-actions">
+                <span className="dep-add-label">+ action:</span>
                 {ADD_PROVIDERS.map((p) => (
                   <button key={p} onClick={() => addAction(si, p)} style={{ fontSize: '0.78em' }}>{PROVIDER_LABEL[p].split(' — ')[0]}</button>
                 ))}
               </div>
             </div>
           ))}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
             <button onClick={addStage}>+ Add stage</button>
-            <span style={{ fontSize: '0.74em', color: '#666', alignSelf: 'center' }}>switch · canary · verify · rollback — reserved</span>
+            <span className="dep-muted" style={{ fontSize: '0.74em' }}>switch · canary · verify · rollback — reserved</span>
           </div>
 
           {/* ENVIRONMENTS — promotion policy (auto-merge per env) */}
-          <div style={{ fontSize: '0.72em', letterSpacing: '.04em', color: '#777', marginBottom: 6 }}>ENVIRONMENTS · promotion policy</div>
-          <div style={{ marginBottom: 18 }}>
+          <div className="dep-group-label">Environments · promotion policy</div>
+          <div>
             {environments.length === 0 && (
-              <div style={{ fontSize: '0.82em', color: '#888', marginBottom: 8 }}>
+              <div className="dep-muted" style={{ fontSize: '0.82em', marginBottom: 8 }}>
                 None declared — promotions never auto-merge (safe default). Add one only to allow auto-merge for a specific environment.
               </div>
             )}
             {environments.map((env, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <input
                   value={env.name || ''}
                   placeholder="env name (e.g. stage)"
@@ -674,22 +708,22 @@ const DeploymentSettings: React.FC = () => {
           </div>
 
           {/* CONNECTIONS — derived from used providers */}
-          <div style={{ fontSize: '0.72em', letterSpacing: '.04em', color: '#777', marginBottom: 6 }}>CONNECTIONS</div>
+          <div className="dep-group-label">Connections</div>
           {!needsConfluence && !needsGithub && !needsVercel && (
-            <div style={{ fontSize: '0.82em', color: '#888', marginBottom: 8 }}>Add a source or action to see the connections it needs.</div>
+            <div className="dep-muted" style={{ fontSize: '0.82em', marginBottom: 8 }}>Add a source or action to see the connections it needs.</div>
           )}
           {needsConfluence && (
-            <div style={{ fontSize: '0.82em', color: '#888', marginBottom: 8 }}>Confluence — connect under Settings → Confluence.</div>
+            <div className="dep-muted" style={{ fontSize: '0.82em', marginBottom: 8 }}>Confluence — connect under Settings → Confluence.</div>
           )}
           {needsGithub && (
             <>
               {renderProvider('GitHub App', 'OAuth (optional hardening)', !!dep.githubConnected, !!dep.isConnectingGithub, connectGithub, disconnectGithub, 'github')}
               <div className="form-group" style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 500 }}>GitHub PAT (mach)</div>
-                <div style={{ fontSize: '0.8em', color: '#888', marginBottom: 4 }}>Classic PAT (repo + workflow), SSO-authorized. Stored only here — never shared to Chrome.</div>
+                <div className="dep-connection-title">GitHub PAT (mach)</div>
+                <div className="dep-muted" style={{ fontSize: '0.8em', marginBottom: 4 }}>Classic PAT (repo + workflow), SSO-authorized. Stored only here — never shared to Chrome.</div>
                 {machStatus.connected ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ color: '#4ecca3', fontSize: '0.82em' }}>
+                    <span className="dep-ok" style={{ fontSize: '0.82em' }}>
                       ✅ connected{machStatus.repos && `${machStatus.repos.monorepo ? '' : ' · monorepo unreachable'}${machStatus.repos.stage ? '' : ' · env repo unreachable'}`}
                     </span>
                     <button onClick={clearMachToken} className="disconnect-button">Clear</button>
@@ -700,13 +734,13 @@ const DeploymentSettings: React.FC = () => {
                     <button onClick={saveMachToken} disabled={machSaving || !machToken.trim()}>{machSaving ? '⏳' : 'Save'}</button>
                   </div>
                 )}
-                {machStatus.detail && <div style={{ fontSize: '0.8em', color: '#e0a458', marginTop: 4, lineHeight: 1.5 }}>{machStatus.detail}</div>}
+                {machStatus.detail && <div className="dep-warn dep-inline-note">{machStatus.detail}</div>}
               </div>
             </>
           )}
           {needsVercel && renderProvider('Vercel', 'frontend env vars', !!dep.vercelConnected, !!dep.isConnectingVercel, connectVercel, disconnectVercel, 'vercel')}
 
-          <button onClick={testConnections} disabled={dep.isTesting} style={{ width: '100%', marginTop: 6 }}>
+          <button onClick={testConnections} disabled={dep.isTesting} style={{ width: '100%', marginTop: 10 }}>
             {dep.isTesting ? '⏳ Testing…' : '🔌 Test all connections'}
           </button>
         </div>

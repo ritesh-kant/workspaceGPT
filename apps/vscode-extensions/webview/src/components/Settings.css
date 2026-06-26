@@ -229,6 +229,15 @@
   border-color: var(--vscode-focusBorder);
 }
 
+.searchable-dropdown-trigger.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.searchable-dropdown-trigger.disabled:hover {
+  border-color: var(--vscode-input-border);
+}
+
 .searchable-dropdown-menu {
   position: absolute;
   top: 100%;
@@ -616,4 +625,191 @@ input:checked + .slider:before {
 .password-toggle-btn:hover {
   color: var(--vscode-foreground) !important;
   background: transparent !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Deployment pipeline layout — theme-aware, replaces hardcoded hex    */
+/* ------------------------------------------------------------------ */
+
+/* Uppercase divider label that introduces a block (SOURCE / STAGES …) */
+.dep-group-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  margin: 18px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.dep-group-label:first-child {
+  margin-top: 0;
+}
+
+/* Intro / helper paragraph */
+.dep-hint {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Small field label above an input/dropdown */
+.dep-field-label {
+  font-size: 0.75rem;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 4px;
+}
+
+.dep-field {
+  margin-bottom: 10px;
+}
+
+/* Row of side-by-side fields */
+.dep-row {
+  display: flex;
+  gap: 10px;
+}
+.dep-row > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A stage container */
+.dep-card {
+  background: var(--vscode-editorWidget-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.dep-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* An action card nested inside a stage */
+.dep-action-card {
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.dep-action-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.dep-action-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.dep-action-badge {
+  font-size: 0.7rem;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* "+ action:" pill row */
+.dep-add-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.dep-add-actions .dep-add-label {
+  font-size: 0.78rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Status text colours mapped to theme where possible */
+.dep-ok {
+  color: var(--vscode-testing-iconPassed, #4ecca3);
+}
+.dep-warn {
+  color: var(--vscode-notificationsWarningIcon-foreground, #e0a458);
+}
+.dep-err {
+  color: var(--vscode-errorForeground, #e74c3c);
+}
+.dep-muted {
+  color: var(--vscode-descriptionForeground);
+}
+
+.dep-status-line {
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.dep-inline-note {
+  font-size: 0.78rem;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* A small icon-only button (refresh / remove) sitting next to a field */
+.dep-icon-button {
+  flex: 0 0 auto;
+  padding: 0 10px;
+}
+
+/* Compact disclosure (Repo topology / Column mapping) */
+.dep-details {
+  margin-top: 10px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  padding: 0 10px;
+}
+.dep-details > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--vscode-descriptionForeground);
+  padding: 8px 0;
+  list-style: revert;
+}
+.dep-details[open] > summary {
+  border-bottom: 1px solid var(--vscode-panel-border);
+  margin-bottom: 10px;
+}
+.dep-details-body {
+  padding-bottom: 10px;
+}
+
+/* Provider connection block */
+.dep-connection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dep-connection-title {
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+/* Inline checkbox label */
+.dep-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  margin-top: 10px;
+}
+.dep-checkbox input {
+  margin-top: 2px;
 }
