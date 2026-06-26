@@ -33,6 +33,17 @@ export default function Home() {
     setTimeout(() => setShowCursorOpenedMessage(false), 5000);
   };
 
+  const openChrome = () => {
+    // The Chrome extension is a separate browser companion (not an IDE) — it just
+    // opens the Web Store listing in a new tab; no custom protocol needed.
+    window.open(
+      'https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    setShowInstallModal(false);
+  };
+
   const openAntigravity = () => {
     // Antigravity is a VS Code fork; the IDE registers the "antigravity-ide" protocol
     // (the bare "antigravity" scheme belongs to the separate Antigravity agent app).
@@ -110,6 +121,30 @@ export default function Home() {
                 <button onClick={openAntigravity} className="bg-brand-blue hover:bg-blue-500 text-white font-medium py-2 px-5 rounded-lg transition-colors text-sm">
                   Install
                 </button>
+              </div>
+
+              <div className="pt-2">
+                <p className="text-xs text-slate-500 mb-3">Browser companion (pairs with the IDE extension)</p>
+                <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-white/10 transition-all duration-300">
+                  <div className="flex items-center gap-4">
+                    <div className="bg-slate-800 p-2 rounded-lg border border-white/5 flex items-center justify-center" style={{ width: 44, height: 44 }}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 48 48">
+                        <circle cx="24" cy="24" r="22" fill="#fff" />
+                        <path fill="#4caf50" d="M24 4A20 20 0 0 0 6.7 14.1l8.4 14.5A10 10 0 0 1 24 14h19.3A20 20 0 0 0 24 4z" />
+                        <path fill="#f44336" d="M43.3 14H24a10 10 0 0 1 8.7 5.1L24 4a20 20 0 0 0-17.3 10.1L15 28.6A10 10 0 0 1 24 14z" opacity="0" />
+                        <path fill="#ffc107" d="M6.7 14.1A20 20 0 0 0 16 41.6l8.4-14.5A10 10 0 0 1 15.1 14z" />
+                        <path fill="#f44336" d="M24 14h19.3A20 20 0 0 0 24 4v10z" />
+                        <path fill="#2196f3" d="M16 41.6A20 20 0 0 0 43.3 14H24a10 10 0 0 1 .4 20z" />
+                        <circle cx="24" cy="24" r="8" fill="#fff" />
+                        <circle cx="24" cy="24" r="6.5" fill="#2196f3" />
+                      </svg>
+                    </div>
+                    <span className="font-semibold text-white">Chrome</span>
+                  </div>
+                  <button onClick={openChrome} className="bg-brand-blue hover:bg-blue-500 text-white font-medium py-2 px-5 rounded-lg transition-colors text-sm">
+                    Add to Chrome
+                  </button>
+                </div>
               </div>
             </div>
           </div>

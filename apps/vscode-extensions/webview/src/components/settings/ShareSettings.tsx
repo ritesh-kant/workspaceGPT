@@ -31,6 +31,19 @@ const ShareSettings: React.FC = () => {
             Create share code
           </button>
         </div>
+        <div className='form-group'>
+          <small className='form-text'>
+            Don't have it yet?{' '}
+            <a
+              href='https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole'
+              target='_blank'
+              rel='noopener noreferrer'
+            >
+              Get the WorkspaceGPT Chrome extension
+            </a>
+            .
+          </small>
+        </div>
       </div>
     </div>
   );

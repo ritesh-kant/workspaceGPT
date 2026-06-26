@@ -7,6 +7,9 @@
 </p>
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/gagogpeepmgaljpabdlpbcknjnbcaole.svg?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole)
+
+> 🧩 **New: WorkspaceGPT for Chrome** — ask your Confluence & Azure DevOps questions from a browser side panel. [Add to Chrome](https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole), then paste a share code from this extension (Settings → Share to Chrome).
 
 Visit our homepage: [workspacegpt.in](https://workspacegpt.in)
 
