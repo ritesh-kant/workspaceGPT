@@ -11,6 +11,7 @@ const sections = [
   { id: "codebase", label: "Codebase Indexing" },
   { id: "confluence", label: "Confluence Integration" },
   { id: "ado", label: "Azure DevOps" },
+  { id: "deployment", label: "Deployment Automation" },
   { id: "mcp", label: "MCP Server" },
   { id: "commands", label: "Commands & Shortcuts" },
   { id: "reset", label: "Reset & Clear Data" },
@@ -386,6 +387,42 @@ ollama pull mistral`}</CodeBlock>
 
             <div className="mt-4 p-5 bg-slate-900 border border-white/5 rounded-2xl text-sm text-slate-300">
               <span className="text-blue-400 font-semibold">Auth format:</span> The extension uses <code className="bg-white/10 px-1 rounded text-xs">Basic base64(:PAT)</code> (colon-prefixed PAT) as required by the Azure DevOps REST API.
+            </div>
+          </section>
+
+          {/* ── Deployment Automation ───────────────────────────── */}
+          <SectionAnchor id="deployment" />
+          <section className="mb-16">
+            <div className="mb-4"><Badge color="purple">Enterprise</Badge></div>
+            <SectionTitle>Deployment Automation</SectionTitle>
+            <SectionSubtitle>
+              Turn the manual release checklist — syncing feature flags, env vars, and component
+              versions across environments — into a reviewable, one-click pipeline. The model is
+              inspired by AWS CodePipeline: a pluggable <strong className="text-white">Source</strong>{" "}
+              feeds ordered <strong className="text-white">Stages</strong> of{" "}
+              <strong className="text-white">Actions</strong>. Nothing is hardwired to one team&apos;s setup.
+            </SectionSubtitle>
+
+            <div className="grid sm:grid-cols-3 gap-4 mb-8">
+              <Card icon="🧩" title="Pluggable" accent="purple">
+                <p>Pick a source, then add only the deploy actions your org actually uses. No provider is baked in.</p>
+              </Card>
+              <Card icon="🛡️" title="Plan → Approve → Apply" accent="green">
+                <p>Every change is previewed as a diff you approve before anything is written. Backend changes open a PR — never an auto-merge.</p>
+              </Card>
+              <Card icon="🔍" title="Discover &amp; select" accent="blue">
+                <p>Repos, workflows, projects, and table columns are detected from your connected accounts — choose from dropdowns, don&apos;t type IDs.</p>
+              </Card>
+            </div>
+
+            <div className="bg-slate-900 border border-brand/20 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <p className="text-white font-semibold mb-1">Full deployment guide</p>
+                <p className="text-slate-400 text-sm">Sources, actions, connections (PAT/SSO + Vercel gotchas), the Releases workflow, environments, security, troubleshooting &amp; FAQ.</p>
+              </div>
+              <Link href="/docs/deployment" className="flex-shrink-0 bg-brand hover:bg-[#1ce2a7] text-black font-semibold px-5 py-2.5 rounded-full text-sm transition-colors text-center">
+                Read the guide →
+              </Link>
             </div>
           </section>
 
