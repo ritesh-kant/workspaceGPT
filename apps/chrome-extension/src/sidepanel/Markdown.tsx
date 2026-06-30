@@ -15,14 +15,16 @@ import React from 'react';
 let keySeq = 0;
 const nextKey = () => `md-${keySeq++}`;
 
-const LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+// Label allows one level of nested brackets, e.g. "Title [Deprecated]", which
+// plain `[^\]]+` would truncate at the first `]`.
+const LINK_RE = /\[((?:[^\[\]]|\[[^\]]*\])+)\]\((https?:\/\/[^\s)]+)\)/g;
 
 /** Parse inline spans: links, bold, italic, inline code. */
 function renderInline(text: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   // Tokenize on the highest-priority markers first; recurse for nesting.
   const pattern =
-    /(\[[^\]]+\]\((?:https?:\/\/)[^\s)]+\))|(`[^`]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*]+\*)|(_[^_]+_)/;
+    /(\[(?:[^\[\]]|\[[^\]]*\])+\]\((?:https?:\/\/)[^\s)]+\))|(`[^`]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*]+\*)|(_[^_]+_)/;
 
   let rest = text;
   while (rest.length) {
