@@ -6,8 +6,7 @@ import { DeploymentConfig } from '../../types';
 import SearchableDropdown from './SearchableDropdown';
 import {
   MESSAGE_TYPES,
-  MARS_MACH_PRESET,
-  MARS_PIPELINE_PRESET,
+  EMPTY_MACH_REPO,
   legacyToDescriptor,
 } from '../../constants';
 import type { PipelineDescriptor, PipelineSource, ActionProvider } from '../../constants';
@@ -19,14 +18,17 @@ function defaultActionConfig(provider: ActionProvider): Record<string, any> {
   }
   if (provider === 'github-workflow-dispatch') {
     return {
-      repo: MARS_MACH_PRESET,
-      brand: 'mms',
+      machMode: true,
+      inputs: [],
+      repo: EMPTY_MACH_REPO,
+      brand: '',
       sourceEnv: '',
       fromBranch: 'main',
       envStage: 'stage',
       envProd: 'prod',
       updateMainYml: true,
-      webappVercelProjectId: '',
+      renamePrTitle: true,
+      versionInjection: { enabled: false, component: 'webapp', vercelProjectId: '' },
     };
   }
   return { owner: '', repo: '', filePath: 'main.yml', strategy: 'env-var-merge' };
@@ -48,8 +50,9 @@ const SOURCE_LABEL: Record<PipelineSource['provider'], string> = {
 
 /**
  * Settings → Deployment pipeline. A generic, CodePipeline-shaped editor: a
- * pluggable Source, then Stages of provider Actions. No provider is hardwired —
- * Mars MMS is just a preset. Everything is stored in one pipeline descriptor.
+ * pluggable Source, then Stages of provider Actions. No provider or org
+ * topology is hardwired — everything is entered here and stored in one
+ * pipeline descriptor.
  */
 const DeploymentSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
@@ -105,6 +108,13 @@ const DeploymentSettings: React.FC = () => {
     });
   const removeStage = (si: number) =>
     savePipeline({ ...pipeline, stages: pipeline.stages.filter((_, i) => i !== si) });
+  const moveStage = (si: number, dir: -1 | 1) => {
+    const ni = si + dir;
+    if (ni < 0 || ni >= pipeline.stages.length) return;
+    const stages = [...pipeline.stages];
+    [stages[si], stages[ni]] = [stages[ni], stages[si]];
+    savePipeline({ ...pipeline, stages });
+  };
   const addAction = (si: number, provider: ActionProvider) =>
     savePipeline({
       ...pipeline,
@@ -127,10 +137,19 @@ const DeploymentSettings: React.FC = () => {
         i !== si ? s : { ...s, actions: s.actions.filter((_, j) => j !== ai) },
       ),
     });
-  const applyPreset = (name: string) => {
-    if (name === 'mars') savePipeline(MARS_PIPELINE_PRESET);
-    else if (name === 'blank') savePipeline({ name: 'Blank', source: { provider: 'none' }, stages: [] });
-  };
+  const moveAction = (si: number, ai: number, dir: -1 | 1) =>
+    savePipeline({
+      ...pipeline,
+      stages: pipeline.stages.map((s, i) => {
+        if (i !== si) return s;
+        const ni = ai + dir;
+        if (ni < 0 || ni >= s.actions.length) return s;
+        const actions = [...s.actions];
+        [actions[ai], actions[ni]] = [actions[ni], actions[ai]];
+        return { ...s, actions };
+      }),
+    });
+  const resetPipeline = () => savePipeline({ name: 'Custom', source: { provider: 'none' }, stages: [] });
 
   const environments = pipeline.environments ?? [];
   const setEnvironments = (list: any[]) => savePipeline({ ...pipeline, environments: list });
@@ -151,7 +170,7 @@ const DeploymentSettings: React.FC = () => {
     }),
   );
   const machAction = machSi >= 0 ? pipeline.stages[machSi].actions[machAi] : undefined;
-  const repoCfg = { ...MARS_MACH_PRESET, ...(machAction?.config?.repo ?? {}) };
+  const repoCfg = { ...EMPTY_MACH_REPO, ...(machAction?.config?.repo ?? {}) };
   const setRepoField = (key: string, value: string) => {
     if (machSi < 0) return;
     setActionConfig(machSi, machAi, { repo: { ...repoCfg, [key]: value } });
@@ -260,7 +279,13 @@ const DeploymentSettings: React.FC = () => {
           setGhLoading(undefined);
           if (message.ok && message.kind) {
             setGhLists((prev) => ({ ...prev, [message.kind]: message.items || [] }));
-            setGhError(undefined);
+            // Don't silently show a partial list — if discovery hit the page cap,
+            // the target may be missing, so say so and let the user refine.
+            setGhError(
+              message.truncated
+                ? `Showing the first ${(message.items || []).length} ${message.kind} — list was truncated. Type to search, or narrow the owner/repo.`
+                : undefined,
+            );
           } else {
             setGhError(message.error || 'GitHub discovery failed');
           }
@@ -406,9 +431,17 @@ const DeploymentSettings: React.FC = () => {
     ];
     return (
       <>
+        {!dep.vercelConnected && (
+          <div className="dep-inline-note dep-warn" style={{ marginTop: 0, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span>Not connected to Vercel</span>
+            <button onClick={connectVercel} disabled={!!dep.isConnectingVercel}>
+              {dep.isConnectingVercel ? '⏳ Connecting…' : '🔗 Connect Vercel'}
+            </button>
+          </div>
+        )}
         <div className="dep-field">
           <div className="dep-field-label">Vercel project</div>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <SearchableDropdown
                 value={cfg.projectId || ''}
@@ -418,11 +451,11 @@ const DeploymentSettings: React.FC = () => {
                   setActionConfig(si, ai, { projectId: id, projectName: name });
                 }}
                 disabled={projectsLoading || vercelProjects.length === 0}
-                placeholder={projectsLoading ? 'Loading…' : vercelProjects.length === 0 ? 'Connect Vercel' : 'Select project'}
+                placeholder={projectsLoading ? 'Loading…' : vercelProjects.length === 0 ? 'Connect Vercel above' : 'Select project'}
                 searchPlaceholder="Search projects…"
               />
             </div>
-            <button className="dep-icon-button" onClick={loadVercelProjects} disabled={projectsLoading} title="Refresh">↻</button>
+            <button className="dep-icon-button" onClick={loadVercelProjects} disabled={projectsLoading} data-tooltip="Refresh project list" aria-label="Refresh project list">↻</button>
           </div>
           {projectsError && <div className="dep-inline-note dep-err">{projectsError}</div>}
         </div>
@@ -444,66 +477,167 @@ const DeploymentSettings: React.FC = () => {
     );
   };
 
-  const renderMachAction = (si: number, ai: number, cfg: Record<string, any>) => (
-    <>
-      <div className={`dep-inline-note ${machStatus.connected ? 'dep-ok' : 'dep-warn'}`} style={{ marginTop: 0, marginBottom: 8 }}>
-        {machStatus.connected ? '✅ token reaches both repos' : 'Set a GitHub PAT below (Connections) to enable.'}
-      </div>
-      <div className="dep-row">
-        <div>
-          <div className="dep-field-label">Brand</div>
-          <input value={cfg.brand ?? ''} placeholder="mms" onChange={(e) => setActionConfig(si, ai, { brand: e.target.value })} style={{ width: '100%' }} />
-        </div>
-        <div>
-          <div className="dep-field-label">Source env (from)</div>
-          <input value={cfg.sourceEnv ?? ''} placeholder="test01" onChange={(e) => setActionConfig(si, ai, { sourceEnv: e.target.value })} style={{ width: '100%' }} />
-        </div>
-        <div>
-          <div className="dep-field-label">Source branch</div>
-          <input value={cfg.fromBranch ?? ''} placeholder="main" onChange={(e) => setActionConfig(si, ai, { fromBranch: e.target.value })} style={{ width: '100%' }} />
-        </div>
-      </div>
-      <div className="dep-row" style={{ marginTop: 10 }}>
-        <div>
-          <div className="dep-field-label">stage → dest env</div>
-          <input value={cfg.envStage ?? ''} placeholder="stage" onChange={(e) => setActionConfig(si, ai, { envStage: e.target.value })} style={{ width: '100%' }} />
-        </div>
-        <div>
-          <div className="dep-field-label">prod → dest env</div>
-          <input value={cfg.envProd ?? ''} placeholder="prod" onChange={(e) => setActionConfig(si, ai, { envProd: e.target.value })} style={{ width: '100%' }} />
-        </div>
-      </div>
-      <label className="dep-checkbox">
-        <input type="checkbox" checked={cfg.updateMainYml !== false} onChange={(e) => setActionConfig(si, ai, { updateMainYml: e.target.checked })} />
-        Update main.yml env vars
-      </label>
-      {si === machSi && ai === machAi && (
-        <details className="dep-details">
-          <summary>Repo topology (auto-detected · defaults to preset)</summary>
-          <div className="dep-details-body">
-            {topoSelect('Monorepo owner (org)', 'monorepoOwner')}
-            {topoSelect('Monorepo repo', 'monorepoRepo')}
-            {topoSelect('Sync workflow', 'workflowName')}
-            {topoSelect('Workflow branch (ref)', 'monorepoRef')}
-            {topoSelect('Env repos owner', 'destOwner')}
-            <div className="dep-field">
-              <div className="dep-field-label">Env repo name template</div>
-              <input value={repoCfg.repoTemplate || ''} placeholder="aws-{brand}-phoenix-{env}-mach" onChange={(e) => setRepoField('repoTemplate', e.target.value)} style={{ width: '100%' }} />
+  const renderMachAction = (si: number, ai: number, cfg: Record<string, any>) => {
+    const machMode = cfg.machMode !== false;
+    const inputs: Array<{ key: string; value: string }> = Array.isArray(cfg.inputs) ? cfg.inputs : [];
+    const setInputs = (list: Array<{ key: string; value: string }>) => setActionConfig(si, ai, { inputs: list });
+    const addInput = () => setInputs([...inputs, { key: '', value: '' }]);
+    const updateInput = (idx: number, patch: Partial<{ key: string; value: string }>) =>
+      setInputs(inputs.map((r, i) => (i !== idx ? r : { ...r, ...patch })));
+    const removeInput = (idx: number) => setInputs(inputs.filter((_, i) => i !== idx));
+    const versionInjection = cfg.versionInjection || {};
+    const setVersionInjection = (patch: Record<string, any>) =>
+      setActionConfig(si, ai, { versionInjection: { ...versionInjection, ...patch } });
+    const vercelProjectOptions = [
+      ...(versionInjection.vercelProjectId && !vercelProjects.some((p) => p.id === versionInjection.vercelProjectId)
+        ? [{ value: versionInjection.vercelProjectId, label: `${versionInjection.vercelProjectId} (current)` }]
+        : []),
+      ...vercelProjects.map((p) => ({ value: p.id, label: p.name })),
+    ];
+    return (
+      <>
+        {(() => {
+          const reachable = !!(machStatus.repos?.monorepo && machStatus.repos?.stage);
+          const okText = machMode ? '✅ token reaches both repos' : '✅ token reaches the workflow repo';
+          const note = !machStatus.connected
+            ? 'Set a GitHub PAT below (Connections) to enable.'
+            : reachable
+              ? okText
+              : 'Token set — configure the repo details below so it can reach the workflow.';
+          return (
+            <div className={`dep-inline-note ${machStatus.connected && reachable ? 'dep-ok' : 'dep-warn'}`} style={{ marginTop: 0, marginBottom: 8 }}>
+              {note}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button onClick={() => discover('orgs')} disabled={!!ghLoading}>{ghLoading ? `Loading ${ghLoading}…` : '↻ Re-detect'}</button>
-              {ghError && <span className="dep-warn" style={{ fontSize: '0.78em' }}>{ghError}</span>}
+          );
+        })()}
+
+        <label className="dep-checkbox" style={{ marginTop: 0, marginBottom: 4 }}>
+          <input type="checkbox" checked={machMode} onChange={(e) => setActionConfig(si, ai, { machMode: e.target.checked })} />
+          <span>
+            MACH deployment
+            <div className="dep-muted" style={{ fontSize: '0.92em', marginTop: 2 }}>
+              Promote component versions between env repos (reads/writes <code>components.yml</code>). Turn off for a plain workflow dispatch with your own inputs.
             </div>
+          </span>
+        </label>
+
+        {machMode && (
+          <>
+            <div className="dep-row">
+              <div>
+                <div className="dep-field-label">Brand</div>
+                <input value={cfg.brand ?? ''} placeholder="e.g. web" onChange={(e) => setActionConfig(si, ai, { brand: e.target.value })} style={{ width: '100%' }} />
+              </div>
+              <div>
+                <div className="dep-field-label">Source env (from)</div>
+                <input value={cfg.sourceEnv ?? ''} placeholder="test01" onChange={(e) => setActionConfig(si, ai, { sourceEnv: e.target.value })} style={{ width: '100%' }} />
+              </div>
+              <div>
+                <div className="dep-field-label">Source branch</div>
+                <input value={cfg.fromBranch ?? ''} placeholder="main" onChange={(e) => setActionConfig(si, ai, { fromBranch: e.target.value })} style={{ width: '100%' }} />
+              </div>
+            </div>
+            <div className="dep-row" style={{ marginTop: 10 }}>
+              <div>
+                <div className="dep-field-label">stage → dest env</div>
+                <input value={cfg.envStage ?? ''} placeholder="stage" onChange={(e) => setActionConfig(si, ai, { envStage: e.target.value })} style={{ width: '100%' }} />
+              </div>
+              <div>
+                <div className="dep-field-label">prod → dest env</div>
+                <input value={cfg.envProd ?? ''} placeholder="prod" onChange={(e) => setActionConfig(si, ai, { envProd: e.target.value })} style={{ width: '100%' }} />
+              </div>
+            </div>
+            <label className="dep-checkbox">
+              <input type="checkbox" checked={cfg.updateMainYml !== false} onChange={(e) => setActionConfig(si, ai, { updateMainYml: e.target.checked })} />
+              Update main.yml env vars
+            </label>
+
+            <div className="dep-group-label" style={{ marginTop: 12 }}>Once the PR opens</div>
+            <label className="dep-checkbox">
+              <input type="checkbox" checked={cfg.renamePrTitle !== false} onChange={(e) => setActionConfig(si, ai, { renamePrTitle: e.target.checked })} />
+              Rename the PR title to the release version
+            </label>
+            <label className="dep-checkbox">
+              <input type="checkbox" checked={!!versionInjection.enabled} onChange={(e) => setVersionInjection({ enabled: e.target.checked })} />
+              Set a component&rsquo;s version from a Vercel deployment
+            </label>
+            {versionInjection.enabled && (
+              <div className="dep-row" style={{ marginTop: 4 }}>
+                <div>
+                  <div className="dep-field-label">Component (in components.yml)</div>
+                  <input
+                    value={versionInjection.component ?? ''}
+                    placeholder="webapp"
+                    onChange={(e) => setVersionInjection({ component: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <div className="dep-field-label">Vercel project</div>
+                  <SearchableDropdown
+                    value={versionInjection.vercelProjectId || ''}
+                    options={vercelProjectOptions}
+                    onChange={(id) => setVersionInjection({ vercelProjectId: id })}
+                    disabled={projectsLoading || vercelProjects.length === 0}
+                    placeholder={projectsLoading ? 'Loading…' : vercelProjects.length === 0 ? 'Connect Vercel above' : 'Defaults to the Frontend stage project'}
+                    searchPlaceholder="Search projects…"
+                  />
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {si === machSi && ai === machAi && (
+          <details className="dep-details" open={!machMode}>
+            <summary>Repo topology (auto-detected · blank until configured)</summary>
+            <div className="dep-details-body">
+              {topoSelect(machMode ? 'Monorepo owner (org)' : 'Repo owner', 'monorepoOwner')}
+              {topoSelect(machMode ? 'Monorepo repo' : 'Repo', 'monorepoRepo')}
+              {topoSelect(machMode ? 'Sync workflow' : 'Workflow', 'workflowName')}
+              {topoSelect('Workflow branch (ref)', 'monorepoRef')}
+              {machMode && topoSelect('Env repos owner', 'destOwner')}
+              {machMode && (
+                <div className="dep-field">
+                  <div className="dep-field-label">Env repo name template</div>
+                  <input value={repoCfg.repoTemplate || ''} placeholder="e.g. myorg-{brand}-{env}-config" onChange={(e) => setRepoField('repoTemplate', e.target.value)} style={{ width: '100%' }} />
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button onClick={() => discover('orgs')} disabled={!!ghLoading}>{ghLoading ? `Loading ${ghLoading}…` : '↻ Re-detect'}</button>
+                {ghError && <span className="dep-warn" style={{ fontSize: '0.78em' }}>{ghError}</span>}
+              </div>
+            </div>
+          </details>
+        )}
+
+        {!machMode && (
+          <div className="dep-field" style={{ marginTop: 10 }}>
+            <div className="dep-field-label">Workflow inputs</div>
+            {inputs.length === 0 && (
+              <div className="dep-muted" style={{ fontSize: '0.78em', marginBottom: 6 }}>
+                No inputs — the workflow is dispatched with none. Add key/value pairs matching its <code>workflow_dispatch</code> inputs.
+              </div>
+            )}
+            {inputs.map((row, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                <input value={row.key} placeholder="input name" onChange={(e) => updateInput(idx, { key: e.target.value })} style={{ flex: 1 }} />
+                <span className="dep-muted">=</span>
+                <input value={row.value} placeholder="value" onChange={(e) => updateInput(idx, { value: e.target.value })} style={{ flex: 1 }} />
+                <button className="dep-icon-button dep-icon-danger" onClick={() => removeInput(idx)} data-tooltip="Remove input" aria-label="Remove input">✕</button>
+              </div>
+            ))}
+            <button onClick={addInput} style={{ marginTop: 2 }}>+ Add input</button>
           </div>
-        </details>
-      )}
-    </>
-  );
+        )}
+      </>
+    );
+  };
 
   const ADD_PROVIDERS: ActionProvider[] = ['vercel-config', 'github-workflow-dispatch', 'repo-file-patch'];
 
   return (
-    <div className="settings-section">
+    <div className="settings-section dep-settings">
       <div className="section-header">
         <h3>Deployment pipeline</h3>
         <label className="toggle-switch">
@@ -516,19 +650,9 @@ const DeploymentSettings: React.FC = () => {
         <div className="settings-form">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
             <p className="dep-hint" style={{ flex: 1 }}>
-              Build from a preset or from blank. No provider is hardwired — write creds stay in VS Code only.
+              Configure your own pipeline below — no provider or org topology is hardwired. Write creds stay in VS Code only.
             </p>
-            <div style={{ flex: '0 0 150px' }}>
-              <SearchableDropdown
-                value=""
-                triggerLabel={`Preset: ${pipeline.name || 'Custom'}`}
-                options={[
-                  { value: 'mars', label: 'Mars MMS', subtitle: 'Load the full Mars preset' },
-                  { value: 'blank', label: 'Blank', subtitle: 'Start from an empty pipeline' },
-                ]}
-                onChange={applyPreset}
-              />
-            </div>
+            <button onClick={resetPipeline} style={{ flex: '0 0 auto' }} title="Clear everything and start from an empty pipeline">Reset to blank</button>
           </div>
 
           {/* SOURCE */}
@@ -588,11 +712,20 @@ const DeploymentSettings: React.FC = () => {
                   </details>
                 )}
                 <label className="dep-checkbox">
-                  <input type="checkbox" checked={!!source.aiAssistParsing} onChange={(e) => setSource({ aiAssistParsing: e.target.checked })} />
+                  <input type="checkbox" checked={source.aiAssistParsing !== false} onChange={(e) => setSource({ aiAssistParsing: e.target.checked })} />
                   <span>
                     AI-assisted page reading (fallback)
                     <div className="dep-muted" style={{ fontSize: '0.92em', marginTop: 2 }}>
                       If header matching fails, use your chat model (Settings → Model) to read the page. Validated and shown for approval before apply.
+                    </div>
+                  </span>
+                </label>
+                <label className="dep-checkbox">
+                  <input type="checkbox" checked={source.aiConfigSync !== false} onChange={(e) => setSource({ aiConfigSync: e.target.checked })} />
+                  <span>
+                    Always use AI for config sync
+                    <div className="dep-muted" style={{ fontSize: '0.92em', marginTop: 2 }}>
+                      Skip header matching when preparing config sync and always read the release page with your chat model (Settings → Model). Recommended when release-page layouts vary per team/release. Validated and shown for approval before apply.
                     </div>
                   </span>
                 </label>
@@ -646,7 +779,9 @@ const DeploymentSettings: React.FC = () => {
                     onChange={(v) => setStage(si, { gate: v })}
                   />
                 </div>
-                <button onClick={() => removeStage(si)} className="disconnect-button" title="Remove stage">✕</button>
+                <button className="dep-icon-button" onClick={() => moveStage(si, -1)} disabled={si === 0} data-tooltip="Move stage up" aria-label="Move stage up">▲</button>
+                <button className="dep-icon-button" onClick={() => moveStage(si, 1)} disabled={si === pipeline.stages.length - 1} data-tooltip="Move stage down" aria-label="Move stage down">▼</button>
+                <button className="dep-icon-button dep-icon-danger" onClick={() => removeStage(si)} data-tooltip="Remove stage" aria-label="Remove stage">✕</button>
               </div>
 
               {stage.actions.map((action, ai) => (
@@ -655,7 +790,9 @@ const DeploymentSettings: React.FC = () => {
                     <span className="dep-action-title">{PROVIDER_LABEL[action.provider]}</span>
                     <span className="dep-action-badge">
                       {action.category}
-                      <button onClick={() => removeAction(si, ai)} className="disconnect-button" title="Remove action">✕</button>
+                      <button className="dep-icon-button" onClick={() => moveAction(si, ai, -1)} disabled={ai === 0} data-tooltip="Move action up" aria-label="Move action up">▲</button>
+                      <button className="dep-icon-button" onClick={() => moveAction(si, ai, 1)} disabled={ai === stage.actions.length - 1} data-tooltip="Move action down" aria-label="Move action down">▼</button>
+                      <button className="dep-icon-button dep-icon-danger" onClick={() => removeAction(si, ai)} data-tooltip="Remove action" aria-label="Remove action">✕</button>
                     </span>
                   </div>
                   {action.provider === 'vercel-config' && renderVercelAction(si, ai, action.config)}
@@ -701,7 +838,7 @@ const DeploymentSettings: React.FC = () => {
                   <input type="checkbox" checked={env.autoMerge === true} onChange={(e) => updateEnv(i, { autoMerge: e.target.checked })} />
                   auto-merge
                 </label>
-                <button onClick={() => removeEnv(i)} className="disconnect-button" title="Remove">✕</button>
+                <button onClick={() => removeEnv(i)} className="disconnect-button" data-tooltip="Remove environment" aria-label="Remove environment">✕</button>
               </div>
             ))}
             <button onClick={addEnv} style={{ marginTop: 4 }}>+ Add environment</button>

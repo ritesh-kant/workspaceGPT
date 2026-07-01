@@ -40,7 +40,30 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
   // Rolling window of recent calls for token+item pacing.
   private recent: Array<{ at: number; tokens: number; items: number }> = [];
 
-  constructor(private apiKey: string) {}
+  // One or more API keys, tried in order. On a 429 (daily-quota exhaustion, or
+  // per-minute quota after retries) we rotate to the next key — handy for
+  // spreading free-tier limits across several keys.
+  private readonly keys: string[];
+  private keyIndex = 0;
+
+  constructor(apiKey: string | string[]) {
+    const list = (Array.isArray(apiKey) ? apiKey : [apiKey])
+      .map((k) => (k ?? '').trim())
+      .filter(Boolean);
+    if (list.length === 0) throw new Error('Gemini embedding selected but no API key configured.');
+    this.keys = list;
+  }
+
+  /** Advance to the next key (fresh pacing budget). Returns false if none left. */
+  private rotateKey(): boolean {
+    if (this.keyIndex >= this.keys.length - 1) return false;
+    this.keyIndex++;
+    this.recent = []; // the new key has its own per-minute budget
+    console.log(
+      `[workspaceGPT][gemini] rotating to API key #${this.keyIndex + 1} of ${this.keys.length} after 429.`,
+    );
+    return true;
+  }
 
   async embedBatch(texts: string[], task: EmbeddingTask): Promise<number[][]> {
     if (texts.length === 0) return [];
@@ -67,10 +90,7 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
         })),
       };
 
-      const res = await this.fetchWithRetry(
-        `${API}/${MODEL}:batchEmbedContents?key=${this.apiKey}`,
-        body,
-      );
+      const res = await this.fetchWithRetry(body);
       const json: any = await res.json();
       for (const e of json.embeddings) out.push(e.values as number[]);
     }
@@ -125,7 +145,8 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
     }
   }
 
-  private async fetchWithRetry(url: string, body: unknown, attempt = 0): Promise<Response> {
+  private async fetchWithRetry(body: unknown, attempt = 0): Promise<Response> {
+    const url = `${API}/${MODEL}:batchEmbedContents?key=${this.keys[this.keyIndex]}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -135,10 +156,11 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
       const text = await res.text();
 
       // A per-DAY free-tier quota (e.g. 1000 embed requests/day) only resets at
-      // midnight Pacific — retrying for minutes is futile. Fail fast with an
-      // actionable message instead of burning the retry budget.
+      // midnight Pacific — retrying for minutes is futile. Rotate to the next
+      // key if there is one; otherwise fail fast with an actionable message.
       if (isDailyQuota(text)) {
-        console.log('[workspaceGPT][gemini] daily free-tier quota exhausted — not retrying.');
+        if (this.rotateKey()) return this.fetchWithRetry(body, 0);
+        console.log('[workspaceGPT][gemini] daily free-tier quota exhausted on all keys — not retrying.');
         throw new Error(dailyQuotaMessage(text));
       }
 
@@ -154,8 +176,11 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
             (serverDelay ? ' (server retryDelay)' : ''),
         );
         await delay(waitMs);
-        return this.fetchWithRetry(url, body, attempt + 1);
+        return this.fetchWithRetry(body, attempt + 1);
       }
+
+      // Per-minute retries exhausted on this key — try the next key before giving up.
+      if (this.rotateKey()) return this.fetchWithRetry(body, 0);
     }
     if (!res.ok) {
       throw new Error(`Gemini embed failed: ${res.status} ${await res.text()}`);

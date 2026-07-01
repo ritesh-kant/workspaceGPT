@@ -82,7 +82,7 @@ export const settingsDefaultConfig: SettingsConfig = {
     vercelEnvStage: 'preview',
     vercelEnvProd: 'production',
     vercelPerEnvValues: false,
-    machBrand: 'mms',
+    machBrand: '',
     machSourceEnv: '',
     machFromBranch: 'main',
     machEnvStage: 'stage',

@@ -142,7 +142,7 @@ export interface DeploymentConfig {
   /**
    * Overrides for the mach repo topology (monorepo/workflow/repo naming),
    * populated by the discover-and-select dropdowns. Absent fields fall back to
-   * the Mars preset, so an unconfigured install behaves exactly as before.
+   * blank until the org configures its own topology in Settings.
    */
   machRepo?: {
     apiBase?: string;
@@ -174,7 +174,10 @@ export interface DeploymentConfig {
 
 export interface EmbeddingProviderConfig {
   provider: 'local' | 'gemini';
+  /** Primary key, kept in sync with apiKeys[0] for backward compat. */
   apiKey?: string;
+  /** All configured keys, tried in order with failover on rate-limit (429). */
+  apiKeys?: string[];
 }
 
 export interface VectorStoreConfig {
@@ -190,7 +193,10 @@ export interface AvailableModel {
 export interface ModelConfig {
   selectedModel?: string;
   provider: string;
+  /** Primary key, kept in sync with apiKeys[0] for backward compat. */
   apiKey?: string;
+  /** All configured keys, tried in order with failover on rate-limit (429). */
+  apiKeys?: string[];
   downloadProgress: number;
   downloadStatus: 'idle' | 'downloading' | 'completed' | 'error';
   errorMessage?: string;

@@ -6,6 +6,26 @@ const EmbeddingSettings: React.FC = () => {
   // Fall back to the default when older persisted settings lack the section.
   const embedding = config.embedding ?? { provider: 'local' as const, apiKey: '' };
 
+  // Configured Gemini keys (falls back to the legacy single key).
+  const apiKeys: string[] =
+    embedding.apiKeys && embedding.apiKeys.length > 0
+      ? embedding.apiKeys
+      : [embedding.apiKey ?? ''];
+  const configuredKeyCount = apiKeys.filter((k) => k.trim()).length;
+
+  // Persist a new key list, keeping apiKey synced to the first entry.
+  const setApiKeys = (keys: string[]) => {
+    updateConfig('embedding', 'apiKeys', keys);
+    updateConfig('embedding', 'apiKey', keys[0] ?? '');
+  };
+  const updateApiKeyAt = (i: number, value: string) =>
+    setApiKeys(apiKeys.map((k, idx) => (idx === i ? value : k)));
+  const addApiKey = () => setApiKeys([...apiKeys, '']);
+  const removeApiKeyAt = (i: number) => {
+    const next = apiKeys.filter((_, idx) => idx !== i);
+    setApiKeys(next.length ? next : ['']);
+  };
+
   return (
     <div className='settings-section'>
       <div className='section-header'>
@@ -33,17 +53,45 @@ const EmbeddingSettings: React.FC = () => {
 
         {embedding.provider === 'gemini' && (
           <div className='form-group'>
-            <label htmlFor='embedding-api-key'>Gemini API Key</label>
-            <input
-              id='embedding-api-key'
-              type='password'
-              value={embedding.apiKey ?? ''}
-              onChange={(e) => updateConfig('embedding', 'apiKey', e.target.value)}
-              placeholder='Enter your Google Gemini API key'
-            />
-            <small className='form-text'>
-              Used to embed documents and queries with gemini-embedding-001.
-            </small>
+            <details className='dep-details'>
+              <summary>
+                Gemini API Key(s) · {configuredKeyCount} configured
+              </summary>
+              <div className='dep-details-body'>
+                {apiKeys.map((key, i) => (
+                  <div key={i} className='api-key-row'>
+                    <input
+                      id={i === 0 ? 'embedding-api-key' : undefined}
+                      type='password'
+                      value={key}
+                      onChange={(e) => updateApiKeyAt(i, e.target.value)}
+                      placeholder={
+                        i === 0 ? 'Enter your Google Gemini API key' : `Fallback key #${i + 1}`
+                      }
+                    />
+                    {apiKeys.length > 1 && (
+                      <button
+                        type='button'
+                        className='dep-icon-button dep-icon-danger'
+                        onClick={() => removeApiKeyAt(i)}
+                        data-tooltip='Remove key'
+                        aria-label='Remove key'
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button type='button' className='add-key-button' onClick={addApiKey}>
+                  + Add API key
+                </button>
+                <small className='form-text'>
+                  Used to embed documents and queries with gemini-embedding-001. Extra keys
+                  are tried in order if one is rate-limited (HTTP 429) — useful for spreading
+                  free-tier quota across multiple keys.
+                </small>
+              </div>
+            </details>
           </div>
         )}
       </div>

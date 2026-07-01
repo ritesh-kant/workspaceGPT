@@ -13,7 +13,7 @@ import {
 import { MachAuthService } from './machAuthService';
 
 export interface MachSyncOptions {
-  /** Repo topology (monorepo/workflow/repo-naming). Defaults to MARS_MACH_PRESET. */
+  /** Repo topology (monorepo/workflow/repo-naming), configured per install in Settings. */
   repo: MachRepoConfig;
   brand: string;
   /** Source environment (e.g. test01) — read from here. */
@@ -30,6 +30,14 @@ export interface MachSyncOptions {
    * regardless, so it's never silently merged into the pre-prod env.
    */
   autoMerge?: boolean;
+  /**
+   * MACH-promotion mode (default true). When false, this is a plain
+   * `workflow_dispatch`: {@link inputs} are sent verbatim, and the component
+   * diff / env-repo concepts don't apply.
+   */
+  machMode?: boolean;
+  /** Generic dispatch inputs (only used when {@link machMode} is false). */
+  inputs?: Record<string, string>;
 }
 
 /** One component's version delta between source and destination `components.yml`. */
@@ -144,7 +152,7 @@ export class MachSyncTarget implements PipelineAction {
     };
   }
 
-  /** Destination repo name, derived as `aws-<brand>-phoenix-<to>-mach`. */
+  /** Destination repo name, derived from the configured `repoTemplate`. */
   private destRepo(): string {
     return renderRepoName(this.opts.repo.repoTemplate, this.opts.brand, this.opts.to);
   }
@@ -245,20 +253,23 @@ export class MachSyncTarget implements PipelineAction {
     const dispatchUrl = `${this.opts.repo.apiBase}/repos/${this.opts.repo.monorepoOwner}/${this.opts.repo.monorepoRepo}/actions/workflows/${id}/dispatches`;
     // Per-env policy (default off), but stage is never auto-merged regardless.
     const autoMerge = this.opts.to === 'stage' ? false : this.opts.autoMerge === true;
+    // Generic dispatch sends the user's inputs verbatim; MACH mode builds the
+    // sync workflow's fixed input contract from the promotion settings.
+    const inputs =
+      this.opts.machMode === false
+        ? this.opts.inputs ?? {}
+        : {
+            brand: this.opts.brand,
+            from: this.opts.from,
+            to: this.opts.to,
+            from_branch: this.opts.fromBranch,
+            auto_merge_pr: String(autoMerge),
+            update_main_yml: String(this.opts.updateMainYml),
+          };
     const res = await fetch(dispatchUrl, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ref: this.opts.repo.monorepoRef,
-        inputs: {
-          brand: this.opts.brand,
-          from: this.opts.from,
-          to: this.opts.to,
-          from_branch: this.opts.fromBranch,
-          auto_merge_pr: String(autoMerge),
-          update_main_yml: String(this.opts.updateMainYml),
-        },
-      }),
+      body: JSON.stringify({ ref: this.opts.repo.monorepoRef, inputs }),
     });
     if (!res.ok) {
       throw new Error(`workflow_dispatch failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
@@ -439,7 +450,7 @@ const SEMVER_TOKEN = /v?\d+\.\d+\.\d+[\w.-]*/i;
 /**
  * Set a component's version in a `components.yml`, editing only the `version:`
  * line that belongs to `component`. When the existing value carries a semver
- * token (e.g. `@phoenix/mms-webapp-v4.751.0`), only that token is swapped so any
+ * token (e.g. `@org/web-v4.751.0`), only that token is swapped so any
  * prefix/suffix is preserved; otherwise the whole value is replaced. Returns the
  * new text plus whether anything changed (so callers can stay idempotent).
  */

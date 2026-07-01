@@ -133,9 +133,12 @@ Org-specific values (which columns, which tag regex, which repo) are
 1. **Resolve** — read Roster page, match today's date → version + env.
    Deterministic lookup; touches nothing live.
 2. **Extract** — parse the release page's Configurations table into structured
-   config vars (deterministic parse; LLM only as a fallback normalizer for
-   malformed rows). Output = the *desired* half of the Plan; still touches
-   nothing live.
+   config vars. Parsing mode is configurable per source: deterministic header
+   matching with the LLM as a fallback normalizer, or — via the **Always use AI
+   for config sync** option — LLM-always, since release-page layouts vary too
+   much per-org for header matching to be reliable. Either way the AI output is
+   validated deterministically and still gated by the plan→approve review.
+   Output = the *desired* half of the Plan; still touches nothing live.
 3. **Diff** — read *current* state from Vercel + mach; classify every var as
    add / update / match / conflict. Result reads like `terraform plan`.
 4. **Approve → Apply** — human approves the diff; only then write. Apply is

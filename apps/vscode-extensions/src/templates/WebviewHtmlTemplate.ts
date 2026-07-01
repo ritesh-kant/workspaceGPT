@@ -55,7 +55,8 @@ export class WebviewHtmlTemplate {
 
       const localPath = path.join(reactDistPath, value);
       const webviewUri = webview.asWebviewUri(vscode.Uri.file(localPath));
-      return `${attr}="${webviewUri}"`;
+      const cacheBuster = fs.existsSync(localPath) ? fs.statSync(localPath).mtimeMs : Date.now();
+      return `${attr}="${webviewUri}?v=${cacheBuster}"`;
     });
   }
 

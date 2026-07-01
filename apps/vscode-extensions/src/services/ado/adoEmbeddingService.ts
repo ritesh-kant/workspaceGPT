@@ -104,6 +104,7 @@ export class AdoEmbeddingService {
         namespace: 'ADO',
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        apiKeys: embeddingSettings.apiKeys,
         vectorStore: getVectorStoreSettings(this.context),
       });
     });
@@ -150,6 +151,7 @@ export class AdoEmbeddingService {
         namespace: 'ADO',
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        apiKeys: embeddingSettings.apiKeys,
         vectorStore: getVectorStoreSettings(this.context),
       });
     });
@@ -185,6 +187,7 @@ export class AdoEmbeddingService {
         ...config,
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        apiKeys: embeddingSettings.apiKeys,
         vectorStore: vectorStoreSettings,
       };
 

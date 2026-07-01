@@ -39,6 +39,7 @@ interface InitMessage {
   namespace?: string;
   provider?: EmbeddingProviderId;
   apiKey?: string;
+  apiKeys?: string[];
   vectorStore?: VectorStoreSettingsMsg;
 }
 
@@ -55,6 +56,7 @@ interface ReloadMessage {
   namespace?: string;
   provider?: EmbeddingProviderId;
   apiKey?: string;
+  apiKeys?: string[];
   vectorStore?: VectorStoreSettingsMsg;
 }
 
@@ -112,7 +114,8 @@ function dotProduct(
 async function initializeProvider(
   providerId: EmbeddingProviderId,
   apiKey: string | undefined,
-  embeddingDirPath: string
+  embeddingDirPath: string,
+  apiKeys?: string[]
 ): Promise<void> {
   if (queryProvider && providerId === currentProviderId) {
     return; // already initialized for this provider
@@ -135,7 +138,7 @@ async function initializeProvider(
     queryProvider = makeEmbeddingProvider({ provider: 'local', extractor });
   } else {
     console.log('SearchWorker: Using Gemini for query embeddings.');
-    queryProvider = makeEmbeddingProvider({ provider: 'gemini', apiKey });
+    queryProvider = makeEmbeddingProvider({ provider: 'gemini', apiKey, apiKeys });
   }
 }
 
@@ -437,7 +440,7 @@ process.on('message', async (msg: WorkerMessage) => {
         if (msg.namespace) {
           currentNamespace = msg.namespace as 'CONFLUENCE' | 'CODEBASE' | 'ADO';
         }
-        await initializeProvider(msg.provider ?? 'local', msg.apiKey, msg.embeddingDirPath);
+        await initializeProvider(msg.provider ?? 'local', msg.apiKey, msg.embeddingDirPath, msg.apiKeys);
         vectorStore = buildVectorStore(msg.vectorStore);
         if (vectorStore) {
           // Cloud: Qdrant holds the vectors; dimension match is enforced server-side.
@@ -464,7 +467,7 @@ process.on('message', async (msg: WorkerMessage) => {
       try {
         const dir = msg.embeddingDirPath || currentEmbeddingDirPath;
         if (msg.provider) {
-          await initializeProvider(msg.provider, msg.apiKey, dir);
+          await initializeProvider(msg.provider, msg.apiKey, dir, msg.apiKeys);
         }
         vectorStore = buildVectorStore(msg.vectorStore);
         if (vectorStore) {

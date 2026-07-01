@@ -33,6 +33,31 @@ const ModelSettings: React.FC = () => {
     [selectedModelProvider.provider]
   );
 
+  // The configured keys for this provider (falls back to the legacy single key).
+  const apiKeys: string[] =
+    selectedModelProvider.apiKeys && selectedModelProvider.apiKeys.length > 0
+      ? selectedModelProvider.apiKeys
+      : [selectedModelProvider.apiKey ?? ''];
+  const configuredKeyCount = apiKeys.filter((k) => k.trim()).length;
+
+  // Persist a new key list, keeping apiKey synced to the first entry. The first
+  // (primary) key is what model-listing validates and the failover order head.
+  const setApiKeys = (keys: string[]) => {
+    const primary = keys[0] ?? '';
+    updateModelProvider(selectedModelProvider.provider, 'apiKeys', keys);
+    updateModelProvider(selectedModelProvider.provider, 'apiKey', primary);
+    updateSelectedModelProvider({ ...selectedModelProvider, apiKeys: keys, apiKey: primary });
+    debouncedFetchModels(primary);
+  };
+
+  const updateApiKeyAt = (i: number, value: string) =>
+    setApiKeys(apiKeys.map((k, idx) => (idx === i ? value : k)));
+  const addApiKey = () => setApiKeys([...apiKeys, '']);
+  const removeApiKeyAt = (i: number) => {
+    const next = apiKeys.filter((_, idx) => idx !== i);
+    setApiKeys(next.length ? next : ['']);
+  };
+
   useEffect(() => {
     // Fetch available models for the selected provider whenever component mounts or selectedProvider changes
     fetchAvailableModels(
@@ -130,34 +155,45 @@ const ModelSettings: React.FC = () => {
             provider.requireApiKey
         ) && (
             <div className='form-group'>
-              <label htmlFor='api-key'>API Key</label>
-              <input
-                id='api-key'
-                type='password'
-                value={selectedModelProvider?.apiKey ?? ''}
-                onChange={(e) => {
-                  const newApiKey = e.target.value;
-                  // Update the API key immediately in the UI
-                  updateModelProvider(
-                    selectedModelProvider.provider,
-                    'apiKey',
-                    newApiKey
-                  );
-                  updateSelectedModelProvider({
-                    ...selectedModelProvider,
-                    apiKey: newApiKey,
-                  });
-                  // Debounce the API call
-                  debouncedFetchModels(newApiKey);
-                }}
-                placeholder='Enter your API key'
-              />
-              <small className='form-text'>
-                Required for {selectedModelProvider.provider} integration
-              </small>
-              {apiKeyError && (
-                <small className='form-text error-message'>{apiKeyError}</small>
-              )}
+              <details className='dep-details'>
+                <summary>
+                  API Key(s) · {configuredKeyCount} configured
+                </summary>
+                <div className='dep-details-body'>
+                  {apiKeys.map((key, i) => (
+                    <div key={i} className='api-key-row'>
+                      <input
+                        id={i === 0 ? 'api-key' : undefined}
+                        type='password'
+                        value={key}
+                        onChange={(e) => updateApiKeyAt(i, e.target.value)}
+                        placeholder={i === 0 ? 'Enter your API key' : `Fallback key #${i + 1}`}
+                      />
+                      {apiKeys.length > 1 && (
+                        <button
+                          type='button'
+                          className='dep-icon-button dep-icon-danger'
+                          onClick={() => removeApiKeyAt(i)}
+                          data-tooltip='Remove key'
+                          aria-label='Remove key'
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button type='button' className='add-key-button' onClick={addApiKey}>
+                    + Add API key
+                  </button>
+                  <small className='form-text'>
+                    Required for {selectedModelProvider.provider} integration. Extra keys are
+                    tried in order if one is rate-limited (HTTP 429).
+                  </small>
+                  {apiKeyError && (
+                    <small className='form-text error-message'>{apiKeyError}</small>
+                  )}
+                </div>
+              </details>
             </div>
           )}
 

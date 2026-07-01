@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './Settings.css';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
+import SearchableDropdown from './settings/SearchableDropdown';
 
 interface ResolvedRelease {
   configured: boolean;
@@ -345,6 +346,8 @@ interface MachApplyState {
   version?: string;
   /** Captured trigger context so polling rebuilds the same target. */
   ctx?: { environment: string; from: string; to: string; brand: string };
+  /** Which post-PR steps this pipeline is configured to run — from Settings, not hardcoded. */
+  postPr?: { renameTitle: boolean; versionInjection: { component: string; vercelProjectId: string } | null } | null;
   error?: string;
 }
 
@@ -551,6 +554,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                 to: message.to,
                 brand: message.brand || '',
               },
+              postPr: message.postPr ?? null,
             });
           } else {
             setMachApply({ loading: false, error: message.error || 'Dispatch failed.' });
@@ -584,15 +588,12 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  // Re-resolve "today's release" and refresh the runs list whenever the panel is
+  // reopened, but leave any in-progress preview/plan/apply/mach state alone —
+  // switching views/windows and coming back shouldn't discard a release run.
   useEffect(() => {
     if (isVisible) {
       setLoading(true);
-      setPreview(null);
-      setPlan(null);
-      setApply(null);
-      setMachPlan(null);
-      setMachApply(null);
-      setMachWebapp(null);
       vscode.postMessage({ type: MESSAGE_TYPES.RESOLVE_RELEASE });
       vscode.postMessage({ type: MESSAGE_TYPES.GET_RELEASE_RUNS });
     }
@@ -707,12 +708,13 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
 
   const injectWebappVersion = () => {
     const m = machApplyRef.current;
-    if (!m?.run?.runId) return;
+    if (!m?.run?.runId || !m.postPr?.versionInjection) return;
     setMachWebapp({ loading: true });
     vscode.postMessage({
       type: MESSAGE_TYPES.INJECT_WEBAPP_VERSION,
       runId: m.run.runId,
       version: m.version,
+      component: m.postPr.versionInjection.component,
       environment: m.ctx?.environment || 'stage',
       overrides: m.ctx ? { from: m.ctx.from, to: m.ctx.to, brand: m.ctx.brand } : undefined,
     });
@@ -804,30 +806,30 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                   border: '1px dashed #3a3a52',
                   borderRadius: 8,
                   display: 'flex',
-                  gap: 8,
+                  gap: '28px',
                   alignItems: 'flex-end',
                 }}
               >
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>Version</div>
                   <input
                     type="text"
                     value={overrideVersion}
-                    placeholder="e.g. mms-2026-6.2"
+                    placeholder="e.g. web-2026-6.2"
                     onChange={(e) => setOverrideVersion(e.target.value)}
                     style={{ width: '100%' }}
                   />
                 </div>
-                <div style={{ width: 110 }}>
+                <div style={{ width: 130, flexShrink: 0 }}>
                   <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>Env</div>
-                  <select
+                  <SearchableDropdown
                     value={overrideEnv}
-                    onChange={(e) => setOverrideEnv(e.target.value)}
-                    style={{ width: '100%' }}
-                  >
-                    <option value="stage">stage</option>
-                    <option value="prod">prod</option>
-                  </select>
+                    options={[
+                      { value: 'stage', label: 'stage' },
+                      { value: 'prod', label: 'prod' },
+                    ]}
+                    onChange={setOverrideEnv}
+                  />
                 </div>
               </div>
             )}
@@ -1009,15 +1011,15 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                               {machApply.pr.title}
                             </div>
                           )}
-                          {!machApply.pr.merged && (
+                          {!machApply.pr.merged && machApply.postPr?.versionInjection && (
                             <div style={{ marginTop: 8 }}>
                               <button
                                 onClick={injectWebappVersion}
                                 disabled={!!machWebapp?.loading}
                                 style={{ fontSize: '0.92em' }}
-                                title="Read the webapp version Vercel deployed to the source env and commit it into this PR"
+                                title={`Read the version Vercel deployed to the source env and commit it into this PR as "${machApply.postPr.versionInjection.component}"`}
                               >
-                                {machWebapp?.loading ? '⏳ Reading Vercel…' : 'Set webapp version from Vercel'}
+                                {machWebapp?.loading ? '⏳ Reading Vercel…' : `Set ${machApply.postPr.versionInjection.component} version from Vercel`}
                               </button>
                               {machWebapp && !machWebapp.loading && (
                                 <div style={{ marginTop: 4, fontSize: '0.92em' }}>
@@ -1025,11 +1027,11 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                                     <span style={{ color: '#e74c3c' }}>{machWebapp.error}</span>
                                   ) : machWebapp.changed ? (
                                     <span style={{ color: '#4ecca3' }}>
-                                      ✅ webapp → {machWebapp.newValue} (was {machWebapp.oldValue || '—'}) — committed to PR
+                                      ✅ {machApply.postPr.versionInjection.component} → {machWebapp.newValue} (was {machWebapp.oldValue || '—'}) — committed to PR
                                     </span>
                                   ) : (
                                     <span style={{ color: '#888' }}>
-                                      webapp already at {machWebapp.version} — no change
+                                      {machApply.postPr.versionInjection.component} already at {machWebapp.version} — no change
                                     </span>
                                   )}
                                 </div>

@@ -6,6 +6,8 @@ export interface EmbeddingConfig {
   provider?: 'local' | 'gemini';
   /** API key for cloud providers (gemini). */
   apiKey?: string;
+  /** All configured keys for gemini, tried in order with 429 failover. */
+  apiKeys?: string[];
   /** Where vectors are stored. Defaults to local (file-based) when omitted. */
   vectorStore?: {
     location: 'local' | 'cloud';

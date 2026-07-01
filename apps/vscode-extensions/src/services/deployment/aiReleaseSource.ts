@@ -11,6 +11,23 @@ import { ConfluenceReleaseSource } from './confluenceReleaseSource';
 export type LlmComplete = (prompt: string) => Promise<string>;
 
 /**
+ * How each parse uses the LLM:
+ *  - `deterministic`: never call the LLM (pure header-matching parser).
+ *  - `fallback`: deterministic first, AI only if it fails/returns nothing.
+ *  - `always`: skip the deterministic parser and go straight to AI. Chosen for
+ *    config sync when release-page layouts vary too much per-org for header
+ *    matching to be reliable.
+ */
+export type AiMode = 'deterministic' | 'fallback' | 'always';
+
+export interface AiReleaseSourceOptions {
+  /** Roster date→version resolution. */
+  resolveMode?: AiMode;
+  /** "Prepare config sync" release-page parsing. */
+  configMode?: AiMode;
+}
+
+/**
  * AI-assisted {@link ReleaseSource}. Robust to roster/release-page structure
  * changes (renamed/reordered columns, vocabulary drift) that break the
  * deterministic header-matching parser.
@@ -27,18 +44,29 @@ export type LlmComplete = (prompt: string) => Promise<string>;
  *    backstop, since nothing applies without that approval gate.
  */
 export class AiReleaseSource implements ReleaseSource {
+  private readonly resolveMode: AiMode;
+  private readonly configMode: AiMode;
+
   constructor(
     private readonly inner: ConfluenceReleaseSource,
     private readonly llm: LlmComplete,
-  ) {}
+    opts: AiReleaseSourceOptions = {},
+  ) {
+    this.resolveMode = opts.resolveMode ?? 'fallback';
+    this.configMode = opts.configMode ?? 'fallback';
+  }
 
   async resolveRelease(date: string): Promise<ResolvedRelease | null> {
+    if (this.resolveMode === 'deterministic') return this.inner.resolveRelease(date);
+
     // Deterministic first — cheap, exact, auditable.
-    try {
-      const det = await this.inner.resolveRelease(date);
-      if (det && /\d/.test(det.version)) return det;
-    } catch {
-      // fall through to AI
+    if (this.resolveMode === 'fallback') {
+      try {
+        const det = await this.inner.resolveRelease(date);
+        if (det && /\d/.test(det.version)) return det;
+      } catch {
+        // fall through to AI
+      }
     }
 
     const { tables, text } = await this.inner.getRosterContent();
@@ -47,11 +75,19 @@ export class AiReleaseSource implements ReleaseSource {
   }
 
   async fetchDesiredConfig(version: string, environment: Environment): Promise<DesiredConfigVar[]> {
-    try {
-      const det = await this.inner.fetchDesiredConfig(version, environment);
-      if (det.length) return det;
-    } catch {
-      // fall through to AI
+    if (this.configMode === 'deterministic') {
+      return this.inner.fetchDesiredConfig(version, environment);
+    }
+
+    // In `always` mode we skip deterministic parsing outright — release-page
+    // layouts vary too much per-org for header matching to be trustworthy.
+    if (this.configMode === 'fallback') {
+      try {
+        const det = await this.inner.fetchDesiredConfig(version, environment);
+        if (det.length) return det;
+      } catch {
+        // fall through to AI
+      }
     }
 
     const { tables, text } = await this.inner.getReleasePageContent(version);
@@ -80,7 +116,7 @@ export class AiReleaseSource implements ReleaseSource {
       'You read a software Release Roster (a Confluence page) and extract the release scheduled for a given date.',
       `Target date: ${date} (format YYYY-MM-DD).`,
       'Find the row/entry whose date equals the target date and return ONLY a JSON object:',
-      '{"version": <string version, e.g. "mms-2026-6.2-rc.8">, "environment": <"stage" or "prod">, "pilot": <string or null>, "date": <"YYYY-MM-DD">, "provenance": <short string: which table/row you used>, "confidence": <0..1>}',
+      '{"version": <string version, e.g. "web-2026-6.2-rc.8">, "environment": <"stage" or "prod">, "pilot": <string or null>, "date": <"YYYY-MM-DD">, "provenance": <short string: which table/row you used>, "confidence": <0..1>}',
       'Rules: map "staging"->"stage", "production"->"prod". If NO release is scheduled for the target date, return {"version": null}. Do not invent a version. No markdown, JSON only.',
       '',
       this.renderContent(tables, text),
@@ -101,10 +137,18 @@ export class AiReleaseSource implements ReleaseSource {
   /** Call the LLM and parse a JSON object/array out of the response. */
   private async ask(prompt: string): Promise<any> {
     const raw = await this.llm(prompt);
-    const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/, '').trim();
+    // Strip reasoning blocks (thinking models such as gemini-2.5-* may emit
+    // <think>…</think>) and markdown code fences before attempting to parse.
+    const cleaned = raw
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/^```[a-z]*\n?/i, '')
+      .replace(/```\s*$/, '')
+      .trim();
     try {
       return JSON.parse(cleaned);
     } catch {
+      // Greedy match from the first bracket to the last — tolerates prose
+      // wrapped around the JSON.
       const m = cleaned.match(/[[{][\s\S]*[\]}]/);
       if (m) {
         try {
@@ -113,7 +157,16 @@ export class AiReleaseSource implements ReleaseSource {
           /* noop */
         }
       }
-      throw new Error('AI source returned output that is not valid JSON.');
+      // Log the raw output for debugging and give an actionable hint that
+      // distinguishes empty / truncated / non-JSON responses.
+      console.warn('[AiReleaseSource] unparseable LLM output:', JSON.stringify(raw).slice(0, 2000));
+      const hint =
+        cleaned.length === 0
+          ? 'The model returned an empty response — it likely spent its whole token budget on reasoning. Use a non-thinking model, or one with a larger output limit.'
+          : /[[{]/.test(cleaned) && !/[\]}]\s*$/.test(cleaned)
+            ? 'The response looks truncated (JSON cut off mid-way) — the output token limit was probably hit. Use a model with a larger output limit, or split the release page.'
+            : 'The model did not return JSON.';
+      throw new Error(`AI source returned output that is not valid JSON. ${hint}`);
     }
   }
 

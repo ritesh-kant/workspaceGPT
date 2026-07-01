@@ -154,7 +154,7 @@ export const MESSAGE_TYPES = {
   DISCOVER_GITHUB: 'discover-github',
   DISCOVER_GITHUB_RESPONSE: 'discover-github-response',
   // Discover-and-select: detect the roster page's column headers so the column
-  // mapping is a dropdown choice rather than bound to the Mars template layout.
+  // mapping is a dropdown choice rather than bound to a fixed template layout.
   DISCOVER_ROSTER_COLUMNS: 'discover-roster-columns',
   DISCOVER_ROSTER_COLUMNS_RESPONSE: 'discover-roster-columns-response',
   PLAN_CONFIG_SYNC: 'plan-config-sync',
@@ -404,6 +404,9 @@ export const GITHUB_APP = {
   CALLBACK_PATH: '/callback',
 };
 
+/** Generic GitHub API base — every install talks to the same GitHub REST endpoint. */
+export const GITHUB_API_BASE = 'https://api.github.com';
+
 /**
  * mach (backend config) target configuration.
  *
@@ -415,44 +418,13 @@ export const GITHUB_APP = {
  *
  * Topology: config writes don't touch the mach repo directly. They trigger a
  * `workflow_dispatch` in the monorepo (where all the Actions live), which after
- * ~5 min opens a PR in the stage-mach repo. We never auto-merge (branch
+ * ~5 min opens a PR in the destination env repo. We never auto-merge (branch
  * protection); the apply surfaces the PR URL for human review.
- */
-export const MACH = {
-  API_BASE: 'https://api.github.com',
-  /** Monorepo that hosts the Actions we dispatch. */
-  MONOREPO_OWNER: 'Mars-Incorporated',
-  MONOREPO_REPO: 'phoenix-mach-component-monorepo',
-  /** Branch the workflow is dispatched against. */
-  MONOREPO_REF: 'main',
-  /**
-   * Org that owns the per-environment mach repos. The actual repo is derived as
-   * `aws-<brand>-phoenix-<env>-mach`, so the dispatched workflow opens its PR in
-   * `${MACH_ENV_OWNER}/aws-<brand>-phoenix-<to>-mach` (~5 min later).
-   */
-  MACH_ENV_OWNER: 'Mars-Cloud-CoE',
-  /** A representative repo in that org, used only to validate token reachability. */
-  STAGE_OWNER: 'Mars-Cloud-CoE',
-  STAGE_REPO: 'aws-mms-phoenix-stage-mach',
-  /**
-   * The config-sync workflow's display `name:` (resolved to its id at dispatch
-   * time, so we don't hardcode/guess the bracketed filename).
-   */
-  WORKFLOW_NAME: '[deploy] Sync Components Across Environments',
-  /** Defaults for the workflow_dispatch inputs; overridable in Settings/per-run. */
-  DEFAULT_BRAND: 'mms',
-  DEFAULT_FROM_BRANCH: 'main',
-  /** Derive the per-environment mach repo name from brand + env. */
-  envRepo(brand: string, env: string): string {
-    return `aws-${brand}-phoenix-${env}-mach`;
-  },
-};
-
-/**
- * Repo topology for the mach promotion as a portable config object — everything
- * that used to be hardcoded in {@link MACH}. Lifting it here makes the mach
- * action org-agnostic: another org supplies its own monorepo/workflow/repo
- * naming and the same code drives it. {@link MARS_MACH_PRESET} is the default.
+ *
+ * Repo topology (monorepo owner/repo, workflow name, per-env repo naming) is
+ * entirely org-supplied — there is no shipped default. Each install configures
+ * its own topology via Settings → Deployment Automation, and that becomes part
+ * of the saved pipeline config, not a source-level constant.
  */
 export interface MachRepoConfig {
   apiBase: string;
@@ -469,18 +441,18 @@ export interface MachRepoConfig {
   repoTemplate: string;
 }
 
-/** The Mars MMS topology — default preset, overridable per org via settings. */
-export const MARS_MACH_PRESET: MachRepoConfig = {
-  apiBase: MACH.API_BASE,
-  monorepoOwner: MACH.MONOREPO_OWNER,
-  monorepoRepo: MACH.MONOREPO_REPO,
-  monorepoRef: MACH.MONOREPO_REF,
-  workflowName: MACH.WORKFLOW_NAME,
-  destOwner: MACH.MACH_ENV_OWNER,
-  repoTemplate: 'aws-{brand}-phoenix-{env}-mach',
+/** Empty mach repo topology — every org-identifying field starts blank until configured in Settings. */
+export const EMPTY_MACH_REPO: MachRepoConfig = {
+  apiBase: GITHUB_API_BASE,
+  monorepoOwner: '',
+  monorepoRepo: '',
+  monorepoRef: 'main',
+  workflowName: '',
+  destOwner: '',
+  repoTemplate: '',
 };
 
-/** Render a per-env repo name from a template, e.g. `aws-{brand}-phoenix-{env}-mach`. */
+/** Render a per-env repo name from a template, e.g. `myorg-{brand}-{env}-config`. */
 export function renderRepoName(template: string, brand: string, env: string): string {
   return template.replace(/\{brand\}/g, brand).replace(/\{env\}/g, env);
 }
@@ -507,6 +479,15 @@ export interface PipelineSource {
   rosterPageUrl?: string;
   rosterColumns?: { date?: string; version?: string; env?: string; pilot?: string };
   aiAssistParsing?: boolean;
+  /**
+   * Force AI to read the release page during "Prepare config sync", skipping the
+   * deterministic header-matching parser entirely. Release-page layouts vary far
+   * more per-org than the roster does, so many orgs want AI to always extract the
+   * config vars. Independent of {@link aiAssistParsing} (which only affects the
+   * roster resolve + acts as a fallback); requires a chat model. Output is still
+   * validated and gated by the plan→approve review, so nothing auto-applies.
+   */
+  aiConfigSync?: boolean;
   /** For provider `file`: a JSON release spec read from a Git repo. */
   fileRepoOwner?: string;
   fileRepoName?: string;
@@ -538,21 +519,42 @@ export interface PipelineDescriptor {
   stages: PipelineStage[];
 }
 
+/** True if `dep` carries any pre-pipeline-model flat deployment field worth migrating. */
+function hasLegacyDeploymentFields(d: Record<string, any>): boolean {
+  return !!(
+    d.rosterPageUrl ||
+    d.vercelProjectId ||
+    d.vercelProjectName ||
+    d.machBrand ||
+    d.machRepo ||
+    d.machSourceEnv ||
+    (Array.isArray(d.environments) && d.environments.length)
+  );
+}
+
 /**
  * Build a descriptor from the legacy flat `deployment` settings, so installs
- * saved before the pipeline model keep working unchanged. Also serves as the
- * Mars MMS preset when called with `{}`.
+ * saved before the pipeline model keep working unchanged. Returns a blank,
+ * empty-stages descriptor when there's nothing to migrate (fresh installs) —
+ * there is no shipped example pipeline; org topology only exists once a user
+ * configures it via Settings → Deployment Automation, and is saved from there.
  */
 export function legacyToDescriptor(dep: any): PipelineDescriptor {
   const d = dep ?? {};
+  if (!hasLegacyDeploymentFields(d)) {
+    return { name: 'Custom', source: { provider: 'none' }, stages: [] };
+  }
   return {
-    name: 'Mars MMS',
+    name: 'Custom',
     environments: Array.isArray(d.environments) ? d.environments : undefined,
     source: {
       provider: 'confluence-roster',
       rosterPageUrl: d.rosterPageUrl ?? '',
       rosterColumns: d.rosterColumns,
-      aiAssistParsing: !!d.aiAssistParsing,
+      // Preserve the raw value (undefined stays undefined) so both flags keep
+      // their default-ON semantics; only an explicit stored `false` disables.
+      aiAssistParsing: d.aiAssistParsing,
+      aiConfigSync: d.aiConfigSync,
     },
     stages: [
       {
@@ -582,14 +584,15 @@ export function legacyToDescriptor(dep: any): PipelineDescriptor {
             provider: 'github-workflow-dispatch',
             category: 'deploy',
             config: {
-              repo: { ...MARS_MACH_PRESET, ...(d.machRepo ?? {}) },
-              brand: d.machBrand ?? 'mms',
+              repo: { ...EMPTY_MACH_REPO, ...(d.machRepo ?? {}) },
+              brand: d.machBrand ?? '',
               sourceEnv: d.machSourceEnv ?? '',
               fromBranch: d.machFromBranch ?? 'main',
               envStage: d.machEnvStage ?? 'stage',
               envProd: d.machEnvProd ?? 'prod',
               updateMainYml: d.machUpdateMainYml !== false,
-              webappVercelProjectId: d.vercelProjectId ?? '',
+              renamePrTitle: true,
+              versionInjection: { enabled: !!d.vercelProjectId, component: 'webapp', vercelProjectId: d.vercelProjectId ?? '' },
             },
           },
         ],
@@ -597,9 +600,6 @@ export function legacyToDescriptor(dep: any): PipelineDescriptor {
     ],
   };
 }
-
-/** The Mars MMS preset descriptor (default for new installs). */
-export const MARS_PIPELINE_PRESET: PipelineDescriptor = legacyToDescriptor({});
 
 /**
  * Vercel OAuth integration configuration (deployment automation — frontend env).

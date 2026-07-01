@@ -236,7 +236,7 @@ async function createEmbeddings(): Promise<void> {
       );
       provider = makeEmbeddingProvider({ provider: 'local', extractor });
     } else {
-      provider = makeEmbeddingProvider({ provider: 'gemini', apiKey: config.apiKey });
+      provider = makeEmbeddingProvider({ provider: 'gemini', apiKey: config.apiKey, apiKeys: config.apiKeys });
     }
 
     const files = fs

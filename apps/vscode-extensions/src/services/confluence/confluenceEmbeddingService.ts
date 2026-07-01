@@ -119,6 +119,7 @@ export class ConfluenceEmbeddingService {
         embeddingDirPath,
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        apiKeys: embeddingSettings.apiKeys,
         vectorStore: getVectorStoreSettings(this.context),
       });
     });
@@ -168,6 +169,7 @@ export class ConfluenceEmbeddingService {
         embeddingDirPath,
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        apiKeys: embeddingSettings.apiKeys,
         vectorStore: getVectorStoreSettings(this.context),
       });
     });
@@ -206,6 +208,7 @@ export class ConfluenceEmbeddingService {
         ...config,
         provider: embeddingSettings.provider,
         apiKey: embeddingSettings.apiKey,
+        apiKeys: embeddingSettings.apiKeys,
         vectorStore: vectorStoreSettings,
       };
 

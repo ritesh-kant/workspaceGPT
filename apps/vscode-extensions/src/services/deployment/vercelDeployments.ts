@@ -1,4 +1,5 @@
 import { VercelAuthService } from './vercelAuthService';
+import type { LlmComplete } from './aiReleaseSource';
 
 export interface VercelDeployedVersion {
   /** The extracted version string, e.g. `v4.752.1`. */
@@ -40,9 +41,50 @@ async function resolveCustomEnv(
 }
 
 /**
+ * Pull a version string out of a commit message. Every org phrases its release
+ * commits differently, so a fixed regex silently mis-extracts (or misses) as
+ * soon as the convention drifts. When a chat model is configured (Settings →
+ * Model) we ask it to read the message and name the version; regex is only the
+ * fallback when no model is set up, or the model call fails/returns nothing
+ * plausible — the version-injection feature must keep working either way.
+ */
+async function extractVersion(commitMessage: string, llm?: LlmComplete): Promise<string | null> {
+  if (llm) {
+    try {
+      const prompt = [
+        'A git commit message triggered a deployment. Extract the release version it names.',
+        'Different teams format these differently — e.g. "feat(webapp): released version v4.752.1 [no ci]", ' +
+          '"chore(release): bump to 4.752.1-rc.2", "Release 2026.7.1", "web-2026-6.2-rc.8".',
+        'Return ONLY a JSON object: {"version": <string, the version exactly as it should be recorded ' +
+          '(keep a leading "v" only if the message uses one), or null if the message names no version>}.',
+        'No markdown, JSON only.',
+        '',
+        `COMMIT MESSAGE:\n${commitMessage}`,
+      ].join('\n');
+      const raw = await llm(prompt);
+      const cleaned = raw.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/, '').trim();
+      const obj = JSON.parse(cleaned.match(/\{[\s\S]*\}/)?.[0] ?? cleaned);
+      const version = obj?.version != null ? String(obj.version).trim() : '';
+      if (version && /\d/.test(version)) return version;
+    } catch {
+      // Fall through to regex — a flaky/misconfigured model shouldn't block the feature.
+    }
+  }
+
+  // Prefer "version vX.Y.Z" phrasing; fall back to any semver token.
+  const m =
+    commitMessage.match(/version\s+v?(\d+\.\d+\.\d+[\w.-]*)/i) ??
+    commitMessage.match(/v?(\d+\.\d+\.\d+[\w.-]*)/);
+  if (!m) return null;
+  const hadV = /version\s+v/i.test(commitMessage) || /\bv\d/.test(commitMessage);
+  return hadV ? `v${m[1]}` : m[1];
+}
+
+/**
  * Read the version currently deployed to a Vercel environment by taking the
- * latest READY deployment and parsing its git commit message (e.g.
- * `feat(mms-webapp): released version v4.752.1 [no ci]` → `v4.752.1`).
+ * latest READY deployment and extracting the version from its git commit
+ * message (AI-assisted when a chat model is configured; regex fallback
+ * otherwise — see {@link extractVersion}).
  *
  * `envName` is the source environment name (e.g. `test01`); we resolve it to the
  * project's matching custom environment and filter deployments to it.
@@ -51,6 +93,7 @@ export async function readVercelDeployedVersion(
   auth: VercelAuthService,
   projectId: string,
   envName: string,
+  llm?: LlmComplete,
 ): Promise<VercelDeployedVersion> {
   const token = await auth.getValidAccessToken();
   const tokens = await auth.getStoredTokens();
@@ -103,7 +146,7 @@ export async function readVercelDeployedVersion(
         )}, customEnvironment=${JSON.stringify(sample.customEnvironment)}`
       : 'none';
     throw new Error(
-      `No READY mms-webapp deployment matched env "${envName}" ` +
+      `No READY deployment matched env "${envName}" ` +
         `(resolved id=${env?.id ?? 'n/a'}, slug=${env?.slug ?? 'n/a'}). ` +
         `Newest deployment env fields: ${seen}.`,
     );
@@ -116,20 +159,15 @@ export async function readVercelDeployedVersion(
     match.meta?.gitCommitMessage ??
     '';
 
-  // Prefer "version vX.Y.Z" phrasing; fall back to any semver token.
-  const m =
-    commitMessage.match(/version\s+v?(\d+\.\d+\.\d+[\w.-]*)/i) ??
-    commitMessage.match(/v?(\d+\.\d+\.\d+[\w.-]*)/);
-  if (!m) {
+  const version = await extractVersion(commitMessage, llm);
+  if (!version) {
     throw new Error(
       `Couldn't parse a version from the latest deployment's commit message: "${commitMessage.slice(0, 120)}".`,
     );
   }
 
-  // Keep the leading `v` if the message used one.
-  const hadV = /version\s+v/i.test(commitMessage) || /\bv\d/.test(commitMessage);
   return {
-    version: hadV ? `v${m[1]}` : m[1],
+    version,
     commitMessage,
     url: match.inspectorUrl ?? (match.url ? `https://${match.url}` : undefined),
   };

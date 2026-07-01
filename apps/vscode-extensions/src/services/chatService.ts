@@ -12,6 +12,8 @@ import {
 } from '../../constants';
 import { CodebaseService } from './codebase/codebaseService';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
+import { getLlmSettings } from 'src/utils/getLlmSettings';
+import { withKeyFailover } from 'src/utils/apiKeyFailover';
 import { classifyQuery } from 'src/utils/queryClassifier';
 import { buildPlan, expandQuery } from 'src/utils/queryPlanner';
 import { rerank } from 'src/utils/reranker';
@@ -218,6 +220,11 @@ export class ChatService {
     try {
       this.chatHistory.push({ role: 'user', content: message });
 
+      // All configured keys for the selected provider, tried in failover order
+      // on 429. Falls back to the single key the webview sent.
+      const apiKeys = getLlmSettings(this.context).apiKeys;
+      const failoverKeys = apiKeys.length ? apiKeys : apiKey ? [apiKey] : [];
+
       const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       const isConfluenceConnected =
         settings?.state?.config?.confluence?.isAuthenticated &&
@@ -290,7 +297,7 @@ export class ChatService {
             )
           ),
           needsLLM
-            ? this.classifyIntentWithLLM(message, classification, modelId, apiKey, provider)
+            ? this.classifyIntentWithLLM(message, classification, modelId, failoverKeys, provider)
             : Promise.resolve({ intent: classification.intent }),
         ]);
 
@@ -337,7 +344,7 @@ export class ChatService {
         finalResults,
         modelId,
         provider,
-        apiKey,
+        failoverKeys,
         userDisplayName,
         currentSprint
       );
@@ -424,17 +431,16 @@ export class ChatService {
     query: string,
     fallback: QueryClassification,
     modelId: string,
-    apiKey: string,
+    apiKeys: string[],
     provider: string
   ): Promise<Pick<QueryClassification, 'intent'>> {
     try {
       const providerConfig = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === provider);
-      if (!providerConfig || !apiKey) {
+      if (!providerConfig || !apiKeys.length) {
         return { intent: fallback.intent };
       }
 
       const OpenAI = (await import('openai')).default;
-      const client = new OpenAI({ apiKey, baseURL: providerConfig.BASE_URL });
 
       const prompt = `Classify the intent of this query into exactly one of: lookup, semantic, aggregation, comparison, chitchat.
 
@@ -448,11 +454,14 @@ Respond with a JSON object only, no markdown: {"intent": "<one of the five value
 
 Query: "${query}"`;
 
-      const response = await client.chat.completions.create({
-        model: modelId,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 20,
-        temperature: 0,
+      const response = await withKeyFailover(apiKeys, (apiKey) => {
+        const client = new OpenAI({ apiKey, baseURL: providerConfig.BASE_URL });
+        return client.chat.completions.create({
+          model: modelId,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 20,
+          temperature: 0,
+        });
       });
 
       const raw = response.choices[0]?.message?.content?.trim() || '{}';
@@ -475,7 +484,7 @@ Query: "${query}"`;
     searchResults: SearchResult[],
     modelId: string,
     provider: string,
-    apiKey: string,
+    apiKeys: string[],
     currentUserName: string = '',
     currentSprint: { name: string; iterationPath: string; startDate: string; endDate: string } | null = null
   ): Promise<string> {
@@ -503,7 +512,8 @@ Query: "${query}"`;
           modelId: modelId ?? this.currentModel,
           chatHistory: formattedChatHistory,
           provider: provider,
-          apiKey: apiKey,
+          apiKey: apiKeys[0],
+          apiKeys: apiKeys,
           currentUserName: currentUserName || undefined,
           currentSprint: currentSprint || undefined,
         },

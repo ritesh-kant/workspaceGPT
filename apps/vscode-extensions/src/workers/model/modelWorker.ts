@@ -3,6 +3,7 @@ import { createStructuredPrompt } from '../../utils/promptTemplates';
 import { MODEL_PROVIDERS } from '../../../constants';
 import OpenAI from 'openai';
 import { EmbeddingSearchResult } from 'src/types/types';
+import { withKeyFailover } from '../../utils/apiKeyFailover';
 
 interface WorkerData {
   prompt: string;
@@ -11,6 +12,8 @@ interface WorkerData {
   chatHistory?: string;
   provider?: string;
   apiKey?: string;
+  /** All configured keys, tried in order with failover on rate-limit (429). */
+  apiKeys?: string[];
   currentUserName?: string;
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null;
 }
@@ -22,9 +25,13 @@ const {
   chatHistory,
   provider,
   apiKey,
+  apiKeys,
   currentUserName,
   currentSprint,
 } = workerData as WorkerData;
+
+// Prefer the full key list; fall back to the single legacy key.
+const failoverKeys = apiKeys && apiKeys.length ? apiKeys : apiKey ? [apiKey] : [];
 
 async function generateResponse(): Promise<void> {
   try {
@@ -32,11 +39,11 @@ async function generateResponse(): Promise<void> {
 
     // Get provider configuration
     const providerConfig = MODEL_PROVIDERS.find(p => p.MODEL_PROVIDER === provider);
-    if (!providerConfig || !modelId || !apiKey) {
+    if (!providerConfig || !modelId || !failoverKeys.length) {
       throw new Error(`Provider ${provider} or modelId not found`);
     }
 
-    await generateWithOpenAIStream(structuredPrompt, modelId, providerConfig.BASE_URL, apiKey);
+    await generateWithOpenAIStream(structuredPrompt, modelId, providerConfig.BASE_URL, failoverKeys);
   } catch (error) {
     parentPort?.postMessage({
       type: 'error',
@@ -45,23 +52,23 @@ async function generateResponse(): Promise<void> {
   }
 }
 
-async function generateWithOpenAIStream(prompt: string, model: string, baseURL: string, apiKey: string): Promise<void> {
-  const openai = new OpenAI({
-    apiKey,
-    baseURL,
-  });
-
-  const stream = await openai.chat.completions.create({
-    model: model,
-    messages: [
-      {
-        role: 'user',
-        content: prompt
-      }
-    ],
-    temperature: 0.3,
-    max_tokens: 4096,
-    stream: true,
+async function generateWithOpenAIStream(prompt: string, model: string, baseURL: string, apiKeys: string[]): Promise<void> {
+  // Create the stream with key failover. A 429 surfaces at creation (before any
+  // chunk), so rotating to the next key here is safe — no partial output yet.
+  const stream = await withKeyFailover(apiKeys, (apiKey) => {
+    const openai = new OpenAI({ apiKey, baseURL });
+    return openai.chat.completions.create({
+      model: model,
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 4096,
+      stream: true,
+    });
   });
 
   let fullContent = '';

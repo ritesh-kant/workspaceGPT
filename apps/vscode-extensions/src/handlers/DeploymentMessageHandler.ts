@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import {
   MESSAGE_TYPES,
   STORAGE_KEYS,
-  MARS_MACH_PRESET,
+  EMPTY_MACH_REPO,
+  GITHUB_API_BASE,
   legacyToDescriptor,
   type MachRepoConfig,
   type PipelineDescriptor,
@@ -14,9 +15,10 @@ import { GitHubOAuthService } from '../services/deployment/githubOAuthService';
 import { VercelAuthService } from '../services/deployment/vercelAuthService';
 import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
 import { ConfluenceReleaseSource } from '../services/deployment/confluenceReleaseSource';
-import { AiReleaseSource } from '../services/deployment/aiReleaseSource';
+import { AiReleaseSource, type AiMode } from '../services/deployment/aiReleaseSource';
 import { FileReleaseSource } from '../services/deployment/fileReleaseSource';
 import { getLlmSettings } from '../utils/getLlmSettings';
+import { withKeyFailover, isRateLimitError } from '../utils/apiKeyFailover';
 import { MachAuthService } from '../services/deployment/machAuthService';
 import { MachSyncTarget, setComponentVersion, type MachSyncOptions } from '../services/deployment/machSyncTarget';
 import { readVercelDeployedVersion } from '../services/deployment/vercelDeployments';
@@ -323,7 +325,7 @@ export class DeploymentMessageHandler {
    *
    * Prefers the configured `environments` list (N-ary, org-agnostic). Falls back
    * to the legacy binary `stage`/`prod` fields so existing configs keep working
-   * unchanged — the fallback never enables auto-merge (Mars-safe). This is the
+   * unchanged — the fallback never enables auto-merge (safe default). This is the
    * single seam that removes the hardcoded stage/prod assumption from the
    * env→target mapping.
    */
@@ -352,7 +354,7 @@ export class DeploymentMessageHandler {
 
     if (src.provider === 'file') {
       const apiBase =
-        this.actionConfig(dep, 'github-workflow-dispatch').repo?.apiBase || MARS_MACH_PRESET.apiBase;
+        this.actionConfig(dep, 'github-workflow-dispatch').repo?.apiBase || GITHUB_API_BASE;
       return new FileReleaseSource(this.machAuth, {
         apiBase,
         owner: src.fileRepoOwner ?? '',
@@ -375,10 +377,32 @@ export class DeploymentMessageHandler {
     }
 
     const deterministic = this.buildConfluenceSource(dep);
-    if (src.aiAssistParsing && this.hasLlm()) {
-      return new AiReleaseSource(deterministic, (prompt) => this.aiComplete(prompt));
-    }
-    return deterministic;
+    const hasLlm = this.hasLlm();
+
+    // Roster resolve uses AI only as an opt-in fallback (its columns are
+    // configurable). Config sync can be forced to *always* use AI, since
+    // release-page layouts vary too much per-org for deterministic header
+    // matching to be reliable. Each parse is independent — enabling one does not
+    // silently enable the other.
+    // Both flags default ON — unset means enabled; only an explicit `false`
+    // disables them. (No-op without a configured chat model.)
+    const aiAssist = src.aiAssistParsing !== false;
+    const aiConfig = src.aiConfigSync !== false;
+    const resolveMode: AiMode = aiAssist && hasLlm ? 'fallback' : 'deterministic';
+    const configMode: AiMode = !hasLlm
+      ? 'deterministic'
+      : aiConfig
+        ? 'always'
+        : aiAssist
+          ? 'fallback'
+          : 'deterministic';
+
+    if (resolveMode === 'deterministic' && configMode === 'deterministic') return deterministic;
+
+    return new AiReleaseSource(deterministic, (prompt) => this.aiComplete(prompt), {
+      resolveMode,
+      configMode,
+    });
   }
 
   /** Whether a chat model is configured (Settings → Model) for AI-assisted parsing. */
@@ -394,14 +418,43 @@ export class DeploymentMessageHandler {
       throw new Error('Select a chat model (Settings → Model) to use AI-assisted parsing.');
     }
     const OpenAI = (await import('openai')).default;
-    const client = new OpenAI({ apiKey: s.apiKey || 'local', baseURL: s.baseUrl });
-    const res = await client.chat.completions.create({
-      model: s.model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0,
-      max_tokens: 2048,
-    });
-    return res.choices[0]?.message?.content?.trim() || '';
+    // Try each configured key in turn, rotating on 429. maxRetries lets the SDK
+    // back off and honor Retry-After before we give up on a given key — the
+    // common case for rate-limited or free-tier chat providers.
+    const keys = s.apiKeys.length ? s.apiKeys : ['local'];
+    try {
+      return await withKeyFailover(keys, async (apiKey) => {
+        const client = new OpenAI({ apiKey: apiKey || 'local', baseURL: s.baseUrl, maxRetries: 4 });
+        const res = await client.chat.completions.create({
+          model: s.model!,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0,
+          // Generous ceiling: config-sync responses can be long JSON arrays, and
+          // thinking models (e.g. gemini-2.5-*) also spend tokens reasoning. Too
+          // low here truncates the JSON → "not valid JSON".
+          max_tokens: 8192,
+        });
+        return res.choices[0]?.message?.content?.trim() || '';
+      });
+    } catch (err: any) {
+      // Translate the SDK's opaque "<status> status code (no body)" errors into
+      // something the user can act on.
+      if (isRateLimitError(err)) {
+        // Only reached once every key is rate-limited.
+        throw new Error(
+          'Chat model rate-limited (HTTP 429) after trying all configured API keys. Add another key or wait, then retry — or check your provider quota (Settings → Model). You can also untick "Always use AI for config sync" to use deterministic parsing instead.',
+        );
+      }
+      const status = err?.status ?? err?.response?.status;
+      if (typeof status === 'number' && status >= 500) {
+        // Provider-side outage (e.g. 503). The SDK already retried; extra API
+        // keys don't help since they hit the same endpoint.
+        throw new Error(
+          `Chat model provider is temporarily unavailable (HTTP ${status}) after retries. This is a provider-side outage, not a key problem — wait a moment and try again. If it persists, untick "Always use AI for config sync" to use deterministic parsing instead.`,
+        );
+      }
+      throw err;
+    }
   }
 
   /** The pipeline descriptor (single config source). Migrates legacy flat
@@ -554,10 +607,12 @@ export class DeploymentMessageHandler {
   }
 
   /**
-   * Set the `webapp` component's version in the open mach PR to the version
-   * Vercel has deployed for the source environment (parsed from the latest READY
-   * deployment's commit message). `webapp` is normally `@skipdeploy` because it
-   * ships via Vercel, so we inject its real deployed version into the PR branch's
+   * Set a component's version in the open mach PR to the version Vercel has
+   * deployed for the source environment (parsed from the latest READY
+   * deployment's commit message). The component + Vercel project are pipeline
+   * config (Settings → Deployment Automation → "Once the PR opens"), not
+   * hardcoded — a component normally on `@skipdeploy` because it ships via
+   * Vercel gets its real deployed version injected into the PR branch's
    * components.yml. Idempotent — a no-op when the version already matches.
    */
   private async handleInjectWebappVersion(data: any): Promise<void> {
@@ -566,20 +621,28 @@ export class DeploymentMessageHandler {
     try {
       const runId: number | undefined = data?.runId;
       const environment: string = data?.environment || 'stage';
-      const component: string = data?.component || 'webapp';
       if (!runId) return fail('No run id — trigger the sync first.');
       if (!(await this.vercelAuth.isConnected())) return fail('Connect Vercel first.');
 
       const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       const dep = settings?.state?.config?.deployment ?? {};
       const m = this.actionConfig(dep, 'github-workflow-dispatch');
-      const projectId: string = m.webappVercelProjectId || this.actionConfig(dep, 'vercel-config').projectId || '';
-      if (!projectId) return fail('Select the mms-webapp Vercel project in Settings → Deployment Automation.');
+      const versionInjection = m.versionInjection ?? {};
+      const component: string = data?.component || versionInjection.component || 'webapp';
+      const projectId: string = versionInjection.vercelProjectId || this.actionConfig(dep, 'vercel-config').projectId || '';
+      if (!projectId) return fail('Select the frontend Vercel project in Settings → Deployment Automation.');
 
       const { target, opts } = await this.buildMachTarget(environment, data?.overrides);
 
-      // 1. Version Vercel actually deployed to the source env.
-      const deployed = await readVercelDeployedVersion(this.vercelAuth, projectId, opts.from);
+      // 1. Version Vercel actually deployed to the source env. AI-assisted
+      // extraction when a chat model is configured — commit-message formats
+      // vary by org, so a fixed regex can't cover them all.
+      const deployed = await readVercelDeployedVersion(
+        this.vercelAuth,
+        projectId,
+        opts.from,
+        this.hasLlm() ? (prompt) => this.aiComplete(prompt) : undefined,
+      );
 
       // 2. Read the PR branch's components.yml and splice the webapp version in.
       const branch = target.syncBranch(runId);
@@ -724,7 +787,7 @@ export class DeploymentMessageHandler {
       const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       const dep = settings?.state?.config?.deployment ?? {};
       const apiBase: string =
-        this.actionConfig(dep, 'github-workflow-dispatch').repo?.apiBase || MARS_MACH_PRESET.apiBase;
+        this.actionConfig(dep, 'github-workflow-dispatch').repo?.apiBase || GITHUB_API_BASE;
       const token = await this.machAuth.requireToken();
       const headers = {
         Authorization: `Bearer ${token}`,
@@ -737,41 +800,87 @@ export class DeploymentMessageHandler {
         if (!res.ok) throw new Error(`GitHub API ${res.status}: ${(await res.text()).slice(0, 150)}`);
         return res.json();
       };
+      // Follow `Link: rel="next"` and concatenate every page, so a repo/branch/
+      // workflow past the first 100 isn't silently dropped from the dropdown.
+      // `extract` pulls the array out of object-shaped responses (e.g. workflows).
+      // Capped so a pathologically large org can't spin forever; the cap is high
+      // enough (25 × 100 = 2500) that hitting it is itself worth surfacing.
+      const nextPageUrl = (link: string | null): string | null => {
+        if (!link) return null;
+        for (const part of link.split(',')) {
+          const m = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+          if (m) return m[1];
+        }
+        return null;
+      };
+      const getAllPages = async (
+        url: string,
+        extract: (body: any) => any[] = (b) => b,
+      ): Promise<{ items: any[]; truncated: boolean }> => {
+        const out: any[] = [];
+        let next: string | null = url;
+        let pages = 0;
+        while (next && pages < 25) {
+          const res: Response = await fetch(next, { headers });
+          if (!res.ok) throw new Error(`GitHub API ${res.status}: ${(await res.text()).slice(0, 150)}`);
+          const body = await res.json();
+          const arr = extract(body);
+          if (Array.isArray(arr)) out.push(...arr);
+          next = nextPageUrl(res.headers.get('link'));
+          pages++;
+        }
+        return { items: out, truncated: next !== null };
+      };
 
       if (kind === 'orgs') {
         const [me, orgs] = await Promise.all([
           getJson(`${apiBase}/user`),
-          getJson(`${apiBase}/user/orgs?per_page=100`),
+          getAllPages(`${apiBase}/user/orgs?per_page=100`),
         ]);
-        const logins = [me?.login, ...(orgs ?? []).map((o: any) => o?.login)].filter(Boolean);
+        const logins = [me?.login, ...orgs.items.map((o: any) => o?.login)].filter(Boolean);
         return reply({ ok: true, items: Array.from(new Set(logins)) });
       }
 
       if (kind === 'repos') {
         const owner: string = data?.owner ?? '';
         if (!owner) return reply({ ok: false, error: 'No owner.' });
-        // Org repos first; fall back to the user-repos endpoint for personal accounts.
-        let repos: any[] = [];
+        // Prefer the org endpoint — it includes the PRIVATE repos the PAT can see
+        // (which is usually exactly the monorepo we're after). Only fall back to
+        // the user-repos endpoint when the owner genuinely isn't an org (404):
+        // that endpoint returns PUBLIC repos only, so falling back on any other
+        // error would silently hide the private repo behind a public-only list.
+        let repos: { items: any[]; truncated: boolean };
         try {
-          repos = await getJson(`${apiBase}/orgs/${owner}/repos?per_page=100&sort=full_name`);
-        } catch {
-          repos = await getJson(`${apiBase}/users/${owner}/repos?per_page=100&sort=full_name`);
+          repos = await getAllPages(`${apiBase}/orgs/${owner}/repos?per_page=100&type=all&sort=full_name`);
+        } catch (e) {
+          if (e instanceof Error && /GitHub API 404/.test(e.message)) {
+            repos = await getAllPages(`${apiBase}/users/${owner}/repos?per_page=100&sort=full_name`);
+          } else {
+            throw e;
+          }
         }
-        return reply({ ok: true, items: (repos ?? []).map((r: any) => r?.name).filter(Boolean) });
+        return reply({
+          ok: true,
+          items: repos.items.map((r: any) => r?.name).filter(Boolean),
+          truncated: repos.truncated,
+        });
       }
 
       if (kind === 'workflows') {
         const { owner, repo } = data ?? {};
         if (!owner || !repo) return reply({ ok: false, error: 'No owner/repo.' });
-        const wf = await getJson(`${apiBase}/repos/${owner}/${repo}/actions/workflows?per_page=100`);
-        return reply({ ok: true, items: (wf?.workflows ?? []).map((w: any) => w?.name).filter(Boolean) });
+        const wf = await getAllPages(
+          `${apiBase}/repos/${owner}/${repo}/actions/workflows?per_page=100`,
+          (b) => b?.workflows ?? [],
+        );
+        return reply({ ok: true, items: wf.items.map((w: any) => w?.name).filter(Boolean), truncated: wf.truncated });
       }
 
       if (kind === 'branches') {
         const { owner, repo } = data ?? {};
         if (!owner || !repo) return reply({ ok: false, error: 'No owner/repo.' });
-        const branches = await getJson(`${apiBase}/repos/${owner}/${repo}/branches?per_page=100`);
-        return reply({ ok: true, items: (branches ?? []).map((b: any) => b?.name).filter(Boolean) });
+        const branches = await getAllPages(`${apiBase}/repos/${owner}/${repo}/branches?per_page=100`);
+        return reply({ ok: true, items: branches.items.map((b: any) => b?.name).filter(Boolean), truncated: branches.truncated });
       }
 
       return reply({ ok: false, error: `Unknown discovery kind: ${kind}` });
@@ -834,8 +943,17 @@ export class DeploymentMessageHandler {
       this.post(MESSAGE_TYPES.MACH_TOKEN_STATUS, { connected: false });
       return;
     }
-    const status = await this.machAuth.validate();
+    const status = await this.machAuth.validate(...this.machValidateArgs());
     this.post(MESSAGE_TYPES.MACH_TOKEN_STATUS, { ...status });
+  }
+
+  /** The configured repo/brand/sample-env + mode to validate the PAT against. */
+  private machValidateArgs(): [MachRepoConfig, string, string, boolean] {
+    const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    const dep = settings?.state?.config?.deployment ?? {};
+    const m = this.actionConfig(dep, 'github-workflow-dispatch');
+    const repo: MachRepoConfig = { ...EMPTY_MACH_REPO, ...(m.repo ?? {}) };
+    return [repo, m.brand || '', m.envStage || 'stage', m.machMode !== false];
   }
 
   /**
@@ -852,7 +970,31 @@ export class DeploymentMessageHandler {
     const dep = settings?.state?.config?.deployment ?? {};
 
     const m = this.actionConfig(dep, 'github-workflow-dispatch');
-    const brand: string = overrides.brand || m.brand || 'mms';
+    const machMode: boolean = m.machMode !== false;
+    // Repo topology from the action config; blank until the user configures it in Settings.
+    const repo: MachRepoConfig = { ...EMPTY_MACH_REPO, ...(m.repo ?? {}) };
+
+    // Generic workflow_dispatch: no promotion semantics — just the workflow and
+    // the user's raw inputs. Source-env / dest-env / components.yml don't apply.
+    if (!machMode) {
+      if (!repo.monorepoOwner || !repo.monorepoRepo || !repo.workflowName) {
+        throw new Error('Set the repo owner, repo, and workflow in Settings → Deployment Automation.');
+      }
+      const inputs: Record<string, string> = { ...toInputRecord(m.inputs), ...(overrides.inputs ?? {}) };
+      const opts: MachSyncOptions = {
+        repo,
+        brand: '',
+        from: '',
+        to: environment,
+        fromBranch: repo.monorepoRef || 'main',
+        updateMainYml: false,
+        machMode: false,
+        inputs,
+      };
+      return { target: new MachSyncTarget(this.machAuth, opts), opts };
+    }
+
+    const brand: string = overrides.brand || m.brand || '';
     const from: string = overrides.from || m.sourceEnv || '';
     if (!from) {
       throw new Error('Set the mach source environment (e.g. test01) in Settings → Deployment Automation.');
@@ -864,12 +1006,10 @@ export class DeploymentMessageHandler {
       typeof overrides.updateMainYml === 'boolean'
         ? overrides.updateMainYml
         : m.updateMainYml !== false;
-    // Per-env policy, defaulting to never auto-merge (Mars-safe).
+    // Per-env policy, defaulting to never auto-merge (safe default).
     const autoMerge: boolean = this.resolveEnv(dep, environment).autoMerge === true;
-    // Repo topology from the action config, defaulting to the Mars preset.
-    const repo: MachRepoConfig = { ...MARS_MACH_PRESET, ...(m.repo ?? {}) };
 
-    const opts: MachSyncOptions = { repo, brand, from, to, fromBranch, updateMainYml, autoMerge };
+    const opts: MachSyncOptions = { repo, brand, from, to, fromBranch, updateMainYml, autoMerge, machMode: true };
     return { target: new MachSyncTarget(this.machAuth, opts), opts };
   }
 
@@ -884,6 +1024,20 @@ export class DeploymentMessageHandler {
     try {
       const environment: string = data?.environment || 'stage';
       const { target, opts } = await this.buildMachTarget(environment, data?.overrides);
+      // Generic dispatch has no component diff — the plan is just "dispatch this
+      // workflow with these inputs". MACH mode computes the components.yml delta.
+      if (opts.machMode === false) {
+        this.post(MESSAGE_TYPES.PLAN_MACH_SYNC_RESPONSE, {
+          ok: true,
+          environment,
+          machMode: false,
+          workflow: opts.repo.workflowName,
+          ref: opts.repo.monorepoRef,
+          inputs: opts.inputs ?? {},
+          changes: [],
+        });
+        return;
+      }
       const changes = await target.planComponentDiff();
       this.post(MESSAGE_TYPES.PLAN_MACH_SYNC_RESPONSE, {
         ok: true,
@@ -925,6 +1079,18 @@ export class DeploymentMessageHandler {
         detail: `dispatched sync ${opts.from}→${opts.to}${run ? ` (run ${run.runId})` : ''}`,
       });
 
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const dep = settings?.state?.config?.deployment ?? {};
+      const m = this.actionConfig(dep, 'github-workflow-dispatch');
+      const postPr = opts.machMode !== false
+        ? {
+            renameTitle: m.renamePrTitle !== false,
+            versionInjection: m.versionInjection?.enabled
+              ? { component: m.versionInjection.component || 'webapp', vercelProjectId: m.versionInjection.vercelProjectId || '' }
+              : null,
+          }
+        : null;
+
       this.post(MESSAGE_TYPES.APPLY_MACH_SYNC_RESPONSE, {
         ok: true,
         environment,
@@ -935,6 +1101,7 @@ export class DeploymentMessageHandler {
         workflowId,
         dispatchedAt: at,
         run,
+        postPr,
       });
     } catch (error) {
       fail(errMessage(error));
@@ -955,7 +1122,12 @@ export class DeploymentMessageHandler {
       const environment: string = data?.environment || 'stage';
       const releaseTitle: string | undefined = data?.version;
       if (!runId && !dispatchedAt) return fail('Nothing to check yet.');
-      const { target } = await this.buildMachTarget(environment, data?.overrides);
+      const { target, opts } = await this.buildMachTarget(environment, data?.overrides);
+
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const dep = settings?.state?.config?.deployment ?? {};
+      const m = this.actionConfig(dep, 'github-workflow-dispatch');
+      const renameEnabled = opts.machMode !== false && m.renamePrTitle !== false;
 
       // Once we have a run id, query it directly; until then, keep trying to
       // locate the run created by our dispatch (the 204 gives us no id).
@@ -964,9 +1136,10 @@ export class DeploymentMessageHandler {
         : await target.findRun(workflowId, dispatchedAt!);
       let pr = run ? await target.findPullRequest(run.runId) : null;
 
-      // Rename the PR to the release version (e.g. mms-2026-6.2-rc.8) once it
-      // exists. Idempotent: only patch when the title actually differs.
-      if (pr && releaseTitle && pr.title !== releaseTitle) {
+      // Rename the PR to the release version (e.g. web-2026-6.2-rc.8) once it
+      // exists, when the pipeline is configured to do so. Idempotent: only
+      // patch when the title actually differs.
+      if (pr && renameEnabled && releaseTitle && pr.title !== releaseTitle) {
         try {
           await target.updatePullRequestTitle(pr.number, releaseTitle);
           pr = { ...pr, title: releaseTitle };
@@ -1036,7 +1209,7 @@ export class DeploymentMessageHandler {
     }
 
     if (await this.machAuth.isConnected()) {
-      const status = await this.machAuth.validate();
+      const status = await this.machAuth.validate(...this.machValidateArgs());
       results.mach =
         status.repos?.monorepo && status.repos?.stage
           ? { ok: true }
@@ -1051,4 +1224,26 @@ export class DeploymentMessageHandler {
 
 function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Normalize the UI's workflow-inputs editor (an array of `{key, value}` rows,
+ * or already an object) into the `{ [key]: value }` map GitHub expects. Blank
+ * keys are dropped so an empty trailing row doesn't dispatch a `"": ""` input.
+ */
+function toInputRecord(inputs: unknown): Record<string, string> {
+  if (Array.isArray(inputs)) {
+    const out: Record<string, string> = {};
+    for (const row of inputs) {
+      const key = String(row?.key ?? '').trim();
+      if (key) out[key] = String(row?.value ?? '');
+    }
+    return out;
+  }
+  if (inputs && typeof inputs === 'object') {
+    return Object.fromEntries(
+      Object.entries(inputs as Record<string, unknown>).map(([k, v]) => [k, String(v ?? '')]),
+    );
+  }
+  return {};
 }

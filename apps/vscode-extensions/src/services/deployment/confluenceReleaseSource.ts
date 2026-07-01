@@ -174,8 +174,8 @@ export class ConfluenceReleaseSource implements ReleaseSource {
 
   /**
    * Find the release page id for a version. The roster carries an `-rc.N`
-   * release-candidate suffix (e.g. `mms-2026-6.2-rc.7`) but the release page is
-   * titled without it (`mms-2026-6.2`), so we strip the suffix and prefer an
+   * release-candidate suffix (e.g. `web-2026-6.2-rc.7`) but the release page is
+   * titled without it (`web-2026-6.2`), so we strip the suffix and prefer an
    * exact title match, falling back to a contains match then the raw version.
    */
   private async findReleasePageId(version: string): Promise<string | null> {

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import {
-  MARS_MACH_PRESET,
+  EMPTY_MACH_REPO,
   STORAGE_KEYS,
   renderRepoName,
   type MachRepoConfig,
@@ -62,12 +62,33 @@ export class MachAuthService {
    * a clean 200 on both is the real liveness signal we need before a release.
    */
   async validate(
-    cfg: MachRepoConfig = MARS_MACH_PRESET,
-    brand = 'mms',
+    cfg: MachRepoConfig = EMPTY_MACH_REPO,
+    brand = '',
     sampleEnv = 'stage',
+    machMode = true,
   ): Promise<MachTokenStatus> {
     const token = await this.getToken();
     if (!token) return { connected: false, detail: 'No token set.' };
+
+    // Nothing to probe until the repo topology is configured. Firing requests
+    // against blank owner/repo would 404 for a reason that has nothing to do
+    // with the token, so don't imply an SSO/auth problem that isn't there.
+    // Generic (non-MACH) dispatch only needs the workflow repo, not an env repo.
+    const missing = [
+      !cfg.monorepoOwner && (machMode ? 'monorepo owner' : 'repo owner'),
+      !cfg.monorepoRepo && (machMode ? 'monorepo repo' : 'repo'),
+      machMode && !cfg.destOwner && 'env repos owner',
+      machMode && !cfg.repoTemplate && 'env repo template',
+    ].filter(Boolean);
+    if (missing.length) {
+      return {
+        connected: true,
+        detail:
+          `Token stored, but the repo topology isn't configured yet ` +
+          `(missing: ${missing.join(', ')}). Fill in the Repo topology fields ` +
+          `in the Backend stage, then re-test.`,
+      };
+    }
 
     const headers = {
       Authorization: `Bearer ${token}`,
@@ -80,29 +101,42 @@ export class MachAuthService {
       return { ok: res.ok, status: res.status };
     };
 
-    // A representative per-environment repo, to prove the env org is reachable.
-    const sampleRepo = renderRepoName(cfg.repoTemplate, brand, sampleEnv);
+    const monoPath = `${cfg.monorepoOwner}/${cfg.monorepoRepo}`;
+    // A representative per-environment repo proves the env org is reachable —
+    // MACH mode only. Generic dispatch has no env repo, so it's trivially OK.
+    const sampleRepo = machMode ? renderRepoName(cfg.repoTemplate, brand, sampleEnv) : '';
+    const stagePath = `${cfg.destOwner}/${sampleRepo}`;
     try {
-      const [mono, stage] = await Promise.all([
-        reach(cfg.monorepoOwner, cfg.monorepoRepo),
-        reach(cfg.destOwner, sampleRepo),
-      ]);
+      const mono = await reach(cfg.monorepoOwner, cfg.monorepoRepo);
+      const stage = machMode
+        ? await reach(cfg.destOwner, sampleRepo)
+        : { ok: true, status: 200 };
       const repos = { monorepo: mono.ok, stage: stage.ok };
       if (mono.ok && stage.ok) return { connected: true, repos };
 
-      // 404 on a private repo a valid token can't see almost always means the
-      // PAT isn't SSO-authorized for that org — call it out specifically.
       const unreachable = [
-        !mono.ok ? `${cfg.monorepoOwner} (${mono.status})` : null,
-        !stage.ok ? `${cfg.destOwner} (${stage.status})` : null,
+        !mono.ok ? `${monoPath} (${mono.status})` : null,
+        !stage.ok ? `${stagePath} (${stage.status})` : null,
       ].filter(Boolean);
+      // Name the actual repo path and status so the failure is diagnosable, and
+      // give guidance matched to the status code rather than always blaming SSO.
+      const statuses = [mono, stage].filter((r) => !r.ok).map((r) => r.status);
+      let hint: string;
+      if (statuses.includes(401)) {
+        hint = 'A 401 means the token is invalid or expired — regenerate the PAT.';
+      } else if (statuses.includes(403)) {
+        hint = 'A 403 usually means the PAT is missing the `repo` + `workflow` scopes, or you hit a rate limit.';
+      } else if (statuses.includes(404)) {
+        hint =
+          "A 404 on a private repo means either the PAT isn't SSO-authorized for that org " +
+          "(open the token's \"Configure SSO\") or the owner/repo name is wrong — double-check the Repo topology fields.";
+      } else {
+        hint = 'Verify the Repo topology values and the token scopes.';
+      }
       return {
         connected: true,
         repos,
-        detail:
-          `Token stored, but can't reach ${unreachable.join(', ')}. ` +
-          `If you see 404, the PAT likely isn't SSO-authorized for that org — ` +
-          `open the token's "Configure SSO" and authorize it.`,
+        detail: `Token stored, but can't reach ${unreachable.join(', ')}. ${hint}`,
       };
     } catch (error) {
       return {
