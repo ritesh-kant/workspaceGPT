@@ -342,7 +342,27 @@ export default function DeploymentDocsPage() {
                 </tbody>
               </table>
             </div>
-            <p className="text-slate-400 text-sm">
+
+            <H3>Backend env vars land on the sync PR</H3>
+            <p className="text-slate-300 text-sm leading-relaxed mb-2">
+              The <strong className="text-white">Vercel</strong> action diffs against live state and
+              writes immediately. The backend is different: component versions and env vars live in a
+              Git repo behind branch protection, so the <strong className="text-white">GitHub — workflow
+              dispatch</strong> action opens a <strong className="text-white">sync pull request</strong>{" "}
+              first. The <strong className="text-white">Repo — file patch</strong> action then diffs your
+              release&apos;s backend env vars against <code className="bg-white/10 px-1 rounded text-xs">main.yml</code>{" "}
+              <em>on that PR</em> — not the repo&apos;s default branch — and commits any add/update back to
+              the same PR branch as one idempotent commit. A single PR ends up carrying both the
+              component-version bumps and the env-var reconciliation.
+            </p>
+            <Note color="blue">
+              <span className="text-blue-400 font-semibold">Ordering:</span> the file-patch step depends
+              on the sync PR. Run the workflow-dispatch action first, wait for its PR to open, then plan
+              the env vars. Until the PR exists, the step reports <em>&ldquo;no open sync PR&rdquo;</em>{" "}
+              rather than diffing against the wrong branch.
+            </Note>
+
+            <p className="text-slate-400 text-sm mt-6">
               Reserved for future releases (the seams exist already): <strong className="text-slate-200">blue-green switch</strong>,{" "}
               <strong className="text-slate-200">canary</strong>, <strong className="text-slate-200">health verify</strong>, and{" "}
               <strong className="text-slate-200">rollback</strong>.
@@ -393,7 +413,16 @@ export default function DeploymentDocsPage() {
           <section className="mb-16">
             <SectionTitle>The Releases workflow</SectionTitle>
             <SectionSubtitle>Open the Releases panel (rocket icon in the title bar) to run a pipeline.</SectionSubtitle>
-            <div className="space-y-0">
+            <Note color="brand">
+              Each pipeline appears as its own <strong className="text-white">color-coded card</strong> —{" "}
+              <span className="text-blue-400 font-medium">Vercel</span>,{" "}
+              <span className="text-purple-400 font-medium">mach components</span>, and{" "}
+              <span className="text-cyan-400 font-medium">mach main.yml env vars</span> — each with a
+              numbered header and a <strong className="text-white">step tracker</strong> (done ✓ /
+              in-progress ● / pending ○). The color tells you which pipeline a button belongs to, and the
+              tracker shows at a glance which step you&apos;re on.
+            </Note>
+            <div className="space-y-0 mt-6">
               <Step number={1} title="Resolve">
                 <p>WorkspaceGPT reads the source and shows today&apos;s release — version, environment, and pilot. (You can override the version/environment for testing.)</p>
               </Step>
@@ -412,7 +441,10 @@ export default function DeploymentDocsPage() {
               <Step number={4} title="Backend → pull request">
                 <p>Workflow-dispatch actions open a PR for human review and poll its status live — the run link and PR link appear as they become available. WorkspaceGPT never merges for you.</p>
               </Step>
-              <Step number={5} title="Recent runs">
+              <Step number={5} title="Sync backend env vars (main.yml)">
+                <p>Once the sync PR is open, the <strong className="text-white">mach main.yml env vars</strong> step diffs your release&apos;s backend env vars against <code className="bg-white/10 px-1 rounded text-xs">main.yml</code> on that PR and commits any add/update to the same PR branch. Review and merge the single PR to deploy — it carries both the component-version bumps and the env-var changes.</p>
+              </Step>
+              <Step number={6} title="Recent runs">
                 <p>Each apply is recorded to a local audit log and surfaced under <strong className="text-white">Recent runs</strong>, with a <strong className="text-white">Retry failed</strong> option.</p>
               </Step>
             </div>
@@ -479,6 +511,7 @@ export default function DeploymentDocsPage() {
                 { problem: "Roster columns not detected", fix: "Open Column mapping (auto-detected) under the Confluence source, click Detect columns, and pick the right header for each field. If the page structure changed, enable AI-assisted page reading." },
                 { problem: "Dropdowns are empty (repos/workflows)", fix: "Make sure the GitHub PAT is saved and reaches the org. Use the ↻ Re-detect button in the action's Repo topology section after connecting." },
                 { problem: "Backend run never appears after trigger", fix: "workflow_dispatch is asynchronous — the run takes a few seconds to register. WorkspaceGPT polls automatically; use the ↻ Recheck button if needed." },
+                { problem: "main.yml env-var plan says “No open sync PR”", fix: "The backend env-var step diffs against the open sync PR, which the GitHub workflow-dispatch (mach sync) action creates. Trigger mach sync first, wait for the PR to open, then plan the main.yml env vars." },
               ].map((item) => (
                 <details key={item.problem} className="group bg-slate-900 border border-white/5 rounded-2xl overflow-hidden">
                   <summary className="flex items-center justify-between px-5 py-4 cursor-pointer text-white font-medium hover:bg-white/5 transition-colors list-none">
