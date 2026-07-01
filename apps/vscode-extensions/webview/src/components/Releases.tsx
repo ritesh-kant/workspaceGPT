@@ -71,6 +71,10 @@ interface PlanState {
   vercelEnv?: string;
   valuesOpaque?: boolean;
   error?: string;
+  /** mach env-var plan: no open sync PR to diff against yet — run mach sync first. */
+  needsSync?: boolean;
+  /** mach env-var plan: the open sync PR being diffed against / committed to. */
+  pr?: MachPull;
 }
 
 interface ReleasesProps {
@@ -278,8 +282,9 @@ const PlanReview: React.FC<{ state: PlanState }> = ({ state }) => {
 
       {state.skipped && state.skipped.length > 0 && (
         <div style={{ marginTop: 12, fontSize: '0.8em', color: '#888' }}>
-          {state.skipped.length} variable{state.skipped.length === 1 ? '' : 's'} skipped (no target
-          configured yet): {state.skipped.map((s) => s.key).join(', ')}
+          {state.skipped.length} mach variable{state.skipped.length === 1 ? '' : 's'} not applied here
+          — handled by the mach main.yml pipeline (③) below:{' '}
+          {state.skipped.map((s) => s.key).join(', ')}
         </div>
       )}
     </div>
@@ -432,12 +437,139 @@ const MachPlanReview: React.FC<{ state: MachPlanState }> = ({ state }) => {
       )}
       {state.updateMainYml && (
         <div style={{ fontSize: '0.76em', color: '#888', marginTop: 8 }}>
-          main.yml env-var sync is enabled — its changes aren't previewed here yet.
+          main.yml env-var sync runs as its own step (③ below), diffed against this PR.
         </div>
       )}
     </div>
   );
 };
+
+/**
+ * Distinct accent per deployment pipeline, so a button's colour tells you which
+ * target it acts on. Chosen to avoid the semantic colours (green=done,
+ * red=fail, amber=warn) used by status glyphs.
+ */
+const PIPE = {
+  vercel: '#4f9cf9', // frontend config
+  machComp: '#a78bfa', // backend component versions
+  machEnv: '#22d3ee', // backend main.yml env vars
+} as const;
+
+type StepState = 'pending' | 'active' | 'done' | 'error' | 'blocked';
+
+const STEP_LABEL_COLOR: Record<StepState, string> = {
+  done: '#4ecca3',
+  active: '', // falls back to the pipeline accent
+  error: '#e74c3c',
+  blocked: '#e0a93b',
+  pending: '#6b7280',
+};
+
+/** Status dot for one pipeline step. */
+const StepDot: React.FC<{ state: StepState; accent: string }> = ({ state, accent }) => {
+  const base: React.CSSProperties = {
+    width: 15,
+    height: 15,
+    borderRadius: '50%',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 9,
+    fontWeight: 700,
+    flexShrink: 0,
+    lineHeight: 1,
+    boxSizing: 'border-box',
+  };
+  if (state === 'done') return <span style={{ ...base, background: '#4ecca3', color: '#0b0b14' }}>✓</span>;
+  if (state === 'error') return <span style={{ ...base, background: '#e74c3c', color: '#fff' }}>!</span>;
+  if (state === 'blocked') return <span style={{ ...base, background: '#e0a93b', color: '#0b0b14' }}>!</span>;
+  if (state === 'active') return <span style={{ ...base, background: accent, color: '#0b0b14' }}>●</span>;
+  return <span style={{ ...base, border: '1.5px solid #4b4b63' }} />;
+};
+
+/** Accent-tinted primary-button style, so the colour maps to the pipeline. */
+const pipeBtn = (accent: string): React.CSSProperties => ({
+  marginTop: 12,
+  width: '100%',
+  background: accent,
+  borderColor: accent,
+  color: '#0b0b14',
+  fontWeight: 600,
+});
+
+/**
+ * A visually distinct card for one deployment pipeline. The accent bar +
+ * numbered header separate it from its siblings; the step tracker shows at a
+ * glance which step you're on and what's already done.
+ */
+const PipelineCard: React.FC<{
+  accent: string;
+  index: number;
+  title: string;
+  target: string;
+  steps: { label: string; state: StepState }[];
+  dependsOn?: string;
+  children: React.ReactNode;
+}> = ({ accent, index, title, target, steps, dependsOn, children }) => (
+  <div
+    style={{
+      marginTop: 18,
+      borderRadius: 10,
+      border: `1px solid ${accent}33`,
+      borderLeft: `3px solid ${accent}`,
+      background: `${accent}0d`,
+      padding: '14px 16px',
+    }}
+  >
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span
+        style={{
+          width: 20,
+          height: 20,
+          borderRadius: '50%',
+          background: accent,
+          color: '#0b0b14',
+          fontSize: '0.72em',
+          fontWeight: 700,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        {index}
+      </span>
+      <span style={{ fontWeight: 600, color: accent, fontSize: '0.92em' }}>{title}</span>
+      <span style={{ fontSize: '0.68em', color: '#888', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        {target}
+      </span>
+    </div>
+
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '9px 0 12px', flexWrap: 'wrap' }}>
+      {steps.map((s, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && <span style={{ color: '#3a3a52', fontSize: '0.8em' }}>›</span>}
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              fontSize: '0.75em',
+              color: STEP_LABEL_COLOR[s.state] || accent,
+            }}
+          >
+            <StepDot state={s.state} accent={accent} />
+            {s.label}
+          </span>
+        </React.Fragment>
+      ))}
+    </div>
+
+    {dependsOn && <div style={{ fontSize: '0.74em', color: '#e0a93b', marginBottom: 10 }}>↳ {dependsOn}</div>}
+
+    {children}
+  </div>
+);
 
 /**
  * Releases home (sidebar overlay). Resolves "today's release" and lists recent
@@ -455,6 +587,8 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const [apply, setApply] = useState<ApplyState | null>(null);
   const [machPlan, setMachPlan] = useState<MachPlanState | null>(null);
   const [machApply, setMachApply] = useState<MachApplyState | null>(null);
+  const [machEnvPlan, setMachEnvPlan] = useState<PlanState | null>(null);
+  const [machEnvApply, setMachEnvApply] = useState<ApplyState | null>(null);
   const [machCountdown, setMachCountdown] = useState(MACH_POLL_SECONDS);
   const [machWebapp, setMachWebapp] = useState<{
     loading?: boolean;
@@ -567,6 +701,25 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
               prev ? { ...prev, run: message.run || prev.run, pr: message.pr ?? prev.pr } : prev
             );
           }
+          break;
+        case MESSAGE_TYPES.PLAN_MACH_ENV_RESPONSE:
+          setMachEnvPlan(
+            message.ok
+              ? { loading: false, plan: message.plan, pr: message.pr }
+              : {
+                  loading: false,
+                  error: message.error || 'Failed to plan mach env vars.',
+                  needsSync: !!message.needsSync,
+                }
+          );
+          break;
+        case MESSAGE_TYPES.APPLY_MACH_ENV_RESPONSE:
+          setMachEnvApply(
+            message.ok
+              ? { loading: false, results: message.results || [], summary: message.summary }
+              : { loading: false, error: message.error || 'Apply failed.' }
+          );
+          vscode.postMessage({ type: MESSAGE_TYPES.GET_RELEASE_RUNS });
           break;
         case MESSAGE_TYPES.INJECT_WEBAPP_VERSION_RESPONSE:
           setMachWebapp(
@@ -720,6 +873,28 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
     });
   };
 
+  const planMachEnv = () => {
+    if (!effectiveVersion) return;
+    setMachEnvPlan({ loading: true });
+    setMachEnvApply(null);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.PLAN_MACH_ENV,
+      version: effectiveVersion,
+      environment: effectiveEnv || 'stage',
+    });
+  };
+
+  const applyMachEnv = (keys?: string[]) => {
+    if (!effectiveVersion) return;
+    setMachEnvApply({ loading: true });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.APPLY_MACH_ENV,
+      version: effectiveVersion,
+      environment: effectiveEnv || 'stage',
+      ...(keys ? { keys } : {}),
+    });
+  };
+
   const previewHasVercel = !!preview?.vars?.some((v) => v.target === 'vercel');
   const planData = plan?.plan;
   const canApply =
@@ -727,6 +902,44 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
     planData.summary.conflict === 0 &&
     planData.summary.add + planData.summary.update > 0;
   const failedKeys = (apply?.results || []).filter((r) => r.status === 'failed').map((r) => r.key);
+
+  const machEnvData = machEnvPlan?.plan;
+  const canApplyMachEnv =
+    !!machEnvData &&
+    machEnvData.summary.conflict === 0 &&
+    machEnvData.summary.add + machEnvData.summary.update > 0;
+  const machEnvFailedKeys = (machEnvApply?.results || [])
+    .filter((r) => r.status === 'failed')
+    .map((r) => r.key);
+
+  // Per-pipeline step states drive the trackers in each PipelineCard header.
+  const vStep1: StepState = plan?.error ? 'error' : plan?.plan ? 'done' : plan?.loading ? 'active' : 'pending';
+  const vStep2: StepState = apply?.error ? 'error' : apply?.summary ? 'done' : apply?.loading ? 'active' : 'pending';
+  const mcStep1: StepState = machPlan?.error
+    ? 'error'
+    : machPlan?.changes
+      ? 'done'
+      : machPlan?.loading
+        ? 'active'
+        : 'pending';
+  // Trigger→PR is "active" from dispatch until the PR appears (polling), "done" once it opens.
+  const mcStep2: StepState = machApply?.error ? 'error' : machApply?.pr ? 'done' : machApply ? 'active' : 'pending';
+  const meStep1: StepState = machEnvPlan?.needsSync
+    ? 'blocked'
+    : machEnvPlan?.error
+      ? 'error'
+      : machEnvPlan?.plan
+        ? 'done'
+        : machEnvPlan?.loading
+          ? 'active'
+          : 'pending';
+  const meStep2: StepState = machEnvApply?.error
+    ? 'error'
+    : machEnvApply?.summary
+      ? 'done'
+      : machEnvApply?.loading
+        ? 'active'
+        : 'pending';
 
   return (
     <div className="settings-panel">
@@ -851,14 +1064,27 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
           {preview && !preview.loading && <ConfigPreview preview={preview} />}
 
           {preview && !preview.loading && !preview.error && previewHasVercel && (
-            <button
-              onClick={planConfigSync}
-              disabled={!!plan?.loading}
-              style={{ marginTop: 12, width: '100%' }}
+            <PipelineCard
+              accent={PIPE.vercel}
+              index={1}
+              title="Vercel"
+              target="frontend env"
+              steps={[
+                { label: '① Plan', state: vStep1 },
+                { label: '② Apply', state: vStep2 },
+              ]}
             >
-              {plan?.loading ? '⏳ Reading live Vercel…' : 'Plan against live Vercel →'}
-            </button>
-          )}
+              <button
+                onClick={planConfigSync}
+                disabled={!!plan?.loading}
+                style={{ ...pipeBtn(PIPE.vercel), marginTop: 0 }}
+              >
+                {plan?.loading
+                  ? '⏳ Reading live Vercel…'
+                  : plan?.plan
+                    ? '✓ Re-plan against live Vercel'
+                    : 'Plan against live Vercel →'}
+              </button>
 
           {plan && !plan.loading && <PlanReview state={plan} />}
 
@@ -867,13 +1093,15 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
               onClick={() => applyConfigSync()}
               disabled={!canApply || !!apply?.loading}
               title={canApply ? undefined : 'Nothing to apply, or unresolved conflicts'}
-              style={{ marginTop: 12, width: '100%' }}
+              style={pipeBtn(PIPE.vercel)}
             >
               {apply?.loading
                 ? '⏳ Applying…'
-                : `Approve & apply (${effectiveEnv || 'stage'}) — ${
-                    (planData?.summary.add || 0) + (planData?.summary.update || 0)
-                  } change(s)`}
+                : apply?.summary
+                  ? '✓ Applied — re-apply'
+                  : `Approve & apply (${effectiveEnv || 'stage'}) — ${
+                      (planData?.summary.add || 0) + (planData?.summary.update || 0)
+                    } change(s)`}
             </button>
           )}
 
@@ -941,20 +1169,37 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
               )}
             </div>
           )}
+            </PipelineCard>
+          )}
 
           {canPrepare && (
-            <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #23233a' }}>
-              <div style={{ fontSize: '0.85em', fontWeight: 600, color: '#85b7eb', marginBottom: 4 }}>
-                mach backend sync
-              </div>
-              <div style={{ fontSize: '0.8em', color: '#888', marginBottom: 8, lineHeight: 1.5 }}>
+            <>
+            <PipelineCard
+              accent={PIPE.machComp}
+              index={2}
+              title="mach components"
+              target="backend repo"
+              steps={[
+                { label: '① Plan', state: mcStep1 },
+                { label: '② Trigger → PR', state: mcStep2 },
+              ]}
+            >
+              <div style={{ fontSize: '0.8em', color: '#888', marginBottom: 10, lineHeight: 1.5 }}>
                 Promote component versions from the source env into{' '}
                 {effectiveEnv || 'stage'} via the sync workflow. Opens a PR for review — never
                 auto-merged.
               </div>
 
-              <button onClick={planMachSync} disabled={!!machPlan?.loading} style={{ width: '100%' }}>
-                {machPlan?.loading ? '⏳ Reading components.yml…' : 'Plan mach sync →'}
+              <button
+                onClick={planMachSync}
+                disabled={!!machPlan?.loading}
+                style={{ ...pipeBtn(PIPE.machComp), marginTop: 0 }}
+              >
+                {machPlan?.loading
+                  ? '⏳ Reading components.yml…'
+                  : machPlan?.changes
+                    ? '✓ Re-plan mach sync'
+                    : 'Plan mach sync →'}
               </button>
 
               {machPlan && !machPlan.loading && <MachPlanReview state={machPlan} />}
@@ -963,7 +1208,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                 <button
                   onClick={applyMachSync}
                   disabled={!!machApply?.loading || (!!machApply && !machApply.error)}
-                  style={{ marginTop: 12, width: '100%' }}
+                  style={pipeBtn(PIPE.machComp)}
                 >
                   {machApply?.loading
                     ? '⏳ Dispatching workflow…'
@@ -1064,7 +1309,135 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                   )}
                 </div>
               )}
-            </div>
+            </PipelineCard>
+
+            <PipelineCard
+              accent={PIPE.machEnv}
+              index={3}
+              title="mach main.yml env vars"
+              target="backend repo · env"
+              dependsOn="needs the sync PR from ② — trigger mach sync first"
+              steps={[
+                { label: '① Plan', state: meStep1 },
+                { label: '② Commit to PR', state: meStep2 },
+              ]}
+            >
+              <div style={{ fontSize: '0.78em', color: '#888', marginBottom: 10, lineHeight: 1.5 }}>
+                Diff the release's mach env vars against <code>main.yml</code> on the open sync PR,
+                then commit any add/update to that same PR branch.
+              </div>
+
+              <button
+                onClick={planMachEnv}
+                disabled={!!machEnvPlan?.loading}
+                style={{ ...pipeBtn(PIPE.machEnv), marginTop: 0 }}
+              >
+                {machEnvPlan?.loading
+                  ? '⏳ Reading main.yml on the PR…'
+                  : machEnvPlan?.plan
+                    ? '✓ Re-plan main.yml env vars'
+                    : 'Plan main.yml env vars →'}
+              </button>
+
+                {machEnvPlan?.needsSync && (
+                  <div style={{ marginTop: 10, fontSize: '0.82em', color: '#e0a93b' }}>
+                    No open sync PR yet — trigger mach sync above, wait for the PR to open, then plan
+                    again.
+                  </div>
+                )}
+
+                {machEnvPlan && !machEnvPlan.loading && !machEnvPlan.needsSync && (
+                  <PlanReview state={machEnvPlan} />
+                )}
+
+                {machEnvPlan?.pr && !machEnvPlan.error && (
+                  <div style={{ marginTop: 8, fontSize: '0.8em', color: '#a0a0a0' }}>
+                    Diffing against PR{' '}
+                    <a href={machEnvPlan.pr.url} style={{ color: '#85b7eb' }}>
+                      #{machEnvPlan.pr.number}
+                    </a>
+                  </div>
+                )}
+
+                {machEnvData && !machEnvPlan?.loading && (
+                  <button
+                    onClick={() => applyMachEnv()}
+                    disabled={!canApplyMachEnv || !!machEnvApply?.loading}
+                    title={canApplyMachEnv ? undefined : 'Nothing to apply, or unresolved conflicts'}
+                    style={pipeBtn(PIPE.machEnv)}
+                  >
+                    {machEnvApply?.loading
+                      ? '⏳ Committing to PR…'
+                      : `Commit env vars to PR — ${machEnvData.summary.add + machEnvData.summary.update} change(s)`}
+                  </button>
+                )}
+
+                {machEnvApply && !machEnvApply.loading && (
+                  <div style={{ marginTop: 12 }}>
+                    {machEnvApply.error ? (
+                      <div className="status-message error" style={{ whiteSpace: 'pre-wrap' }}>
+                        {machEnvApply.error}
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '0.85em', marginBottom: 6 }}>
+                          <span style={{ color: '#4ecca3' }}>
+                            {machEnvApply.summary?.applied || 0} committed
+                          </span>
+                          {!!machEnvApply.summary?.failed && (
+                            <span style={{ color: '#e74c3c', marginLeft: 10 }}>
+                              {machEnvApply.summary.failed} failed
+                            </span>
+                          )}
+                        </div>
+                        {(machEnvApply.results || []).map((r, i) => (
+                          <div
+                            key={`${r.key}-${i}`}
+                            style={{ fontSize: '0.8em', padding: '4px 0', borderBottom: '1px solid #23233a' }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                              <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{r.key}</span>
+                              <span
+                                style={{
+                                  color: r.status === 'applied' ? '#4ecca3' : r.status === 'failed' ? '#e74c3c' : '#888',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {r.status === 'applied' ? 'committed' : r.status}
+                              </span>
+                            </div>
+                            {r.error && (
+                              <div
+                                style={{
+                                  fontSize: '0.92em',
+                                  color: '#e0a0a0',
+                                  marginTop: 2,
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word',
+                                }}
+                              >
+                                {r.error}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {machEnvFailedKeys.length > 0 && (
+                          <button
+                            onClick={() => applyMachEnv(machEnvFailedKeys)}
+                            style={{ marginTop: 10, width: '100%' }}
+                          >
+                            Retry failed ({machEnvFailedKeys.length})
+                          </button>
+                        )}
+                        <div style={{ fontSize: '0.78em', color: '#888', marginTop: 8 }}>
+                          Committed to the PR branch — review &amp; merge the PR to deploy.
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+            </PipelineCard>
+            </>
           )}
         </div>
       </div>

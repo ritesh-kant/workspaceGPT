@@ -170,6 +170,11 @@ export const MESSAGE_TYPES = {
   CHECK_MACH_RUN_RESPONSE: 'check-mach-run-response',
   INJECT_WEBAPP_VERSION: 'inject-webapp-version',
   INJECT_WEBAPP_VERSION_RESPONSE: 'inject-webapp-version-response',
+  // mach env-var (main.yml) config-sync against the open sync PR
+  PLAN_MACH_ENV: 'plan-mach-env',
+  PLAN_MACH_ENV_RESPONSE: 'plan-mach-env-response',
+  APPLY_MACH_ENV: 'apply-mach-env',
+  APPLY_MACH_ENV_RESPONSE: 'apply-mach-env-response',
 
   // Vector store (Qdrant) connection test
   TEST_QDRANT_CONNECTION: 'test-qdrant-connection',

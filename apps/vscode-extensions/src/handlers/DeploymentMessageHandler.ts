@@ -21,6 +21,8 @@ import { getLlmSettings } from '../utils/getLlmSettings';
 import { withKeyFailover, isRateLimitError } from '../utils/apiKeyFailover';
 import { MachAuthService } from '../services/deployment/machAuthService';
 import { MachSyncTarget, setComponentVersion, type MachSyncOptions } from '../services/deployment/machSyncTarget';
+import { MachEnvTarget, NoSyncPrError } from '../services/deployment/machEnvTarget';
+import { defaultMainYmlCodec } from '../services/deployment/mainYmlCodec';
 import { readVercelDeployedVersion } from '../services/deployment/vercelDeployments';
 import * as path from 'path';
 import { VercelTarget, OPAQUE_VALUE } from '../services/deployment/vercelTarget';
@@ -130,6 +132,12 @@ export class DeploymentMessageHandler {
       case MESSAGE_TYPES.CHECK_MACH_RUN:
         await this.handleCheckMachRun(data);
         return true;
+      case MESSAGE_TYPES.PLAN_MACH_ENV:
+        await this.handlePlanMachEnv(data);
+        break;
+      case MESSAGE_TYPES.APPLY_MACH_ENV:
+        await this.handleApplyMachEnv(data);
+        break;
       case MESSAGE_TYPES.INJECT_WEBAPP_VERSION:
         this.analyticsService.trackEvent('mach_webapp_version_injected');
         await this.handleInjectWebappVersion(data);
@@ -1150,6 +1158,152 @@ export class DeploymentMessageHandler {
 
       this.post(MESSAGE_TYPES.CHECK_MACH_RUN_RESPONSE, { ok: true, run: run ?? null, pr });
     } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
+  /**
+   * Shared read-only plan builder for the mach env-var half: parse the desired
+   * mach vars from the release source, read `main.yml` **at the head of the open
+   * sync PR** (not the default branch), and diff. Used by both plan (preview) and
+   * apply. Throws {@link NoSyncPrError} when no sync PR is open — callers turn
+   * that into a "run mach sync first" prompt rather than a hard error.
+   */
+  private async buildMachEnvPlan(version: string, environment: string, overrides: any = {}) {
+    const connected =
+      (await this.confluenceAuth.isAuthenticated()) && !!this.confluenceAuth.getStoredSite();
+    if (!connected) throw new Error('Connect Confluence (Settings → Confluence) first.');
+
+    const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    const dep = settings?.state?.config?.deployment ?? {};
+    const m = this.actionConfig(dep, 'github-workflow-dispatch');
+
+    const { target: sync, opts } = await this.buildMachTarget(environment, overrides);
+    const filePath: string = m.mainYmlPath || 'main.yml';
+    const target = new MachEnvTarget(sync, { filePath, codec: defaultMainYmlCodec });
+
+    const source = this.buildReleaseSource(dep);
+    const desired = await source.fetchDesiredConfig(version, environment);
+    const machDesired = desired.filter((v) => v.target === 'mach');
+
+    // readCurrent resolves the sync PR — throws NoSyncPrError if none is open.
+    const pr = await target.pullRequest();
+    const plan = await buildPlan({
+      release: version,
+      environment,
+      desired: machDesired,
+      targets: [target],
+      now: new Date().toISOString(),
+      source: `mach ${filePath} · PR #${pr.number} (${opts.to})`,
+    });
+
+    return { plan, target, pr, filePath };
+  }
+
+  /**
+   * Read-only preview of the mach env-var sync: diff the release's desired mach
+   * vars against `main.yml` on the open sync PR branch. Writes nothing. Reports
+   * `needsSync: true` (instead of a hard error) when no sync PR is open yet.
+   */
+  private async handlePlanMachEnv(data: any): Promise<void> {
+    const fail = (error: string, extra: Record<string, unknown> = {}) =>
+      this.post(MESSAGE_TYPES.PLAN_MACH_ENV_RESPONSE, { ok: false, error, ...extra });
+    try {
+      const version: string | undefined = data?.version;
+      const environment: string = data?.environment || 'stage';
+      if (!version) return fail('No release version to plan. Resolve a release first.');
+
+      const { plan, pr, filePath } = await this.buildMachEnvPlan(version, environment, data?.overrides);
+      this.post(MESSAGE_TYPES.PLAN_MACH_ENV_RESPONSE, {
+        ok: true,
+        version,
+        environment,
+        filePath,
+        pr,
+        plan,
+      });
+    } catch (error) {
+      if (error instanceof NoSyncPrError) return fail(errMessage(error), { needsSync: true });
+      fail(errMessage(error));
+    }
+  }
+
+  /**
+   * Apply the approved mach env-var changes by committing them to the open sync
+   * PR branch (one idempotent commit). Recomputes the plan server-side (never
+   * trusts the client diff), refuses on unresolved conflicts, applies only
+   * add/update rows — optionally narrowed to `keys` (Retry failed). Every outcome
+   * is written to the audit log.
+   */
+  private async handleApplyMachEnv(data: any): Promise<void> {
+    const fail = (error: string, extra: Record<string, unknown> = {}) =>
+      this.post(MESSAGE_TYPES.APPLY_MACH_ENV_RESPONSE, { ok: false, error, ...extra });
+    try {
+      const version: string | undefined = data?.version;
+      const environment: string = data?.environment || 'stage';
+      const onlyKeys: string[] | undefined = Array.isArray(data?.keys) ? data.keys : undefined;
+      if (!version) return fail('No release version to apply.');
+
+      const { plan, target, pr } = await this.buildMachEnvPlan(version, environment, data?.overrides);
+
+      if (hasUnresolvedConflicts(plan.configVars)) {
+        return fail('Plan has unresolved conflicts — resolve them before applying.');
+      }
+
+      let changes: ConfigVarDiff[] = applicableChanges(plan.configVars);
+      if (onlyKeys) changes = changes.filter((c) => onlyKeys.includes(c.key));
+      if (changes.length === 0) {
+        return this.post(MESSAGE_TYPES.APPLY_MACH_ENV_RESPONSE, {
+          ok: true,
+          results: [],
+          summary: { applied: 0, failed: 0, total: 0 },
+          version,
+          environment,
+          pr,
+        });
+      }
+
+      const results = await target.apply(environment, changes);
+      const applied = results.filter((r) => r.status === 'applied').length;
+      const failed = results.filter((r) => r.status === 'failed').length;
+
+      const audit = this.auditLog();
+      const at = new Date().toISOString();
+      const actor = this.context.globalState.get<string>('userEmail') || undefined;
+      await Promise.all(
+        results.map((r) =>
+          audit.record({
+            at,
+            release: version,
+            environment,
+            action: r.status === 'applied' ? 'applied' : r.status === 'failed' ? 'failed' : 'skipped',
+            target: r.target,
+            key: r.key,
+            detail: r.error ?? (r.reference ? `committed to ${r.reference}` : undefined),
+            actor,
+          }),
+        ),
+      );
+      await audit.record({
+        at,
+        release: version,
+        environment,
+        action: failed > 0 ? 'failed' : 'applied',
+        target: 'mach',
+        actor,
+        detail: `main.yml: ${applied}/${results.length} committed to PR #${pr.number}${failed ? `, ${failed} failed` : ''}`,
+      });
+
+      this.post(MESSAGE_TYPES.APPLY_MACH_ENV_RESPONSE, {
+        ok: true,
+        results,
+        summary: { applied, failed, total: results.length },
+        version,
+        environment,
+        pr,
+      });
+    } catch (error) {
+      if (error instanceof NoSyncPrError) return fail(errMessage(error), { needsSync: true });
       fail(errMessage(error));
     }
   }

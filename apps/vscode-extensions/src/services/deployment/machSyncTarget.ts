@@ -338,6 +338,38 @@ export class MachSyncTarget implements PipelineAction {
     return `sync-from-${this.opts.from}-to-${this.opts.to}-${runId}`;
   }
 
+  /**
+   * Find the newest **open** sync PR — the release PR whose head branch matches
+   * `sync-from-<from>-to-<to>-*`. This is the ref that env-var diffing reads
+   * `main.yml` from: the latest workflow-generated changes live here, not on the
+   * destination's default branch. Returns null when none is open (caller should
+   * dispatch a sync first rather than diffing against `main`).
+   *
+   * The branch prefix is the workflow's convention today; per-install it may be a
+   * PR label or bot author instead — see open item #1. Kept here so that
+   * discovery rule is the single place to adjust.
+   */
+  async findLatestSyncPull(): Promise<(MachPullRef & { headBranch: string }) | null> {
+    const headers = await this.headers();
+    const prefix = `sync-from-${this.opts.from}-to-${this.opts.to}-`;
+    const url =
+      `${this.opts.repo.apiBase}/repos/${this.opts.repo.destOwner}/${this.destRepo()}/pulls` +
+      `?state=open&sort=created&direction=desc&per_page=50`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) return null;
+    const list: any[] = await res.json();
+    const pr = list.find((p) => typeof p?.head?.ref === 'string' && p.head.ref.startsWith(prefix));
+    if (!pr) return null;
+    return {
+      url: pr.html_url,
+      number: pr.number,
+      state: pr.state,
+      merged: !!pr.merged_at,
+      title: pr.title ?? '',
+      headBranch: pr.head.ref,
+    };
+  }
+
   /** Read a file from the destination repo at a branch, with its blob sha. */
   async readDestFile(branch: string, filePath: string): Promise<{ content: string; sha: string } | null> {
     const headers = await this.headers();
