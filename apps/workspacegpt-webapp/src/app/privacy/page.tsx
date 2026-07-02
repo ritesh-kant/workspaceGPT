@@ -2,9 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy - WorkspaceGPT",
+  title: "Privacy Policy",
   description:
     "How the WorkspaceGPT browser extension and VS Code extension handle your data.",
+  alternates: {
+    canonical: "/privacy",
+  },
 };
 
 const UPDATED = "June 25, 2026";

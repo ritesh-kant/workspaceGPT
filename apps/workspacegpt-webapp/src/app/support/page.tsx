@@ -2,9 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Support - WorkspaceGPT",
+  title: "Support",
   description:
     "Get help with WorkspaceGPT — contact support, report an issue, or read the docs.",
+  alternates: {
+    canonical: "/support",
+  },
 };
 
 const GITHUB_ISSUES = "https://github.com/ritesh-kant/workspaceGPT/issues";
