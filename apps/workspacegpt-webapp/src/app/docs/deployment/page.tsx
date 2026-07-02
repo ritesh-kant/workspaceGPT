@@ -106,6 +106,10 @@ function H3({ children }: { children: React.ReactNode }) {
   return <h3 className="text-lg font-semibold text-white mt-8 mb-4">{children}</h3>;
 }
 
+function H4({ children }: { children: React.ReactNode }) {
+  return <h4 className="text-base font-semibold text-white mt-6 mb-3">{children}</h4>;
+}
+
 function Note({ children, color = "brand" }: { children: React.ReactNode; color?: string }) {
   const border: Record<string, string> = {
     brand: "border-brand/20",
@@ -279,6 +283,20 @@ export default function DeploymentDocsPage() {
               <Link href="/docs#confluence" className="text-brand hover:underline">Settings → Confluence</Link>. The page is read with your existing Confluence auth.
             </Note>
 
+            <H4>Config target routing</H4>
+            <p className="text-slate-300 text-sm leading-relaxed mb-2">
+              A Confluence configuration table names an app/system per row but has no explicit{" "}
+              <code className="bg-white/10 px-1 rounded text-xs">target</code> column, so WorkspaceGPT decides
+              whether each variable syncs to <strong className="text-white">Vercel</strong> or{" "}
+              <strong className="text-white">mach</strong>. By default it uses judgment — a{" "}
+              <code className="bg-white/10 px-1 rounded text-xs">NEXT_PUBLIC_</code>-prefixed or otherwise
+              frontend-looking key routes to Vercel, generic backend config to mach. To pin specific apps, open{" "}
+              <strong className="text-white">Config target routing</strong> on the Confluence source and add rules
+              mapping an app/system name to a target. Each rule accepts several comma-separated names, matched as a
+              case-insensitive substring; the first matching rule wins, and unmatched rows fall back to Vercel only
+              if the name mentions “vercel”, otherwise mach.
+            </p>
+
             <H3>JSON file (Git repo)</H3>
             <p className="text-slate-300 text-sm leading-relaxed mb-2">
               For teams that keep release info in version control instead of a wiki. Point the source at a repo,
@@ -424,7 +442,8 @@ export default function DeploymentDocsPage() {
             </Note>
             <div className="space-y-0 mt-6">
               <Step number={1} title="Resolve">
-                <p>WorkspaceGPT reads the source and shows today&apos;s release — version, environment, and pilot. (You can override the version/environment for testing.)</p>
+                <p>WorkspaceGPT reads the source and shows today&apos;s release — version, environment, and pilot. When a chat model is configured (<Link href="/docs#ai-providers" className="text-brand hover:underline">Settings → Model</Link>), it reads the roster with AI by default so it isn&apos;t tripped up by per-org column names or date formats; without a model it falls back to strict header matching.</p>
+                <p className="mt-2">If the roster has a row for today but its <strong className="text-white">version cell is empty</strong>, that&apos;s not an error — WorkspaceGPT still shows the environment and pilot and asks you to supply the release yourself. Expand <strong className="text-white">Enter version / release page URL</strong> and use the tabs to either type a <strong className="text-white">version</strong> or paste a <strong className="text-white">release page URL</strong> directly (only one is needed — a URL skips the version-name page lookup). The same panel doubles as a version/environment override for testing.</p>
               </Step>
               <Step number={2} title="Plan">
                 <p>Click <strong className="text-white">Plan</strong> to compute a diff against live state. Each variable is classified:</p>
@@ -471,11 +490,21 @@ export default function DeploymentDocsPage() {
           <SectionAnchor id="ai" />
           <section className="mb-16">
             <SectionTitle>AI-assisted page reading</SectionTitle>
-            <SectionSubtitle>Optional resilience for when a wiki page&apos;s structure changes.</SectionSubtitle>
+            <SectionSubtitle>How WorkspaceGPT reads a wiki page whose structure varies per team and release.</SectionSubtitle>
             <p className="text-slate-300 text-sm leading-relaxed mb-3">
-              A renamed column or reordered table can break a strict parser. Toggle{" "}
-              <strong className="text-white">AI-assisted page reading</strong> on the Confluence source, and if the normal
-              parse fails, WorkspaceGPT uses your configured chat model (<Link href="/docs#ai-providers" className="text-brand hover:underline">Settings → Model</Link>) to read the page.
+              Roster and release-page layouts differ too much between orgs for a strict header parser to be reliable, so
+              when a chat model is configured (<Link href="/docs#ai-providers" className="text-brand hover:underline">Settings → Model</Link>) WorkspaceGPT reads pages with AI by
+              default — both resolving today&apos;s release from the roster and extracting config variables during{" "}
+              <strong className="text-white">Prepare config sync</strong>. Strict header matching is used only as a fallback
+              when no model is configured.
+            </p>
+            <p className="text-slate-300 text-sm leading-relaxed mb-3">
+              Two toggles on the Confluence source let you tune this: <strong className="text-white">AI-assisted page
+              reading</strong> (roster resolution) and <strong className="text-white">Always use AI for config
+              sync</strong> (release-page extraction). When reading the config table, the model also decides each
+              variable&apos;s <strong className="text-white">target</strong> by judgment — inferring Vercel vs mach from the
+              key&apos;s naming and the row&apos;s app/system context — and consults your{" "}
+              <strong className="text-white">Config target routing</strong> rules when it isn&apos;t sure.
             </p>
             <Note color="green">
               <span className="text-emerald-400 font-semibold">AI proposes, you approve.</span> The model&apos;s output is
@@ -505,7 +534,9 @@ export default function DeploymentDocsPage() {
             <SectionSubtitle>Issues specific to deployment automation.</SectionSubtitle>
             <div className="space-y-4">
               {[
-                { problem: "“No release scheduled for today”", fix: "The source has no entry whose date matches today. Check the roster/file date format, or use the override version field in the Releases view to test a specific version." },
+                { problem: "“No release scheduled for today”", fix: "The source has no entry whose date matches today. Check the roster/file date format, or expand Enter version / release page URL in the Releases view and supply a version (or paste a release page URL) manually." },
+                { problem: "“Release scheduled, but no version listed”", fix: "A roster row matches today but its version cell is blank. This isn't an error — expand Enter version / release page URL and either type the version or paste the release page URL. A URL routes straight to that page and skips the version-name lookup entirely." },
+                { problem: "A config var synced to the wrong pipeline (mach vs Vercel)", fix: "Confluence config tables have no explicit target column, so the target is inferred from the key name and the row's app/system. To pin it, open Config target routing on the Confluence source and add a rule mapping that app/system name (comma-separated names allowed) to vercel or mach. Rules are checked in order, first match wins." },
                 { problem: "GitHub returns 404 on a private repo", fix: "Your PAT almost certainly isn't SSO-authorized for that organization. Open the token's Configure SSO and authorize it for the org that owns the repo. A valid-but-unauthorized token returns 404, not 403." },
                 { problem: "Vercel diff shows “(value hidden)”", fix: "Integration tokens can't decrypt values they don't own. The change is still classified correctly (update vs add); only the old value is hidden. This is a Vercel platform limit, not a bug." },
                 { problem: "Roster columns not detected", fix: "Open Column mapping (auto-detected) under the Confluence source, click Detect columns, and pick the right header for each field. If the page structure changed, enable AI-assisted page reading." },
