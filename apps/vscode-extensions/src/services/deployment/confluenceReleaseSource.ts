@@ -89,6 +89,40 @@ function findCol(headers: string[], re: RegExp): string | null {
 }
 
 /**
+ * Builds a `targetFor` from the org's Settings → Deployment Automation
+ * "Config target routing" rules: each rule's `pattern` is one or more
+ * comma-separated names; a row matches if the row's application/system name
+ * contains ANY of them (case-insensitive substring). Rules are checked in
+ * order — first match wins. The column holding that name is org-specific;
+ * this deterministic path gets it from the auto-detected header, while the
+ * AI path infers it from row content. Returns `undefined` when there are no
+ * rules, so the caller's built-in "mentions vercel" default applies unchanged.
+ */
+export function buildTargetFor(
+  targetMap?: { pattern: string; target: string }[],
+): ((appSystem: string) => string) | undefined {
+  const rules = (targetMap || [])
+    .map((r) => ({ tokens: splitPatternTokens(r.pattern), target: r.target }))
+    .filter((r) => r.tokens.length);
+  if (!rules.length) return undefined;
+  return (appSystem: string) => {
+    const s = (appSystem || '').toLowerCase();
+    for (const r of rules) {
+      if (r.tokens.some((t) => s.includes(t))) return r.target;
+    }
+    return /vercel/i.test(appSystem) ? 'vercel' : 'mach';
+  };
+}
+
+/** Split a rule's pattern into lower-cased, trimmed, non-empty comma-separated tokens. */
+function splitPatternTokens(pattern: string): string[] {
+  return (pattern || '')
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
  * `ReleaseSource` backed by Confluence: a Roster page (date → version) plus a
  * per-release Configurations table. Reads only — touches nothing live.
  */
@@ -149,11 +183,25 @@ export class ConfluenceReleaseSource implements ReleaseSource {
   }
 
   /** Raw content of the release page for a version (tables + plain text). */
-  async getReleasePageContent(version: string): Promise<{ tables: ParsedTable[]; text: string }> {
-    const pageId = await this.findReleasePageId(version);
+  async getReleasePageContent(
+    version: string,
+    pageUrlOverride?: string,
+  ): Promise<{ tables: ParsedTable[]; text: string }> {
+    const pageId = await this.resolvePageId(version, pageUrlOverride);
     if (!pageId) throw new Error(`Could not find a Confluence release page for "${version}".`);
     const html = await this.fetchPageHtml(pageId);
     return { tables: parseStorageTables(html), text: this.stripHtml(html) };
+  }
+
+  /**
+   * Resolve the release page id: a caller-supplied page URL wins outright
+   * (bypasses the title search entirely — useful when the version string
+   * doesn't match the roster's release-page naming convention, or there is
+   * no version at all yet). Otherwise fall back to the version-based search.
+   */
+  private async resolvePageId(version: string, pageUrlOverride?: string): Promise<string | null> {
+    if (pageUrlOverride) return pageIdFromUrl(pageUrlOverride);
+    return this.findReleasePageId(version);
   }
 
   /** Run a CQL query and return the first matching page id, or null. */
@@ -250,30 +298,41 @@ export class ConfluenceReleaseSource implements ReleaseSource {
     const row = roster.records.find((r) => normalizeDate(r[dateCol]) === date);
     if (!row) return null; // No release scheduled today — not an error.
 
-    const version = (versionCol && row[versionCol]?.trim()) || '';
-    if (!version) {
-      throw new Error(`Found today's roster row but no version column (headers: ${roster.headers.join(', ')}).`);
-    }
-
     const rawEnv = (envCol && row[envCol]?.trim()) || '';
     const environment: Environment =
       /\bpr(o)?d|production/i.test(rawEnv) ? 'prod'
         : /\bst(a)?g|stage|staging/i.test(rawEnv) ? 'stage'
         : rawEnv || this.opts.defaultEnvironment || 'stage';
+    const pilot = (pilotCol && row[pilotCol]?.trim()) || undefined;
+
+    const version = (versionCol && row[versionCol]?.trim()) || '';
+    if (!version) {
+      // Row exists for today but the version cell is empty — not an error,
+      // the caller surfaces this so the user can fill it in manually.
+      return { version: '', environment, pilot, date, needsVersion: true };
+    }
 
     return {
       version,
       environment,
-      pilot: (pilotCol && row[pilotCol]?.trim()) || undefined,
+      pilot,
       date,
       pageUrl: this.opts.rosterPageUrl,
     };
   }
 
-  async fetchDesiredConfig(version: string, environment: Environment): Promise<DesiredConfigVar[]> {
-    const pageId = await this.findReleasePageId(version);
+  async fetchDesiredConfig(
+    version: string,
+    environment: Environment,
+    pageUrl?: string,
+  ): Promise<DesiredConfigVar[]> {
+    const pageId = await this.resolvePageId(version, pageUrl);
     if (!pageId) {
-      throw new Error(`Could not find a Confluence release page for "${version}".`);
+      throw new Error(
+        pageUrl
+          ? `Could not read a page id from the release page URL "${pageUrl}".`
+          : `Could not find a Confluence release page for "${version}".`,
+      );
     }
 
     const tables = await this.fetchTables(pageId);

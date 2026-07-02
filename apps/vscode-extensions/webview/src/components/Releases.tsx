@@ -13,6 +13,8 @@ interface ResolvedRelease {
   pageUrl?: string;
   /** Why resolution didn't produce a release (shown in the empty state). */
   reason?: string;
+  /** A roster row exists for today but has no version filled in. */
+  needsVersion?: boolean;
 }
 
 interface ReleaseRun {
@@ -134,6 +136,10 @@ const ConfigPreview: React.FC<{ preview: PreparePreview }> = ({ preview }) => {
       <div style={{ fontSize: '0.85em', color: '#a0a0a0', marginBottom: 10 }}>
         {vars.length} variable{vars.length === 1 ? '' : 's'} for{' '}
         <strong>{preview.version}</strong> · {preview.environment}
+      </div>
+
+      <div style={{ fontSize: '0.78em', color: '#888', marginBottom: 10 }}>
+        Target looks wrong? Configure it in Settings → Deployment Automation → Config target routing.
       </div>
 
       {Object.entries(groups).map(([target, items]) => (
@@ -603,7 +609,9 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const machApplyRef = useRef<MachApplyState | null>(null);
   machApplyRef.current = machApply;
   const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideMode, setOverrideMode] = useState<'version' | 'pageUrl'>('version');
   const [overrideVersion, setOverrideVersion] = useState('');
+  const [overridePageUrl, setOverridePageUrl] = useState('');
   const [overrideEnv, setOverrideEnv] = useState('stage');
 
   useEffect(() => {
@@ -619,7 +627,12 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
             pilot: message.pilot,
             pageUrl: message.pageUrl,
             reason: message.reason,
+            needsVersion: !!message.needsVersion,
           });
+          if (message.needsVersion) {
+            setOverrideOpen(true);
+            if (message.environment) setOverrideEnv(message.environment);
+          }
           setLoading(false);
           break;
         case MESSAGE_TYPES.GET_RELEASE_RUNS_RESPONSE:
@@ -800,15 +813,18 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
 
   if (!isVisible) return null;
 
-  // The override (when set) wins over the resolved release — used for testing
-  // config-sync against an arbitrary version/env.
-  const hasOverride = overrideVersion.trim().length > 0;
+  // The override (when set) wins over the resolved release — used both to
+  // test config-sync against an arbitrary version/env, and to fill in a
+  // version/page URL manually when the roster row is missing one.
+  const overridePageUrlTrimmed = overridePageUrl.trim();
+  const hasOverride = overrideVersion.trim().length > 0 || overridePageUrlTrimmed.length > 0;
   const effectiveVersion = hasOverride ? overrideVersion.trim() : release?.version;
+  const effectivePageUrl = hasOverride ? overridePageUrlTrimmed : release?.pageUrl;
   const effectiveEnv = hasOverride ? overrideEnv : release?.environment;
   const canPrepare = !!release?.configured || hasOverride;
 
   const prepareConfigSync = () => {
-    if (!effectiveVersion) return;
+    if (!effectiveVersion && !effectivePageUrl) return;
     setPreview({ loading: true });
     setPlan(null);
     setApply(null);
@@ -816,6 +832,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
       type: MESSAGE_TYPES.PREPARE_CONFIG_SYNC,
       version: effectiveVersion,
       environment: effectiveEnv || 'stage',
+      pageUrl: effectivePageUrl || undefined,
     });
   };
 
@@ -988,12 +1005,17 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
           ) : (
             <div style={{ color: '#a0a0a0', fontSize: '0.9em', lineHeight: 1.6 }}>
               <p style={{ margin: '0 0 6px' }}>
-                No release resolved{release?.date ? ` for today (${release.date})` : ''}.
+                {release?.needsVersion
+                  ? `Release scheduled${release?.date ? ` for today (${release.date})` : ''}, but no version listed.`
+                  : `No release resolved${release?.date ? ` for today (${release.date})` : ''}.`}
               </p>
               <p style={{ margin: 0, fontSize: '0.85em', color: '#888' }}>
                 {release?.reason ||
                   'Configure the Release Roster page under Settings → Deployment Automation.'}
               </p>
+              {release?.needsVersion && release?.pilot && (
+                <p style={{ margin: '4px 0 0', fontSize: '0.85em', color: '#888' }}>Pilot: {release.pilot}</p>
+              )}
             </div>
           )}
 
@@ -1009,7 +1031,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                 fontSize: '0.82em',
               }}
             >
-              {overrideOpen ? '▾' : '▸'} Override version (testing)
+              {overrideOpen ? '▾' : '▸'} {release?.needsVersion ? 'Enter version / release page URL' : 'Override version (testing)'}
             </button>
             {overrideOpen && (
               <div
@@ -1018,31 +1040,62 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                   padding: '10px 12px',
                   border: '1px dashed #3a3a52',
                   borderRadius: 8,
-                  display: 'flex',
-                  gap: '28px',
-                  alignItems: 'flex-end',
                 }}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>Version</div>
-                  <input
-                    type="text"
-                    value={overrideVersion}
-                    placeholder="e.g. web-2026-6.2"
-                    onChange={(e) => setOverrideVersion(e.target.value)}
-                    style={{ width: '100%' }}
-                  />
-                </div>
-                <div style={{ width: 130, flexShrink: 0 }}>
-                  <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>Env</div>
-                  <SearchableDropdown
-                    value={overrideEnv}
-                    options={[
-                      { value: 'stage', label: 'stage' },
-                      { value: 'prod', label: 'prod' },
-                    ]}
-                    onChange={setOverrideEnv}
-                  />
+                <div style={{ display: 'flex', gap: '16px 28px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                      {(['version', 'pageUrl'] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => {
+                            setOverrideMode(mode);
+                            if (mode === 'version') setOverridePageUrl('');
+                            else setOverrideVersion('');
+                          }}
+                          style={{
+                            fontSize: '0.78em',
+                            padding: '3px 10px',
+                            borderRadius: 6,
+                            border: 'none',
+                            cursor: 'pointer',
+                            background: overrideMode === mode ? '#1d3a5f' : 'transparent',
+                            color: overrideMode === mode ? '#85b7eb' : '#a0a0a0',
+                          }}
+                        >
+                          {mode === 'version' ? 'Version' : 'Release page URL'}
+                        </button>
+                      ))}
+                    </div>
+                    {overrideMode === 'version' ? (
+                      <input
+                        type="text"
+                        value={overrideVersion}
+                        placeholder="e.g. web-2026-6.2"
+                        onChange={(e) => setOverrideVersion(e.target.value)}
+                        style={{ width: '100%' }}
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={overridePageUrl}
+                        placeholder="Confluence release page URL"
+                        onChange={(e) => setOverridePageUrl(e.target.value)}
+                        style={{ width: '100%' }}
+                      />
+                    )}
+                  </div>
+                  <div style={{ width: 130, flexShrink: 0 }}>
+                    <div style={{ fontSize: '0.78em', color: '#a0a0a0', marginBottom: 2 }}>Env</div>
+                    <SearchableDropdown
+                      value={overrideEnv}
+                      options={[
+                        { value: 'stage', label: 'stage' },
+                        { value: 'prod', label: 'prod' },
+                      ]}
+                      onChange={setOverrideEnv}
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -1057,7 +1110,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
             {preview?.loading
               ? '⏳ Preparing…'
               : hasOverride
-                ? `Prepare config sync (override: ${effectiveVersion})`
+                ? `Prepare config sync (override: ${effectiveVersion || 'linked page'})`
                 : 'Prepare config sync'}
           </button>
 

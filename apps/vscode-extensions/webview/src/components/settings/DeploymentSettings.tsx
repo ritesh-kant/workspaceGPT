@@ -90,6 +90,12 @@ const DeploymentSettings: React.FC = () => {
   const source = pipeline.source;
   const setSource = (patch: Partial<PipelineSource>) =>
     savePipeline({ ...pipeline, source: { ...pipeline.source, ...patch } });
+  const targetMap: { pattern: string; target: 'vercel' | 'mach' }[] = source.targetMap || [];
+  const setTargetMap = (list: { pattern: string; target: 'vercel' | 'mach' }[]) => setSource({ targetMap: list });
+  const addTargetMapRow = () => setTargetMap([...targetMap, { pattern: '', target: 'vercel' }]);
+  const updateTargetMapRow = (idx: number, patch: Partial<{ pattern: string; target: 'vercel' | 'mach' }>) =>
+    setTargetMap(targetMap.map((r, i) => (i !== idx ? r : { ...r, ...patch })));
+  const removeTargetMapRow = (idx: number) => setTargetMap(targetMap.filter((_, i) => i !== idx));
   const setActionConfig = (si: number, ai: number, patch: Record<string, any>) =>
     savePipeline({
       ...pipeline,
@@ -729,6 +735,46 @@ const DeploymentSettings: React.FC = () => {
                     </div>
                   </span>
                 </label>
+                <details className="dep-details" style={{ marginTop: 10 }}>
+                  <summary>Config target routing</summary>
+                  <div className="dep-details-body">
+                    <div className="dep-muted" style={{ fontSize: '0.78em', marginBottom: 6 }}>
+                      Which pipeline (Vercel or mach) each row of the release page's Configurations table
+                      syncs to, based on its app/system name. First matching rule wins. Unmatched rows go to
+                      Vercel if the name mentions "vercel", otherwise mach.
+                    </div>
+                    {targetMap.map((row, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                        <input
+                          value={row.pattern}
+                          placeholder="app/system name(s), e.g. webapp, web-app"
+                          onChange={(e) => updateTargetMapRow(idx, { pattern: e.target.value })}
+                          style={{ flex: 1 }}
+                        />
+                        <span className="dep-muted">→</span>
+                        <div style={{ width: 110 }}>
+                          <SearchableDropdown
+                            value={row.target}
+                            options={[
+                              { value: 'vercel', label: 'vercel' },
+                              { value: 'mach', label: 'mach' },
+                            ]}
+                            onChange={(v) => updateTargetMapRow(idx, { target: v as 'vercel' | 'mach' })}
+                          />
+                        </div>
+                        <button
+                          className="dep-icon-button dep-icon-danger"
+                          onClick={() => removeTargetMapRow(idx)}
+                          data-tooltip="Remove rule"
+                          aria-label="Remove rule"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <button onClick={addTargetMapRow} style={{ marginTop: 2 }}>+ Add rule</button>
+                  </div>
+                </details>
               </div>
             )}
             {source.provider === 'file' && (

@@ -14,7 +14,7 @@ import { AnalyticsService } from '../services/analyticsService';
 import { GitHubOAuthService } from '../services/deployment/githubOAuthService';
 import { VercelAuthService } from '../services/deployment/vercelAuthService';
 import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
-import { ConfluenceReleaseSource } from '../services/deployment/confluenceReleaseSource';
+import { ConfluenceReleaseSource, buildTargetFor } from '../services/deployment/confluenceReleaseSource';
 import { AiReleaseSource, type AiMode } from '../services/deployment/aiReleaseSource';
 import { FileReleaseSource } from '../services/deployment/fileReleaseSource';
 import { getLlmSettings } from '../utils/getLlmSettings';
@@ -208,6 +208,16 @@ export class DeploymentMessageHandler {
       if (!resolved) {
         return notConfigured(`No release scheduled for ${today} on the roster.`);
       }
+      if (resolved.needsVersion) {
+        return this.post(MESSAGE_TYPES.RESOLVE_RELEASE_RESPONSE, {
+          configured: false,
+          needsVersion: true,
+          date: resolved.date ?? today,
+          environment: resolved.environment,
+          pilot: resolved.pilot,
+          reason: `Release scheduled for ${today} (env ${resolved.environment}) but no version is listed on the roster — enter it below.`,
+        });
+      }
 
       this.post(MESSAGE_TYPES.RESOLVE_RELEASE_RESPONSE, {
         configured: true,
@@ -255,9 +265,12 @@ export class DeploymentMessageHandler {
       this.post(MESSAGE_TYPES.PREPARE_CONFIG_SYNC_RESPONSE, { ok: false, error });
 
     try {
-      const version: string | undefined = data?.version;
+      const version: string = data?.version || '';
+      const pageUrl: string | undefined = data?.pageUrl || undefined;
       const environment: string = data?.environment || 'stage';
-      if (!version) return fail('No release version to prepare. Resolve a release first.');
+      if (!version && !pageUrl) {
+        return fail('Enter a version or paste the release page URL, then try again.');
+      }
 
       const connected =
         (await this.confluenceAuth.isAuthenticated()) && !!this.confluenceAuth.getStoredSite();
@@ -267,7 +280,7 @@ export class DeploymentMessageHandler {
       const dep = settings?.state?.config?.deployment ?? {};
 
       const source = this.buildReleaseSource(dep);
-      const vars = await source.fetchDesiredConfig(version, environment);
+      const vars = await source.fetchDesiredConfig(version, environment, pageUrl);
 
       this.post(MESSAGE_TYPES.PREPARE_CONFIG_SYNC_RESPONSE, {
         ok: true,
@@ -347,6 +360,7 @@ export class DeploymentMessageHandler {
     return new ConfluenceReleaseSource(this.confluenceAuth, {
       rosterPageUrl: src.rosterPageUrl ?? '',
       columns: src.rosterColumns,
+      targetFor: buildTargetFor(src.targetMap),
     });
   }
 
@@ -387,16 +401,16 @@ export class DeploymentMessageHandler {
     const deterministic = this.buildConfluenceSource(dep);
     const hasLlm = this.hasLlm();
 
-    // Roster resolve uses AI only as an opt-in fallback (its columns are
-    // configurable). Config sync can be forced to *always* use AI, since
-    // release-page layouts vary too much per-org for deterministic header
-    // matching to be reliable. Each parse is independent — enabling one does not
-    // silently enable the other.
+    // Both roster resolve and config sync default to *always* using AI when a
+    // chat model is configured — release-page and roster layouts vary too much
+    // per-org for deterministic header/date matching to be reliable. Each parse
+    // is independent — enabling one does not silently enable the other.
     // Both flags default ON — unset means enabled; only an explicit `false`
-    // disables them. (No-op without a configured chat model.)
+    // disables them. The deterministic parser only runs when no chat model is
+    // configured at all (there's no AI to call in that case).
     const aiAssist = src.aiAssistParsing !== false;
     const aiConfig = src.aiConfigSync !== false;
-    const resolveMode: AiMode = aiAssist && hasLlm ? 'fallback' : 'deterministic';
+    const resolveMode: AiMode = aiAssist && hasLlm ? 'always' : 'deterministic';
     const configMode: AiMode = !hasLlm
       ? 'deterministic'
       : aiConfig
@@ -410,6 +424,7 @@ export class DeploymentMessageHandler {
     return new AiReleaseSource(deterministic, (prompt) => this.aiComplete(prompt), {
       resolveMode,
       configMode,
+      targetMap: src.targetMap,
     });
   }
 

@@ -2,6 +2,7 @@ import { GeminiEmbeddingProvider, QdrantVectorStore, SearchHit, SourceName, embe
 import { ChromeSettings, isConfigured } from './storage';
 import { buildPlan, classifyQuery, expandQuery, rerank } from './retrieval';
 import { buildChatMessages, isGreeting } from './prompt';
+import { withKeyFailover } from './keyFailover';
 
 export type { SourceName };
 
@@ -46,7 +47,7 @@ export async function* answerQuestion(
 
   let hits: SearchHit[] = [];
   if (!isGreeting(question) && plan.sources.length > 0 && plan.topKPerPass > 0) {
-    const provider = new GeminiEmbeddingProvider(settings.gemini.apiKey);
+    const provider = new GeminiEmbeddingProvider(settings.gemini.apiKeys);
     const store = new QdrantVectorStore({
       url: settings.qdrant.url,
       apiKey: settings.qdrant.apiKey,
@@ -82,21 +83,30 @@ export async function* answerQuestion(
   }
 
   onStatus?.('generating');
-  const res = await fetch(`${settings.llm.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${settings.llm.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: settings.llm.model,
-      stream: true,
-      messages: buildChatMessages(question, hits),
-    }),
-    signal,
+  // Tried in order; a 429 from one key fails over to the next before the
+  // stream starts (once tokens are streaming there's no way to retry mid-flight).
+  const res = await withKeyFailover(settings.llm.apiKeys, async (apiKey) => {
+    const r = await fetch(`${settings.llm.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: settings.llm.model,
+        stream: true,
+        messages: buildChatMessages(question, hits),
+      }),
+      signal,
+    });
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      throw Object.assign(new Error(`Chat failed: ${r.status} ${body}`), { status: r.status });
+    }
+    return r;
   });
-  if (!res.ok || !res.body) {
-    throw new Error(`Chat failed: ${res.status} ${await res.text().catch(() => '')}`);
+  if (!res.body) {
+    throw new Error('Chat failed: empty response body.');
   }
 
   yield* parseSSE(res.body, signal);

@@ -104,6 +104,12 @@ export interface ResolvedRelease {
   pilot?: string;
   date?: string;
   pageUrl?: string;
+  /**
+   * A roster row exists for the target date, but it has no version filled
+   * in — `version` is `''` in this case. Not an error: the caller should
+   * prompt the user to enter a version or release-page URL manually.
+   */
+  needsVersion?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -117,8 +123,12 @@ export interface ResolvedRelease {
 export interface ReleaseSource {
   /** Resolve the release scheduled for the given date (ISO `YYYY-MM-DD`). */
   resolveRelease(date: string): Promise<ResolvedRelease | null>;
-  /** Read the desired config for a resolved release + environment. */
-  fetchDesiredConfig(version: string, environment: Environment): Promise<DesiredConfigVar[]>;
+  /**
+   * Read the desired config for a resolved release + environment. `pageUrl`,
+   * when given, points directly at the release page and bypasses any
+   * version-based page lookup (useful when there's no version string yet).
+   */
+  fetchDesiredConfig(version: string, environment: Environment, pageUrl?: string): Promise<DesiredConfigVar[]>;
 }
 
 /** The outcome of applying a single variable. */

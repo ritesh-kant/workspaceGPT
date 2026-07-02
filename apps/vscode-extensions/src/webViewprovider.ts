@@ -43,6 +43,36 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     this.setWebviewHtml(webviewView);
     this.setupMessageHandler(webviewView);
 
+    // Automatically reload webview when build files change in development mode
+    if (this._context.extensionMode === vscode.ExtensionMode.Development) {
+      const distWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(this._extensionUri, 'webview/dist/**/*')
+      );
+
+      let debounceTimeout: any;
+      const reloadWebview = () => {
+        if (debounceTimeout) {
+          clearTimeout(debounceTimeout);
+        }
+        debounceTimeout = setTimeout(() => {
+          if (this._view) {
+            this.setWebviewHtml(this._view);
+          }
+        }, 150);
+      };
+
+      distWatcher.onDidChange(reloadWebview);
+      distWatcher.onDidCreate(reloadWebview);
+      distWatcher.onDidDelete(reloadWebview);
+
+      webviewView.onDidDispose(() => {
+        distWatcher.dispose();
+        if (debounceTimeout) {
+          clearTimeout(debounceTimeout);
+        }
+      });
+    }
+
     // Resume interrupted indexing (embedding) on restart.
     // _needsResumeIndexing is set by the sync scheduler when it detects stale isIndexing flag.
     // isIndexing itself is checked as a fallback in case the scheduler hasn't run yet.

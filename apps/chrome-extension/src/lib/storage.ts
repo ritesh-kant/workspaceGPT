@@ -10,33 +10,50 @@
  */
 export interface ChromeSettings {
   qdrant: { url: string; apiKey: string; collectionPrefix?: string };
-  gemini: { apiKey: string };
-  llm: { baseUrl: string; apiKey: string; model: string };
+  /** All configured Gemini keys, tried in order with 429 failover. */
+  gemini: { apiKeys: string[] };
+  /** All configured chat-model keys, tried in order with 429 failover. */
+  llm: { baseUrl: string; apiKeys: string[]; model: string };
 }
 
-/** Versioned wire format of a share code (must match the VS Code producer). */
+/**
+ * Versioned wire format of a share code (must match the VS Code producer).
+ * v1 carried a single key per provider; v2 carries the full failover list.
+ * Both are accepted on decode so an old share code still works.
+ */
 export interface ShareBundle {
-  v: 1;
+  v: 1 | 2;
   qdrant: { url: string; apiKey?: string; collectionPrefix?: string };
-  gemini: { apiKey: string };
-  llm: { baseUrl: string; apiKey: string; model: string };
+  gemini: { apiKey?: string; apiKeys?: string[] };
+  llm: { baseUrl: string; apiKey?: string; apiKeys?: string[]; model: string };
 }
 
 export const DEFAULT_SETTINGS: ChromeSettings = {
   qdrant: { url: '', apiKey: '', collectionPrefix: '' },
-  gemini: { apiKey: '' },
-  llm: { baseUrl: '', apiKey: '', model: '' },
+  gemini: { apiKeys: [] },
+  llm: { baseUrl: '', apiKeys: [], model: '' },
 };
 
 const KEY = 'workspacegpt-settings';
+
+/** Merge a legacy single key with a multi-key array, trimmed and de-duplicated. */
+function normalizeApiKeys(apiKeys: unknown, legacy?: unknown): string[] {
+  const arr = Array.isArray(apiKeys) ? apiKeys : [];
+  const merged = [...arr, legacy].map((k) => (typeof k === 'string' ? k.trim() : '')).filter(Boolean);
+  return [...new Set(merged)];
+}
 
 export async function loadSettings(): Promise<ChromeSettings> {
   const stored = await chrome.storage.local.get(KEY);
   const s = stored[KEY] ?? {};
   return {
     qdrant: { ...DEFAULT_SETTINGS.qdrant, ...(s.qdrant ?? {}) },
-    gemini: { ...DEFAULT_SETTINGS.gemini, ...(s.gemini ?? {}) },
-    llm: { ...DEFAULT_SETTINGS.llm, ...(s.llm ?? {}) },
+    gemini: { apiKeys: normalizeApiKeys(s.gemini?.apiKeys, s.gemini?.apiKey) },
+    llm: {
+      ...DEFAULT_SETTINGS.llm,
+      ...(s.llm ?? {}),
+      apiKeys: normalizeApiKeys(s.llm?.apiKeys, s.llm?.apiKey),
+    },
   };
 }
 
@@ -45,7 +62,7 @@ export async function saveSettings(settings: ChromeSettings): Promise<void> {
 }
 
 export function isConfigured(s: ChromeSettings): boolean {
-  return !!(s.qdrant.url && s.gemini.apiKey && s.llm.apiKey && s.llm.baseUrl);
+  return !!(s.qdrant.url && s.gemini.apiKeys.length > 0 && s.llm.apiKeys.length > 0 && s.llm.baseUrl);
 }
 
 /**
@@ -59,7 +76,9 @@ export function decodeShareCode(code: string): ChromeSettings {
   } catch {
     throw new Error('That share code is not valid. Copy it again from VS Code.');
   }
-  if (bundle.v !== 1 || !bundle.qdrant?.url || !bundle.gemini?.apiKey || !bundle.llm?.apiKey) {
+  const geminiKeys = normalizeApiKeys(bundle.gemini?.apiKeys, bundle.gemini?.apiKey);
+  const llmKeys = normalizeApiKeys(bundle.llm?.apiKeys, bundle.llm?.apiKey);
+  if ((bundle.v !== 1 && bundle.v !== 2) || !bundle.qdrant?.url || geminiKeys.length === 0 || llmKeys.length === 0) {
     throw new Error('That share code is missing required fields or is an unsupported version.');
   }
   return {
@@ -68,7 +87,7 @@ export function decodeShareCode(code: string): ChromeSettings {
       apiKey: bundle.qdrant.apiKey ?? '',
       collectionPrefix: bundle.qdrant.collectionPrefix ?? '',
     },
-    gemini: { apiKey: bundle.gemini.apiKey },
-    llm: { baseUrl: bundle.llm.baseUrl, apiKey: bundle.llm.apiKey, model: bundle.llm.model },
+    gemini: { apiKeys: geminiKeys },
+    llm: { baseUrl: bundle.llm.baseUrl, apiKeys: llmKeys, model: bundle.llm.model },
   };
 }

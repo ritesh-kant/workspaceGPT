@@ -148,7 +148,8 @@
     "download-models": "node scripts/download-models.mjs",
     "vscode:prepublish": "pnpm run download-models && pnpm run build",
     "build": "pnpm build-webview && node esbuild.config.js",
-    "watch": "pnpm watch-webview && node esbuild.config.js --watch",
+    "watch": "concurrently \"pnpm watch-webview\" \"node esbuild.config.js --watch\"",
+    "watch-webview": "cd webview && pnpm run watch",
     "vscode:package": "vsce package --no-dependencies",
     "vscode:publish": "vsce publish --no-dependencies && pnpm create-tag",
     "vscode:publish-pre-release": "vsce publish --no-dependencies --pre-release && pnpm create-tag",
@@ -159,7 +160,6 @@
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
     "dev": "pnpm run build && code --new-window --extensionDevelopmentPath=${PWD}",
-    "watch-webview": "cd webview && pnpm run dev",
     "create-tag": "git tag workspaceGPT-v${npm_package_version} && git push origin workspaceGPT-v${npm_package_version}"
   },
   "dependencies": {
@@ -182,6 +182,7 @@
     "@types/vscode": "^1.98.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
+    "concurrently": "^10.0.3",
     "esbuild": "^0.20.1",
     "eslint": "^8.56.0",
     "ovsx": "^0.10.1",

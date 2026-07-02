@@ -10,6 +10,9 @@ import { getLlmSettings } from './getLlmSettings';
  * no server — the keys live only in the code and in whoever's browser imports it.
  *
  * Requires Gemini embeddings + Qdrant cloud (the only shareable combination).
+ * Carries every configured Gemini/chat-model key (not just the first) so the
+ * Chrome extension gets the same 429 failover as the VS Code extension — see
+ * {@link withKeyFailover} on the Chrome side.
  */
 export async function shareToChrome(context: vscode.ExtensionContext): Promise<void> {
   const embedding = getEmbeddingSettings(context);
@@ -17,13 +20,13 @@ export async function shareToChrome(context: vscode.ExtensionContext): Promise<v
   const llm = getLlmSettings(context);
 
   const problems: string[] = [];
-  if (embedding.provider !== 'gemini' || !embedding.apiKey) {
+  if (embedding.provider !== 'gemini' || embedding.apiKeys.length === 0) {
     problems.push('• Embeddings must be set to Gemini with an API key.');
   }
   if (vectorStore.location !== 'cloud' || !vectorStore.qdrantUrl) {
     problems.push('• Vector store must be set to Qdrant cloud with a URL.');
   }
-  if (!llm.apiKey || !llm.baseUrl || !llm.model) {
+  if (llm.apiKeys.length === 0 || !llm.baseUrl || !llm.model) {
     problems.push('• A chat model with an API key must be selected.');
   }
   if (problems.length) {
@@ -35,14 +38,14 @@ export async function shareToChrome(context: vscode.ExtensionContext): Promise<v
   }
 
   const bundle = {
-    v: 1 as const,
+    v: 2 as const,
     qdrant: {
       url: vectorStore.qdrantUrl,
       apiKey: vectorStore.qdrantApiKey,
       collectionPrefix: '',
     },
-    gemini: { apiKey: embedding.apiKey },
-    llm: { baseUrl: llm.baseUrl, apiKey: llm.apiKey, model: llm.model },
+    gemini: { apiKeys: embedding.apiKeys },
+    llm: { baseUrl: llm.baseUrl, apiKeys: llm.apiKeys, model: llm.model },
   };
 
   const code = Buffer.from(JSON.stringify(bundle), 'utf8').toString('base64');

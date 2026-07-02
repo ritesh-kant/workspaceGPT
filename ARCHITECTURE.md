@@ -69,15 +69,24 @@ hundred bytes.
 ### Share bundle (the decoded share code)
 ```jsonc
 {
-  "v": 1,
+  "v": 2,
   "qdrant": { "url": "...", "apiKey": "...", "collectionPrefix": "" },
-  "gemini": { "apiKey": "..." },          // model/dims are pinned (gemini-embedding-001, 768)
-  "llm":    { "baseUrl": "...", "apiKey": "...", "model": "..." }
+  "gemini": { "apiKeys": ["..."] },          // model/dims are pinned (gemini-embedding-001, 768)
+  "llm":    { "baseUrl": "...", "apiKeys": ["..."], "model": "..." }
 }
 ```
 
+`gemini.apiKeys` / `llm.apiKeys` carry every key configured for 429 failover in
+VS Code (not just the first) — Chrome retries with the next key on a rate limit,
+same as the VS Code extension. `v: 1` bundles (single `apiKey` string) still
+decode; `decodeShareCode` normalizes either shape into an `apiKeys[]` list.
+
 Producer: `apps/vscode-extensions/src/utils/shareToChrome.ts`.
 Consumer: `apps/chrome-extension/src/lib/storage.ts` (`ShareBundle`, `decodeShareCode`).
+Chrome-side failover: `apps/chrome-extension/src/lib/keyFailover.ts` (`withKeyFailover`,
+mirrors `apps/vscode-extensions/src/utils/apiKeyFailover.ts`), used in
+`apps/chrome-extension/src/lib/ragService.ts` for the LLM call; Gemini embedding
+rotation is built into `GeminiEmbeddingProvider` in `packages/embedding-core`.
 
 ### Security model & tradeoff
 - The share code contains **real API keys in plain form** (base64 is encoding,

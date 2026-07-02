@@ -224,11 +224,13 @@
 .secondary-button {
   background: transparent !important;
   border: 1px solid var(--vscode-button-background) !important;
-  color: var(--vscode-button-foreground) !important;
+  color: var(--vscode-button-background) !important;
+  transition: all 0.2s ease !important;
 }
 
 .secondary-button:hover {
-  background: rgba(255, 255, 255, 0.06) !important;
+  background: var(--vscode-button-background) !important;
+  color: var(--vscode-button-foreground) !important;
 }
 
 /* Searchable Dropdown Styles */

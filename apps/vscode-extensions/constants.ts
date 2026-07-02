@@ -493,6 +493,16 @@ export interface PipelineSource {
    * validated and gated by the plan→approve review, so nothing auto-applies.
    */
   aiConfigSync?: boolean;
+  /**
+   * Routes a Configurations-table row to a config-sync target by matching the
+   * row's application/system name (case-insensitive substring) against
+   * `pattern`, in order — first match wins. The column holding that name is
+   * org-specific (App/System, Service, Component, …): the AI path infers it
+   * from row content; the deterministic path auto-detects the header. Falls
+   * back to the "mentions vercel" default when no rule matches, so an
+   * empty/unset list behaves exactly as before.
+   */
+  targetMap?: { pattern: string; target: 'vercel' | 'mach' }[];
   /** For provider `file`: a JSON release spec read from a Git repo. */
   fileRepoOwner?: string;
   fileRepoName?: string;
