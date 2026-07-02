@@ -13,16 +13,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const SITE_URL = "https://workspacegpt.in";
+const SITE_URL = "https://www.workspacegpt.in";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "WorkspaceGPT — Local, Private AI Coding Assistant for VS Code & Cursor",
+    default: "WorkspaceGPT — Local, Private AI Coding Assistant",
     template: "%s | WorkspaceGPT",
   },
   description:
-    "WorkspaceGPT is a RAG-based AI coding assistant that runs 100% locally. Chat with your codebase, Confluence docs, and Azure DevOps work items inside VS Code, Cursor, or Antigravity — with total privacy via Ollama or your own API keys.",
+    "A RAG-based AI coding assistant that runs 100% locally. Chat with your codebase, Confluence docs, and Azure DevOps inside VS Code, Cursor, or Antigravity.",
   applicationName: "WorkspaceGPT",
   keywords: [
     "AI coding assistant",
@@ -47,14 +47,14 @@ export const metadata: Metadata = {
     siteName: "WorkspaceGPT",
     title: "WorkspaceGPT — Local, Private AI Coding Assistant",
     description:
-      "Chat with your codebase, Confluence docs, and Azure DevOps work items from inside your IDE. 100% local and private with Ollama, or bring your own API keys.",
+      "Chat with your codebase, Confluence docs, and Azure DevOps inside your IDE. 100% local and private.",
     locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
     title: "WorkspaceGPT — Local, Private AI Coding Assistant",
     description:
-      "Chat with your codebase, Confluence docs, and Azure DevOps work items from inside your IDE. 100% local and private.",
+      "Chat with your codebase, Confluence docs, and Azure DevOps inside your IDE. 100% local and private.",
   },
   robots: {
     index: true,

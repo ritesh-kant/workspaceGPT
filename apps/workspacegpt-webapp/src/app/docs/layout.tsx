@@ -6,7 +6,7 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "Complete guide to WorkspaceGPT: installation, AI providers (Ollama, OpenAI, Gemini, Groq, OpenRouter), codebase indexing, Confluence and Azure DevOps integration, MCP server, Chrome extension, and troubleshooting.",
+    "Install WorkspaceGPT, pick an AI provider (Ollama, OpenAI, Gemini), and connect Confluence and Azure DevOps. Full setup and troubleshooting guide.",
   alternates: {
     canonical: "/docs",
   },

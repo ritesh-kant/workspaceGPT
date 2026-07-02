@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 export const alt =
-  "WorkspaceGPT — Local, Private AI Coding Assistant for VS Code & Cursor";
+  "WorkspaceGPT — Local, Private AI Coding Assistant. Install free for VS Code, Cursor & Antigravity.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -33,7 +33,7 @@ export default function OpengraphImage() {
             background: "rgba(31,242,180,0.08)",
             color: "#1ff2b4",
             fontSize: 28,
-            marginBottom: 40,
+            marginBottom: 32,
           }}
         >
           100% Local &amp; Private
@@ -66,7 +66,7 @@ export default function OpengraphImage() {
           style={{
             display: "flex",
             gap: 24,
-            marginTop: 48,
+            marginTop: 36,
             fontSize: 26,
             color: "#64748b",
           }}
@@ -78,6 +78,20 @@ export default function OpengraphImage() {
           <span>Azure DevOps</span>
           <span style={{ color: "#1ff2b4" }}>•</span>
           <span>Ollama</span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            marginTop: 40,
+            padding: "16px 44px",
+            borderRadius: 9999,
+            background: "#1ff2b4",
+            color: "#030712",
+            fontSize: 30,
+            fontWeight: 700,
+          }}
+        >
+          Install free — VS Code, Cursor &amp; Antigravity →
         </div>
       </div>
     ),

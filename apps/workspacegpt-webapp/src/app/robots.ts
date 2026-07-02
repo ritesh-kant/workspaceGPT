@@ -6,6 +6,6 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: "/",
     },
-    sitemap: "https://workspacegpt.in/sitemap.xml",
+    sitemap: "https://www.workspacegpt.in/sitemap.xml",
   };
 }

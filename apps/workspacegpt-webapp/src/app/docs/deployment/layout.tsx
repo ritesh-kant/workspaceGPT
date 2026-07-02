@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Deployment Automation Docs",
   description:
-    "How to automate release config-sync and hotfix workflows with WorkspaceGPT Deployment Automation: sources, actions, connections, environments, security model, and FAQ.",
+    "Automate release config-sync and hotfix workflows with WorkspaceGPT: sources, actions, environments, and security model.",
   alternates: {
     canonical: "/docs/deployment",
   },

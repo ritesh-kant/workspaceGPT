@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 
-const SITE_URL = "https://workspacegpt.in";
+const SITE_URL = "https://www.workspacegpt.in";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
