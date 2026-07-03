@@ -3,7 +3,7 @@ import { defineManifest } from '@crxjs/vite-plugin';
 export default defineManifest({
   manifest_version: 3,
   name: 'WorkspaceGPT',
-  version: '0.1.1',
+  version: '0.1.2',
   description:
     'Ask questions about your Confluence & Azure DevOps knowledge, in the browser.',
   icons: {
