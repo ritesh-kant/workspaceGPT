@@ -3,7 +3,7 @@
  *
  * The engine only ever knows these generic concepts: release, environment,
  * config variable, target, diff, apply. Anything organisation-specific
- * (Confluence table layouts, Vercel/mach APIs, `@phoenix` tag formats) lives
+ * (Confluence table layouts, Vercel/mach APIs, org-specific tag formats) lives
  * behind the adapter interfaces below — never in these types.
  *
  * See DEPLOYMENT-AUTOMATION-DESIGN.md (repo root) for the full design.

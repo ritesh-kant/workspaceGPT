@@ -175,6 +175,11 @@ export const MESSAGE_TYPES = {
   PLAN_MACH_ENV_RESPONSE: 'plan-mach-env-response',
   APPLY_MACH_ENV: 'apply-mach-env',
   APPLY_MACH_ENV_RESPONSE: 'apply-mach-env-response',
+  // Hotfix flow (tickets → commits → components → cherry-pick → tag → release)
+  PLAN_HOTFIX: 'plan-hotfix',
+  PLAN_HOTFIX_RESPONSE: 'plan-hotfix-response',
+  APPLY_HOTFIX: 'apply-hotfix',
+  APPLY_HOTFIX_RESPONSE: 'apply-hotfix-response',
 
   // Vector store (Qdrant) connection test
   TEST_QDRANT_CONNECTION: 'test-qdrant-connection',
@@ -527,11 +532,36 @@ export interface PipelineStage {
   actions: PipelineActionDef[];
 }
 
+/**
+ * Hotfix flow config (a separate flow from the config-sync stages): where the
+ * hotfix commits/tags live and how tags/branches are named. Every field is
+ * optional — when a field is blank the handler falls back to the GitHub
+ * workflow-dispatch action's repo topology (its release tags are repo-scoped),
+ * so the common case needs no hotfix config at all. Presence of the object is
+ * what opts the flow in.
+ */
+export interface PipelineHotfix {
+  /** Repo owner (org/user). Defaults to the workflow action's monorepo owner. */
+  owner?: string;
+  /** Repo name. Defaults to the workflow action's monorepo repo. */
+  repo?: string;
+  /** Branch commits are cherry-picked from / hotfix branches fork off. */
+  defaultBranch?: string;
+  /** Tag template with `{component}`, `{version}`, `{n}` placeholders. */
+  tagTemplate?: string;
+  /** Hotfix branch template with a `{date}` placeholder. */
+  branchTemplate?: string;
+  /** GitHub API base; defaults to the workflow repo's or the global default. */
+  apiBase?: string;
+}
+
 export interface PipelineDescriptor {
   name: string;
   environments?: DeploymentEnvironment[];
   source: PipelineSource;
   stages: PipelineStage[];
+  /** Optional hotfix flow config; presence opts the flow in. */
+  hotfix?: PipelineHotfix;
 }
 
 /** True if `dep` carries any pre-pipeline-model flat deployment field worth migrating. */

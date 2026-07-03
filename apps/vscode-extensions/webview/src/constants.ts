@@ -8,4 +8,5 @@ export type {
   PipelineActionDef,
   PipelineStage,
   PipelineDescriptor,
+  PipelineHotfix,
 } from '../../constants';

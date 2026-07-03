@@ -9,7 +9,10 @@ import {
   EMPTY_MACH_REPO,
   legacyToDescriptor,
 } from '../../constants';
-import type { PipelineDescriptor, PipelineSource, ActionProvider } from '../../constants';
+import type { PipelineDescriptor, PipelineSource, ActionProvider, PipelineHotfix } from '../../constants';
+
+const HOTFIX_TAG_PLACEHOLDER = '{component}-v{version}-hotfix.{n}';
+const HOTFIX_BRANCH_PLACEHOLDER = 'hotfix/{date}';
 
 /** Default config for a freshly-added action of each provider. */
 function defaultActionConfig(provider: ActionProvider): Record<string, any> {
@@ -76,6 +79,9 @@ const DeploymentSettings: React.FC = () => {
   }>({ orgs: [], repos: [], workflows: [], branches: [] });
   const [ghLoading, setGhLoading] = useState<string | undefined>();
   const [ghError, setGhError] = useState<string | undefined>();
+  // Separate discovery lists for the hotfix config, so its owner/repo dropdowns
+  // don't clobber the workflow action's (scope: 'hotfix' on the shared endpoint).
+  const [hfLists, setHfLists] = useState<{ orgs: string[]; repos: string[] }>({ orgs: [], repos: [] });
 
   const [rosterCols, setRosterCols] = useState<{
     headers: string[];
@@ -164,6 +170,14 @@ const DeploymentSettings: React.FC = () => {
     setEnvironments(environments.map((e, j) => (j !== i ? e : { ...e, ...patch })));
   const removeEnv = (i: number) => setEnvironments(environments.filter((_, j) => j !== i));
 
+  // Hotfix flow — a separate flow; presence of `pipeline.hotfix` opts it in.
+  const hotfix = pipeline.hotfix;
+  const hotfixEnabled = !!hotfix;
+  const enableHotfix = (on: boolean) =>
+    savePipeline(on ? { ...pipeline, hotfix: pipeline.hotfix ?? {} } : { ...pipeline, hotfix: undefined });
+  const setHotfix = (patch: Partial<PipelineHotfix>) =>
+    savePipeline({ ...pipeline, hotfix: { ...(pipeline.hotfix ?? {}), ...patch } });
+
   // First github-workflow-dispatch action — drives the shared topology discovery.
   let machSi = -1;
   let machAi = -1;
@@ -197,13 +211,16 @@ const DeploymentSettings: React.FC = () => {
     setGhError(undefined);
     vscode.postMessage({ type: MESSAGE_TYPES.DISCOVER_GITHUB, kind, ...params });
   };
+  const discoverHotfix = (kind: 'orgs' | 'repos', params: { owner?: string } = {}) =>
+    vscode.postMessage({ type: MESSAGE_TYPES.DISCOVER_GITHUB, kind, scope: 'hotfix', ...params });
 
   // Derived connections — only what this pipeline actually uses.
   const usedProviders = new Set(pipeline.stages.flatMap((s) => s.actions.map((a) => a.provider)));
   const needsGithub =
     usedProviders.has('github-workflow-dispatch') ||
     usedProviders.has('repo-file-patch') ||
-    source.provider === 'file';
+    source.provider === 'file' ||
+    hotfixEnabled;
   const needsVercel = usedProviders.has('vercel-config');
   const needsConfluence = source.provider === 'confluence-roster';
 
@@ -282,6 +299,12 @@ const DeploymentSettings: React.FC = () => {
           break;
 
         case MESSAGE_TYPES.DISCOVER_GITHUB_RESPONSE:
+          if (message.scope === 'hotfix') {
+            if (message.ok && (message.kind === 'orgs' || message.kind === 'repos')) {
+              setHfLists((prev) => ({ ...prev, [message.kind]: message.items || [] }));
+            }
+            break;
+          }
           setGhLoading(undefined);
           if (message.ok && message.kind) {
             setGhLists((prev) => ({ ...prev, [message.kind]: message.items || [] }));
@@ -345,6 +368,15 @@ const DeploymentSettings: React.FC = () => {
       discover('branches', { owner: repoCfg.monorepoOwner, repo: repoCfg.monorepoRepo });
     }
   }, [machStatus.connected, machSi, repoCfg.monorepoOwner, repoCfg.monorepoRepo]);
+
+  // Hotfix owner/repo discovery — independent of the workflow action's lists.
+  useEffect(() => {
+    if (dep.isDeploymentEnabled && machStatus.connected && hotfixEnabled) discoverHotfix('orgs');
+  }, [dep.isDeploymentEnabled, machStatus.connected, hotfixEnabled]);
+  useEffect(() => {
+    const owner = hotfix?.owner || repoCfg.monorepoOwner;
+    if (machStatus.connected && hotfixEnabled && owner) discoverHotfix('repos', { owner });
+  }, [machStatus.connected, hotfixEnabled, hotfix?.owner, repoCfg.monorepoOwner]);
 
   const connectGithub = () => {
     batchUpdateConfig('deployment', { isConnectingGithub: true, statusMessage: 'Opening GitHub App install…', messageType: 'success' });
@@ -889,6 +921,129 @@ const DeploymentSettings: React.FC = () => {
             ))}
             <button onClick={addEnv} style={{ marginTop: 4 }}>+ Add environment</button>
           </div>
+
+          {/* HOTFIX — a separate flow (tickets → commits → tags → release) */}
+          <div className="dep-group-label">Hotfix flow</div>
+          <label className="dep-checkbox">
+            <input type="checkbox" checked={hotfixEnabled} onChange={(e) => enableHotfix(e.target.checked)} />
+            Enable hotfix flow (cherry-pick by ticket → tag → GitHub Release)
+          </label>
+          {hotfixEnabled && (
+            <div style={{ marginTop: 8 }}>
+              <div className="dep-muted" style={{ fontSize: '0.8em', marginBottom: 8 }}>
+                Runs from the magenta card in the Releases view. Uses the GitHub PAT below. Leave a field blank to
+                fall back to the workflow action&apos;s repo (its release tags are repo-scoped).
+              </div>
+
+              <div className="dep-row">
+                <div>
+                  <div className="dep-field-label">Repo owner (org)</div>
+                  <SearchableDropdown
+                    value={hotfix?.owner || ''}
+                    options={[
+                      ...(hotfix?.owner && !hfLists.orgs.includes(hotfix.owner)
+                        ? [{ value: hotfix.owner, label: `${hotfix.owner} (current)` }]
+                        : []),
+                      ...hfLists.orgs.map((o) => ({ value: o, label: o })),
+                    ]}
+                    onChange={(v) => setHotfix({ owner: v, repo: '' })}
+                    disabled={!machStatus.connected}
+                    placeholder={
+                      !machStatus.connected
+                        ? 'Add the GitHub PAT below'
+                        : repoCfg.monorepoOwner
+                          ? `${repoCfg.monorepoOwner} (workflow repo)`
+                          : 'Select org…'
+                    }
+                    clearable
+                    clearLabel="-- Use workflow repo --"
+                    searchPlaceholder="Search orgs…"
+                  />
+                </div>
+                <div>
+                  <div className="dep-field-label">Repo</div>
+                  <SearchableDropdown
+                    value={hotfix?.repo || ''}
+                    options={[
+                      ...(hotfix?.repo && !hfLists.repos.includes(hotfix.repo)
+                        ? [{ value: hotfix.repo, label: `${hotfix.repo} (current)` }]
+                        : []),
+                      ...hfLists.repos.map((r) => ({ value: r, label: r })),
+                    ]}
+                    onChange={(v) => setHotfix({ repo: v })}
+                    disabled={!machStatus.connected || hfLists.repos.length === 0}
+                    placeholder={
+                      !machStatus.connected
+                        ? 'Add the GitHub PAT below'
+                        : hfLists.repos.length === 0
+                          ? 'Select owner first'
+                          : repoCfg.monorepoRepo
+                            ? `${repoCfg.monorepoRepo} (workflow repo)`
+                            : 'Select repo…'
+                    }
+                    clearable
+                    clearLabel="-- Use workflow repo --"
+                    searchPlaceholder="Search repos…"
+                  />
+                </div>
+              </div>
+
+              <div className="dep-field" style={{ marginTop: 8 }}>
+                <div className="dep-field-label">Base branch</div>
+                <input
+                  value={hotfix?.defaultBranch || ''}
+                  placeholder={repoCfg.monorepoRef || 'main'}
+                  onChange={(e) => setHotfix({ defaultBranch: e.target.value })}
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              <button
+                onClick={() =>
+                  setHotfix({
+                    owner: repoCfg.monorepoOwner,
+                    repo: repoCfg.monorepoRepo,
+                    defaultBranch: repoCfg.monorepoRef || 'main',
+                  })
+                }
+                disabled={!repoCfg.monorepoOwner || !repoCfg.monorepoRepo}
+                style={{ marginTop: 6 }}
+                title="Copy owner/repo/branch from the GitHub workflow-dispatch action"
+              >
+                Copy from workflow repo
+              </button>
+
+              <details className="dep-details" style={{ marginTop: 10 }}>
+                <summary>Tag &amp; branch naming (advanced)</summary>
+                <div className="dep-details-body">
+                  <div className="dep-field">
+                    <div className="dep-field-label">Tag template</div>
+                    <input
+                      value={hotfix?.tagTemplate || ''}
+                      placeholder={HOTFIX_TAG_PLACEHOLDER}
+                      onChange={(e) => setHotfix({ tagTemplate: e.target.value })}
+                      style={{ width: '100%' }}
+                    />
+                    <div className="dep-inline-note dep-muted">
+                      Placeholders: <code>{'{component}'}</code>, <code>{'{version}'}</code>, <code>{'{n}'}</code> (hotfix number).
+                    </div>
+                  </div>
+                  <div className="dep-field">
+                    <div className="dep-field-label">Hotfix branch template</div>
+                    <input
+                      value={hotfix?.branchTemplate || ''}
+                      placeholder={HOTFIX_BRANCH_PLACEHOLDER}
+                      onChange={(e) => setHotfix({ branchTemplate: e.target.value })}
+                      style={{ width: '100%' }}
+                    />
+                    <div className="dep-inline-note dep-muted">
+                      Placeholder: <code>{'{date}'}</code> (today, <code>YYYY-MM-DD</code>).
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </div>
+          )}
 
           {/* CONNECTIONS — derived from used providers */}
           <div className="dep-group-label">Connections</div>

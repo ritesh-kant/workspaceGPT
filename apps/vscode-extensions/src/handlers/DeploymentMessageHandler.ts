@@ -30,10 +30,14 @@ import {
   buildPlan,
   applicableChanges,
   hasUnresolvedConflicts,
+  buildHotfixPlan,
+  DEFAULT_HOTFIX_TAG_TEMPLATE,
   FileAuditLog,
   type ConfigVarDiff,
   type ReleaseSource,
+  type HotfixCommitGroup,
 } from '@workspace-gpt/release-core';
+import { GitHubVcsProvider, type GitHubVcsOptions } from '../services/deployment/githubVcsProvider';
 
 /**
  * Handles the deployment-automation provider connections (GitHub App + Vercel)
@@ -141,6 +145,14 @@ export class DeploymentMessageHandler {
       case MESSAGE_TYPES.INJECT_WEBAPP_VERSION:
         this.analyticsService.trackEvent('mach_webapp_version_injected');
         await this.handleInjectWebappVersion(data);
+        return true;
+
+      case MESSAGE_TYPES.PLAN_HOTFIX:
+        await this.handlePlanHotfix(data);
+        return true;
+      case MESSAGE_TYPES.APPLY_HOTFIX:
+        this.analyticsService.trackEvent('hotfix_applied');
+        await this.handleApplyHotfix(data);
         return true;
 
       case MESSAGE_TYPES.TEST_DEPLOYMENT_CONNECTIONS:
@@ -723,6 +735,259 @@ export class DeploymentMessageHandler {
     this.webviewView.webview.postMessage({ type, ...payload });
   }
 
+  /* ------------------------------------------------------------------ */
+  /* Hotfix flow — tickets → commits → components → cherry-pick → tag →  */
+  /* release. A separate flow from config-sync, sharing the same         */
+  /* resolve → plan → approve → apply spine (see §9 of the design doc).  */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Hotfix repo + naming config. Defaults from the mach workflow-dispatch
+   * action's repo topology (its release tags are monorepo-scoped), with an
+   * optional `pipeline.hotfix` / `deployment.hotfix` override block.
+   */
+  private hotfixConfig(dep: any): {
+    apiBase: string;
+    owner: string;
+    repo: string;
+    defaultBranch: string;
+    tagTemplate: string;
+    branchTemplate: string;
+  } {
+    const hf = (this.getPipeline(dep) as any)?.hotfix ?? dep?.hotfix ?? {};
+    const repo: MachRepoConfig = { ...EMPTY_MACH_REPO, ...(this.actionConfig(dep, 'github-workflow-dispatch').repo ?? {}) };
+    return {
+      apiBase: hf.apiBase || repo.apiBase || GITHUB_API_BASE,
+      owner: hf.owner || repo.monorepoOwner || '',
+      repo: hf.repo || repo.monorepoRepo || '',
+      defaultBranch: hf.defaultBranch || repo.monorepoRef || 'main',
+      tagTemplate: hf.tagTemplate || DEFAULT_HOTFIX_TAG_TEMPLATE,
+      branchTemplate: hf.branchTemplate || 'hotfix/{date}',
+    };
+  }
+
+  private async buildVcsProvider(dep: any) {
+    if (!(await this.machAuth.isConnected())) {
+      throw new Error('Set a mach GitHub token in Settings → Deployment Automation first.');
+    }
+    const hf = this.hotfixConfig(dep);
+    if (!hf.owner || !hf.repo) {
+      throw new Error('Set the hotfix repository (owner/repo) in Settings → Deployment Automation.');
+    }
+    const opts: GitHubVcsOptions = {
+      apiBase: hf.apiBase,
+      owner: hf.owner,
+      repo: hf.repo,
+      defaultBranch: hf.defaultBranch,
+    };
+    return { vcs: new GitHubVcsProvider(this.machAuth, opts), hf };
+  }
+
+  /**
+   * Derive a component's current released base version and the hotfix ordinals
+   * already taken, by listing tags that match the template's prefix. Best-effort:
+   * returns an undefined base when the component has never been tagged (the
+   * reviewer then supplies the version manually).
+   */
+  private async deriveComponentBase(
+    vcs: GitHubVcsProvider,
+    tagTemplate: string,
+    component: string,
+  ): Promise<{ baseVersion?: string; numbersByVersion: Record<string, number[]> }> {
+    // Prefix up to the `{version}` placeholder, e.g. `api-v` for `api-v{version}…`.
+    const prefix = tagTemplate.split('{version}')[0].replace(/\{component\}/g, component);
+    const names = await vcs.listTags(prefix);
+    const numbersByVersion: Record<string, number[]> = {};
+    let base: string | undefined;
+    for (const name of names) {
+      const rest = name.slice(prefix.length);
+      const m = /^(\d+\.\d+\.\d+)(?:-hotfix\.(\d+))?/.exec(rest);
+      if (!m) continue;
+      const version = m[1];
+      if (m[2]) (numbersByVersion[version] ??= []).push(Number(m[2]));
+      if (!base || compareSemver(version, base) > 0) base = version;
+    }
+    return { baseVersion: base, numbersByVersion };
+  }
+
+  /** Build a fresh hotfix plan from tickets. Shared by plan (preview) + apply. */
+  private async buildHotfixPlanFor(
+    dep: any,
+    tickets: string[],
+    baseOverrides: Record<string, string>,
+    branch: string,
+  ) {
+    const { vcs, hf } = await this.buildVcsProvider(dep);
+
+    const groups: HotfixCommitGroup[] = [];
+    for (const raw of tickets) {
+      const ticket = String(raw ?? '').trim();
+      if (!ticket) continue;
+      const commits = await vcs.findCommitsByTicket(ticket);
+      groups.push({ ticket: { id: ticket }, commits });
+    }
+
+    // First pass discovers the component set; a second pass fills base versions.
+    const now = new Date().toISOString();
+    const prelim = buildHotfixPlan({ groups, branch, now, tagTemplate: hf.tagTemplate });
+
+    const baseVersions: Record<string, string> = {};
+    const existingHotfixNumbers: Record<string, number[]> = {};
+    for (const comp of prelim.components) {
+      const info = await this.deriveComponentBase(vcs, hf.tagTemplate, comp.component);
+      const chosen = baseOverrides[comp.component]?.trim() || info.baseVersion;
+      if (chosen) {
+        baseVersions[comp.component] = chosen;
+        const normalized = chosen.replace(/^v/, '');
+        existingHotfixNumbers[comp.component] = info.numbersByVersion[normalized] ?? [];
+      }
+    }
+
+    const plan = buildHotfixPlan({
+      groups,
+      branch,
+      now,
+      tagTemplate: hf.tagTemplate,
+      baseVersions,
+      existingHotfixNumbers,
+    });
+    return { vcs, hf, plan };
+  }
+
+  private defaultHotfixBranch(branchTemplate: string): string {
+    const today = new Date().toISOString().slice(0, 10);
+    return branchTemplate.replace(/\{date\}/g, today);
+  }
+
+  /** Read-only hotfix preview: find commits, map to components, propose tags. */
+  private async handlePlanHotfix(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.PLAN_HOTFIX_RESPONSE, { ok: false, error });
+    try {
+      const tickets: string[] = Array.isArray(data?.tickets) ? data.tickets : [];
+      if (tickets.filter((t) => String(t ?? '').trim()).length === 0) {
+        return fail('Enter at least one hotfix ticket.');
+      }
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const dep = settings?.state?.config?.deployment ?? {};
+      const baseOverrides: Record<string, string> = data?.baseVersions ?? {};
+      const hf = this.hotfixConfig(dep);
+      const branch: string = data?.branch?.trim() || this.defaultHotfixBranch(hf.branchTemplate);
+
+      const { plan } = await this.buildHotfixPlanFor(dep, tickets, baseOverrides, branch);
+      this.post(MESSAGE_TYPES.PLAN_HOTFIX_RESPONSE, { ok: true, plan });
+    } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
+  /**
+   * Apply an approved hotfix: cherry-pick every commit onto the hotfix branch,
+   * then push a scoped tag + GitHub Release per component (which fires the
+   * component's deploy workflow). The plan is recomputed server-side — the client
+   * diff is never trusted. Every component to be tagged must have a resolved base
+   * version; missing ones block the apply rather than inventing a tag.
+   */
+  private async handleApplyHotfix(data: any): Promise<void> {
+    const fail = (error: string) =>
+      this.post(MESSAGE_TYPES.APPLY_HOTFIX_RESPONSE, { ok: false, error });
+    try {
+      const tickets: string[] = Array.isArray(data?.tickets) ? data.tickets : [];
+      if (tickets.filter((t) => String(t ?? '').trim()).length === 0) {
+        return fail('Enter at least one hotfix ticket.');
+      }
+      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+      const dep = settings?.state?.config?.deployment ?? {};
+      const baseOverrides: Record<string, string> = data?.baseVersions ?? {};
+      const onlyComponents: string[] | undefined = Array.isArray(data?.components)
+        ? data.components
+        : undefined;
+      const hf = this.hotfixConfig(dep);
+      const branch: string = data?.branch?.trim() || this.defaultHotfixBranch(hf.branchTemplate);
+
+      const { vcs, plan } = await this.buildHotfixPlanFor(dep, tickets, baseOverrides, branch);
+
+      let components = plan.components;
+      if (onlyComponents) components = components.filter((c) => onlyComponents.includes(c.component));
+      if (components.length === 0) return fail('No components to hotfix — no matching commits found.');
+
+      const missing = components.filter((c) => !c.tag).map((c) => c.component);
+      if (missing.length) {
+        return fail(`Enter a base version for: ${missing.join(', ')} (no released tag found to derive it).`);
+      }
+
+      // Cherry-pick every selected commit, de-duplicated, in plan order.
+      const shas: string[] = [];
+      for (const c of components) for (const cm of c.commits) if (!shas.includes(cm.sha)) shas.push(cm.sha);
+      if (shas.length === 0) return fail('No commits to cherry-pick.');
+
+      await vcs.cherryPick(branch, shas);
+
+      // Tag + release per component (idempotent — safe to retry).
+      const audit = this.auditLog();
+      const at = new Date().toISOString();
+      const actor = this.context.globalState.get<string>('userEmail') || undefined;
+      const results: Array<{
+        component: string;
+        tag: string;
+        status: 'applied' | 'failed';
+        releaseUrl?: string;
+        error?: string;
+      }> = [];
+
+      for (const c of components) {
+        const tag = c.tag as string;
+        try {
+          await vcs.createTag(tag, branch);
+          const rel = await vcs.createRelease(tag, tag);
+          results.push({ component: c.component, tag, status: 'applied', releaseUrl: rel.url });
+          await audit.record({
+            at,
+            release: tag,
+            environment: 'hotfix',
+            action: 'applied',
+            target: 'github',
+            key: c.component,
+            actor,
+            detail: rel.url,
+          });
+        } catch (e) {
+          results.push({ component: c.component, tag, status: 'failed', error: errMessage(e) });
+          await audit.record({
+            at,
+            release: tag,
+            environment: 'hotfix',
+            action: 'failed',
+            target: 'github',
+            key: c.component,
+            actor,
+            detail: errMessage(e),
+          });
+        }
+      }
+
+      const applied = results.filter((r) => r.status === 'applied').length;
+      const failed = results.filter((r) => r.status === 'failed').length;
+      await audit.record({
+        at,
+        release: branch,
+        environment: 'hotfix',
+        action: failed > 0 ? 'failed' : 'applied',
+        actor,
+        detail: `hotfix ${branch}: ${applied}/${results.length} component(s) released${failed ? `, ${failed} failed` : ''}`,
+      });
+
+      this.post(MESSAGE_TYPES.APPLY_HOTFIX_RESPONSE, {
+        ok: true,
+        branch,
+        results,
+        summary: { applied, failed, total: results.length },
+      });
+    } catch (error) {
+      fail(errMessage(error));
+    }
+  }
+
   // --- GitHub ---
 
   private async handleStartGitHubInstall(): Promise<void> {
@@ -802,8 +1067,10 @@ export class DeploymentMessageHandler {
    */
   private async handleDiscoverGithub(data: any): Promise<void> {
     const kind: string = data?.kind ?? '';
+    // `scope` lets a caller (e.g. the hotfix config) keep its own dropdown lists
+    // instead of sharing the workflow action's — echoed back untouched.
     const reply = (payload: any) =>
-      this.post(MESSAGE_TYPES.DISCOVER_GITHUB_RESPONSE, { kind, owner: data?.owner, repo: data?.repo, ...payload });
+      this.post(MESSAGE_TYPES.DISCOVER_GITHUB_RESPONSE, { kind, owner: data?.owner, repo: data?.repo, scope: data?.scope, ...payload });
 
     try {
       if (!(await this.machAuth.isConnected())) return reply({ ok: false, error: 'Set the mach GitHub token first.' });
@@ -1393,6 +1660,17 @@ export class DeploymentMessageHandler {
 
 function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Compare two `X.Y.Z` versions numerically. >0 if a is newer than b. */
+function compareSemver(a: string, b: string): number {
+  const pa = a.replace(/^v/, '').split('.').map(Number);
+  const pb = b.replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
 }
 
 /**

@@ -56,12 +56,12 @@ split *is* the decoupling seam.
 |---|---|
 | Release-train cadence (calendar → version) | Source of truth = Confluence pages with a specific table layout |
 | Config promotion stage → prod, semver | Two targets: Vercel + a MACH git repo |
-| Conventional Commits for component identity | `@phoenix/…`, `@terraform/…&depth=1`, `hotfix.N`, `D2C-` prefixes |
+| Conventional Commits for component identity | scoped monorepo tag prefixes, `hotfix.N`, `D2C-` ticket prefixes |
 | Cherry-pick → tag → release triggers deploy | Specific GitHub workflows; AWS/layer0 deploy |
 | Issue tracker integration | Tracker = Azure DevOps |
 
-Tight coupling = the engine "knowing" about Confluence tables or `@phoenix`
-tags. The fix is the adapter architecture below.
+Tight coupling = the engine "knowing" about Confluence tables or org-specific
+tag formats. The fix is the adapter architecture below.
 
 ---
 
@@ -232,7 +232,7 @@ new targets (GitHub App, Vercel, mach path) need setup.
 | b | `packages/release-core`: `ReleasePlan` schema + adapter interfaces + audit log | nothing | **done** (type-checks + 8 unit tests green) |
 | c | Read/extract: `ConfluenceRosterSource`, `ConfluenceReleasePageSource`, table parser | Open item #2 | **resolve done** — `ConfluenceReleaseSource` (`resolveRelease` wired to the Releases view; `fetchDesiredConfig` implemented with default target/env mapping pending open items #2/#3); digit-preserving `parseStorageTables` in `confluence-utils`; 14 parse assertions green |
 | d | Diff/apply: `VercelTarget`, `GitRepoTarget`, approval gate UI | Open items #1, #3, #4 | **Vercel half DONE (end-to-end)** — preview → `Plan against live Vercel` (diff) → `Approve & apply` (`APPLY_CONFIG_SYNC`): server recomputes plan, conflict-gated, applies add/update via `VercelTarget.apply` (idempotent upsert; custom-env aware), per-var results + **Retry failed**, writes `FileAuditLog` (globalStorage `deployment-runs.jsonl`) → **Recent runs**. Settings: live Vercel project dropdown + Stage/Prod→env mapping. Platform limits handled: custom-environment vars (`customEnvironmentId`), `Global Project Environment Variables` scope required, and integration tokens **can't decrypt** values → present=opaque `update`. Debug stripped. **mach split into two facets of the `mach` target: `MachSyncTarget` (component-version promotion via the sync workflow — dispatches, finds run/PR, `readDestFile`/`commitDestFile`, done) and `MachEnvTarget` (`ConfigTarget` for `main.yml` env vars — `readCurrent` reads `main.yml` at the latest open sync PR head via `findLatestSyncPull`, diffs Confluence-desired vs it, `apply` commits corrections to the same PR branch as one idempotent commit).** **Now WIRED end-to-end** — `PLAN_MACH_ENV`/`APPLY_MACH_ENV` handler methods (share `buildMachEnvPlan`; `NoSyncPrError` → `needsSync` prompt rather than a hard error; server-side plan recompute + conflict-gate + `applicableChanges` + Retry-failed + audit log, mirroring the Vercel apply) and a "main.yml env vars" sub-block in the Releases mach section (Plan → `PlanReview` diff + PR link → "Commit env vars to PR"). Uses a **default `MainYmlCodec`** (`mainYmlCodec.ts`: flat top-level `KEY: value`, dotted keys, surgical line edits, append-if-absent — sanity-tested) that stays swappable once the real `main.yml`/`update-main-file/action.yml` schema is confirmed. Order inverts Vercel's: mach sync (opens PR) → env diff against the PR → approve → commit to PR → human merge. |
-| e | Hotfix flow (see §9) | after config-sync is solid | not started |
+| e | Hotfix flow (see §9) | after config-sync is solid | **DONE (end-to-end, pending live e2e)** — org-agnostic core `buildHotfixPlan` + Conventional-Commit scope→component mapping + tag/branch formatting in `release-core` (`hotfix/plan.ts`, 17 unit tests green); `GitHubVcsProvider` adapter (`src/services/deployment/githubVcsProvider.ts`, mach PAT) does commit-search-by-ticket, Git-Data-API cherry-pick (sibling→merge→reparent, conflict-safe), idempotent annotated tag + GitHub Release; handler `PLAN_HOTFIX`/`APPLY_HOTFIX` (find commits → derive base version + next `hotfix.N` from existing tags → plan; apply recomputes server-side, cherry-picks onto the hotfix branch, tags+releases per component, audit log); Releases view has a magenta hotfix pipeline card (tickets → Plan → per-component review with manual base-version entry when no tag exists → Approve & apply → release links + Retry failed). |
 | f | MCP action-tools + decoupling audit (no org strings in `release-core`) | after d | not started |
 
 ### What's been built (initial increment)
@@ -277,7 +277,7 @@ Releases shell.
 
 ---
 
-## 9. Hotfix flow (later milestone)
+## 9. Hotfix flow (BUILT)
 
 Reuses the same resolve → extract → diff → approve → apply spine, with
 tickets/commits/tags instead of config vars:
@@ -285,10 +285,49 @@ tickets/commits/tags instead of config vars:
 1. Collect hotfix ticket numbers.
 2. Find GitHub commits whose title carries the ticket (`D2C-…`).
 3. Conventional-Commit scope → which component to fix (`feat(mms-bff): …`).
-4. Cherry-pick onto a `hotfix/<tag>` branch.
-5. Push tag `@phoenix/<component>-vX.Y.Z-hotfix.N`; create a GitHub Release from
+4. Cherry-pick onto a `hotfix/<date>` branch.
+5. Push tag `<component>-vX.Y.Z-hotfix.N` (org-specific tag format); create a GitHub Release from
    the tag → deploy workflow fires (+ manual `[deploy] Service (S3 serverless)`
    step for lambda components).
+
+### How it's implemented (mirrors the config-sync spine)
+
+- **Org-agnostic core** — `packages/release-core/src/hotfix/plan.ts`:
+  `buildHotfixPlan` is pure (no network, no clock). It groups the commits an
+  adapter supplies by component, assigns the next `hotfix.N` and renders the tag
+  per component, and surfaces any commit with no derivable component in
+  `unassigned` (never dropped silently). Component mapping defaults to the
+  Conventional-Commit scope (`parseConventionalCommit`); the tag template
+  (`{component}-v{version}-hotfix.{n}` by default) and the
+  commit→component rule are both injectable. When a component's base version is
+  unknown the tag is `null` — the reviewer supplies it; the engine never invents
+  a version. 17 unit tests green.
+- **VCS adapter** — `src/services/deployment/githubVcsProvider.ts` implements
+  the `VcsProvider` seam over the GitHub REST API with the mach classic PAT
+  (`repo` scope covers commit-search, git-data writes, tags and releases,
+  including the SAML-SSO'd Mars orgs). GitHub has no cherry-pick endpoint, so
+  `cherryPick` replays the Git-Data-API algorithm per commit
+  (sibling-commit → `/merges` → reparent → fast-forward); a merge conflict
+  surfaces as an error and restores the branch head rather than writing a bad
+  tree. `createTag`/`createRelease` are idempotent (existing tag left in place;
+  existing release fetched), so Retry is safe. `listTags(prefix)` drives base
+  version + existing-`hotfix.N` derivation.
+- **Handler** — `PLAN_HOTFIX` finds commits per ticket, derives each component's
+  base version + taken hotfix ordinals from tags, and returns the plan.
+  `APPLY_HOTFIX` recomputes the plan server-side (never trusts the client),
+  blocks any component still missing a base version, cherry-picks the
+  de-duplicated commit set onto the hotfix branch, then tags + releases each
+  component, recording per-component + run-summary audit entries.
+- **UI** — a magenta hotfix pipeline card in the Releases view: paste tickets →
+  Plan (per-component commit list + proposed tag, with an inline base-version
+  input when no released tag exists) → Approve & apply → release links + Retry
+  failed. Config (hotfix repo owner/repo/branch, tag template) defaults from the
+  mach workflow-dispatch action's repo topology, overridable via a
+  `pipeline.hotfix` block.
+
+Pending: live end-to-end verification against the real component repo; the
+manual `[deploy] Service (S3 serverless)` step for lambda components is not
+automated (the tag/release fires the standard deploy workflow only).
 
 ---
 

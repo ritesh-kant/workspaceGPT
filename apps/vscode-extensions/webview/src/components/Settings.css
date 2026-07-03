@@ -720,6 +720,15 @@ input:checked + .slider:before {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+  /* Let controls wrap to a second row instead of clipping off the panel edge
+     when the sidebar is narrow. */
+  flex-wrap: wrap;
+}
+/* The name input must be allowed to shrink below its intrinsic width; without
+   min-width:0 a flex item defaults to min-content, which overflows the row and
+   pushes the trailing remove (✕) button past the panel edge. */
+.dep-card-header > input {
+  min-width: 0;
 }
 
 /* An action card nested inside a stage */
@@ -735,6 +744,8 @@ input:checked + .slider:before {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 10px;
 }
 
@@ -742,6 +753,8 @@ input:checked + .slider:before {
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--vscode-foreground);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .dep-action-badge {

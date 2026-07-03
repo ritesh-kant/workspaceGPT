@@ -364,6 +364,48 @@ interface MachApplyState {
 
 const MACH_POLL_SECONDS = 20;
 
+/* ------------------------------- hotfix flow ------------------------------- */
+
+interface HotfixCommitRow {
+  sha: string;
+  title: string;
+  ticket: string;
+}
+interface HotfixComponentRow {
+  component: string;
+  commits: HotfixCommitRow[];
+  baseVersion?: string;
+  hotfixNumber: number;
+  /** Null when no base version could be derived — the reviewer must supply one. */
+  tag: string | null;
+}
+interface HotfixPlanData {
+  tickets: { id: string; title?: string }[];
+  branch: string;
+  components: HotfixComponentRow[];
+  unassigned: HotfixCommitRow[];
+  summary: { tickets: number; commits: number; components: number; unassigned: number };
+}
+interface HotfixPlanState {
+  loading?: boolean;
+  error?: string;
+  plan?: HotfixPlanData;
+}
+interface HotfixResultRow {
+  component: string;
+  tag: string;
+  status: 'applied' | 'failed';
+  releaseUrl?: string;
+  error?: string;
+}
+interface HotfixApplyState {
+  loading?: boolean;
+  error?: string;
+  branch?: string;
+  results?: HotfixResultRow[];
+  summary?: { applied: number; failed: number; total: number };
+}
+
 const MACH_ACTION_COLOR: Record<MachAction, string> = {
   update: '#e0a93b',
   match: '#6b7280',
@@ -459,6 +501,7 @@ const PIPE = {
   vercel: '#4f9cf9', // frontend config
   machComp: '#a78bfa', // backend component versions
   machEnv: '#22d3ee', // backend main.yml env vars
+  hotfix: '#e879c9', // hotfix cherry-pick → tag → release
 } as const;
 
 type StepState = 'pending' | 'active' | 'done' | 'error' | 'blocked';
@@ -613,6 +656,11 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const [overrideVersion, setOverrideVersion] = useState('');
   const [overridePageUrl, setOverridePageUrl] = useState('');
   const [overrideEnv, setOverrideEnv] = useState('stage');
+  // Hotfix flow state.
+  const [hotfixTickets, setHotfixTickets] = useState('');
+  const [hotfixBase, setHotfixBase] = useState<Record<string, string>>({});
+  const [hotfixPlan, setHotfixPlan] = useState<HotfixPlanState | null>(null);
+  const [hotfixApply, setHotfixApply] = useState<HotfixApplyState | null>(null);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -747,6 +795,17 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                 }
               : { loading: false, error: message.error || 'Failed to set webapp version.' }
           );
+          break;
+        case MESSAGE_TYPES.PLAN_HOTFIX_RESPONSE:
+          setHotfixPlan(message.ok ? { plan: message.plan } : { error: message.error });
+          break;
+        case MESSAGE_TYPES.APPLY_HOTFIX_RESPONSE:
+          setHotfixApply(
+            message.ok
+              ? { results: message.results, summary: message.summary, branch: message.branch }
+              : { error: message.error }
+          );
+          if (message.ok) vscode.postMessage({ type: MESSAGE_TYPES.GET_RELEASE_RUNS });
           break;
       }
     };
@@ -912,6 +971,38 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
     });
   };
 
+  const parseTickets = (raw: string): string[] =>
+    raw.split(/[\s,]+/).map((t) => t.trim()).filter(Boolean);
+
+  const planHotfix = () => {
+    const tickets = parseTickets(hotfixTickets);
+    if (tickets.length === 0) return;
+    setHotfixPlan({ loading: true });
+    setHotfixApply(null);
+    vscode.postMessage({ type: MESSAGE_TYPES.PLAN_HOTFIX, tickets, baseVersions: hotfixBase });
+  };
+
+  const applyHotfix = (components?: string[]) => {
+    const tickets = parseTickets(hotfixTickets);
+    if (tickets.length === 0) return;
+    setHotfixApply({ loading: true });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.APPLY_HOTFIX,
+      tickets,
+      baseVersions: hotfixBase,
+      branch: hotfixPlan?.plan?.branch,
+      ...(components ? { components } : {}),
+    });
+  };
+
+  const hotfixData = hotfixPlan?.plan;
+  const hotfixMissingBase = (hotfixData?.components || []).filter((c) => !c.tag).map((c) => c.component);
+  const canApplyHotfix =
+    !!hotfixData && hotfixData.components.length > 0 && hotfixMissingBase.length === 0;
+  const hotfixFailed = (hotfixApply?.results || [])
+    .filter((r) => r.status === 'failed')
+    .map((r) => r.component);
+
   const previewHasVercel = !!preview?.vars?.some((v) => v.target === 'vercel');
   const planData = plan?.plan;
   const canApply =
@@ -955,6 +1046,22 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
     : machEnvApply?.summary
       ? 'done'
       : machEnvApply?.loading
+        ? 'active'
+        : 'pending';
+  const hfStep1: StepState = hotfixPlan?.error
+    ? 'error'
+    : hotfixMissingBase.length > 0
+      ? 'blocked'
+      : hotfixPlan?.plan
+        ? 'done'
+        : hotfixPlan?.loading
+          ? 'active'
+          : 'pending';
+  const hfStep2: StepState = hotfixApply?.error
+    ? 'error'
+    : hotfixApply?.summary
+      ? 'done'
+      : hotfixApply?.loading
         ? 'active'
         : 'pending';
 
@@ -1492,6 +1599,266 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
             </PipelineCard>
             </>
           )}
+        </div>
+      </div>
+
+      <div className="settings-section" style={{ marginTop: 16 }}>
+        <div className="section-header">
+          <h3>Hotfix</h3>
+        </div>
+        <div className="settings-form">
+          <p style={{ color: '#888', fontSize: '0.85em', margin: '0 0 10px', lineHeight: 1.5 }}>
+            Cherry-pick commits by ticket onto a hotfix branch, then push a scoped tag + GitHub Release for
+            each affected component (which fires its deploy). A separate flow from the config-sync release above.
+          </p>
+          <div
+            style={{
+              borderRadius: 10,
+              border: `1px solid ${PIPE.hotfix}33`,
+              borderLeft: `3px solid ${PIPE.hotfix}`,
+              background: `${PIPE.hotfix}0d`,
+              padding: '14px 16px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  background: PIPE.hotfix,
+                  color: '#0b0b14',
+                  fontSize: '0.72em',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                ⛑
+              </span>
+              <span style={{ fontWeight: 600, color: PIPE.hotfix, fontSize: '0.92em' }}>
+                Cherry-pick → tag → release
+              </span>
+              <span style={{ fontSize: '0.68em', color: '#888', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                github
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '9px 0 12px', flexWrap: 'wrap' }}>
+              {[
+                { label: '① Plan', state: hfStep1 },
+                { label: '② Apply', state: hfStep2 },
+              ].map((s, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && <span style={{ color: '#3a3a52', fontSize: '0.8em' }}>›</span>}
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      fontSize: '0.75em',
+                      color: STEP_LABEL_COLOR[s.state] || PIPE.hotfix,
+                    }}
+                  >
+                    <StepDot state={s.state} accent={PIPE.hotfix} />
+                    {s.label}
+                  </span>
+                </React.Fragment>
+              ))}
+            </div>
+
+            <label style={{ fontSize: '0.8em', color: '#ccc', display: 'block', marginBottom: 4 }}>
+              Hotfix tickets
+            </label>
+            <textarea
+              value={hotfixTickets}
+              onChange={(e) => setHotfixTickets(e.target.value)}
+              placeholder="D2C-123456, D2C-123457"
+              rows={2}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                background: '#0f0f1a',
+                border: '1px solid #2a2a3e',
+                borderRadius: 6,
+                color: '#e0e0e0',
+                fontSize: '0.85em',
+                padding: '7px 9px',
+                resize: 'vertical',
+                fontFamily: 'inherit',
+              }}
+            />
+
+            <button
+              onClick={planHotfix}
+              disabled={hotfixPlan?.loading || parseTickets(hotfixTickets).length === 0}
+              className="primary-button"
+              style={pipeBtn(PIPE.hotfix)}
+            >
+              {hotfixPlan?.loading ? 'Finding commits…' : hotfixData ? '✓ Re-plan' : 'Plan hotfix →'}
+            </button>
+
+            {hotfixPlan?.error && (
+              <div style={{ color: '#e0a0a0', fontSize: '0.82em', marginTop: 10 }}>{hotfixPlan.error}</div>
+            )}
+
+            {hotfixData && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: '0.8em', color: '#a0a0a0', marginBottom: 8 }}>
+                  Branch <span style={{ fontFamily: 'monospace', color: '#ccc' }}>{hotfixData.branch}</span> ·{' '}
+                  {hotfixData.summary.commits} commit(s) · {hotfixData.summary.components} component(s)
+                </div>
+
+                {hotfixData.components.length === 0 && (
+                  <div style={{ fontSize: '0.82em', color: '#e0a93b' }}>
+                    No commits mapped to a component. Check the ticket ids and that commit titles carry a
+                    Conventional-Commit scope (e.g. <code>fix(mms-bff): …</code>).
+                  </div>
+                )}
+
+                {hotfixData.components.map((c) => (
+                  <div
+                    key={c.component}
+                    style={{
+                      border: '1px solid #23233a',
+                      borderRadius: 8,
+                      padding: '10px 12px',
+                      marginBottom: 8,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.9em' }}>{c.component}</span>
+                      {c.tag ? (
+                        <span style={{ fontFamily: 'monospace', fontSize: '0.78em', color: '#4ecca3' }}>{c.tag}</span>
+                      ) : (
+                        <span style={{ fontSize: '0.75em', color: '#e0a93b' }}>base version needed</span>
+                      )}
+                    </div>
+
+                    {!c.tag && (
+                      <div style={{ marginTop: 6 }}>
+                        <input
+                          value={hotfixBase[c.component] ?? ''}
+                          onChange={(e) =>
+                            setHotfixBase((b) => ({ ...b, [c.component]: e.target.value }))
+                          }
+                          placeholder="base version, e.g. 1.2.3"
+                          style={{
+                            width: '100%',
+                            boxSizing: 'border-box',
+                            background: '#0f0f1a',
+                            border: '1px solid #2a2a3e',
+                            borderRadius: 6,
+                            color: '#e0e0e0',
+                            fontSize: '0.8em',
+                            padding: '5px 8px',
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: 8 }}>
+                      {c.commits.map((cm) => (
+                        <div
+                          key={cm.sha}
+                          style={{ fontSize: '0.78em', color: '#a0a0a0', padding: '3px 0', display: 'flex', gap: 6 }}
+                        >
+                          <span style={{ fontFamily: 'monospace', color: '#85b7eb', flexShrink: 0 }}>
+                            {cm.sha.slice(0, 7)}
+                          </span>
+                          <span style={{ wordBreak: 'break-word' }}>{cm.title}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {hotfixData.unassigned.length > 0 && (
+                  <div style={{ fontSize: '0.78em', color: '#e0a93b', marginBottom: 8 }}>
+                    {hotfixData.unassigned.length} commit(s) had no derivable component and will be skipped.
+                  </div>
+                )}
+
+                {hotfixMissingBase.length > 0 && (
+                  <div style={{ fontSize: '0.78em', color: '#e0a93b', marginBottom: 8 }}>
+                    Enter a base version for {hotfixMissingBase.join(', ')}, then Re-plan to compute tags.
+                  </div>
+                )}
+
+                <button
+                  onClick={() => applyHotfix()}
+                  disabled={!canApplyHotfix || hotfixApply?.loading}
+                  className="primary-button"
+                  style={pipeBtn(PIPE.hotfix)}
+                >
+                  {hotfixApply?.loading
+                    ? 'Cherry-picking + tagging…'
+                    : `Approve & apply — ${hotfixData.components.length} component(s)`}
+                </button>
+
+                {hotfixApply?.error && (
+                  <div style={{ color: '#e0a0a0', fontSize: '0.82em', marginTop: 10 }}>{hotfixApply.error}</div>
+                )}
+
+                {hotfixApply?.summary && (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: '0.82em', color: '#a0a0a0', marginBottom: 6 }}>
+                      {hotfixApply.summary.applied}/{hotfixApply.summary.total} released
+                      {hotfixApply.summary.failed ? `, ${hotfixApply.summary.failed} failed` : ''} on{' '}
+                      <span style={{ fontFamily: 'monospace', color: '#ccc' }}>{hotfixApply.branch}</span>
+                    </div>
+                    {(hotfixApply.results || []).map((r, i) => (
+                      <div
+                        key={`${r.component}-${i}`}
+                        style={{ fontSize: '0.8em', padding: '4px 0', borderBottom: '1px solid #23233a' }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>{r.tag}</span>
+                          <span
+                            style={{
+                              color: r.status === 'applied' ? '#4ecca3' : '#e74c3c',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {r.status === 'applied' ? 'released' : 'failed'}
+                          </span>
+                        </div>
+                        {r.releaseUrl && (
+                          <a
+                            href={r.releaseUrl}
+                            style={{ fontSize: '0.92em', color: '#85b7eb' }}
+                          >
+                            view release ↗
+                          </a>
+                        )}
+                        {r.error && <div style={{ fontSize: '0.92em', color: '#e0a0a0' }}>{r.error}</div>}
+                      </div>
+                    ))}
+                    {hotfixFailed.length > 0 && (
+                      <button
+                        onClick={() => applyHotfix(hotfixFailed)}
+                        disabled={hotfixApply?.loading}
+                        style={{
+                          marginTop: 10,
+                          background: 'none',
+                          border: '1px solid #e74c3c',
+                          color: '#e74c3c',
+                          borderRadius: 6,
+                          padding: '5px 10px',
+                          fontSize: '0.8em',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Retry failed ({hotfixFailed.length})
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

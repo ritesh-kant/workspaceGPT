@@ -11,6 +11,7 @@ const sections = [
   { id: "actions", label: "Actions" },
   { id: "connections", label: "Connections & permissions" },
   { id: "releases", label: "The Releases workflow" },
+  { id: "hotfix", label: "Hotfix flow" },
   { id: "environments", label: "Environments & policy" },
   { id: "ai", label: "AI-assisted reading" },
   { id: "security", label: "Security model" },
@@ -469,6 +470,46 @@ export default function DeploymentDocsPage() {
             </div>
           </section>
 
+          {/* ── Hotfix ───────────────────────────────────────── */}
+          <SectionAnchor id="hotfix" />
+          <section className="mb-16">
+            <SectionTitle>Hotfix flow</SectionTitle>
+            <SectionSubtitle>Ship an urgent fix by ticket, without a full release.</SectionSubtitle>
+            <p className="text-slate-300 text-sm leading-relaxed mb-3">
+              The hotfix flow is a <strong className="text-white">separate pipeline</strong> from the config-sync
+              release — the magenta card at the bottom of the Releases panel. Instead of config variables, its unit
+              of work is <strong className="text-white">tickets → commits → components → tags</strong>. It reuses the
+              same <em>plan → approve → apply</em> spine: nothing is written until you approve, and the plan is
+              recomputed server-side on apply.
+            </p>
+            <div className="space-y-0 mt-6">
+              <Step number={1} title="Enter tickets">
+                <p>Paste one or more hotfix ticket ids (comma- or space-separated), e.g. <code className="bg-white/10 px-1 rounded text-xs">D2C-123456</code>.</p>
+              </Step>
+              <Step number={2} title="Plan">
+                <p>WorkspaceGPT searches the hotfix repo for commits whose message carries each ticket, then maps each commit to a component from its <strong className="text-white">Conventional-Commit scope</strong> (<code className="bg-white/10 px-1 rounded text-xs">fix(mms-bff): …</code> → <code className="bg-white/10 px-1 rounded text-xs">mms-bff</code>). For each component it derives the current base version and next <code className="bg-white/10 px-1 rounded text-xs">hotfix.N</code> from existing tags, and proposes a tag:</p>
+                <CodeBlock language="text">mms-bff-v1.2.3-hotfix.1</CodeBlock>
+                <p className="mt-2">Commits with no derivable component are listed as <strong className="text-white">skipped</strong> — never silently dropped.</p>
+              </Step>
+              <Step number={3} title="Approve &amp; apply">
+                <p>On approve, WorkspaceGPT cherry-picks the commits onto a <code className="bg-white/10 px-1 rounded text-xs">hotfix/&lt;date&gt;</code> branch (via the GitHub Git Data API — a merge conflict stops the apply cleanly rather than writing a bad tree), then pushes a scoped tag and creates a GitHub Release per component. The release fires that component&apos;s deploy workflow. Tags and releases are idempotent, so <strong className="text-white">Retry failed</strong> is safe.</p>
+              </Step>
+            </div>
+            <Note color="brand">
+              If a component has never been tagged, WorkspaceGPT can&apos;t derive its base version — the card shows a
+              <strong className="text-white"> base version needed</strong> field. Enter <code className="bg-white/10 px-1 rounded text-xs">X.Y.Z</code>
+              and Re-plan to compute the tag. The engine never invents a version.
+            </Note>
+            <H4>Configuration</H4>
+            <p className="text-slate-300 text-sm leading-relaxed">
+              The hotfix repository, base branch, and tag template default from your GitHub workflow-dispatch action&apos;s
+              repo topology (its release tags are repo-scoped), and can be overridden per install — the default tag
+              template is <code className="bg-white/10 px-1 rounded text-xs">{'{component}-v{version}-hotfix.{n}'}</code>.
+              Authentication reuses the same mach GitHub token
+              (classic PAT, <code className="bg-white/10 px-1 rounded text-xs">repo</code> scope) — no extra connection.
+            </p>
+          </section>
+
           {/* ── Environments ─────────────────────────────────── */}
           <SectionAnchor id="environments" />
           <section className="mb-16">
@@ -543,6 +584,9 @@ export default function DeploymentDocsPage() {
                 { problem: "Dropdowns are empty (repos/workflows)", fix: "Make sure the GitHub PAT is saved and reaches the org. Use the ↻ Re-detect button in the action's Repo topology section after connecting." },
                 { problem: "Backend run never appears after trigger", fix: "workflow_dispatch is asynchronous — the run takes a few seconds to register. WorkspaceGPT polls automatically; use the ↻ Recheck button if needed." },
                 { problem: "main.yml env-var plan says “No open sync PR”", fix: "The backend env-var step diffs against the open sync PR, which the GitHub workflow-dispatch (mach sync) action creates. Trigger mach sync first, wait for the PR to open, then plan the main.yml env vars." },
+                { problem: "Hotfix plan says a component needs a base version", fix: "That component has no released tag to derive vX.Y.Z from. Enter the base version in the component's field on the hotfix card, then Re-plan — WorkspaceGPT never invents a version." },
+                { problem: "Hotfix: “no commits mapped to a component”", fix: "Commits are mapped by their Conventional-Commit scope, e.g. fix(mms-bff): …. Confirm the ticket id appears in the commit messages and that titles carry a (scope). Commits with no scope are listed as skipped." },
+                { problem: "Hotfix cherry-pick reports a conflict", fix: "The commit doesn't apply cleanly onto the hotfix branch. WorkspaceGPT stops and restores the branch head rather than writing a bad tree — resolve the conflict manually (cherry-pick locally) for that component." },
               ].map((item) => (
                 <details key={item.problem} className="group bg-slate-900 border border-white/5 rounded-2xl overflow-hidden">
                   <summary className="flex items-center justify-between px-5 py-4 cursor-pointer text-white font-medium hover:bg-white/5 transition-colors list-none">
