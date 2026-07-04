@@ -100,7 +100,7 @@ Commands:
 - `pnpm run vscode:publish` — publish to the VS Code Marketplace only.
 - `pnpm run vscode:publish-pre-release` — publish a pre-release version to the VS Code Marketplace only.
 - `pnpm run vscode:publish-ovsx` — publish the packaged `.vsix` to Open VSX (requires `OVSX_TOKEN`).
-- `pnpm run vscode:publish-pre-release-ovsx` — publish the packaged pre-release `.vsix` to Open VSX (requires `OVSX_TOKEN`).
+- `pnpm run vscode:publish-pre-release-ovsx` — build, package and publish a pre-release version to Open VSX (requires `OVSX_TOKEN`).
 - `pnpm run vscode:publish-all` — package once and publish the **same** artifact to both registries, then tag the release.
 - `pnpm run vscode:publish-pre-release-all` — package once and publish the **same** pre-release artifact to both registries, then tag the release.
 
