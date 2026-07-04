@@ -1,14 +1,25 @@
 # Workspace GPT 🧠🚀 (In Development)
 
-**Stop losing time searching for information!** Workspace GPT is an AI-powered knowledge assistant designed to break down data silos and make your organization's collective knowledge instantly accessible **within your own local environment**. This **Retrieval-Augmented Generation (RAG)** system, powered by the **LLaMA 3.2** model, centralizes information from various sources, allowing your teams to focus on what matters most: building great products. **Crucially, all operations are performed locally, ensuring complete data privacy and security.**
+**Stop losing time searching for information!** Workspace GPT is an AI-powered knowledge assistant designed to break down data silos and make your organization's collective knowledge instantly accessible **from inside your IDE**. This **Retrieval-Augmented Generation (RAG)** system is **local-first**: by default it runs on a local model (**LLaMA 3.2** via [Ollama](https://ollama.com/)) with local embeddings and a local vector store, so your data can stay entirely on your machine. If you prefer, you can also plug in a cloud provider (OpenAI, Gemini, Groq, and others) — the tradeoff is yours to make.
 
 **Who is this for?** Workspace GPT is designed for developers, product owners, managers, and anyone in your organization who needs quick access to relevant information **without compromising data privacy**.
 
 Workspace GPT helps your organization work smarter, not harder. **All while keeping your data under your control.**
 
-## 🔒 Key Principle: Local-Only & Completely Private
+## 🔒 Key Principle: Local-First & Private by Default
 
-**Workspace GPT is built from the ground up with privacy in mind.**  All data extraction, processing, and querying happen **entirely within your local environment**. No data is ever sent to the internet or any external servers. Your organizational knowledge remains completely private and secure.
+**Workspace GPT is built with privacy in mind.** Data extraction, embedding, and storage happen on your machine, and when you use the default local model (Ollama) with a local vector store, **nothing leaves your environment.**
+
+> ⚠️ **Privacy is a choice you control.** If you configure a cloud model or embedding provider (e.g. OpenAI, Gemini, Groq) or a hosted Qdrant instance, the relevant data is sent to that provider. For a fully local setup, use Ollama + a local vector store.
+
+## 🚀 Try it
+
+The easiest way to use Workspace GPT is the **IDE extension** (VS Code, Cursor, and Antigravity via Open VSX):
+
+*   **VS Code Marketplace:** search for `WorkspaceGPT` (`Riteshkant.workspacegpt-extension`)
+*   For a **100% local** setup, install [Ollama](https://ollama.com/) and pull a model (e.g. `ollama pull llama3.2`); embeddings and the vector store run locally by default.
+
+The instructions below cover running the monorepo from source for development.
 
 ## 🧰 Prerequisites:
 
@@ -22,9 +33,10 @@ Before you begin, ensure you have the following installed:
 
 ## 🔹 Supported Data Sources:
 
-*   **Atlassian Confluence:** (SUPPORTED) - Extract data from Confluence spaces and pages.
-*   **Codebase:** (IN PROGRESS) -  Currently working on extracting information directly from code repositories.
-*   **Jira/Azure DevOps:** (TBD) - Support for Jira and Azure DevOps integration is planned for the future.
+*   **Atlassian Confluence:** ✅ (SUPPORTED) — Index Confluence spaces and pages.
+*   **Azure DevOps:** ✅ (SUPPORTED) — Index work items and query them in natural language.
+*   **Codebase:** 🧪 (EXPERIMENTAL) — Index a **local, checked-out repository** by pointing at its path for code Q&A. This is local-repo indexing, not GitHub-org-wide search.
+*   **Jira:** 🚧 (PLANNED) — Scaffolded, but not functional yet.
 
 ## 🔹 Key Features:
 
@@ -33,17 +45,15 @@ Before you begin, ensure you have the following installed:
         *   "How do I use the X library to make a network request?"
         *   "What are the best practices for error handling in our codebase?"
         * "What are the supported authentication methods?"
--   **Ticket Lookup:** Product owners can quickly retrieve the latest details on any Jira issue, including status, assignees, and comments, saving valuable time.
+-   **Ticket Lookup (Azure DevOps):** Retrieve details on your Azure DevOps work items — status, assignees, and more — in natural language. *(Jira support is planned.)*
     *   **Example Prompts:**
-        *   "What is the current status of ABC-123?"
-        *   "Who is assigned to ticket XYZ-456?"
-        *   "Show me all the comments on issue DEF-789."
--   **Code Search:** Engineers can effortlessly locate relevant code snippets across your entire codebase, complete with code analysis and associated documentation links.
+        *   "What is the current status of work item 12345?"
+        *   "Who is assigned to this bug?"
+-   **Code Search (experimental):** Index a local checked-out repository and ask questions about it. Note: this searches embeddings extracted from the local repo you point it at — not remote GitHub repositories.
     *   **Example Prompts:**
-        *   "Find all the functions that use the Y class."
+        *   "Where is the network call defined?"
         *   "Show me examples of how to use the `calculate_total` function."
-        * "Where is the network call defined?"
--   **Secure & Private:** Designed for internal use, ensuring organizational data privacy. All data stays within your organization's infrastructure, and access is controlled via secure authentication. **All operations occur locally. Data is stored in your own vector database, and no data is ever sent outside your environment.**
+-   **Secure & Private:** Designed for internal use. Your indexed data is stored in your own vector database, and with the default local model + local vector store, **it stays on your machine.** Only if you opt into a cloud model/embedding provider is data sent to that provider.
 
 ## ⚙️ Installation & Setup:
 

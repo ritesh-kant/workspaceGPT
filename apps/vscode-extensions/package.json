@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "WorkspaceGPT is a fully local, privacy-first AI assistant for your development environment. Ask questions about your codebase or integrated Confluence documents — all without sending any data to external servers.",
-  "version": "1.0.7",
+  "version": "2.0.0",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
@@ -151,10 +151,13 @@
     "watch": "concurrently \"pnpm watch-webview\" \"node esbuild.config.js --watch\"",
     "watch-webview": "cd webview && pnpm run watch",
     "vscode:package": "vsce package --no-dependencies",
+    "vscode:package-pre-release": "vsce package --no-dependencies --pre-release",
     "vscode:publish": "vsce publish --no-dependencies && pnpm create-tag",
     "vscode:publish-pre-release": "vsce publish --no-dependencies --pre-release && pnpm create-tag",
     "vscode:publish-ovsx": "ovsx publish workspacegpt-extension-${npm_package_version}.vsix --no-dependencies -p $OVSX_TOKEN",
+    "vscode:publish-pre-release-ovsx": "ovsx publish workspacegpt-extension-${npm_package_version}.vsix --no-dependencies --pre-release -p $OVSX_TOKEN",
     "vscode:publish-all": "pnpm run vscode:package && vsce publish --packagePath workspacegpt-extension-${npm_package_version}.vsix --no-dependencies && pnpm run vscode:publish-ovsx && pnpm create-tag",
+    "vscode:publish-pre-release-all": "pnpm run vscode:package-pre-release && vsce publish --packagePath workspacegpt-extension-${npm_package_version}.vsix --no-dependencies --pre-release && pnpm run vscode:publish-pre-release-ovsx && pnpm create-tag",
     "vscode:test": "vsce package --no-dependencies && code --install-extension workspacegpt-extension-${npm_package_version}.vsix",
     "build-webview": "cd webview && pnpm install --ignore-workspace && pnpm run build",
     "lint": "eslint src --ext ts",
@@ -188,5 +191,5 @@
     "ovsx": "^0.10.1",
     "typescript": "^5.3.3"
   },
-  "preview": false
+  "preview": true
 }

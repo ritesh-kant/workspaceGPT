@@ -96,9 +96,13 @@ The extension is distributed through two registries:
 Commands:
 
 - `pnpm run vscode:package` — build and package a `.vsix`.
+- `pnpm run vscode:package-pre-release` — build and package a `.vsix` with pre-release metadata.
 - `pnpm run vscode:publish` — publish to the VS Code Marketplace only.
+- `pnpm run vscode:publish-pre-release` — publish a pre-release version to the VS Code Marketplace only.
 - `pnpm run vscode:publish-ovsx` — publish the packaged `.vsix` to Open VSX (requires `OVSX_TOKEN`).
+- `pnpm run vscode:publish-pre-release-ovsx` — publish the packaged pre-release `.vsix` to Open VSX (requires `OVSX_TOKEN`).
 - `pnpm run vscode:publish-all` — package once and publish the **same** artifact to both registries, then tag the release.
+- `pnpm run vscode:publish-pre-release-all` — package once and publish the **same** pre-release artifact to both registries, then tag the release.
 
 Setup for Open VSX (one-time): create a publisher namespace matching `Riteshkant` at [open-vsx.org](https://open-vsx.org), generate an access token, and export it before publishing:
 
