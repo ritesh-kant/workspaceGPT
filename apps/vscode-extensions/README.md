@@ -95,14 +95,15 @@ The extension is distributed through two registries:
 
 Commands:
 
-- `pnpm run vscode:package` — build and package a `.vsix`.
-- `pnpm run vscode:package-pre-release` — build and package a `.vsix` with pre-release metadata.
-- `pnpm run vscode:publish` — publish to the VS Code Marketplace only.
-- `pnpm run vscode:publish-pre-release` — publish a pre-release version to the VS Code Marketplace only.
-- `pnpm run vscode:publish-ovsx` — publish the packaged `.vsix` to Open VSX (requires `OVSX_TOKEN`).
-- `pnpm run vscode:publish-pre-release-ovsx` — build, package and publish a pre-release version to Open VSX (requires `OVSX_TOKEN`).
-- `pnpm run vscode:publish-all` — package once and publish the **same** artifact to both registries, then tag the release.
-- `pnpm run vscode:publish-pre-release-all` — package once and publish the **same** pre-release artifact to both registries, then tag the release.
+- `pnpm run vscode:package` — build and package a `.vsix` locally (e.g. for manual install).
+- `pnpm run vscode:publish-marketplace` — publish the already-packaged `.vsix` to the VS Code Marketplace.
+- `pnpm run vscode:publish-pre-release-marketplace` — same, marked as a pre-release.
+- `pnpm run vscode:publish-ovsx` — publish the already-packaged `.vsix` to Open VSX (requires `OVSX_TOKEN`).
+- `pnpm run vscode:publish-pre-release-ovsx` — same, marked as a pre-release.
+- `pnpm run vscode:publish-all` — package once, publish the **same** artifact to both registries via the scripts above, then tag the release.
+- `pnpm run vscode:publish-pre-release-all` — same, using the pre-release variants throughout.
+
+If a full run fails partway (e.g. a registry outage), don't re-run `-all` — `vsce publish` will reject a version already live on the Marketplace. Instead, run just the step(s) that didn't complete, e.g. `pnpm run vscode:publish-ovsx && pnpm create-tag`.
 
 Setup for Open VSX (one-time): create a publisher namespace matching `Riteshkant` at [open-vsx.org](https://open-vsx.org), generate an access token, and export it before publishing:
 

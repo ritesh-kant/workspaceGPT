@@ -131,8 +131,8 @@ pnpm run build
 # Automatically downloads models if needed + builds
 pnpm run vscode:prepublish
 
-# Then publish
-pnpm run vscode:publish
+# Then publish to both registries and tag the release
+pnpm run vscode:publish-all
 ```
 
 ## Troubleshooting
