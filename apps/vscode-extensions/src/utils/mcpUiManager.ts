@@ -25,18 +25,24 @@ export class McpUiManager {
    * Should be called once during extension activation.
    */
   async initialize(): Promise<void> {
-    // Show welcome notification if not yet shown
-    await this.showWelcomeNotificationIfNeeded();
+    const isInstalled = await isMcpInstalled();
+
+    // Show welcome notification if not yet shown (fire-and-forget: its promise
+    // only settles when the user dismisses the toast)
+    this.showWelcomeNotificationIfNeeded(isInstalled);
 
     // Create and show the status bar button
-    await this.updateStatusBar();
+    this.applyStatusBar(isInstalled);
   }
 
   /**
    * Updates the status bar button to reflect current MCP installation status.
    */
   async updateStatusBar(): Promise<void> {
-    const isInstalled = await isMcpInstalled();
+    this.applyStatusBar(await isMcpInstalled());
+  }
+
+  private applyStatusBar(isInstalled: boolean): void {
 
     if (isInstalled) {
       this.statusBarItem.text = '$(check) MCP';
@@ -56,17 +62,18 @@ export class McpUiManager {
    * Shows a welcome notification about MCP setup, but only once per version.
    * Uses globalState to track if the notification has been shown.
    */
-  private async showWelcomeNotificationIfNeeded(): Promise<void> {
+  private showWelcomeNotificationIfNeeded(isInstalled: boolean): void {
     const alreadyShown = this.context.globalState.get(MCP_WELCOME_SHOWN_KEY);
 
     if (alreadyShown) {
       return; // Already shown in this version
     }
 
-    const isInstalled = await isMcpInstalled();
+    // Mark as shown up front so the pending notification can't be re-triggered
+    this.context.globalState.update(MCP_WELCOME_SHOWN_KEY, true);
+
     if (isInstalled) {
       // Already configured, no need to show welcome
-      this.context.globalState.update(MCP_WELCOME_SHOWN_KEY, true);
       return;
     }
 
@@ -75,28 +82,25 @@ export class McpUiManager {
     const connectAction = 'Connect MCP';
     const dismissAction = 'Dismiss';
 
-    const selection = await vscode.window.showInformationMessage(
+    vscode.window.showInformationMessage(
       '🚀 WorkspaceGPT MCP Server\n\nUse WorkspaceGPT with Cursor, GitHub Copilot, Claude Desktop, and other AI IDEs! Connect your knowledge base to your favorite AI assistant.',
       { modal: false },
       learnMoreAction,
       connectAction,
       dismissAction
-    );
-
-    // Mark as shown (regardless of user action)
-    await this.context.globalState.update(MCP_WELCOME_SHOWN_KEY, true);
-
-    if (selection === learnMoreAction) {
-      // Open the README or documentation
-      vscode.commands.executeCommand(
-        'vscode.open',
-        vscode.Uri.parse('https://github.com/yourusername/workspacegpt#mcp-integration')
-      );
-    } else if (selection === connectAction) {
-      // Trigger the setup command
-      vscode.commands.executeCommand('workspacegpt.setupMcp');
-    }
-    // If dismissed, do nothing
+    ).then((selection) => {
+      if (selection === learnMoreAction) {
+        // Open the README or documentation
+        vscode.commands.executeCommand(
+          'vscode.open',
+          vscode.Uri.parse('https://github.com/yourusername/workspacegpt#mcp-integration')
+        );
+      } else if (selection === connectAction) {
+        // Trigger the setup command
+        vscode.commands.executeCommand('workspacegpt.setupMcp');
+      }
+      // If dismissed, do nothing
+    });
   }
 
   /**

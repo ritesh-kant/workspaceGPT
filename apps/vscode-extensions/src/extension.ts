@@ -27,9 +27,11 @@ export async function activate(context: vscode.ExtensionContext) {
   // Search workers are warmed by the chat webview itself (WebviewMessageHandler → ChatService.prewarm),
   // so the warmup lands on the exact service instances the chat queries.
 
-  // Initialize MCP UI Manager (welcome notification + status bar button)
+  // Initialize MCP UI Manager (welcome notification + status bar button).
+  // Not awaited: the welcome notification resolves only when the user dismisses
+  // it, which would block activation (and inflate activation time) on first run.
   mcpUiManager = new McpUiManager(context);
-  await mcpUiManager.initialize();
+  void mcpUiManager.initialize();
 
   // Register WebViewProvider
   const webViewProvider = new WebViewProvider(context.extensionUri, context);

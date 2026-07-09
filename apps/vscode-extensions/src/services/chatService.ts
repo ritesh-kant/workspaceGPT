@@ -524,6 +524,40 @@ Query: "${query}"`;
       return new Promise((resolve, reject) => {
         this.currentReject = reject;
         let fullContent = '';
+        // Mirror the streamed chunks here so we can salvage a response if the
+        // worker dies before it sends 'done' (see settle() below).
+        let streamedContent = '';
+        let settled = false;
+
+        // Single exit point. A "Premature close" (or any late teardown error)
+        // is emitted asynchronously on the LLM response socket AFTER all chunks
+        // have already been streamed to the UI, and it surfaces as the worker's
+        // 'error' event — outside the worker's try/catch. When that happens but
+        // we already have content, the response is complete: finish cleanly
+        // instead of showing the user a failure over an answer that rendered.
+        const settle = (error: Error | null) => {
+          if (settled) return;
+          settled = true;
+          this.currentModelWorker = null;
+          this.currentReject = null;
+          modelWorker.terminate();
+
+          if (!error || streamedContent.trim().length > 0) {
+            if (error) {
+              console.warn(
+                'WorkspaceGPT: model stream ended with an error after content was received; ' +
+                  'salvaging the streamed response.',
+                error.message
+              );
+            }
+            this.webviewView.webview.postMessage({
+              type: MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
+            });
+            resolve(fullContent || streamedContent);
+          } else {
+            reject(error);
+          }
+        };
 
         modelWorker.on(
           'message',
@@ -535,6 +569,7 @@ Query: "${query}"`;
           }) => {
             switch (result.type) {
               case 'chunk':
+                streamedContent += result.content || '';
                 // Stream chunk to webview
                 this.webviewView.webview.postMessage({
                   type: MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK,
@@ -545,20 +580,11 @@ Query: "${query}"`;
               case 'done':
                 // Stream complete
                 fullContent = result.content || '';
-                this.webviewView.webview.postMessage({
-                  type: MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
-                });
-                this.currentModelWorker = null;
-                this.currentReject = null;
-                modelWorker.terminate();
-                resolve(fullContent);
+                settle(null);
                 break;
 
               case 'error':
-                this.currentModelWorker = null;
-                this.currentReject = null;
-                modelWorker.terminate();
-                reject(new Error(result.message));
+                settle(new Error(result.message));
                 break;
 
               case WORKER_STATUS.PROCESSING:
@@ -572,10 +598,7 @@ Query: "${query}"`;
         );
 
         modelWorker.on('error', (error) => {
-          reject(error);
-          this.currentModelWorker = null;
-          this.currentReject = null;
-          modelWorker.terminate();
+          settle(error instanceof Error ? error : new Error(String(error)));
         });
       });
     } catch (error) {

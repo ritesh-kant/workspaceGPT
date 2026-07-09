@@ -101,7 +101,7 @@ function extractFrontmatter(markdownContent: string): {
   }
 }
 
-type EmbeddingRow = { filename: string; text: string; url: string; embedding: number[] };
+type EmbeddingRow = { filename: string; text: string; url: string; embedding: number[]; contentHash: string };
 
 /**
  * Write the combined binary file (embeddings.bin + embeddings_meta.json).
@@ -115,7 +115,7 @@ async function writeBinary(allEmbeddings: EmbeddingRow[]): Promise<void> {
 
   // Pack all embeddings into a flat Float32Array
   const matrix = new Float32Array(allEmbeddings.length * dimensions);
-  const entries: Array<{ filename: string; text: string; url: string; embeddingOffset: number }> = [];
+  const entries: Array<{ filename: string; text: string; url: string; embeddingOffset: number; contentHash: string }> = [];
 
   for (let i = 0; i < allEmbeddings.length; i++) {
     const offset = i * dimensions;
@@ -128,6 +128,7 @@ async function writeBinary(allEmbeddings: EmbeddingRow[]): Promise<void> {
       text: allEmbeddings[i].text,
       url: allEmbeddings[i].url,
       embeddingOffset: offset,
+      contentHash: allEmbeddings[i].contentHash,
     });
   }
 
@@ -249,22 +250,18 @@ async function createEmbeddings(): Promise<void> {
       fs.mkdirSync(embeddingDirPath, { recursive: true });
     }
 
-    // If resuming, find the starting point
-    let startIndex = 0;
-    if (resume && lastProcessedFile) {
-      startIndex = files.findIndex((file) => file === lastProcessedFile);
-      if (startIndex !== -1) {
-        startIndex++; // Start from the next file
-      }
-    }
+    // Resume no longer slices at lastProcessedFile: the content-hash skip below
+    // preserves already-embedded files at the cost of a hash, and slicing dropped
+    // every entry before the slice point when the binary was rewritten at the end.
+    const startIndex = 0;
 
     // Collect all embeddings (preserved unchanged + newly created); rebuild the binary at the end.
-    const allEmbeddings: Array<{ filename: string; text: string; url: string; embedding: number[] }> = [];
+    const allEmbeddings: EmbeddingRow[] = [];
 
     // Load existing embeddings from binary (to preserve unchanged ones across syncs)
     const binPath = path.join(embeddingDirPath, 'embeddings.bin');
     const metaPath = path.join(embeddingDirPath, 'embeddings_meta.json');
-    let existingData: Map<string, { text: string; url: string; embedding: number[] }> = new Map();
+    let existingData: Map<string, { text: string; url: string; embedding: number[]; contentHash?: string }> = new Map();
 
     if (fs.existsSync(binPath) && fs.existsSync(metaPath)) {
       try {
@@ -280,6 +277,7 @@ async function createEmbeddings(): Promise<void> {
             text: entry.text,
             url: entry.url,
             embedding,
+            contentHash: entry.contentHash,
           });
         }
       } catch {
@@ -288,7 +286,7 @@ async function createEmbeddings(): Promise<void> {
     }
 
     // ── Phase 1: classify each file as skip (preserve) or needs-embedding ──
-    const toEmbed: Array<{ filename: string; text: string; url: string; srcFile: string }> = [];
+    const toEmbed: Array<{ filename: string; text: string; url: string; srcFile: string; contentHash: string }> = [];
     let done = startIndex; // files before startIndex were processed in a prior run
 
     for (let i = startIndex; i < files.length; i++) {
@@ -301,6 +299,7 @@ async function createEmbeddings(): Promise<void> {
       const markdownContent = fs.readFileSync(filePath, 'utf8');
       const { content: cleanContent, frontmatter } = extractFrontmatter(markdownContent);
       const resolvedFilename = frontmatter?.fileName ?? file;
+      const contentHash = crypto.createHash('sha256').update(markdownContent).digest('hex');
 
       // Skip 1 (legacy): individual JSON file exists and is newer than the markdown
       if (fs.existsSync(embeddingFilePath)) {
@@ -314,20 +313,27 @@ async function createEmbeddings(): Promise<void> {
               text: existing.text,
               url: existing.url,
               embedding: existing.embedding,
+              // md is older than the embedding, so the current file content is
+              // what was embedded — its hash is valid for this entry.
+              contentHash,
             });
           } catch { /* skip if can't read */ }
           done++;
           reportProcessing(done, total, file);
           continue;
         }
-      } else if (existingData.has(resolvedFilename)) {
-        // Skip 2 (binary): already embedded in a previous sync
+      } else if (existingData.get(resolvedFilename)?.contentHash === contentHash) {
+        // Skip 2 (binary): already embedded and the source content is unchanged.
+        // Entries from indexes built before contentHash existed never match,
+        // so they get re-embedded once — this also flushes any stale entries
+        // preserved by the old filename-only skip.
         const existing = existingData.get(resolvedFilename)!;
         allEmbeddings.push({
           filename: resolvedFilename,
           text: existing.text,
           url: existing.url,
           embedding: existing.embedding,
+          contentHash,
         });
         done++;
         reportProcessing(done, total, file);
@@ -344,6 +350,7 @@ async function createEmbeddings(): Promise<void> {
         text: content,
         url: frontmatter?.url ?? '',
         srcFile: file,
+        contentHash,
       });
     }
 
@@ -445,6 +452,7 @@ async function createEmbeddings(): Promise<void> {
           text: batch[j].text,
           url: batch[j].url,
           embedding: vectors[j],
+          contentHash: batch[j].contentHash,
         });
         done++;
       }

@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "WorkspaceGPT is a fully local, privacy-first AI assistant for your development environment. Ask questions about your codebase or integrated Confluence documents — all without sending any data to external servers.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
@@ -146,7 +146,7 @@
   "scripts": {
     "postinstall": "node scripts/post-install/patch-xenova-transformer.js",
     "download-models": "node scripts/download-models.mjs",
-    "vscode:prepublish": "pnpm run download-models && pnpm run build",
+    "vscode:prepublish": "pnpm run download-models && NODE_ENV=production pnpm run build",
     "build": "pnpm build-webview && node esbuild.config.js",
     "watch": "concurrently \"pnpm watch-webview\" \"node esbuild.config.js --watch\"",
     "watch-webview": "cd webview && pnpm run watch",

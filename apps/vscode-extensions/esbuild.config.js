@@ -51,7 +51,7 @@ const extensionConfig = {
   target: 'node18',
   outdir: 'dist',
   format: 'cjs',
-  sourcemap: true,
+  sourcemap: !isProduction,
   minify: isProduction,
   external: [
     'vscode',
@@ -74,7 +74,7 @@ const workersConfig = {
   outdir: 'dist/workers',
   outbase: 'src/workers',
   format: 'esm',
-  sourcemap: true,
+  sourcemap: !isProduction,
   minify: isProduction,
   external: [
     'vscode',

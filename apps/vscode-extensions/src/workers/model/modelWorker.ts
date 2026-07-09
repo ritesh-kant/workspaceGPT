@@ -75,44 +75,61 @@ async function generateWithOpenAIStream(prompt: string, model: string, baseURL: 
   let thinkingDone = false;
   let isCheckingThink = true;
 
-  for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content;
-    if (delta) {
-      fullContent += delta;
+  try {
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        fullContent += delta;
 
-      // Check for <think> tag at the very start
-      if (isCheckingThink) {
-        if (fullContent.length >= 7) {
-          isCheckingThink = false;
-          if (!fullContent.startsWith('<think>')) {
-            thinkingDone = true;
-            // Not a thinking model, send everything we buffered so far
-            parentPort?.postMessage({ type: 'chunk', content: fullContent });
+        // Check for <think> tag at the very start
+        if (isCheckingThink) {
+          if (fullContent.length >= 7) {
+            isCheckingThink = false;
+            if (!fullContent.startsWith('<think>')) {
+              thinkingDone = true;
+              // Not a thinking model, send everything we buffered so far
+              parentPort?.postMessage({ type: 'chunk', content: fullContent });
+              continue;
+            }
+          } else {
+            // Still accumulating the first 7 chars
             continue;
           }
-        } else {
-          // Still accumulating the first 7 chars
+        }
+
+        // Strip <think>...</think> blocks - only send content after thinking is done
+        if (!thinkingDone) {
+          const thinkEnd = fullContent.indexOf('</think>');
+          if (thinkEnd !== -1) {
+            thinkingDone = true;
+            const afterThink = fullContent.substring(thinkEnd + 8).trim();
+            if (afterThink) {
+              parentPort?.postMessage({ type: 'chunk', content: afterThink });
+            }
+          }
+          // If still inside <think> block, don't send anything yet
           continue;
         }
-      }
 
-      // Strip <think>...</think> blocks - only send content after thinking is done
-      if (!thinkingDone) {
-        const thinkEnd = fullContent.indexOf('</think>');
-        if (thinkEnd !== -1) {
-          thinkingDone = true;
-          const afterThink = fullContent.substring(thinkEnd + 8).trim();
-          if (afterThink) {
-            parentPort?.postMessage({ type: 'chunk', content: afterThink });
-          }
-        }
-        // If still inside <think> block, don't send anything yet
-        continue;
+        // Send chunk to UI
+        parentPort?.postMessage({ type: 'chunk', content: delta });
       }
-
-      // Send chunk to UI
-      parentPort?.postMessage({ type: 'chunk', content: delta });
     }
+  } catch (streamError) {
+    // Some OpenAI-compatible providers/proxies close the SSE stream without a
+    // proper terminator, which the SDK surfaces as "Premature close" even after
+    // the full message has already arrived. If we've buffered any content,
+    // treat it as a complete response and fall through to the 'done' signal
+    // below rather than failing the whole chat.
+    const isPrematureClose =
+      streamError instanceof Error && /premature close/i.test(streamError.message);
+    if (!isPrematureClose || fullContent.length === 0) {
+      throw streamError;
+    }
+    console.warn(
+      '[workspaceGPT] LLM stream closed early after content was received — ' +
+        'salvaging buffered response instead of erroring.',
+    );
   }
 
   // Handle case where stream ended before 7 chars
