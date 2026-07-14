@@ -4,7 +4,7 @@ import {
   STORAGE_KEYS,
   EMPTY_MACH_REPO,
   GITHUB_API_BASE,
-  legacyToDescriptor,
+  resolveActivePipeline,
   type MachRepoConfig,
   type PipelineDescriptor,
   type PipelineSource,
@@ -492,10 +492,11 @@ export class DeploymentMessageHandler {
     }
   }
 
-  /** The pipeline descriptor (single config source). Migrates legacy flat
-   *  settings into a descriptor when none is saved yet. */
+  /** The active preset's pipeline descriptor. Migrates legacy flat settings
+   *  or a single unpresented `pipeline` into a one-item preset list when no
+   *  `pipelines[]` is saved yet. */
   private getPipeline(dep: any): PipelineDescriptor {
-    return dep?.pipeline ?? legacyToDescriptor(dep ?? {});
+    return resolveActivePipeline(dep);
   }
 
   /** Config of the first action with the given provider, or `{}` if none. */

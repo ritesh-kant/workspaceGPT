@@ -889,6 +889,51 @@ input:checked + .slider:before {
   pointer-events: none;
 }
 
+/* Preset selector row — dropdown + a cluster of compact icon actions,
+   kept to one line instead of full-width labelled buttons. */
+.dep-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.dep-preset-row > .searchable-dropdown-container,
+.dep-preset-row > .dep-preset-dropdown {
+  flex: 1;
+  min-width: 0;
+}
+input.dep-preset-dropdown {
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+/* Tab strip inside a `dep-details-body` (e.g. Preset JSON view/import) */
+.dep-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.dep-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+.dep-tab:hover {
+  color: var(--vscode-foreground);
+}
+.dep-tab.active {
+  color: var(--vscode-foreground);
+  border-bottom-color: var(--vscode-focusBorder, var(--vscode-button-background));
+}
+
 /* Compact disclosure (Repo topology / Column mapping) */
 .dep-details {
   margin-top: 10px;

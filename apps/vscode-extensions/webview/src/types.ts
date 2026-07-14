@@ -105,6 +105,10 @@ export interface DeploymentConfig {
    * installs into one automatically.
    */
   pipeline?: PipelineDescriptor;
+  /** Named presets — multiple saved pipeline configs, switchable via Settings. */
+  pipelines?: PipelineDescriptor[];
+  /** Which preset in `pipelines` is currently active (by `PipelineDescriptor.id`). */
+  activePipelineId?: string;
   isDeploymentEnabled?: boolean;
   /** Confluence Release Roster page URL — source for resolving today's release. */
   rosterPageUrl?: string;

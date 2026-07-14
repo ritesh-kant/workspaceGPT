@@ -113,6 +113,9 @@ export const MESSAGE_TYPES = {
   // Share to Chrome
   SHARE_TO_CHROME: 'share-to-chrome',
 
+  // Deployment presets — copy a preset's JSON to the clipboard
+  COPY_DEPLOYMENT_PRESET: 'copy-deployment-preset',
+
   // Deployment automation — provider connections (write-scoped, VS Code only)
   CHECK_GITHUB_CONNECTION: 'check-github-connection',
   START_GITHUB_INSTALL: 'start-github-install',
@@ -556,6 +559,8 @@ export interface PipelineHotfix {
 }
 
 export interface PipelineDescriptor {
+  /** Stable identity for preset selection; independent of the editable `name`. */
+  id?: string;
   name: string;
   environments?: DeploymentEnvironment[];
   source: PipelineSource;
@@ -644,6 +649,66 @@ export function legacyToDescriptor(dep: any): PipelineDescriptor {
       },
     ],
   };
+}
+
+/** Mint a fresh, collision-safe id for a preset created before ids existed. */
+function ensureId(p: PipelineDescriptor): PipelineDescriptor {
+  return p.id ? p : { ...p, id: `pl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+}
+
+/**
+ * The full preset list, normalizing legacy single-`pipeline`/flat-field
+ * installs into a one-item list on the fly. Pure — never mutates or persists
+ * `dep`; callers persist only on an explicit user action (add/rename/delete/
+ * switch/import).
+ */
+export function resolvePresetList(dep: any): PipelineDescriptor[] {
+  if (Array.isArray(dep?.pipelines) && dep.pipelines.length) {
+    return dep.pipelines.map(ensureId);
+  }
+  const single = dep?.pipeline ? dep.pipeline : legacyToDescriptor(dep ?? {});
+  return [ensureId(single)];
+}
+
+/**
+ * The currently-active preset — falls back to the first preset if
+ * `activePipelineId` is unset or stale (e.g. its preset was deleted).
+ */
+export function resolveActivePipeline(dep: any): PipelineDescriptor {
+  const list = resolvePresetList(dep);
+  return list.find((p) => p.id === dep?.activePipelineId) ?? list[0];
+}
+
+/**
+ * Shape-only defaulting for a pasted/imported preset — guards the UI against
+ * throwing on a malformed paste (e.g. `.stages.map`), nothing more. Deep
+ * validation would duplicate the defensive re-resolution the plan/apply
+ * handlers already do server-side regardless of where a descriptor came
+ * from. Never trusts an imported `id` — the caller always mints a fresh one.
+ */
+export function sanitizeImportedPipeline(raw: unknown): PipelineDescriptor | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as any;
+  return {
+    name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : 'Imported preset',
+    source: r.source && typeof r.source === 'object' ? r.source : { provider: 'none' },
+    stages: Array.isArray(r.stages) ? r.stages : [],
+    environments: Array.isArray(r.environments) ? r.environments : undefined,
+    hotfix: r.hotfix && typeof r.hotfix === 'object' ? r.hotfix : undefined,
+  };
+}
+
+/**
+ * Auto-suffix a preset name on collision (`"Name (2)"`, `"Name (3)"`, ...).
+ * Cosmetic only — `id` is the real selection key, so a name collision never
+ * breaks storage or selection, just dropdown clarity.
+ */
+export function uniqueName(base: string, existing: PipelineDescriptor[], excludeId?: string): string {
+  const taken = new Set(existing.filter((p) => p.id !== excludeId).map((p) => p.name));
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base} (${n})`)) n++;
+  return `${base} (${n})`;
 }
 
 /**

@@ -39,6 +39,10 @@ export class SystemMessageHandler {
       case MESSAGE_TYPES.SHARE_TO_CHROME:
         await vscode.commands.executeCommand(EXTENSION.COMMAND_SHARE_TO_CHROME);
         return true;
+      case MESSAGE_TYPES.COPY_DEPLOYMENT_PRESET:
+        await vscode.env.clipboard.writeText(data?.json ?? '');
+        vscode.window.showInformationMessage('Preset JSON copied to clipboard.');
+        return true;
       case MESSAGE_TYPES.TEST_QDRANT_CONNECTION:
         await this.handleTestQdrantConnection(data);
         return true;

@@ -7,7 +7,9 @@ import SearchableDropdown from './SearchableDropdown';
 import {
   MESSAGE_TYPES,
   EMPTY_MACH_REPO,
-  legacyToDescriptor,
+  resolvePresetList,
+  sanitizeImportedPipeline,
+  uniqueName,
 } from '../../constants';
 import type { PipelineDescriptor, PipelineSource, ActionProvider, PipelineHotfix } from '../../constants';
 
@@ -90,9 +92,70 @@ const DeploymentSettings: React.FC = () => {
   const [rosterColsLoading, setRosterColsLoading] = useState(false);
   const [rosterColsError, setRosterColsError] = useState<string | undefined>();
 
-  // ---- descriptor (single source of truth) + immutable edit helpers ----
-  const pipeline: PipelineDescriptor = dep.pipeline ?? legacyToDescriptor(dep);
-  const savePipeline = (p: PipelineDescriptor) => updateConfig('deployment', 'pipeline', p);
+  const [importJson, setImportJson] = useState('');
+  const [importError, setImportError] = useState<string | undefined>();
+  const [renamingPreset, setRenamingPreset] = useState(false);
+  const [presetTab, setPresetTab] = useState<'json' | 'import'>('json');
+
+  // ---- preset list + active descriptor + immutable edit helpers ----
+  const presets = resolvePresetList(dep);
+  const activeId = dep.activePipelineId ?? presets[0]?.id!;
+  const pipeline: PipelineDescriptor = presets.find((p) => p.id === activeId) ?? presets[0];
+  const savePresetList = (list: PipelineDescriptor[], nextActiveId: string = activeId) =>
+    batchUpdateConfig('deployment', { pipelines: list, activePipelineId: nextActiveId });
+  const savePipeline = (p: PipelineDescriptor) =>
+    savePresetList(presets.map((x) => (x.id === pipeline.id ? p : x)));
+
+  const addPreset = () => {
+    const p: PipelineDescriptor = {
+      id: `pl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: uniqueName('New preset', presets),
+      source: { provider: 'none' },
+      stages: [],
+    };
+    savePresetList([...presets, p], p.id);
+  };
+  const duplicatePreset = () => {
+    const p: PipelineDescriptor = {
+      ...pipeline,
+      id: `pl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: uniqueName(`${pipeline.name} (copy)`, presets),
+    };
+    savePresetList([...presets, p], p.id);
+  };
+  const deletePreset = () => {
+    if (presets.length <= 1) return;
+    const remaining = presets.filter((p) => p.id !== pipeline.id);
+    savePresetList(remaining, remaining[0].id);
+  };
+  const renamePreset = (name: string) => {
+    if (!name.trim()) return;
+    savePipeline({ ...pipeline, name: uniqueName(name.trim(), presets, pipeline.id) });
+  };
+  const importPreset = () => {
+    setImportError(undefined);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(importJson);
+    } catch {
+      setImportError('Not valid JSON.');
+      return;
+    }
+    const sanitized = sanitizeImportedPipeline(parsed);
+    if (!sanitized) {
+      setImportError('That JSON does not look like a deployment preset.');
+      return;
+    }
+    const p: PipelineDescriptor = {
+      ...sanitized,
+      id: `pl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: uniqueName(sanitized.name, presets),
+    };
+    savePresetList([...presets, p], p.id);
+    setImportJson('');
+  };
+  const copyPresetJson = () =>
+    vscode.postMessage({ type: MESSAGE_TYPES.COPY_DEPLOYMENT_PRESET, json: JSON.stringify(pipeline, null, 2) });
   const source = pipeline.source;
   const setSource = (patch: Partial<PipelineSource>) =>
     savePipeline({ ...pipeline, source: { ...pipeline.source, ...patch } });
@@ -161,7 +224,8 @@ const DeploymentSettings: React.FC = () => {
         return { ...s, actions };
       }),
     });
-  const resetPipeline = () => savePipeline({ name: 'Custom', source: { provider: 'none' }, stages: [] });
+  const resetPipeline = () =>
+    savePipeline({ id: pipeline.id, name: pipeline.name, source: { provider: 'none' }, stages: [] });
 
   const environments = pipeline.environments ?? [];
   const setEnvironments = (list: any[]) => savePipeline({ ...pipeline, environments: list });
@@ -686,6 +750,84 @@ const DeploymentSettings: React.FC = () => {
 
       {dep.isDeploymentEnabled && (
         <div className="settings-form">
+          <div className="dep-preset-row">
+            {renamingPreset ? (
+              <input
+                type="text"
+                autoFocus
+                defaultValue={pipeline.name}
+                onBlur={(e) => { renamePreset(e.target.value); setRenamingPreset(false); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                  if (e.key === 'Escape') setRenamingPreset(false);
+                }}
+                className="dep-preset-dropdown"
+              />
+            ) : (
+              <SearchableDropdown
+                value={activeId}
+                options={presets.map((p) => ({ value: p.id!, label: p.name }))}
+                onChange={(id) => savePresetList(presets, id)}
+                searchable={presets.length > 6}
+              />
+            )}
+            <button className="dep-icon-button" onClick={addPreset} data-tooltip="New preset" aria-label="New preset">+</button>
+            <button className="dep-icon-button" onClick={duplicatePreset} data-tooltip="Duplicate preset" aria-label="Duplicate preset">⧉</button>
+            <button className="dep-icon-button" onClick={() => setRenamingPreset(true)} data-tooltip="Rename preset" aria-label="Rename preset">✎</button>
+            <button
+              className="dep-icon-button dep-icon-danger"
+              onClick={deletePreset}
+              disabled={presets.length <= 1}
+              data-tooltip={presets.length <= 1 ? 'At least one preset is required' : 'Delete preset'}
+              aria-label="Delete preset"
+            >
+              🗑
+            </button>
+          </div>
+
+          <details className="dep-details">
+            <summary>Preset JSON</summary>
+            <div className="dep-details-body">
+              <div className="dep-tabs">
+                <button
+                  className={`dep-tab${presetTab === 'json' ? ' active' : ''}`}
+                  onClick={() => setPresetTab('json')}
+                >
+                  View / copy
+                </button>
+                <button
+                  className={`dep-tab${presetTab === 'import' ? ' active' : ''}`}
+                  onClick={() => setPresetTab('import')}
+                >
+                  Import
+                </button>
+              </div>
+
+              {presetTab === 'json' ? (
+                <>
+                  <p className="dep-inline-note dep-muted">
+                    Non-secret config only — no tokens or credentials are ever included. Safe to share with a teammate.
+                  </p>
+                  <textarea readOnly value={JSON.stringify(pipeline, null, 2)} style={{ width: '100%', minHeight: 140, fontFamily: 'monospace' }} />
+                  <button onClick={copyPresetJson} style={{ marginTop: 6 }}>Copy to clipboard</button>
+                </>
+              ) : (
+                <>
+                  <textarea
+                    value={importJson}
+                    onChange={(e) => setImportJson(e.target.value)}
+                    placeholder="Paste preset JSON here…"
+                    style={{ width: '100%', minHeight: 140, fontFamily: 'monospace' }}
+                  />
+                  {importError && <div className="dep-warn" style={{ fontSize: '0.78em', marginTop: 4 }}>{importError}</div>}
+                  <button onClick={importPreset} disabled={!importJson.trim()} style={{ marginTop: 6 }}>
+                    Import as new preset
+                  </button>
+                </>
+              )}
+            </div>
+          </details>
+
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
             <p className="dep-hint" style={{ flex: 1 }}>
               Configure your own pipeline below — no provider or org topology is hardwired. Write creds stay in VS Code only.
