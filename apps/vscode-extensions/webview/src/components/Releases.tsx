@@ -165,8 +165,16 @@ const ConfigPreview: React.FC<{ preview: PreparePreview }> = ({ preview }) => {
                   <span style={{ marginLeft: 6, color: '#e0a93b', fontSize: '0.85em' }}>🔒</span>
                 )}
               </span>
-              <span style={{ color: '#a0a0a0', fontFamily: 'monospace', wordBreak: 'break-all', textAlign: 'right' }}>
-                {v.sensitive ? '••••••' : v.value}
+              <span
+                style={{
+                  color: v.value ? '#a0a0a0' : '#e0a93b',
+                  fontFamily: 'monospace',
+                  fontStyle: v.value ? 'normal' : 'italic',
+                  wordBreak: 'break-all',
+                  textAlign: 'right',
+                }}
+              >
+                {v.sensitive ? '••••••' : v.value || `(no value for ${preview.environment})`}
               </span>
             </div>
           ))}
@@ -189,7 +197,11 @@ const ACTION_COLOR: Record<PlanAction, string> = {
  * de-emphasised), conflicts surfaced. Nothing is applied — the apply gate lands
  * in the next step.
  */
-const PlanReview: React.FC<{ state: PlanState }> = ({ state }) => {
+const PlanReview: React.FC<{
+  state: PlanState;
+  uncheckedKeys: Set<string>;
+  onToggle: (key: string) => void;
+}> = ({ state, uncheckedKeys, onToggle }) => {
   if (state.error) {
     return (
       <div className="status-message error" style={{ marginTop: 12, whiteSpace: 'pre-wrap' }}>
@@ -244,17 +256,29 @@ const PlanReview: React.FC<{ state: PlanState }> = ({ state }) => {
         </div>
       )}
 
-      {configVars.map((r, i) => (
+      {configVars.map((r, i) => {
+        const applicable = r.action === 'add' || r.action === 'update';
+        const checked = !uncheckedKeys.has(r.key);
+        return (
         <div
           key={`${r.key}-${i}`}
           style={{
             padding: '6px 0',
             borderBottom: '1px solid #23233a',
-            opacity: r.action === 'match' ? 0.55 : 1,
+            opacity: r.action === 'match' ? 0.55 : applicable && !checked ? 0.45 : 1,
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontFamily: 'monospace', fontSize: '0.82em', wordBreak: 'break-all' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'monospace', fontSize: '0.82em', wordBreak: 'break-all' }}>
+              {applicable && (
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onToggle(r.key)}
+                  title={checked ? 'Included in apply — uncheck to skip this variable' : 'Excluded from apply'}
+                  style={{ flexShrink: 0 }}
+                />
+              )}
               {r.key}
               {r.sensitive && <span style={{ marginLeft: 6, color: '#e0a93b' }}>🔒</span>}
             </span>
@@ -273,7 +297,7 @@ const PlanReview: React.FC<{ state: PlanState }> = ({ state }) => {
             <div style={{ fontSize: '0.78em', color: '#a0a0a0', fontFamily: 'monospace', marginTop: 2 }}>
               {r.sensitive
                 ? '•••••• → ••••••'
-                : `${r.opaque ? '(value hidden)' : r.current === null ? '(none)' : r.current} → ${r.desired}`}
+                : `${r.opaque ? '(value hidden)' : r.current === null ? '(none)' : r.current} → ${r.desired || '(empty)'}`}
             </div>
           )}
           {!!r.linkedEnvs && r.linkedEnvs > 1 && (
@@ -284,7 +308,8 @@ const PlanReview: React.FC<{ state: PlanState }> = ({ state }) => {
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
 
       {state.skipped && state.skipped.length > 0 && (
         <div style={{ marginTop: 12, fontSize: '0.8em', color: '#888' }}>
@@ -633,6 +658,11 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<PreparePreview | null>(null);
   const [plan, setPlan] = useState<PlanState | null>(null);
+  // Keys the user unchecked in the plan review — everything is checked (synced)
+  // by default; unchecking excludes that one var from apply. Reset whenever a
+  // fresh plan comes back so a re-plan starts from all-checked again.
+  const [uncheckedPlanKeys, setUncheckedPlanKeys] = useState<Set<string>>(new Set());
+  const [uncheckedMachEnvKeys, setUncheckedMachEnvKeys] = useState<Set<string>>(new Set());
   const [apply, setApply] = useState<ApplyState | null>(null);
   const [machPlan, setMachPlan] = useState<MachPlanState | null>(null);
   const [machApply, setMachApply] = useState<MachApplyState | null>(null);
@@ -656,6 +686,10 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const [overrideVersion, setOverrideVersion] = useState('');
   const [overridePageUrl, setOverridePageUrl] = useState('');
   const [overrideEnv, setOverrideEnv] = useState('stage');
+  // Whether the user has explicitly touched the Env dropdown — distinct from
+  // hasOverride (version/page URL), so switching just the env takes effect
+  // immediately instead of silently falling back to the resolved release's env.
+  const [envTouched, setEnvTouched] = useState(false);
   // Hotfix flow state.
   const [hotfixTickets, setHotfixTickets] = useState('');
   const [hotfixBase, setHotfixBase] = useState<Record<string, string>>({});
@@ -677,6 +711,10 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
             reason: message.reason,
             needsVersion: !!message.needsVersion,
           });
+          // Seed the editable version field from the resolved value so the
+          // displayed version is always correctable in place (the roster
+          // source can produce garbled/duplicated text).
+          setOverrideVersion(message.version || '');
           if (message.needsVersion) {
             setOverrideOpen(true);
             if (message.environment) setOverrideEnv(message.environment);
@@ -710,6 +748,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                 }
               : { loading: false, error: message.error || 'Failed to compute plan.' }
           );
+          setUncheckedPlanKeys(new Set());
           break;
         case MESSAGE_TYPES.APPLY_CONFIG_SYNC_RESPONSE:
           setApply(
@@ -773,6 +812,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                   needsSync: !!message.needsSync,
                 }
           );
+          setUncheckedMachEnvKeys(new Set());
           break;
         case MESSAGE_TYPES.APPLY_MACH_ENV_RESPONSE:
           setMachEnvApply(
@@ -879,7 +919,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
   const hasOverride = overrideVersion.trim().length > 0 || overridePageUrlTrimmed.length > 0;
   const effectiveVersion = hasOverride ? overrideVersion.trim() : release?.version;
   const effectivePageUrl = hasOverride ? overridePageUrlTrimmed : release?.pageUrl;
-  const effectiveEnv = hasOverride ? overrideEnv : release?.environment;
+  const effectiveEnv = hasOverride || envTouched ? overrideEnv : release?.environment;
   const canPrepare = !!release?.configured || hasOverride;
 
   const prepareConfigSync = () => {
@@ -1005,17 +1045,32 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
 
   const previewHasVercel = !!preview?.vars?.some((v) => v.target === 'vercel');
   const planData = plan?.plan;
-  const canApply =
-    !!planData &&
-    planData.summary.conflict === 0 &&
-    planData.summary.add + planData.summary.update > 0;
+  const checkedApplyKeys = (planData?.configVars || [])
+    .filter((r) => (r.action === 'add' || r.action === 'update') && !uncheckedPlanKeys.has(r.key))
+    .map((r) => r.key);
+  const canApply = !!planData && planData.summary.conflict === 0 && checkedApplyKeys.length > 0;
   const failedKeys = (apply?.results || []).filter((r) => r.status === 'failed').map((r) => r.key);
+  const toggleUncheckedPlanKey = (key: string) =>
+    setUncheckedPlanKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const machEnvData = machEnvPlan?.plan;
+  const checkedMachEnvKeys = (machEnvData?.configVars || [])
+    .filter((r) => (r.action === 'add' || r.action === 'update') && !uncheckedMachEnvKeys.has(r.key))
+    .map((r) => r.key);
   const canApplyMachEnv =
-    !!machEnvData &&
-    machEnvData.summary.conflict === 0 &&
-    machEnvData.summary.add + machEnvData.summary.update > 0;
+    !!machEnvData && machEnvData.summary.conflict === 0 && checkedMachEnvKeys.length > 0;
+  const toggleUncheckedMachEnvKey = (key: string) =>
+    setUncheckedMachEnvKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const machEnvFailedKeys = (machEnvApply?.results || [])
     .filter((r) => r.status === 'failed')
     .map((r) => r.key);
@@ -1086,9 +1141,19 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
           ) : release?.configured ? (
             <div style={{ border: '1px solid #2a2a3e', borderRadius: 8, padding: '12px 14px' }}>
               <div style={{ fontSize: '0.8em', color: '#888' }}>{release.date}</div>
-              <div style={{ fontSize: '1.05em', fontWeight: 500, margin: '2px 0 6px' }}>
-                {release.version}
-              </div>
+              <input
+                type="text"
+                value={overrideVersion}
+                onChange={(e) => setOverrideVersion(e.target.value)}
+                title="Resolved from the release roster — edit if it looks wrong"
+                style={{
+                  fontSize: '1.05em',
+                  fontWeight: 500,
+                  margin: '2px 0 6px',
+                  width: '100%',
+                  border: '1px solid var(--vscode-input-border, #3a3a52)',
+                }}
+              />
               {release.environment && (
                 <span
                   style={{
@@ -1200,7 +1265,10 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                         { value: 'stage', label: 'stage' },
                         { value: 'prod', label: 'prod' },
                       ]}
-                      onChange={setOverrideEnv}
+                      onChange={(v) => {
+                        setOverrideEnv(v);
+                        setEnvTouched(true);
+                      }}
                     />
                   </div>
                 </div>
@@ -1246,11 +1314,13 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                     : 'Plan against live Vercel →'}
               </button>
 
-          {plan && !plan.loading && <PlanReview state={plan} />}
+          {plan && !plan.loading && (
+            <PlanReview state={plan} uncheckedKeys={uncheckedPlanKeys} onToggle={toggleUncheckedPlanKey} />
+          )}
 
           {plan && !plan.loading && !plan.error && (
             <button
-              onClick={() => applyConfigSync()}
+              onClick={() => applyConfigSync(checkedApplyKeys)}
               disabled={!canApply || !!apply?.loading}
               title={canApply ? undefined : 'Nothing to apply, or unresolved conflicts'}
               style={pipeBtn(PIPE.vercel)}
@@ -1259,9 +1329,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                 ? '⏳ Applying…'
                 : apply?.summary
                   ? '✓ Applied — re-apply'
-                  : `Approve & apply (${effectiveEnv || 'stage'}) — ${
-                      (planData?.summary.add || 0) + (planData?.summary.update || 0)
-                    } change(s)`}
+                  : `Approve & apply (${effectiveEnv || 'stage'}) — ${checkedApplyKeys.length} change(s)`}
             </button>
           )}
 
@@ -1332,7 +1400,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
             </PipelineCard>
           )}
 
-          {canPrepare && (
+          {preview && !preview.loading && !preview.error && (
             <>
             <PipelineCard
               accent={PIPE.machComp}
@@ -1507,7 +1575,11 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                 )}
 
                 {machEnvPlan && !machEnvPlan.loading && !machEnvPlan.needsSync && (
-                  <PlanReview state={machEnvPlan} />
+                  <PlanReview
+                    state={machEnvPlan}
+                    uncheckedKeys={uncheckedMachEnvKeys}
+                    onToggle={toggleUncheckedMachEnvKey}
+                  />
                 )}
 
                 {machEnvPlan?.pr && !machEnvPlan.error && (
@@ -1521,14 +1593,14 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
 
                 {machEnvData && !machEnvPlan?.loading && (
                   <button
-                    onClick={() => applyMachEnv()}
+                    onClick={() => applyMachEnv(checkedMachEnvKeys)}
                     disabled={!canApplyMachEnv || !!machEnvApply?.loading}
                     title={canApplyMachEnv ? undefined : 'Nothing to apply, or unresolved conflicts'}
                     style={pipeBtn(PIPE.machEnv)}
                   >
                     {machEnvApply?.loading
                       ? '⏳ Committing to PR…'
-                      : `Commit env vars to PR — ${machEnvData.summary.add + machEnvData.summary.update} change(s)`}
+                      : `Commit env vars to PR — ${checkedMachEnvKeys.length} change(s)`}
                   </button>
                 )}
 

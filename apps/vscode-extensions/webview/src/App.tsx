@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import './App.css';
 import ChatMessage from './components/ChatMessage';
+import AgentWriteCard from './components/AgentWriteCard';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
+import Onboarding from './components/onboarding/Onboarding';
 import { VSCodeAPI } from './vscode';
 import {
   setModelState,
@@ -12,6 +14,7 @@ import {
   useModelProviders,
   useSelectedModelProvider,
   useSettingsStore,
+  useUiStore,
 } from './store';
 import { modelDefaultConfig } from './store/modelStore';
 import { MESSAGE_TYPES, STORAGE_KEYS } from './constants';
@@ -43,7 +46,6 @@ const App: React.FC = () => {
     showTips,
     currentSessionId,
     historyList,
-    showHistory,
     addMessage,
     appendToLastMessage,
     clearMessages,
@@ -53,24 +55,27 @@ const App: React.FC = () => {
     setShowTips,
     setCurrentSessionId,
     setHistoryList,
-    setShowHistory,
-    showReleases,
-    setShowReleases,
     setMessages,
     contextSelection,
     setContextSelection,
     statusText,
     setStatusText,
+    setWriteReviewDecision,
+    agentSteps,
+    addAgentStep,
   } = useChatStore();
 
   const {
     config,
-    showSettings,
-    setShowSettings,
     setConfig: setSettingsConfig,
   } = useSettingsStore();
 
+  const { activeView, setActiveView, settingsHydrated, setSettingsHydrated } = useUiStore();
+
+  const mode = config.mode;
   const isConfluenceConnected = config.confluence?.isAuthenticated || false;
+  const hasRemoteChatKey =
+    !!config.embedding?.apiKeys?.some((k) => k.trim()) || !!config.embedding?.apiKey?.trim();
 
   const modelProviders = useModelProviders();
 
@@ -86,7 +91,7 @@ const App: React.FC = () => {
   >([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   // When true, discard incoming response chunks that belong to a previous request.
   // useRef so it's always current inside the stale useEffect message-handler closure.
   const ignoringStreamRef = useRef(false);
@@ -206,6 +211,26 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.RETRIEVAL_STATUS:
           setStatusText(message.text || '');
           break;
+        case MESSAGE_TYPES.AGENT_STEP:
+          if (message.text) addAgentStep(message.text);
+          break;
+        case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
+          // A proposed agent write — render the diff card. The agent run is
+          // still alive host-side, parked on this decision, so keep isLoading.
+          addMessage({
+            content: '',
+            isUser: false,
+            writeReview: {
+              id: message.id,
+              kind: message.kind,
+              path: message.path,
+              summary: message.summary,
+              diff: message.diff,
+              command: message.command,
+            },
+          });
+          setStatusText('Waiting for your review…');
+          break;
         case MESSAGE_TYPES.ERROR_CHAT: {
           const rawError = message.message || 'An unknown error occurred.';
           let userFacingError: string;
@@ -241,26 +266,20 @@ const App: React.FC = () => {
           break;
         }
         case MESSAGE_TYPES.SHOW_SETTINGS:
-          setShowSettings(true);
-          setShowHistory(false);
-          setShowReleases(false);
+          setActiveView('settings');
           break;
         case MESSAGE_TYPES.NEW_CHAT:
           handleNewChat();
           break;
         case MESSAGE_TYPES.SHOW_HISTORY:
-          setShowHistory(true);
-          setShowSettings(false);
-          setShowReleases(false);
+          setActiveView('history');
           // Refresh history list when opened
           vscode.postMessage({
             type: MESSAGE_TYPES.GET_CHAT_HISTORY_LIST,
           });
           break;
         case MESSAGE_TYPES.SHOW_RELEASES:
-          setShowReleases(true);
-          setShowSettings(false);
-          setShowHistory(false);
+          setActiveView('releases');
           break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
@@ -313,6 +332,10 @@ const App: React.FC = () => {
               ado: { ...restoredConfig.ado, ...transientAdoDefaults },
               codebase: { ...restoredConfig.codebase, ...transientCodebaseDefaults },
             });
+            setSettingsHydrated(true);
+            if (!restoredConfig.onboardingCompleted) {
+              setActiveView('onboarding');
+            }
           }
           if (message.key === STORAGE_KEYS.MODEL) {
             if (message.state && message.state.modelProviders) {
@@ -341,7 +364,7 @@ const App: React.FC = () => {
             setMessages(message.messages);
             setCurrentSessionId(message.sessionId);
             setShowTips(false);
-            setShowHistory(false);
+            setActiveView('chat');
           }
           break;
       }
@@ -421,8 +444,7 @@ const App: React.FC = () => {
     setInputValue('');
     setCurrentSessionId(null);
     setShowTips(true);
-    setShowHistory(false);
-    hideSettings();
+    setActiveView('chat');
   };
 
   const handleSendMessage = () => {
@@ -430,11 +452,18 @@ const App: React.FC = () => {
     ignoringStreamRef.current = false; // Accept chunks for this new request
     resetStreamBuffer(); // Discard any leftover buffer from a prior stream
 
-    // Check if model is currently downloading
-    if (!selectedModelProvider?.selectedModel) {
-      // Show notification to wait for model download to complete
+    // Local mode: a model must be selected. Remote mode has no model picker —
+    // it just needs a Gemini key (the host routes the actual model by task).
+    if (mode === 'local' && !selectedModelProvider?.selectedModel) {
       addMessage({
         content: 'Please select the model from settings to use the model',
+        isUser: false,
+      });
+      return;
+    }
+    if (mode === 'remote' && !hasRemoteChatKey) {
+      addMessage({
+        content: 'Add your Gemini API key in Settings to start chatting.',
         isUser: false,
       });
       return;
@@ -478,24 +507,37 @@ const App: React.FC = () => {
     setIsStreaming(false);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Shift+Enter inserts a newline (default textarea behavior); plain Enter
+    // sends. Ignore Enter while an IME composition is in progress so picking
+    // a candidate doesn't submit early.
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
       handleSendMessage();
     }
   };
 
-  // Add a handler for hiding settings
-  const hideSettings = () => {
-    setShowSettings(false);
+  // Auto-grow the composer up to ~7 lines, then let it scroll internally.
+  const autosizeInput = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
   };
 
   const handleStarterPrompt = (promptText: string) => {
     setInputValue(promptText);
     // Trigger send on next tick so inputValue is set
     setTimeout(() => {
-      if (!selectedModelProvider?.selectedModel) {
+      if (mode === 'local' && !selectedModelProvider?.selectedModel) {
         addMessage({
           content: 'Please select the model from settings to use the model',
+          isUser: false,
+        });
+        return;
+      }
+      if (mode === 'remote' && !hasRemoteChatKey) {
+        addMessage({
+          content: 'Add your Gemini API key in Settings to start chatting.',
           isUser: false,
         });
         return;
@@ -565,6 +607,17 @@ const App: React.FC = () => {
     return date.toLocaleDateString();
   };
 
+  // Wait for the persisted settings blob before rendering anything — otherwise
+  // a returning user would see a flash of onboarding for the instant before
+  // `onboardingCompleted` loads in.
+  if (!settingsHydrated) {
+    return <div className='app-container app-loading' />;
+  }
+
+  if (activeView === 'onboarding') {
+    return <Onboarding onFinish={() => setActiveView('chat')} />;
+  }
+
   return (
     <div className='app-container'>
       <div className='chat-container'>
@@ -576,7 +629,7 @@ const App: React.FC = () => {
                   <h2>Recent Chats</h2>
                 </div>
                 <button
-                  onClick={() => setShowHistory(true)}
+                  onClick={() => setActiveView('history')}
                   className='see-all-btn'
                   title='View all history'
                 >
@@ -627,8 +680,9 @@ const App: React.FC = () => {
                 <div className='privacy-message'>
                   <span className='privacy-icon'>🛡️</span>
                   <span>
-                    Your data stays secure! Everything runs locally on your
-                    machine, ensuring complete privacy and security.
+                    {mode === 'remote'
+                      ? "You're in Remote mode: chat models run in the cloud, and your search index lives in your own Qdrant cluster."
+                      : "You're in Local mode: everything — chat model, embeddings, and your search index — runs on this machine."}
                   </span>
                 </div>
               </div>
@@ -637,13 +691,10 @@ const App: React.FC = () => {
                 <div className='tips-list'>
                   <div
                     className='tip-item tip-item--interactive'
-                    onClick={() => {
-                      setShowSettings(true);
-                      setShowHistory(false);
-                    }}
+                    onClick={() => setActiveView('settings')}
                     role='button'
                     tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { setShowSettings(true); setShowHistory(false); } }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setActiveView('settings'); }}
                   >
                     <span className='tip-icon'>🔗</span>
                     <span>
@@ -680,18 +731,41 @@ const App: React.FC = () => {
           )
         ) : (
           <div className='messages-container'>
-            {messages.map((message, index) => (
-              <ChatMessage
-                key={index}
-                content={message.content}
-                isUser={message.isUser}
-                isError={message.isError}
-              />
-            ))}
+            {messages.map((message, index) =>
+              message.writeReview ? (
+                <AgentWriteCard
+                  key={message.writeReview.id}
+                  review={message.writeReview}
+                  onDecided={setWriteReviewDecision}
+                />
+              ) : (
+                <ChatMessage
+                  key={index}
+                  content={message.content}
+                  isUser={message.isUser}
+                  isError={message.isError}
+                  agentSteps={message.agentSteps}
+                />
+              )
+            )}
             {isLoading && (
               <div className='loading-indicator'>
-                <span className='loading-pulse' />
-                <span>{statusText || 'Thinking...'}</span>
+                {agentSteps.length > 0 && (
+                  <details className='agent-steps'>
+                    <summary>
+                      Exploring workspace — {agentSteps.length} step{agentSteps.length === 1 ? '' : 's'}
+                    </summary>
+                    <ul className='agent-steps-live'>
+                      {agentSteps.map((step, i) => (
+                        <li key={i}>{step}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                <div className='loading-indicator-row'>
+                  <span className='loading-pulse' />
+                  <span>{statusText || 'Thinking...'}</span>
+                </div>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -699,20 +773,36 @@ const App: React.FC = () => {
         )}
         <div className='input-container'>
           <div className='input-wrapper'>
-            <input
+            <textarea
               ref={inputRef}
-              type='text'
+              rows={1}
               value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
+              onChange={(e) => {
+                setInputValue(e.target.value);
+                autosizeInput(e.target);
+              }}
               onKeyDown={handleKeyDown}
               placeholder={
-                selectedModelProvider?.selectedModel
-                  ? 'Ask WorkspaceGPT...'
-                  : 'Please configure model to use '
+                mode === 'remote'
+                  ? hasRemoteChatKey
+                    ? 'Ask WorkspaceGPT...'
+                    : 'Add your Gemini key in Settings to start chatting...'
+                  : selectedModelProvider?.selectedModel
+                    ? 'Ask WorkspaceGPT...'
+                    : 'Please configure a model in Settings to start chatting...'
               }
             />
             <div className='input-controls'>
               <div className='input-selectors'>
+                <button
+                  type='button'
+                  className='mode-chip'
+                  onClick={() => setActiveView('settings')}
+                  title={`${mode === 'remote' ? 'Remote' : 'Local'} mode — click to change`}
+                >
+                  <span className={`mode-chip-dot mode-chip-dot--${mode}`} />
+                  {mode === 'remote' ? 'Remote' : 'Local'}
+                </button>
                 <div className='context-selector-bottom'>
                   <select
                     value={contextSelection}
@@ -721,37 +811,39 @@ const App: React.FC = () => {
                     <option value='Auto'>Context: Auto ✨</option>
                     <option value='Confluence'>Confluence</option>
                     <option value='Azure DevOps'>Azure DevOps</option>
+                    <option value='Codebase'>Codebase</option>
                   </select>
                 </div>
-                <div className='model-selector-bottom'>
-                  <select
-                    value={selectedModelProvider?.provider}
-                    onChange={(e) => {
-                      if (e.target.value === 'selectModel') {
-                        setShowSettings(true);
-                        return;
-                      }
-                      const providerConfig = activeModels.find(
-                        (model) => model.provider === e.target.value
-                      );
-                      handleModelChange(
-                        providerConfig?.model!,
-                        providerConfig?.provider!
-                      );
-                    }}
-                  >
-                    {activeModels?.map((model) => (
-                      <option key={model.provider} value={model.provider}>
-                        {model.provider} ({model.model})
-                      </option>
-                    ))}
-                    {!activeModels?.length && (
-                      <option value='none'>Select Model</option>
-                    )}
-                    <hr />
-                    <option value='selectModel'>Edit...</option>
-                  </select>
-                </div>
+                {mode === 'local' && (
+                  <div className='model-selector-bottom'>
+                    <select
+                      value={selectedModelProvider?.provider}
+                      onChange={(e) => {
+                        if (e.target.value === 'selectModel') {
+                          setActiveView('settings');
+                          return;
+                        }
+                        const providerConfig = activeModels.find(
+                          (model) => model.provider === e.target.value
+                        );
+                        handleModelChange(
+                          providerConfig?.model!,
+                          providerConfig?.provider!
+                        );
+                      }}
+                    >
+                      {activeModels?.map((model) => (
+                        <option key={model.provider} value={model.provider}>
+                          {model.provider} ({model.model})
+                        </option>
+                      ))}
+                      {!activeModels?.length && (
+                        <option value='none'>Select Model</option>
+                      )}
+                      <option value='selectModel'>Edit...</option>
+                    </select>
+                  </div>
+                )}
               </div>
               {isLoading || isStreaming ? (
                 <button
@@ -780,15 +872,15 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
-        <SettingsButton isVisible={showSettings} onBack={hideSettings} />
-        <Releases isVisible={showReleases} onBack={() => setShowReleases(false)} />
+        <SettingsButton isVisible={activeView === 'settings'} onBack={() => setActiveView('chat')} />
+        <Releases isVisible={activeView === 'releases'} onBack={() => setActiveView('chat')} />
         <ChatHistorySidebar
-          isVisible={showHistory}
+          isVisible={activeView === 'history'}
           historyList={historyList}
           currentSessionId={currentSessionId}
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
-          onClose={() => setShowHistory(false)}
+          onClose={() => setActiveView('chat')}
           onNewChat={handleNewChat}
         />
       </div>

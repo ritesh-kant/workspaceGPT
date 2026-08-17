@@ -1,0 +1,6 @@
+# Derived model for the edit-format spike: same weights, 24k context.
+# Ollama's default num_ctx (4096) silently truncates our large-file prompts,
+# which would corrupt the eval. Create with:
+#   ollama create qwen2.5-coder:14b-ctx24k -f Modelfile.qwen-ctx24k
+FROM qwen2.5-coder:14b
+PARAMETER num_ctx 24576

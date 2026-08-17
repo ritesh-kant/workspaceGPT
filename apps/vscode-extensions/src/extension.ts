@@ -5,6 +5,8 @@ import { AnalyticsService } from './services/analyticsService';
 import { ConfluenceSyncScheduler } from './services/confluence/confluenceSyncScheduler';
 import { AdoSyncScheduler } from './services/ado/adoSyncScheduler';
 import { McpUiManager } from './utils/mcpUiManager';
+import { syncContextKeys } from './utils/syncContextKeys';
+import { migrateModeSettings } from './utils/migrateModeSettings';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
@@ -23,6 +25,15 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize and start ADO sync scheduler
   adoSyncScheduler = new AdoSyncScheduler(context);
   adoSyncScheduler.start();
+
+  // One-time upgrade: stamp `mode` onto pre-existing settings blobs so
+  // upgrading installs infer local/remote from their current config instead
+  // of being sent through onboarding.
+  await migrateModeSettings(context);
+
+  // Reflect persisted toggles into `when`-clause context keys so title-bar
+  // icons (Releases, Share to Chrome) hide themselves declaratively.
+  await syncContextKeys(context);
 
   // Search workers are warmed by the chat webview itself (WebviewMessageHandler → ChatService.prewarm),
   // so the warmup lands on the exact service instances the chat queries.
@@ -155,6 +166,46 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(releasesDisposable);
+
+  // Revert the workspace to an agent checkpoint (shadow-git snapshots taken
+  // before every approved agent write).
+  let revertCheckpointDisposable = vscode.commands.registerCommand(
+    'workspacegpt.revertAgentCheckpoint',
+    async () => {
+      analyticsService.trackEvent('command_revert_agent_checkpoint_triggered');
+      const root = vscode.workspace.workspaceFolders?.[0];
+      if (!root) {
+        vscode.window.showWarningMessage('WorkspaceGPT: open a workspace folder first.');
+        return;
+      }
+      const { checkpointServiceFor } = await import('./services/agent/checkpointService');
+      const service = checkpointServiceFor(context.globalStorageUri.fsPath, root.uri.fsPath);
+      const checkpoints = await service.list(30);
+      if (!checkpoints.length) {
+        vscode.window.showInformationMessage('WorkspaceGPT: no agent checkpoints yet — they are created when you approve agent edits.');
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        checkpoints.map((c) => ({
+          label: c.label,
+          description: new Date(c.timestamp).toLocaleString(),
+          detail: c.sha.slice(0, 10),
+          sha: c.sha,
+        })),
+        { placeHolder: 'Restore the workspace to the state saved at…' }
+      );
+      if (!picked) return;
+      const confirm = await vscode.window.showWarningMessage(
+        `Revert all agent-touched files to "${picked.label}"? Files you changed yourself since then (and never checkpointed) are left alone.`,
+        { modal: true },
+        'Revert'
+      );
+      if (confirm !== 'Revert') return;
+      await service.revertTo(picked.sha);
+      vscode.window.showInformationMessage(`WorkspaceGPT: workspace restored to "${picked.label}".`);
+    }
+  );
+  context.subscriptions.push(revertCheckpointDisposable);
 
   // Register the clear data command
   let clearDataDisposable = vscode.commands.registerCommand(

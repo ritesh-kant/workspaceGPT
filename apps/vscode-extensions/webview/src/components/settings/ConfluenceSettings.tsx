@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect } from 'react';
 import { useSettingsStore } from '../../store';
 import { VSCodeAPI } from '../../vscode';
 import {
@@ -8,6 +8,7 @@ import {
 } from './utils';
 import { ConfluenceConfig } from '../../types';
 import { MESSAGE_TYPES, SYNC_INTERVAL_MS } from '../../constants';
+import SearchableDropdown from './SearchableDropdown';
 
 const ConfluenceSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
@@ -197,8 +198,6 @@ const ConfluenceSettings: React.FC = () => {
 
   const handleSpaceChange = (key: string) => {
     handleInputChange('confluence', 'spaceKey', key);
-    setSearchQuery('');
-    setIsOpen(false);
   };
 
   const checkConnection = () => {
@@ -253,27 +252,11 @@ const ConfluenceSettings: React.FC = () => {
   const isAuthenticated = confluenceConfig?.isAuthenticated;
   const hasSpaceSelected = !!confluenceConfig?.spaceKey;
 
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const filteredSpaces = confluenceConfig?.availableSpaces?.filter(space =>
-    space.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    space.key.toLowerCase().includes(searchQuery.toLowerCase())
-  ) || [];
-
-  const selectedSpace = confluenceConfig?.availableSpaces?.find(s => s.key === confluenceConfig?.spaceKey);
+  const spaceOptions = (confluenceConfig?.availableSpaces ?? []).map((space) => ({
+    value: space.key,
+    label: space.name,
+    subtitle: `${space.key} - ${space.type}`,
+  }));
 
   return (
     <div className='settings-section'>
@@ -335,57 +318,19 @@ const ConfluenceSettings: React.FC = () => {
                 </button>
               </div>
 
-              {/* Space Selection (Searchable Dropdown) */}
-              <div className='form-group' ref={dropdownRef}>
+              {/* Space Selection */}
+              <div className='form-group'>
                 <label htmlFor='confluence-space'>Select Space</label>
-                <div className="searchable-dropdown-container">
-                  <div
-                    onClick={() => setIsOpen(!isOpen)}
-                    className="searchable-dropdown-trigger"
-                  >
-                    <span className="trigger-text">
-                      {selectedSpace ? `${selectedSpace.name} (${selectedSpace.key})` : '-- Select a space --'}
-                    </span>
-                    <span className="trigger-arrow">{isOpen ? '▲' : '▼'}</span>
-                  </div>
-
-                  {isOpen && (
-                    <div className="searchable-dropdown-menu">
-                      <input
-                        type='text'
-                        placeholder='Search spaces...'
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        autoFocus
-                        className="searchable-dropdown-input"
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <ul className="searchable-dropdown-list">
-                        <li
-                          onClick={() => handleSpaceChange('')}
-                          className="searchable-dropdown-item clickable"
-                        >
-                          <span className="item-subtitle">-- Clear selection --</span>
-                        </li>
-                        {filteredSpaces.map((space) => (
-                          <li
-                            key={space.key}
-                            onClick={() => handleSpaceChange(space.key)}
-                            className={`searchable-dropdown-item ${space.key === confluenceConfig.spaceKey ? 'selected' : ''}`}
-                          >
-                            <div className="item-title">{space.name}</div>
-                            <div className="item-subtitle">{space.key} - {space.type}</div>
-                          </li>
-                        ))}
-                        {filteredSpaces.length === 0 && (
-                          <li className="searchable-dropdown-empty">
-                            No spaces found...
-                          </li>
-                        )}
-                      </ul>
-                    </div>
-                  )}
-                </div>
+                <SearchableDropdown
+                  value={confluenceConfig?.spaceKey ?? ''}
+                  options={spaceOptions}
+                  onChange={handleSpaceChange}
+                  placeholder='-- Select a space --'
+                  searchPlaceholder='Search spaces...'
+                  clearable
+                  clearLabel='-- Clear selection --'
+                  emptyLabel='No spaces found...'
+                />
               </div>
 
               {/* Action Buttons */}

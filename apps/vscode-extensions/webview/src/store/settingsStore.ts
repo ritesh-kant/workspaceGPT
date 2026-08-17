@@ -1,9 +1,20 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
+import { WorkspaceMode } from '../constants';
 
 
 export interface SettingsConfig {
+  /**
+   * The single local/remote switch — see root `constants.ts` for the full
+   * contract. Drives which settings sections render and which model the host
+   * uses for inference; embedding/vectorStore provider fields below are
+   * still stored here (keys, URLs) but their `provider`/`location`
+   * discriminators are derived from `mode` on the host, not read from here.
+   */
+  mode: WorkspaceMode;
+  /** Set once onboarding finishes (or is skipped past); gates the first-run flow. */
+  onboardingCompleted: boolean;
   confluence: ConfluenceConfig;
   codebase: CodebaseConfig;
   ado: AdoConfig;
@@ -13,6 +24,8 @@ export interface SettingsConfig {
 }
 
 export const settingsDefaultConfig: SettingsConfig = {
+  mode: 'local',
+  onboardingCompleted: false,
   confluence: {
     isConfluenceEnabled: false,
     isAuthenticated: false,
@@ -107,20 +120,27 @@ export const settingsDefaultConfig: SettingsConfig = {
   },
 };
 
+/** The object-valued sections of SettingsConfig — excludes the config-level
+ *  scalars (`mode`, `onboardingCompleted`), which have their own dedicated
+ *  setters below since `updateConfig`/`batchUpdateConfig` assume a section is
+ *  spreadable. */
+type SettingsSectionKey = Exclude<keyof SettingsConfig, 'mode' | 'onboardingCompleted'>;
+
 interface SettingsState {
   config: SettingsConfig;
-  showSettings: boolean;
   setConfig: (config: SettingsConfig) => void;
-  updateConfig: <T extends keyof SettingsConfig, K extends keyof SettingsConfig[T]>(
+  updateConfig: <T extends SettingsSectionKey, K extends keyof SettingsConfig[T]>(
     section: T,
     field: K,
     value: SettingsConfig[T][K]
   ) => void;
-  setShowSettings: (show: boolean) => void;
-  batchUpdateConfig: <T extends keyof SettingsConfig>(
+  batchUpdateConfig: <T extends SettingsSectionKey>(
     section: T,
     updates: Partial<SettingsConfig[T]>
   ) => void;
+  /** Config-level scalars (not nested under a section, so `updateConfig` can't express them). */
+  setMode: (mode: WorkspaceMode) => void;
+  setOnboardingCompleted: (onboardingCompleted: boolean) => void;
   resetStore: () => void;
 }
 
@@ -166,7 +186,6 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       config: settingsDefaultConfig,
-      showSettings: false,
       setConfig: (config) =>
         set({ config: { ...settingsDefaultConfig, ...config } }),
       updateConfig: (section, field, value) => {
@@ -182,7 +201,6 @@ export const useSettingsStore = create<SettingsState>()(
           return { config: newConfig };
         });
       },
-      setShowSettings: (showSettings) => set({ showSettings }),
       batchUpdateConfig: (section, updates) => {
         set((state) => {
           const newConfig = { ...state.config };
@@ -193,13 +211,16 @@ export const useSettingsStore = create<SettingsState>()(
           return { config: newConfig };
         });
       },
+      setMode: (mode) => set((state) => ({ config: { ...state.config, mode } })),
+      setOnboardingCompleted: (onboardingCompleted) =>
+        set((state) => ({ config: { ...state.config, onboardingCompleted } })),
       resetStore: () => {
         const vscode = VSCodeAPI();
         vscode.setState({});
         vscode.postMessage({
           type: MESSAGE_TYPES.CLEAR_GLOBAL_STATE,
         });
-        set({ config: settingsDefaultConfig, showSettings: false });
+        set({ config: settingsDefaultConfig });
         vscode.postMessage({
           type: MESSAGE_TYPES.GET_WORKSPACE_PATH,
         });

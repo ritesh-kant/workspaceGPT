@@ -13,6 +13,15 @@ export const MESSAGE_TYPES = {
   STOP_MESSAGE: 'stop-message',
   // Retrieval pipeline status (shown to user while loading)
   RETRIEVAL_STATUS: 'retrieval-status',
+  // One completed agent exploration step — accumulated by the webview and
+  // persisted on the answer, unlike the transient RETRIEVAL_STATUS label.
+  AGENT_STEP: 'agent-step',
+
+  // Agent write tools: host → webview review card, webview → host decision.
+  // The agent loop BLOCKS on the decision (worker awaits tool_response), so
+  // every write is human-approved before it touches the workspace.
+  AGENT_WRITE_REVIEW: 'agent-write-review',
+  AGENT_WRITE_DECISION: 'agent-write-decision',
 
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',
@@ -262,6 +271,36 @@ export const EXTENSION = {
   COMMAND_SHARE_TO_CHROME: 'workspacegpt.shareToChrome',
   COMMAND_RELEASES: 'workspacegpt.releases',
   VIEW_CONTAINER: 'workspacegpt-sidebar',
+  CONTEXT_DEPLOYMENT_ENABLED: 'workspacegpt.deploymentEnabled',
+  CONTEXT_REMOTE_MODE: 'workspacegpt.remoteMode',
+};
+
+/**
+ * Workspace mode — the single switch that decides where embeddings, the vector
+ * index, and (in `remote`) chat inference live. `local`: bring-your-own chat
+ * model (incl. Ollama), bundled local embeddings, file-based vector index,
+ * Share-to-Chrome hidden. `remote`: managed Gemini embeddings + Qdrant cloud,
+ * no model picker (inference is routed server-side, see {@link REMOTE_TASK_MODELS}),
+ * Share-to-Chrome enabled.
+ */
+export type WorkspaceMode = 'local' | 'remote';
+
+/** Inference task kinds routed independently in remote mode. */
+export type LlmTask = 'chat' | 'codegen' | 'classification' | 'title';
+
+/**
+ * Task → model routing table for remote-mode inference. Not user-facing — the
+ * owner edits this in code to move a task to a different model/provider
+ * without any UI change. Provider names must match a `MODEL_PROVIDER` entry in
+ * {@link MODEL_PROVIDERS} so the base URL resolves the same way local mode does.
+ */
+export const REMOTE_TASK_MODELS: Record<LlmTask, { provider: string; model: string }> = {
+  chat: { provider: 'Gemini', model: 'models/gemini-3.7-flash' },
+  // No stable Gemini 3.x Pro exists (only gemini-3.1-pro-preview); 3.7-flash is
+  // Google's recommended GA model for coding/agentic workloads.
+  codegen: { provider: 'Gemini', model: 'models/gemini-3.7-flash' },
+  classification: { provider: 'Gemini', model: 'models/gemini-3.5-flash-lite' },
+  title: { provider: 'Gemini', model: 'models/gemini-3.5-flash-lite' },
 };
 
 // Model Constants

@@ -9,4 +9,5 @@ export type {
   PipelineStage,
   PipelineDescriptor,
   PipelineHotfix,
+  WorkspaceMode,
 } from '../../constants';

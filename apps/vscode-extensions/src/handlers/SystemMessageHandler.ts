@@ -4,6 +4,7 @@ import { clearWorkspaceGPTData } from 'src/utils/clearData';
 import { AnalyticsService } from '../services/analyticsService';
 import { installMcpServer } from '../utils/mcpInstaller';
 import { isMcpInstalled } from '../utils/mcpStatusChecker';
+import { syncContextKeys } from '../utils/syncContextKeys';
 
 export class SystemMessageHandler {
   constructor(
@@ -119,6 +120,9 @@ export class SystemMessageHandler {
 
   private async updateGlobalState(data: any): Promise<void> {
     await this.context.globalState.update(data.key, data.state);
+    if (data.key === STORAGE_KEYS.SETTINGS) {
+      await syncContextKeys(this.context);
+    }
   }
 
   private async getGlobalState(data: any): Promise<void> {

@@ -18,6 +18,14 @@ const CONFLUENCE_KEYWORDS = [
   'setup', 'install', 'deploy', 'deployment', 'release notes', 'changelog',
 ];
 
+const CODEBASE_KEYWORDS = [
+  'function', 'class', 'method', 'variable', 'implementation', 'implement',
+  'repo', 'repository', 'codebase', 'source code', 'file', 'files',
+  'where is', 'defined', 'definition', 'how does', 'code', 'refactor',
+  'bug in', 'import', 'export', 'component', 'module', 'interface', 'type',
+  '.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.java', '.rs', '.json',
+];
+
 // ── Intent detection ───────────────────────────────────────────────────
 
 const INTENT_PATTERNS: Array<{ intent: QueryIntent; pattern: RegExp }> = [
@@ -70,32 +78,45 @@ function detectSources(
   if (intent === 'lookup' && /\b\d{5,}\b|\b[A-Z]{2,10}-\d+\b/.test(query)) {
     const adoAvailable = availableSources.includes('ADO');
     return {
-      sources: adoAvailable ? ['ADO'] : availableSources,
+      sources: adoAvailable ? ['ADO'] : availableSources.filter((s) => s !== 'CODEBASE'),
       confidence: adoAvailable ? 'high' : 'low',
     };
   }
 
   const lower = query.toLowerCase();
 
+  // Codebase is mutually exclusive with Confluence/ADO for a given turn — if
+  // the query looks code-related and codebase tools are available, route
+  // there and skip the doc/ticket keyword checks entirely.
+  const hasCodebaseKeyword = CODEBASE_KEYWORDS.some((kw) => lower.includes(kw));
+  if (hasCodebaseKeyword && availableSources.includes('CODEBASE')) {
+    return { sources: ['CODEBASE'], confidence: 'high' };
+  }
+
   const hasAdoKeyword = ADO_KEYWORDS.some((kw) => lower.includes(kw));
   const hasConfluenceKeyword = CONFLUENCE_KEYWORDS.some((kw) => lower.includes(kw));
 
+  // Codebase is opt-in only via an explicit keyword match above — none of the
+  // doc/ticket fallback paths below should silently pull it in, since that
+  // would let chatService's exclusivity rule hijack every ambiguous query.
+  const nonCodebaseSources = availableSources.filter((s) => s !== 'CODEBASE');
+
   if (hasAdoKeyword && !hasConfluenceKeyword) {
-    const sources = availableSources.filter((s): s is DataSource => s === 'ADO');
-    return { sources: sources.length ? sources : availableSources, confidence: sources.length ? 'high' : 'low' };
+    const sources = nonCodebaseSources.filter((s) => s === 'ADO');
+    return { sources: sources.length ? sources : nonCodebaseSources, confidence: sources.length ? 'high' : 'low' };
   }
 
   if (hasConfluenceKeyword && !hasAdoKeyword) {
-    const sources = availableSources.filter((s): s is DataSource => s === 'CONFLUENCE');
-    return { sources: sources.length ? sources : availableSources, confidence: sources.length ? 'high' : 'low' };
+    const sources = nonCodebaseSources.filter((s) => s === 'CONFLUENCE');
+    return { sources: sources.length ? sources : nonCodebaseSources, confidence: sources.length ? 'high' : 'low' };
   }
 
   if (hasAdoKeyword && hasConfluenceKeyword) {
-    return { sources: availableSources, confidence: 'high' };
+    return { sources: nonCodebaseSources, confidence: 'high' };
   }
 
-  // No keyword match — search all available sources, signal low confidence
-  return { sources: availableSources, confidence: 'low' };
+  // No keyword match — search all available non-codebase sources, signal low confidence
+  return { sources: nonCodebaseSources, confidence: 'low' };
 }
 
 // ── Public API ─────────────────────────────────────────────────────────

@@ -34,72 +34,60 @@ const McpSettings: React.FC = () => {
 
   return (
     <div className='settings-section'>
-      <h4 style={{ margin: '0 0 0.5rem 0' }}>MCP Server</h4>
-      <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.8rem', opacity: 0.75 }}>
-        Connect WorkspaceGPT as an MCP server to use your knowledge base
-        directly inside Cursor, GitHub Copilot, Claude Desktop, and other AI
-        IDEs.
-      </p>
-
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          marginBottom: '0.75rem',
-        }}
-      >
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            backgroundColor:
-              isInstalled === null
-                ? 'var(--vscode-descriptionForeground)'
-                : isInstalled
-                  ? 'var(--vscode-testing-iconPassed)'
-                  : 'var(--vscode-testing-iconFailed)',
-            flexShrink: 0,
-            display: 'inline-block',
-          }}
-        />
-        <span style={{ fontSize: '0.8rem' }}>
-          {isInstalled === null
-            ? 'Checking status…'
-            : isInstalled
-              ? 'MCP server is connected'
-              : 'MCP server is not connected'}
-        </span>
+      <div className='section-header'>
+        <h3>MCP Server</h3>
       </div>
+      <div className='settings-form'>
+        <div className='form-group'>
+          <small className='form-text'>
+            Connect WorkspaceGPT as an MCP server to use your knowledge base
+            directly inside Cursor, GitHub Copilot, Claude Desktop, and other AI
+            IDEs.
+          </small>
+        </div>
 
-      <button
-        className='primary-button-full'
-        onClick={handleConnect}
-        disabled={isInstalling}
-        style={{ marginBottom: statusMessage ? '0.5rem' : 0 }}
-      >
-        {isInstalling
-          ? 'Connecting…'
-          : isInstalled
-            ? 'Reconfigure MCP Server'
-            : 'Connect MCP Server'}
-      </button>
+        <div className='form-group'>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                backgroundColor:
+                  isInstalled === null
+                    ? 'var(--vscode-descriptionForeground)'
+                    : isInstalled
+                      ? 'var(--vscode-testing-iconPassed)'
+                      : 'var(--vscode-testing-iconFailed)',
+                flexShrink: 0,
+                display: 'inline-block',
+              }}
+            />
+            <span style={{ fontSize: '0.8rem' }}>
+              {isInstalled === null
+                ? 'Checking status…'
+                : isInstalled
+                  ? 'MCP server is connected'
+                  : 'MCP server is not connected'}
+            </span>
+          </div>
+        </div>
 
-      {statusMessage && (
-        <p
-          style={{
-            margin: '0.5rem 0 0',
-            fontSize: '0.8rem',
-            color:
-              messageType === 'error'
-                ? 'var(--vscode-errorForeground)'
-                : 'var(--vscode-testing-iconPassed)',
-          }}
-        >
-          {statusMessage}
-        </p>
-      )}
+        <div className='form-group'>
+          <button className='primary-button-full' onClick={handleConnect} disabled={isInstalling}>
+            {isInstalling
+              ? 'Connecting…'
+              : isInstalled
+                ? 'Reconfigure MCP Server'
+                : 'Connect MCP Server'}
+          </button>
+          {statusMessage && (
+            <div className={`status-message ${messageType}`} style={{ marginTop: '8px' }}>
+              {statusMessage}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

@@ -1,0 +1,33 @@
+/*
+ * Design tokens — spacing/radius scale plus semantic colors mapped onto VS
+ * Code's own theme variables. Existing components mostly still use
+ * --vscode-* variables directly (that's fine, they're the real source of
+ * truth); these tokens exist for the handful of cases that previously
+ * hardcoded a fixed hex regardless of theme (success/danger/warning accents
+ * in Settings.css, the mode indicator, etc.) — swapping those onto a
+ * `--vscode-*`-backed token is what makes them follow light/dark themes.
+ * Fallback hex values match what was already hardcoded, so switching a rule
+ * over to a token doesn't shift its look under the default theme.
+ */
+:root {
+  --wgpt-space-1: 4px;
+  --wgpt-space-2: 8px;
+  --wgpt-space-3: 12px;
+  --wgpt-space-4: 16px;
+
+  --wgpt-radius-sm: 4px;
+  --wgpt-radius-md: 6px;
+  --wgpt-radius-lg: 10px;
+
+  --wgpt-success: var(--vscode-testing-iconPassed, #4ecca3);
+  --wgpt-success-rgb: 78, 204, 163;
+
+  --wgpt-danger: var(--vscode-errorForeground, #e74c3c);
+  --wgpt-danger-rgb: 231, 76, 60;
+
+  --wgpt-warning: var(--vscode-notificationsWarningIcon-foreground, #e0a458);
+  --wgpt-warning-rgb: 224, 164, 88;
+
+  --wgpt-border: var(--vscode-widget-border, var(--vscode-panel-border));
+  --wgpt-surface: var(--vscode-editorWidget-background);
+}

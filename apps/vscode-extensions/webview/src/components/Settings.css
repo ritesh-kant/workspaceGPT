@@ -1,3 +1,11 @@
+/* Vertical rhythm between top-level Settings sections — replaces the old
+   literal <br/> tags between them. */
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .settings-section {
   background-color: var(--vscode-textBlockQuote-background);
   padding: 1rem;
@@ -117,14 +125,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: rgba(78, 204, 163, 0.08);
+  background: rgba(var(--wgpt-success-rgb), 0.08);
   border-radius: 8px;
   margin-bottom: 14px;
-  border: 1px solid rgba(78, 204, 163, 0.18);
+  border: 1px solid rgba(var(--wgpt-success-rgb), 0.18);
 }
 
 .connected-banner .connected-label {
-  color: #4ecca3;
+  color: var(--wgpt-success);
   font-size: 0.85em;
   display: flex;
   align-items: center;
@@ -135,17 +143,17 @@
 .disconnect-button {
   padding: 5px 12px;
   font-size: 0.78em;
-  background: rgba(231, 76, 60, 0.12);
-  color: #e74c3c;
-  border: 1px solid rgba(231, 76, 60, 0.25);
+  background: rgba(var(--wgpt-danger-rgb), 0.12);
+  color: var(--wgpt-danger);
+  border: 1px solid rgba(var(--wgpt-danger-rgb), 0.25);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .disconnect-button:hover {
-  background: rgba(231, 76, 60, 0.22) !important;
-  border-color: rgba(231, 76, 60, 0.45);
+  background: rgba(var(--wgpt-danger-rgb), 0.22) !important;
+  border-color: rgba(var(--wgpt-danger-rgb), 0.45);
 }
 
 /* Styled select dropdowns */
@@ -318,6 +326,14 @@
   color: var(--vscode-list-activeSelectionForeground);
 }
 
+/* Keyboard-navigated row (Arrow Up/Down) — distinct from .selected (the
+   persisted value) so a keyboard user can see both at once. */
+.searchable-dropdown-item.highlighted {
+  background: var(--vscode-list-focusBackground, var(--vscode-list-hoverBackground));
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
 .searchable-dropdown-item .item-title {
   font-weight: 600;
   font-size: 0.85rem;
@@ -367,6 +383,87 @@
   margin-top: 12px !important;
 }
 
+/* Mode selector — two cards, active one highlighted */
+.mode-card-row {
+  display: flex;
+  gap: 10px;
+}
+
+.mode-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.mode-card:hover:not(:disabled) {
+  border-color: var(--vscode-focusBorder);
+}
+
+.mode-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mode-card--active {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-list-activeSelectionBackground, rgba(255, 255, 255, 0.06));
+}
+
+.mode-card-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.mode-card-desc {
+  font-size: 0.75rem;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+
+/* Mode-switch confirmation */
+.mode-confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 1rem;
+}
+
+.mode-confirm-dialog {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  padding: 1rem;
+  max-width: 320px;
+}
+
+.mode-confirm-dialog p {
+  margin: 0 0 1rem 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.mode-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .description-text {
   color: var(--vscode-descriptionForeground);
   margin: 0 0 8px 0;
@@ -405,7 +502,7 @@
 }
 
 .active-sync-indicator {
-  color: #4ecca3;
+  color: var(--wgpt-success);
   font-size: 0.95rem;
   display: flex;
   align-items: center;
@@ -461,15 +558,15 @@
 }
 
 .status-message.success {
-  background-color: rgba(0, 128, 0, 0.1);
-  color: #2cbb5d;
-  border: 1px solid #2cbb5d;
+  background-color: rgba(var(--wgpt-success-rgb), 0.1);
+  color: var(--wgpt-success);
+  border: 1px solid var(--wgpt-success);
 }
 
 .status-message.error {
-  background-color: rgba(255, 0, 0, 0.1);
-  color: #f14c4c;
-  border: 1px solid #f14c4c;
+  background-color: rgba(var(--wgpt-danger-rgb), 0.1);
+  color: var(--wgpt-danger);
+  border: 1px solid var(--wgpt-danger);
 }
 
 .sync-progress {
@@ -500,6 +597,69 @@
   align-items: center;
   margin-bottom: 0.5rem;
   border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.section-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.beta-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--wgpt-warning);
+  background: rgba(var(--wgpt-warning-rgb), 0.12);
+  border: 1px solid rgba(var(--wgpt-warning-rgb), 0.3);
+  border-radius: 10px;
+  vertical-align: middle;
+}
+
+.beta-section {
+  border: 1px solid rgba(224, 164, 88, 0.3);
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.beta-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  /* Matches the combined inset of a nested card's own title/toggle
+     (beta-section-body's 0.75rem + settings-section's 1rem) so the
+     "Beta Features" title and arrow line up with the cards below it. */
+  padding: 0.6rem 1.75rem;
+  cursor: pointer;
+  border-bottom: none;
+  margin-bottom: 0;
+  user-select: none;
+}
+
+.beta-section-header:hover {
+  background: rgba(224, 164, 88, 0.06);
+}
+
+.beta-section-body {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.beta-section-body .settings-section {
+  border-top: 1px solid var(--vscode-panel-border);
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.beta-section-body .settings-section:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
 }
 
 .header-controls {

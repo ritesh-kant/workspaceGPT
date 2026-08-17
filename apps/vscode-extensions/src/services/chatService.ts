@@ -8,20 +8,53 @@ import {
   MODEL,
   ModelType,
   MODEL_PROVIDERS,
-  STORAGE_KEYS
+  STORAGE_KEYS,
+  LlmTask,
 } from '../../constants';
 import { CodebaseService } from './codebase/codebaseService';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
 import { getLlmSettings } from 'src/utils/getLlmSettings';
+import { getMode } from 'src/utils/getModeSettings';
 import { withKeyFailover } from 'src/utils/apiKeyFailover';
 import { classifyQuery } from 'src/utils/queryClassifier';
 import { buildPlan, expandQuery } from 'src/utils/queryPlanner';
 import { rerank } from 'src/utils/reranker';
 import {
+  buildRepoOrientation,
+  findFiles,
+  findReferences,
+  findSymbol,
+  getNamedRoots,
+  goToDefinition,
+  listDirectory,
+  NamedRoot,
+  readFile,
+  searchCodebase,
+} from './codebase/codebaseTools';
+import {
   DataSource,
   EmbeddingSearchResult,
   QueryClassification,
 } from 'src/types/types';
+import {
+  applyWrite,
+  prepareCreateFile,
+  prepareDeleteFile,
+  prepareEditFile,
+  PreparedWrite,
+} from './agent/agentWriteTools';
+import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
+import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
+import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/inspectTools';
+import {
+  agentOutputChannel,
+  assertCommandAllowed,
+  executeCommand,
+  recordAgentAudit,
+  resolveCommandCwd,
+  RunCommandArgs,
+} from './agent/commandTools';
+import { loadWorkspaceRules } from './agent/rulesFiles';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -41,6 +74,12 @@ export class ChatService {
   private currentModel: string;
   private currentModelWorker: Worker | null = null;
   private currentReject: ((reason?: any) => void) | null = null;
+  /** Human-approval gate for agent write tools (P1: every write is reviewed). */
+  private agentWriteGate = new AgentWriteGate();
+  /** Shadow-git checkpoints, created lazily per workspace on the first write. */
+  private checkpointService: CheckpointService | null = null;
+  /** Commands the user approved "for this session" (exact string match). */
+  private sessionCommandAllowlist = new Set<string>();
 
   constructor(
     webviewView: vscode.WebviewView,
@@ -182,6 +221,8 @@ export class ChatService {
   }
 
   public stopMessage(): void {
+    // Unpark any write approvals first — their worker is about to die.
+    this.agentWriteGate.rejectAll('Run stopped by the user.');
     if (this.currentModelWorker) {
       this.currentModelWorker.terminate();
       this.currentModelWorker = null;
@@ -220,9 +261,15 @@ export class ChatService {
     try {
       this.chatHistory.push({ role: 'user', content: message });
 
+      const mode = getMode(this.context);
+
       // All configured keys for the selected provider, tried in failover order
-      // on 429. Falls back to the single key the webview sent.
-      const apiKeys = getLlmSettings(this.context).apiKeys;
+      // on 429. Local mode: the webview's selected model + its stored keys.
+      // Remote mode: the 'chat' task's routed provider/keys (Gemini) — the
+      // task is re-resolved once `useCodebaseTools` is final, right before the
+      // model actually runs (see the generateModelResponse call below).
+      // Falls back to the single key the webview sent.
+      const apiKeys = getLlmSettings(this.context, 'chat').apiKeys;
       const failoverKeys = apiKeys.length ? apiKeys : apiKey ? [apiKey] : [];
 
       const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
@@ -236,10 +283,15 @@ export class ChatService {
       const userDisplayName: string = settings?.state?.config?.ado?.userDisplayName || '';
       const currentSprint = settings?.state?.config?.ado?.currentSprint || null;
 
+      // Codebase tools need no auth/indexing — only an open workspace folder.
+      const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
+      const isCodebaseAvailable = workspaceFolders.length > 0;
+
       // Build the list of actually-connected sources
       const availableSources: DataSource[] = [
         ...(isConfluenceConnected ? ['CONFLUENCE' as DataSource] : []),
         ...(isAdoConnected ? ['ADO' as DataSource] : []),
+        ...(isCodebaseAvailable ? ['CODEBASE' as DataSource] : []),
       ];
 
       // ── Step 1: Rule-based classification (synchronous, zero latency) ──
@@ -249,12 +301,37 @@ export class ChatService {
       if (contextSelection !== 'Auto') {
         const explicitSource: DataSource | null =
           contextSelection === 'Confluence' ? 'CONFLUENCE' :
-          contextSelection === 'Azure DevOps' ? 'ADO' : null;
+          contextSelection === 'Azure DevOps' ? 'ADO' :
+          contextSelection === 'Codebase' ? 'CODEBASE' : null;
         if (explicitSource && availableSources.includes(explicitSource)) {
           classification = { ...classification, sources: [explicitSource], confidence: 'high' };
         } else if (!explicitSource) {
           classification = { ...classification, sources: availableSources, confidence: 'high' };
         }
+      }
+
+      // Codebase is mutually exclusive with Confluence/ADO for a given turn —
+      // it skips the embedding search pipeline entirely (see Step 3) in favor
+      // of a live tool-calling loop in the model worker. `let` because the
+      // low-confidence LLM classification below may re-route an ambiguous
+      // query to the codebase (keyword rules can't cover natural questions
+      // like "what blogs are there in web").
+      let useCodebaseTools = classification.sources.includes('CODEBASE');
+      if (useCodebaseTools) {
+        classification = { ...classification, sources: ['CODEBASE'] };
+      }
+
+      // No doc/ticket source matched (or none are connected) but a workspace
+      // is open — default to codebase tools rather than answering from nothing.
+      if (
+        !useCodebaseTools &&
+        classification.sources.length === 0 &&
+        classification.intent !== 'chitchat' &&
+        isCodebaseAvailable
+      ) {
+        console.log('No doc/ticket source classified — defaulting to codebase tools.');
+        useCodebaseTools = true;
+        classification = { ...classification, sources: ['CODEBASE'] };
       }
 
       // ── Step 2: Build preliminary plan from rule-based result ──────────
@@ -263,9 +340,11 @@ export class ChatService {
       console.log(`Preliminary plan: intent=${prelimPlan.intent}, sources=${prelimPlan.sources.join(',')}, topKPerPass=${prelimPlan.topKPerPass}`);
 
       // ── Step 3: Fan-out search + LLM classification concurrently ───────
+      // Codebase turns skip the embedding search pipeline entirely — the model
+      // worker gets live tools instead (see generateModelResponse below).
       let finalResults: SearchResult[] = [];
 
-      if (prelimPlan.sources.length > 0 && prelimPlan.topKPerPass > 0) {
+      if (!useCodebaseTools && prelimPlan.sources.length > 0 && prelimPlan.topKPerPass > 0) {
         const adoQuery = this.rewriteQueryWithUser(message, userDisplayName);
         if (adoQuery !== message) {
           console.log(`ADO query rewritten: "${message}" → "${adoQuery}"`);
@@ -278,11 +357,13 @@ export class ChatService {
 
         // LLM classification is only worth the latency when:
         // - rule confidence is low AND auto mode
-        // - a cloud provider + apiKey are available (skip for local Ollama)
+        // - a cloud provider + apiKey are available (skip for local Ollama);
+        //   remote mode is always "cloud" — it has no local-model option
         // - BOTH sources are connected (single-source: intent only shifts topK by ±5, not worth it)
         const isCloudProvider =
-          MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === provider)?.BASE_URL !== undefined &&
-          !!apiKey;
+          mode === 'remote' ||
+          (MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === provider)?.BASE_URL !== undefined &&
+            !!apiKey);
         const needsLLM =
           classification.confidence === 'low' &&
           contextSelection === 'Auto' &&
@@ -290,63 +371,86 @@ export class ChatService {
           availableSources.length > 1;
 
         // Pass 1 search and LLM classification run at the same time
-        const [pass1PerSource, upgradedIntent] = await Promise.all([
+        const [pass1PerSource, upgraded] = await Promise.all([
           Promise.all(
             prelimPlan.sources.map((source) =>
               this.searchSource(source, source === 'ADO' ? adoQuery : message, prelimPlan.topKPerPass)
             )
           ),
           needsLLM
-            ? this.classifyIntentWithLLM(message, classification, modelId, failoverKeys, provider)
-            : Promise.resolve({ intent: classification.intent }),
+            ? this.classifyIntentWithLLM(message, classification, modelId, failoverKeys, provider, availableSources)
+            : Promise.resolve({ intent: classification.intent, sources: undefined as DataSource[] | undefined }),
         ]);
 
-        // Apply upgraded intent and rebuild the final plan
-        if (needsLLM && upgradedIntent.intent !== classification.intent) {
-          console.log(`Intent upgraded via LLM: ${classification.intent} → ${upgradedIntent.intent}`);
+        // The LLM may re-route an ambiguous query to the codebase — keyword
+        // rules can't recognize questions like "what blogs are there in web"
+        // as code questions. When that happens, discard the embedding results
+        // (they were searched speculatively in parallel) and switch to tools.
+        if (needsLLM && upgraded.sources?.includes('CODEBASE') && isCodebaseAvailable) {
+          console.log('LLM routed query to CODEBASE — switching to live codebase tools.');
+          useCodebaseTools = true;
+          classification = { ...classification, intent: upgraded.intent, sources: ['CODEBASE'] };
         }
-        classification = { ...classification, intent: upgradedIntent.intent };
-        const plan = buildPlan(classification);
 
-        const pass1Flat = pass1PerSource.flat();
-
-        // ── Step 4: Pass 2 (semantic only, when best pass-1 score is weak) ─
-        let allResults = pass1Flat;
-        if (plan.maxPasses === 2 && pass1Flat.length > 0) {
-          const bestScore = Math.max(...pass1Flat.map((r) => r.score));
-          if (bestScore < plan.passThreshold) {
-            console.log(`Pass 1 best score ${bestScore.toFixed(3)} < ${plan.passThreshold}. Running pass 2.`);
-            this.postStatus('Expanding search...');
-            const enrichedQuery = expandQuery(message, pass1Flat);
-            const pass2Results = await Promise.all(
-              plan.sources.map((source) =>
-                this.searchSource(
-                  source,
-                  source === 'ADO' ? this.rewriteQueryWithUser(enrichedQuery, userDisplayName) : enrichedQuery,
-                  plan.topKPerPass
-                )
-              )
-            );
-            allResults = [...pass1Flat, ...pass2Results.flat()];
+        if (!useCodebaseTools) {
+          // Apply upgraded intent and rebuild the final plan
+          if (needsLLM && upgraded.intent !== classification.intent) {
+            console.log(`Intent upgraded via LLM: ${classification.intent} → ${upgraded.intent}`);
           }
-        }
+          classification = { ...classification, intent: upgraded.intent };
+          const plan = buildPlan(classification);
 
-        // ── Step 5: Rerank + threshold filter ─────────────────────────────
-        this.postStatus('Ranking results...');
-        finalResults = rerank(message, allResults, plan);
-        console.log(`Reranked to ${finalResults.length} results (threshold=${plan.similarityThreshold}).`);
+          const pass1Flat = pass1PerSource.flat();
+
+          // ── Step 4: Pass 2 (semantic only, when best pass-1 score is weak) ─
+          let allResults = pass1Flat;
+          if (plan.maxPasses === 2 && pass1Flat.length > 0) {
+            const bestScore = Math.max(...pass1Flat.map((r) => r.score));
+            if (bestScore < plan.passThreshold) {
+              console.log(`Pass 1 best score ${bestScore.toFixed(3)} < ${plan.passThreshold}. Running pass 2.`);
+              this.postStatus('Expanding search...');
+              const enrichedQuery = expandQuery(message, pass1Flat);
+              const pass2Results = await Promise.all(
+                plan.sources.map((source) =>
+                  this.searchSource(
+                    source,
+                    source === 'ADO' ? this.rewriteQueryWithUser(enrichedQuery, userDisplayName) : enrichedQuery,
+                    plan.topKPerPass
+                  )
+                )
+              );
+              allResults = [...pass1Flat, ...pass2Results.flat()];
+            }
+          }
+
+          // ── Step 5: Rerank + threshold filter ───────────────────────────
+          this.postStatus('Ranking results...');
+          finalResults = rerank(message, allResults, plan);
+          console.log(`Reranked to ${finalResults.length} results (threshold=${plan.similarityThreshold}).`);
+        }
       }
 
       // ── Step 6: Generate response ──────────────────────────────────────
+      // Resolve the model to actually run only now that `useCodebaseTools` is
+      // final (it can flip late via the LLM reroute above). Local mode keeps
+      // the webview's selection; remote mode routes by task — codegen gets a
+      // different model than a Confluence/ADO chat answer.
+      const finalTask: LlmTask = useCodebaseTools ? 'codegen' : 'chat';
+      const finalLlm = mode === 'remote' ? getLlmSettings(this.context, finalTask) : null;
+      const effModelId = finalLlm?.model ?? modelId;
+      const effProvider = finalLlm?.provider ?? provider;
+      const effApiKeys = finalLlm?.apiKeys.length ? finalLlm.apiKeys : failoverKeys;
+
       this.postStatus('Thinking...');
       const modelResponse = await this.generateModelResponse(
         message,
         finalResults,
-        modelId,
-        provider,
-        failoverKeys,
+        effModelId,
+        effProvider,
+        effApiKeys,
         userDisplayName,
-        currentSprint
+        currentSprint,
+        useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined
       );
 
       this.chatHistory.push({ role: 'assistant', content: modelResponse });
@@ -374,7 +478,274 @@ export class ChatService {
     if (source === 'CONFLUENCE') {
       return this.embeddingService.searchEmbeddings(query, topK);
     }
+    if (source === 'CODEBASE') {
+      // Codebase never reaches the embedding pipeline — sendMessage() routes
+      // it to the live tool-calling loop instead (see useCodebaseTools).
+      return [];
+    }
     return this.adoEmbeddingService.searchEmbeddings(query, topK);
+  }
+
+  /**
+   * Dispatches a tool call requested by the model worker to the corresponding
+   * codebase tool function. Called from the modelWorker 'message' handler in
+   * generateModelResponse() when it receives a `tool_request`.
+   */
+  private async executeCodebaseTool(
+    name: string,
+    args: any,
+    roots: NamedRoot[]
+  ): Promise<unknown> {
+    switch (name) {
+      case 'search_codebase':
+        return searchCodebase(args, roots);
+      case 'read_file':
+        return readFile(args, roots);
+      case 'list_directory':
+        return listDirectory(args, roots);
+      case 'find_files':
+        return findFiles(args, roots);
+      case 'find_symbol':
+        return findSymbol(args, roots);
+      case 'find_references':
+        return findReferences(args, roots);
+      case 'go_to_definition':
+        return goToDefinition(args, roots);
+      case 'edit_file':
+        return this.gatedWrite(await prepareEditFile(args, roots), roots);
+      case 'create_file':
+        return this.gatedWrite(await prepareCreateFile(args, roots), roots);
+      case 'delete_file':
+        return this.gatedWrite(await prepareDeleteFile(args, roots), roots);
+      case 'get_diagnostics':
+        return getDiagnostics(args, roots);
+      case 'git_status':
+        return gitStatus(args, roots);
+      case 'git_diff':
+        return gitDiff(args, roots);
+      case 'git_log':
+        return gitLog(args, roots);
+      case 'git_blame':
+        return gitBlame(args, roots);
+      case 'run_command':
+        return this.gatedCommand(args, roots);
+      case 'search_docs':
+        return this.searchKnowledge('CONFLUENCE', args);
+      case 'search_tickets':
+        return this.searchKnowledge('ADO', args);
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  }
+
+  /**
+   * run_command flow: denylist (hard block) → session allowlist (skip the
+   * card) → approval card → checkpoint → execute → mirror output + audit.
+   */
+  private async gatedCommand(args: RunCommandArgs, roots: NamedRoot[]): Promise<unknown> {
+    const command = (args.command ?? '').trim();
+    if (!command) throw new Error('command must be non-empty.');
+    assertCommandAllowed(command);
+    const { cwd, displayCwd } = resolveCommandCwd(roots, args.cwd);
+    const summary = `Run: ${command}`;
+
+    let decisionKind: 'auto' | 'approved' | 'approved-session' = 'auto';
+    if (!this.sessionCommandAllowlist.has(command)) {
+      const { id, decision } = this.agentWriteGate.await({ kind: 'command', summary });
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
+        id,
+        kind: 'command',
+        path: displayCwd,
+        summary,
+        command,
+        diff: { added: 0, removed: 0, text: '' },
+      });
+      const result = await decision;
+      if (!result.approved) {
+        await this.audit('command', command, 'rejected', 'skipped');
+        throw new Error(
+          `The user rejected running this command.${result.feedback ? ` Feedback: ${result.feedback}` : ''} ` +
+            'Do not retry it verbatim — adjust per the feedback or proceed without it.'
+        );
+      }
+      if (result.scope === 'session') {
+        this.sessionCommandAllowlist.add(command);
+        decisionKind = 'approved-session';
+      } else {
+        decisionKind = 'approved';
+      }
+    }
+
+    // Commands can mutate the workspace — same snapshot rule as file writes.
+    try {
+      await this.checkpoints(roots).checkpoint(summary);
+    } catch (e) {
+      console.warn('WorkspaceGPT: checkpoint before command failed (continuing):', e);
+    }
+
+    this.postStatus(`Running: ${command}`);
+    const res = await executeCommand(command, cwd, args.timeoutSec);
+    const channel = agentOutputChannel();
+    channel.appendLine(`\n$ ${command}   (cwd: ${displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms)`);
+    if (res.output) channel.appendLine(res.output);
+    await this.audit('command', `${command} → exit ${res.exitCode}`, decisionKind, res.exitCode === 0 ? 'applied' : 'failed');
+    return res;
+  }
+
+  /** Append one line to the agent-actions JSONL audit log; never throws. */
+  private async audit(
+    action: 'edit' | 'create' | 'delete' | 'command',
+    detail: string,
+    decision: 'approved' | 'approved-session' | 'rejected' | 'auto',
+    outcome: 'applied' | 'failed' | 'skipped',
+    error?: string
+  ): Promise<void> {
+    try {
+      await recordAgentAudit(this.context.globalStorageUri.fsPath, {
+        ts: new Date().toISOString(),
+        action,
+        detail,
+        decision,
+        outcome,
+        error,
+      });
+    } catch (e) {
+      console.warn('WorkspaceGPT: audit write failed:', e);
+    }
+  }
+
+  /**
+   * Org-knowledge tools for the agent loop (P3.1): the same Confluence/ADO
+   * semantic search that powers RAG chat, exposed as tools so the agent can
+   * pull design docs and tickets MID-TASK ("implement D2C-1234" → read the
+   * ticket → find the design page → then touch code). Results are compacted —
+   * the worker caps tool output, so send only what the model needs.
+   */
+  private async searchKnowledge(
+    source: DataSource,
+    args: { query: string; topK?: number }
+  ): Promise<unknown> {
+    if (!args?.query?.trim()) throw new Error('query must be non-empty.');
+    const topK = Math.min(Math.max(args.topK ?? 5, 1), 10);
+    let results: SearchResult[];
+    try {
+      results = await this.searchSource(source, args.query, topK);
+    } catch (e) {
+      const label = source === 'CONFLUENCE' ? 'Confluence' : 'Azure DevOps';
+      throw new Error(
+        `${label} search unavailable: ${e instanceof Error ? e.message : String(e)}. ` +
+          'The source may not be connected/synced — answer from the codebase alone or tell the user.'
+      );
+    }
+    return {
+      results: results.map((r) => ({
+        source: r.data?.source,
+        title: (r.data as any)?.title ?? (r.data as any)?.name,
+        url: (r.data as any)?.url,
+        text: r.text.length > 1500 ? r.text.slice(0, 1500) + '… (truncated)' : r.text,
+      })),
+    };
+  }
+
+  /**
+   * The write half of the agent loop: show the prepared write to the user as
+   * a diff card, block until they decide (the worker's tool loop is already
+   * parked on this promise), checkpoint, then apply. A rejection surfaces to
+   * the model as a tool error carrying the user's feedback.
+   */
+  private async gatedWrite(write: PreparedWrite, roots: NamedRoot[]): Promise<unknown> {
+    const { id, decision } = this.agentWriteGate.await(write);
+    const diff = buildReviewDiff(write.before, write.after);
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
+      id,
+      kind: write.kind,
+      path: write.displayPath,
+      summary: write.summary,
+      diff,
+    });
+
+    const result = await decision;
+    if (!result.approved) {
+      await this.audit(write.kind, write.summary, 'rejected', 'skipped');
+      throw new Error(
+        `The user rejected this ${write.kind}.${result.feedback ? ` Feedback: ${result.feedback}` : ''} ` +
+          'Do not retry the same change — adjust per the feedback or ask the user how to proceed.'
+      );
+    }
+
+    // Snapshot BEFORE mutating, so "revert this step" is always available.
+    try {
+      await this.checkpoints(roots).checkpoint(write.summary);
+    } catch (e) {
+      console.warn('WorkspaceGPT: checkpoint failed (continuing with the write):', e);
+    }
+    try {
+      await applyWrite(write);
+    } catch (e) {
+      await this.audit(write.kind, write.summary, 'approved', 'failed', e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+    await this.audit(write.kind, write.summary, 'approved', 'applied');
+    return { applied: true, path: write.displayPath, summary: write.summary };
+  }
+
+  /** Lazily construct the per-workspace shadow-git checkpoint service. */
+  private checkpoints(roots: NamedRoot[]): CheckpointService {
+    if (!this.checkpointService) {
+      this.checkpointService = checkpointServiceFor(this.context.globalStorageUri.fsPath, roots[0].uri.fsPath);
+    }
+    return this.checkpointService;
+  }
+
+  /** Webview AGENT_WRITE_DECISION handler — resolves the parked write gate. */
+  public resolveAgentWrite(id: string, approved: boolean, feedback?: string, scope?: 'once' | 'session'): void {
+    this.agentWriteGate.resolve(id, approved, feedback, scope);
+  }
+
+  /** Human-readable status text for a codebase tool call, shown in the loading indicator. */
+  private describeToolCall(name: string, args: any): string {
+    switch (name) {
+      case 'search_codebase':
+        return `Searching codebase for "${args?.query ?? ''}"...`;
+      case 'read_file':
+        return `Reading ${args?.path ?? 'file'}...`;
+      case 'list_directory':
+        return `Listing ${args?.path || 'workspace root'}...`;
+      case 'find_files':
+        return `Finding files matching "${args?.pattern ?? ''}"...`;
+      case 'find_symbol':
+        return `Looking up symbol "${args?.query ?? ''}"...`;
+      case 'find_references':
+        return `Finding references to "${args?.symbol ?? ''}"...`;
+      case 'go_to_definition':
+        return `Finding definition of "${args?.symbol ?? ''}"...`;
+      case 'run_command':
+        return `Proposing command: ${args?.command ?? ''} (awaiting your review)...`;
+      case 'search_docs':
+        return `Searching Confluence for "${args?.query ?? ''}"...`;
+      case 'search_tickets':
+        return `Searching Azure DevOps for "${args?.query ?? ''}"...`;
+      case 'get_diagnostics':
+        return args?.path ? `Checking problems in ${args.path}...` : 'Checking workspace problems...';
+      case 'git_status':
+        return 'Reading git status...';
+      case 'git_diff':
+        return `Reading git diff${args?.path ? ` for ${args.path}` : ''}...`;
+      case 'git_log':
+        return `Reading git history${args?.path ? ` for ${args.path}` : ''}...`;
+      case 'git_blame':
+        return `Reading git blame for ${args?.path ?? 'file'}...`;
+      case 'edit_file':
+        return `Proposing edit to ${args?.path ?? 'file'} (awaiting your review)...`;
+      case 'create_file':
+        return `Proposing new file ${args?.path ?? ''} (awaiting your review)...`;
+      case 'delete_file':
+        return `Proposing deletion of ${args?.path ?? 'file'} (awaiting your review)...`;
+      default:
+        return 'Working...';
+    }
   }
 
   private formatSearchResults(results: SearchResult[]): string {
@@ -423,43 +794,71 @@ export class ChatService {
   }
 
   /**
-   * Upgrades the intent classification using an LLM when the rule-based classifier
-   * returned low confidence. Only updates intent — source routing stays rule-determined.
+   * Upgrades the classification using an LLM when the rule-based classifier
+   * returned low confidence: refines the intent AND picks the best source(s),
+   * including routing natural-language code questions ("what blogs are there
+   * in web") to CODEBASE — keyword rules can't recognize those.
    * Guarded: will not fire for local Ollama (requires cloud provider + apiKey).
+   * In remote mode, ignores the passed-through webview model and resolves its
+   * own model via the 'classification' task route instead.
    */
   private async classifyIntentWithLLM(
     query: string,
     fallback: QueryClassification,
     modelId: string,
     apiKeys: string[],
-    provider: string
-  ): Promise<Pick<QueryClassification, 'intent'>> {
+    provider: string,
+    availableSources: DataSource[] = []
+  ): Promise<{ intent: QueryClassification['intent']; sources?: DataSource[] }> {
     try {
-      const providerConfig = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === provider);
-      if (!providerConfig || !apiKeys.length) {
+      let effModelId = modelId;
+      let effApiKeys = apiKeys;
+      let effProvider = provider;
+      if (getMode(this.context) === 'remote') {
+        const llm = getLlmSettings(this.context, 'classification');
+        effModelId = llm.model ?? effModelId;
+        effProvider = llm.provider ?? effProvider;
+        effApiKeys = llm.apiKeys.length ? llm.apiKeys : effApiKeys;
+      }
+
+      const providerConfig = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === effProvider);
+      if (!providerConfig || !effApiKeys.length) {
         return { intent: fallback.intent };
       }
 
       const OpenAI = (await import('openai')).default;
 
-      const prompt = `Classify the intent of this query into exactly one of: lookup, semantic, aggregation, comparison, chitchat.
+      const sourceDescriptions: Record<DataSource, string> = {
+        CONFLUENCE: 'CONFLUENCE: the team\'s Confluence wiki (documentation, guides, processes)',
+        ADO: 'ADO: Azure DevOps (tickets, work items, sprints, bugs)',
+        CODEBASE: 'CODEBASE: the source code repository currently open in the editor (files, components, features, implementation details)',
+      };
+      const sourceList = availableSources.map((s) => `- ${sourceDescriptions[s]}`).join('\n');
 
+      const prompt = `Classify this query.
+
+Intent — exactly one of: lookup, semantic, aggregation, comparison, chitchat.
 - lookup: asking about a specific ticket, ID, or named item
 - semantic: open-ended question, explanation, or how-to
 - aggregation: asking to list, count, or summarize multiple items
 - comparison: comparing two or more things
 - chitchat: greeting or small talk
 
-Respond with a JSON object only, no markdown: {"intent": "<one of the five values>"}
+Sources — which of these should be consulted to answer (pick the single best one unless several are clearly needed):
+${sourceList}
+
+Note: questions about what exists in an app/repo/project, its pages, features, sections, or how something is built are CODEBASE questions even if they never use programming words.
+
+Respond with a JSON object only, no markdown: {"intent": "<intent>", "sources": ["<SOURCE>", ...]}
 
 Query: "${query}"`;
 
-      const response = await withKeyFailover(apiKeys, (apiKey) => {
+      const response = await withKeyFailover(effApiKeys, (apiKey) => {
         const client = new OpenAI({ apiKey, baseURL: providerConfig.BASE_URL });
         return client.chat.completions.create({
-          model: modelId,
+          model: effModelId,
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 20,
+          max_tokens: 60,
           temperature: 0,
         });
       });
@@ -467,12 +866,17 @@ Query: "${query}"`;
       const raw = response.choices[0]?.message?.content?.trim() || '{}';
       // Strip markdown code fences if present
       const jsonStr = raw.replace(/^```[a-z]*\n?/i, '').replace(/```$/,'').trim();
-      const parsed = JSON.parse(jsonStr) as { intent?: string };
+      const parsed = JSON.parse(jsonStr) as { intent?: string; sources?: string[] };
       const validIntents = ['lookup', 'semantic', 'aggregation', 'comparison', 'chitchat'];
-      if (parsed.intent && validIntents.includes(parsed.intent)) {
-        return { intent: parsed.intent as QueryClassification['intent'] };
-      }
-      return { intent: fallback.intent };
+
+      const intent = parsed.intent && validIntents.includes(parsed.intent)
+        ? (parsed.intent as QueryClassification['intent'])
+        : fallback.intent;
+      const sources = Array.isArray(parsed.sources)
+        ? (parsed.sources.filter((s): s is DataSource => availableSources.includes(s as DataSource)))
+        : undefined;
+
+      return { intent, sources: sources?.length ? sources : undefined };
     } catch (error) {
       console.warn('LLM intent classification failed, keeping rule-based result:', error);
       return { intent: fallback.intent };
@@ -486,7 +890,8 @@ Query: "${query}"`;
     provider: string,
     apiKeys: string[],
     currentUserName: string = '',
-    currentSprint: { name: string; iterationPath: string; startDate: string; endDate: string } | null = null
+    currentSprint: { name: string; iterationPath: string; startDate: string; endDate: string } | null = null,
+    codebaseRoots?: NamedRoot[]
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -505,6 +910,18 @@ Query: "${query}"`;
         )
         .join('\n\n');
 
+      // Give codebase turns an upfront map of the workspace (file tree +
+      // README head) so the model doesn't burn its first tool-call rounds on
+      // basic discovery.
+      let repoOrientation: string | undefined;
+      if (codebaseRoots?.length) {
+        try {
+          repoOrientation = await buildRepoOrientation(codebaseRoots);
+        } catch (e) {
+          console.warn('Failed to build repo orientation (continuing without):', e);
+        }
+      }
+
       const modelWorker = new Worker(workerPath, {
         workerData: {
           prompt: message,
@@ -516,6 +933,9 @@ Query: "${query}"`;
           apiKeys: apiKeys,
           currentUserName: currentUserName || undefined,
           currentSprint: currentSprint || undefined,
+          codebaseTools: codebaseRoots ? { enabled: true } : undefined,
+          repoOrientation,
+          workspaceRules: codebaseRoots?.length ? loadWorkspaceRules(codebaseRoots) : undefined,
         },
       });
 
@@ -566,6 +986,9 @@ Query: "${query}"`;
             content?: string;
             message?: string;
             progress?: string;
+            id?: string;
+            name?: string;
+            arguments?: any;
           }) => {
             switch (result.type) {
               case 'chunk':
@@ -585,6 +1008,41 @@ Query: "${query}"`;
 
               case 'error':
                 settle(new Error(result.message));
+                break;
+
+              case 'tool_status': {
+                // A tool the model just decided to call — surfaced as a
+                // transient status label, and also as a persistent step so
+                // the exploration remains visible in the transcript.
+                const label = this.describeToolCall(result.name!, result.arguments);
+                this.postStatus(label);
+                this.webviewView.webview.postMessage({
+                  type: MESSAGE_TYPES.AGENT_STEP,
+                  text: label.replace(/\.\.\.$/, ''),
+                });
+                break;
+              }
+
+              case 'tool_request':
+                // Codebase tools need the `vscode` workspace APIs, which this
+                // worker thread cannot reach — execute on the main thread and
+                // send the result back so the worker's tool loop can continue.
+                console.log(`[codebase-tool] → ${result.name}(${JSON.stringify(result.arguments)})`);
+                this.executeCodebaseTool(result.name!, result.arguments, codebaseRoots ?? [])
+                  .then((toolResult) => {
+                    const summary = JSON.stringify(toolResult);
+                    console.log(`[codebase-tool] ← ${result.name}: ${summary.length} chars${summary.length <= 300 ? ` — ${summary}` : ''}`);
+                    modelWorker.postMessage({ type: 'tool_response', id: result.id, result: toolResult });
+                  })
+                  .catch((err) => {
+                    const message = err instanceof Error ? err.message : String(err);
+                    console.log(`[codebase-tool] ← ${result.name} ERROR: ${message}`);
+                    modelWorker.postMessage({
+                      type: 'tool_response',
+                      id: result.id,
+                      error: message,
+                    });
+                  });
                 break;
 
               case WORKER_STATUS.PROCESSING:

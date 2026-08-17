@@ -21,8 +21,13 @@ function getAllFiles(dir, fileList = []) {
 
 const workerFiles = getAllFiles(path.join(__dirname, 'src/workers'));
 
-// Utility function to copy directories recursively
-async function copyRecursive(src, dest) {
+// Utility function to copy directories recursively.
+// `shouldSkip(src)` is checked before every file/directory so unwanted
+// subtrees (wrong-platform binaries, vendor wasm/maps) are never even read.
+async function copyRecursive(src, dest, shouldSkip) {
+  if (shouldSkip && shouldSkip(src)) {
+    return;
+  }
   try {
     const stats = await fs.promises.stat(src);
 
@@ -31,7 +36,7 @@ async function copyRecursive(src, dest) {
       const files = await fs.promises.readdir(src);
 
       await Promise.all(files.map(file =>
-        copyRecursive(path.join(src, file), path.join(dest, file))
+        copyRecursive(path.join(src, file), path.join(dest, file), shouldSkip)
       ));
     } else {
       // Ensure destination directory exists
@@ -41,6 +46,74 @@ async function copyRecursive(src, dest) {
   } catch (error) {
     console.warn(`Warning: Could not copy ${src} to ${dest}:`, error.message);
   }
+}
+
+// vsce/ovsx target name -> onnxruntime-node's bin/napi-v3/<platform>/<arch> folder.
+const ONNXRUNTIME_NODE_TARGET_PLATFORMS = {
+  'win32-x64': ['win32', 'x64'],
+  'win32-arm64': ['win32', 'arm64'],
+  'linux-x64': ['linux', 'x64'],
+  'linux-arm64': ['linux', 'arm64'],
+  'darwin-x64': ['darwin', 'x64'],
+  'darwin-arm64': ['darwin', 'arm64'],
+};
+
+// @vscode/ripgrep ships each platform's binary as its own npm package, named
+// to exactly match a vsce/ovsx --target string — no folder-structure mapping
+// needed like onnxruntime-node above, just the package name.
+const RIPGREP_PLATFORM_PACKAGES = [
+  'darwin-x64', 'darwin-arm64',
+  'win32-x64', 'win32-arm64', 'win32-ia32',
+  'linux-x64', 'linux-arm64', 'linux-arm', 'linux-ppc64', 'linux-riscv64', 'linux-s390x', 'linux-ia32',
+].map((p) => `@vscode/ripgrep-${p}`);
+
+// Builds the shouldSkip predicate used while copying @xenova/transformers and
+// its nested deps into dist/node_modules.
+//
+// Always skipped: onnxruntime-web's/transformers' vendored *.wasm and *.map
+// files. transformers.js statically imports both onnxruntime-node and
+// onnxruntime-web (see its backends/onnx.js), but in this extension every
+// embedding call runs inside a Node worker_threads/child_process worker, so
+// the code path that actually executes the wasm backend never runs — only
+// onnxruntime-node's native binding does. The web package's JS entry point
+// must stay (removing the package breaks the static import), but its wasm
+// payload is dead weight.
+//
+// Conditionally skipped (only when VSCODE_TARGET is set): onnxruntime-node's
+// native binaries for every platform/arch except the one being packaged.
+// vsce/ovsx --target only tags the manifest; excluding the other 5 platform
+// binaries is left to the build, which is what this does.
+function createDependencyFilter() {
+  const target = process.env.VSCODE_TARGET;
+  let targetPlatform = null;
+  if (target) {
+    targetPlatform = ONNXRUNTIME_NODE_TARGET_PLATFORMS[target];
+    if (!targetPlatform) {
+      throw new Error(`Unknown VSCODE_TARGET "${target}". Valid targets: ${Object.keys(ONNXRUNTIME_NODE_TARGET_PLATFORMS).join(', ')}`);
+    }
+  }
+
+  return function shouldSkip(srcPath) {
+    if (srcPath.endsWith('.wasm') || srcPath.endsWith('.map')) {
+      return true;
+    }
+
+    if (targetPlatform) {
+      const segments = srcPath.split(path.sep);
+      const napiIdx = segments.lastIndexOf('napi-v3');
+      if (napiIdx !== -1 && segments[napiIdx - 1] === 'bin') {
+        const [platform, arch] = segments.slice(napiIdx + 1, napiIdx + 3);
+        if (platform && platform !== targetPlatform[0]) {
+          return true;
+        }
+        if (platform === targetPlatform[0] && arch && arch !== targetPlatform[1]) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  };
 }
 
 /** Main extension: CommonJS for VSCode compatibility */
@@ -57,7 +130,8 @@ const extensionConfig = {
     'vscode',
     '@xenova/transformers',  // Keep external - don't bundle
     'onnxruntime-node',      // Required by @xenova/transformers for Node.js backend
-    'sharp'                  // Image processing (if used)
+    'sharp',                 // Image processing (if used)
+    '@vscode/ripgrep'        // ESM + native binary resolution — must stay external
   ],
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development')
@@ -98,23 +172,44 @@ const __dirname = dirname(__filename);
   }
 };
 
-// Copy dependencies and their nested dependencies recursively
-async function copyDependencyWithNested(depName, srcNodeModules, destNodeModules, visited = new Set(), excludedDependencies = new Set()) {
+// pnpm's non-flat store resolves a package's own dependencies through a
+// per-package symlinked view, not by hoisting them into the top-level
+// node_modules — hand-rolling that directory math (../.. vs ../node_modules,
+// scoped vs unscoped, etc.) is fragile and store-layout-specific. Node's own
+// resolver already walks that structure correctly, so ask it directly.
+function resolveNestedDepDir(depName, fromDir) {
+  try {
+    // `paths` walks up from a REAL directory (Module._nodeModulePaths does not
+    // resolve symlinks itself) — pnpm's per-package view lives behind a
+    // symlink, so an unresolved fromDir silently fails to find anything nested.
+    const realFromDir = fs.realpathSync(fromDir);
+    const pkgJsonPath = require.resolve(`${depName}/package.json`, { paths: [realFromDir] });
+    return path.dirname(pkgJsonPath);
+  } catch {
+    return null;
+  }
+}
+
+// Copy dependencies and their nested dependencies recursively.
+async function copyDependencyWithNested(depName, srcNodeModules, destNodeModules, visited = new Set(), excludedDependencies = new Set(), shouldSkip, parentSrcPath) {
   if (visited.has(depName) || excludedDependencies.has(depName)) {
     return; // Avoid circular dependencies or excluded dependencies
   }
   visited.add(depName);
 
-  const srcPath = path.join(srcNodeModules, depName);
+  const topLevelSrcPath = path.join(srcNodeModules, depName);
+  const srcPath = fs.existsSync(topLevelSrcPath)
+    ? topLevelSrcPath
+    : (parentSrcPath ? resolveNestedDepDir(depName, parentSrcPath) : null);
   const destPath = path.join(destNodeModules, depName);
 
-  if (!fs.existsSync(srcPath)) {
-    console.warn(`⚠️  Dependency ${depName} not found in ${srcNodeModules}`);
+  if (!srcPath) {
+    console.warn(`⚠️  Dependency ${depName} not found in ${srcNodeModules}${parentSrcPath ? ` (or resolvable from ${parentSrcPath})` : ''}`);
     return;
   }
 
   // Copy the main dependency
-  await copyRecursive(srcPath, destPath);
+  await copyRecursive(srcPath, destPath, shouldSkip);
   console.log(`✅ Copied ${depName}`);
 
   // Check for package.json to find nested dependencies
@@ -129,7 +224,7 @@ async function copyDependencyWithNested(depName, srcNodeModules, destNodeModules
 
       // Copy nested dependencies
       for (const nestedDep of Object.keys(allDeps || {})) {
-        await copyDependencyWithNested(nestedDep, srcNodeModules, destNodeModules, visited, excludedDependencies);
+        await copyDependencyWithNested(nestedDep, srcNodeModules, destNodeModules, visited, excludedDependencies, shouldSkip, srcPath);
       }
     } catch (error) {
       console.warn(`⚠️  Could not read package.json for ${depName}:`, error.message);
@@ -169,7 +264,13 @@ async function copyDependencies() {
 
   // Main dependencies to copy (with all their nested dependencies)
   const mainDependencies = [
-    '@xenova/transformers'
+    '@xenova/transformers',
+    // Pulls in whichever @vscode/ripgrep-<platform>-<arch> optional dependency
+    // is actually installed locally (pnpm only installs the one matching the
+    // build machine). codebaseTools.ts resolves it lazily and falls back to a
+    // pure-JS scanner if it's missing — e.g. a VSIX packaged for another
+    // platform without that platform's optional dep installed at build time.
+    '@vscode/ripgrep'
   ];
 
   // Dependencies to exclude (problematic ones)
@@ -189,8 +290,24 @@ async function copyDependencies() {
     '@img/sharp-win32-x64'
   ]);
 
+  const shouldSkip = createDependencyFilter();
+  if (process.env.VSCODE_TARGET) {
+    console.log(`🎯 Filtering onnxruntime-node native binaries for target: ${process.env.VSCODE_TARGET}`);
+
+    // Only the matching platform's ripgrep binary belongs in this target's
+    // VSIX — exclude the other 11 (all installed locally via pnpm's
+    // supportedArchitectures so every target build has one available).
+    const matchingRipgrepPackage = `@vscode/ripgrep-${process.env.VSCODE_TARGET}`;
+    for (const pkg of RIPGREP_PLATFORM_PACKAGES) {
+      if (pkg !== matchingRipgrepPackage) {
+        excludedDependencies.add(pkg);
+      }
+    }
+    console.log(`🎯 Filtering ripgrep binary for target: ${process.env.VSCODE_TARGET} (${matchingRipgrepPackage})`);
+  }
+
   for (const dep of mainDependencies) {
-    await copyDependencyWithNested(dep, srcNodeModules, outNodeModules, new Set(), excludedDependencies);
+    await copyDependencyWithNested(dep, srcNodeModules, outNodeModules, new Set(), excludedDependencies, shouldSkip);
   }
 
   console.log('✅ Dependencies copied successfully');

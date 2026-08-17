@@ -357,11 +357,14 @@ export class ConfluenceReleaseSource implements ReleaseSource {
       throw new Error(`No value column for environment "${environment}" on the release page.`);
     }
 
+    // Every row with a key is returned, even when this environment's cell is
+    // blank — the UI shows it (checked off by default) so a human decides
+    // whether to sync it, rather than the parser silently dropping it.
     const vars: DesiredConfigVar[] = [];
     for (const r of table.records) {
       const key = r[keyCol]?.trim();
-      const value = r[envCol]?.trim();
-      if (!key || value === undefined || value === '') continue;
+      if (!key) continue;
+      const value = r[envCol]?.trim() ?? '';
       vars.push({
         key,
         target: this.targetFor(appCol ? r[appCol] ?? '' : ''),

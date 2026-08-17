@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { STORAGE_KEYS } from '../../constants';
 import { EmbeddingProviderId } from '../types/embeddingManifest';
 import { normalizeApiKeys } from './getLlmSettings';
+import { getMode } from './getModeSettings';
 
 export interface EmbeddingSettings {
   provider: EmbeddingProviderId;
@@ -13,8 +14,10 @@ export interface EmbeddingSettings {
 
 /**
  * Read the embedding provider + key(s) from the persisted webview settings
- * store. Defaults to local so existing installs (no `embedding` section) keep
- * working.
+ * store. The provider is derived from {@link getMode} (not the stored
+ * discriminator) so it can never disagree with the active mode — remote is
+ * always Gemini, local is always the bundled model. Keys are still read from
+ * their stored fields.
  */
 export function getEmbeddingSettings(
   context: vscode.ExtensionContext,
@@ -23,7 +26,7 @@ export function getEmbeddingSettings(
   const emb = settings?.state?.config?.embedding;
   const apiKeys = normalizeApiKeys(emb?.apiKeys, emb?.apiKey);
   return {
-    provider: emb?.provider === 'gemini' ? 'gemini' : 'local',
+    provider: getMode(context) === 'remote' ? 'gemini' : 'local',
     apiKey: apiKeys[0] || undefined,
     apiKeys,
   };

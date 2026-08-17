@@ -93,17 +93,20 @@ The extension is distributed through two registries:
 - **VS Code Marketplace** (`vsce`) — used by Microsoft VS Code.
 - **Open VSX** (`ovsx`) — used by VS Code forks such as **Antigravity**, Cursor, Windsurf, and VSCodium. The Microsoft Marketplace cannot be used by these forks, so the extension must be on Open VSX to be discoverable there.
 
+### Per-target packages
+
+`onnxruntime-node` (a dependency of the embedding model) ships a separate native binary for every OS/arch. A single universal `.vsix` has to bundle all of them, which produces a 200+ MB package — slow enough to upload that `vsce publish`/`ovsx publish` can appear to hang with no progress output. `pnpm run vscode:publish-all` instead builds and publishes **one `.vsix` per target** (`win32-x64`, `win32-arm64`, `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`), each carrying only its own binary. The Marketplace and Open VSX both serve the correct one to each user automatically.
+
+Vendored `onnxruntime-web`/`transformers.js` `.wasm` and `.map` files are stripped from every package regardless of target — the extension only ever runs the Node (`onnxruntime-node`) backend, so that wasm path never executes (see `esbuild.config.js`'s `createDependencyFilter`).
+
 Commands:
 
-- `pnpm run vscode:package` — build and package a `.vsix` locally (e.g. for manual install).
-- `pnpm run vscode:publish-marketplace` — publish the already-packaged `.vsix` to the VS Code Marketplace.
-- `pnpm run vscode:publish-pre-release-marketplace` — same, marked as a pre-release.
-- `pnpm run vscode:publish-ovsx` — publish the already-packaged `.vsix` to Open VSX (requires `OVSX_TOKEN`).
-- `pnpm run vscode:publish-pre-release-ovsx` — same, marked as a pre-release.
-- `pnpm run vscode:publish-all` — package once, publish the **same** artifact to both registries via the scripts above, then tag the release.
-- `pnpm run vscode:publish-pre-release-all` — same, using the pre-release variants throughout.
+- `pnpm run vscode:package` — build and package a single **universal** `.vsix` locally (all platforms bundled). Used for manual install / local testing, not for publishing.
+- `pnpm run vscode:package-targets` — build and package all per-target `.vsix` files locally without publishing (useful for checking sizes before a real release).
+- `pnpm run vscode:publish-all` — build, package, and publish a `.vsix` per target to **both** registries, then tag the release.
+- `pnpm run vscode:publish-pre-release-all` — same, marked as a pre-release.
 
-If a full run fails partway (e.g. a registry outage), don't re-run `-all` — `vsce publish` will reject a version already live on the Marketplace. Instead, run just the step(s) that didn't complete, e.g. `pnpm run vscode:publish-ovsx && pnpm create-tag`.
+Both `-all` scripts (`scripts/publish-targets.mjs`) are safe to re-run after a partial failure (e.g. a registry outage mid-way through the target list) — publish calls pass `--skip-duplicate`, so already-published targets are skipped rather than rejected, and the tag is only created once every target succeeds.
 
 Setup for Open VSX (one-time): create a publisher namespace matching `Riteshkant` at [open-vsx.org](https://open-vsx.org), generate an access token, and export it before publishing:
 

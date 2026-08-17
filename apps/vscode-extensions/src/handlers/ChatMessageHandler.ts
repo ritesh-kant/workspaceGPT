@@ -56,6 +56,10 @@ export class ChatMessageHandler {
         this.analyticsService.trackEvent('message_stopped');
         await this.handleStopMessage();
         return true;
+      case MESSAGE_TYPES.AGENT_WRITE_DECISION:
+        this.analyticsService.trackEvent('agent_write_decision', { approved: !!data.approved, scope: data.scope });
+        this.chatService?.resolveAgentWrite(data.id, !!data.approved, data.feedback, data.scope);
+        return true;
       case MESSAGE_TYPES.UPDATE_MODEL:
         this.analyticsService.trackEvent('model_updated', {
           modelId: data.modelId,

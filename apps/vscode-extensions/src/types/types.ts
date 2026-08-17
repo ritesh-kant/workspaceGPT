@@ -51,7 +51,7 @@ export interface EmbeddingProgress {
 
 export type QueryIntent = 'lookup' | 'semantic' | 'aggregation' | 'comparison' | 'chitchat';
 
-export type DataSource = 'CONFLUENCE' | 'ADO';
+export type DataSource = 'CONFLUENCE' | 'ADO' | 'CODEBASE';
 
 export interface QueryClassification {
   intent: QueryIntent;

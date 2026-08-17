@@ -1,12 +1,12 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { clearVSCodeState, VSCodeAPI } from '../vscode';
 import './Settings.css';
 import { useSettingsStore, useChatStore, useModelActions } from '../store';
 import { MESSAGE_TYPES } from '../constants';
 import { clearStatusMessageAfterDelay } from './settings/utils';
+import ModeSelector from './settings/ModeSelector';
 import ModelSettings from './settings/ModelSettings';
-import EmbeddingSettings from './settings/EmbeddingSettings';
-import VectorStoreSettings from './settings/VectorStoreSettings';
+import RemoteEngineSettings from './settings/RemoteEngineSettings';
 import ShareSettings from './settings/ShareSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
@@ -20,7 +20,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   onBack,
 }) => {
   const {
-    setConfig,
+    config,
     batchUpdateConfig,
     resetStore: resetSettingStore,
   } = useSettingsStore();
@@ -28,115 +28,21 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
   const { resetStore: resetModelStore } = useModelActions();
   const { resetStore: resetChatStore } = useChatStore();
 
-  const vscode = VSCodeAPI(); 
+  const vscode = VSCodeAPI();
 
+  const isRemote = config.mode === 'remote';
+
+  const [isBetaOpen, setIsBetaOpen] = useState(
+    () => !!(config.ado?.isAdoEnabled || config.deployment?.isDeploymentEnabled)
+  );
+
+  // If either beta feature is already enabled (e.g. settings finish loading
+  // after this component mounts), expand the section so it isn't hidden.
   useEffect(() => {
-
-    // Listen for configuration and sync updates from extension
-    const handleMessage = (event: MessageEvent) => {
-      const message = event.data;
-
-      switch (message.type) {
-        case 'SettingsButtonConfig':
-          setConfig(message.config);
-          break;
-        // Codebase
-        case MESSAGE_TYPES.SYNC_CODEBASE_IN_PROGRESS:
-          batchUpdateConfig('codebase', {
-            codebaseSyncProgress: message.progress,
-            messageType: 'success',
-            isSyncing: message.progress < 100,
-            canResume: true,
-          });
-          break;
-
-        case MESSAGE_TYPES.SYNC_CODEBASE_COMPLETE:
-          batchUpdateConfig('codebase', {
-            isSyncing: false,
-            codebaseSyncProgress: 100,
-            messageType: 'success',
-            statusMessage: 'Sync completed successfully',
-            canResume: false,
-            isSyncCompleted: true,
-          });
-          clearStatusMessageAfterDelay(
-            'codebase',
-            'statusMessage',
-          );
-          break;
-
-        case MESSAGE_TYPES.SYNC_CODEBASE_ERROR:
-          batchUpdateConfig('codebase', {
-            isSyncing: false,
-            messageType: 'error',
-            statusMessage: `Sync error: ${message.message}`,
-            canResume: true,
-          });
-          break;
-
-        case MESSAGE_TYPES.CODEBASE_CONNECTION_STATUS:
-          batchUpdateConfig('codebase', {
-            messageType: message.status ? 'success' : 'error',
-            statusMessage: message.message || '',
-          });
-          clearStatusMessageAfterDelay(
-            'codebase',
-            'statusMessage',
-          );
-          break;
-
-        // Codebase Indexing
-        case MESSAGE_TYPES.INDEXING_CODEBASE_IN_PROGRESS:
-          batchUpdateConfig('codebase', {
-            codebaseIndexProgress: message.progress,
-            messageType: 'success',
-            isIndexing: message.progress < 100,
-            canResumeIndexing: true,
-            isSyncing: false,
-            canResume: false,
-          });
-          break;
-
-        case MESSAGE_TYPES.INDEXING_CODEBASE_COMPLETE:
-          batchUpdateConfig('codebase', {
-            codebaseIndexProgress: 100,
-            messageType: 'success',
-            isIndexing: false,
-            statusMessage: 'Indexing completed successfully',
-            canResumeIndexing: false,
-            isSyncing: false,
-            canResume: false,
-            isIndexingCompleted: true,
-          });
-          clearStatusMessageAfterDelay(
-            'codebase',
-            'statusMessage',
-          );
-          break;
-
-        case MESSAGE_TYPES.INDEXING_CODEBASE_ERROR:
-          batchUpdateConfig('codebase', {
-            isSyncing: false,
-            messageType: 'error',
-            statusMessage: `Indexing error: ${message.message}`,
-            canResumeIndexing: true,
-          });
-          break;
-
-        // Handle workspace path response
-        case MESSAGE_TYPES.WORKSPACE_PATH:
-          if (message.path) {
-            batchUpdateConfig('codebase', {
-              repoPath: message.path,
-            });
-          }
-          break;
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
+    if (config.ado?.isAdoEnabled || config.deployment?.isDeploymentEnabled) {
+      setIsBetaOpen(true);
+    }
+  }, [config.ado?.isAdoEnabled, config.deployment?.isDeploymentEnabled]);
 
   function reset() {
     clearVSCodeState();
@@ -167,37 +73,42 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         </div>
       </div>
 
-      <ModelSettings />
-      <br />
+      <div className='settings-stack'>
+        <ModeSelector />
 
-      <EmbeddingSettings />
-      <br />
+        {isRemote ? <RemoteEngineSettings /> : <ModelSettings />}
 
-      <VectorStoreSettings />
-      <br />
+        {isRemote && <ShareSettings />}
 
-      <ShareSettings />
-      <br />
+        <ConfluenceSettings />
 
-      <ConfluenceSettings />
-      <br />
+        <div className='beta-section'>
+          <div
+            className='beta-section-header'
+            onClick={() => setIsBetaOpen((open) => !open)}
+          >
+            <h3>
+              Beta Features <span className='beta-badge'>Beta</span>
+            </h3>
+            <span className='trigger-arrow'>{isBetaOpen ? '▲' : '▼'}</span>
+          </div>
+          {isBetaOpen && (
+            <div className='beta-section-body'>
+              <AdoSettings />
+              <DeploymentSettings />
+            </div>
+          )}
+        </div>
 
-      <AdoSettings />
-      <br />
+        <McpSettings />
 
-      <DeploymentSettings />
-      <br />
+        {/* <CodebaseSettings /> */}
 
-      <McpSettings />
-      <br />
-
-      {/* <CodebaseSettings /> */}
-      <br />
-
-      <div className='settings-form'>
-        <button className='secondary-button' onClick={() => reset()}>
-          Reset WorkspaceGPT
-        </button>
+        <div className='settings-form'>
+          <button className='secondary-button' onClick={() => reset()}>
+            Reset WorkspaceGPT
+          </button>
+        </div>
       </div>
     </div>
   );
