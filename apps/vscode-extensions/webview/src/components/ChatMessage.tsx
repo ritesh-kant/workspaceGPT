@@ -3,16 +3,21 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import CodeBlock from './CodeBlock';
+import AgentTimeline from './AgentTimeline';
+import FilesChangedBar from './FilesChangedBar';
+import { AgentStep, TurnSummary } from '../store/chatStore';
 
 interface ChatMessageProps {
   content: string;
   isUser: boolean;
   isError?: boolean;
   /** Tool-exploration steps taken before this answer — rendered collapsed above it. */
-  agentSteps?: string[];
+  agentSteps?: (AgentStep | string)[];
+  /** Duration + files-changed rollup for the agent turn that produced this answer. */
+  turnSummary?: TurnSummary;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser, isError, agentSteps }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser, isError, agentSteps, turnSummary }) => {
   const [copied, setCopied] = useState(false);
 
   const copyMessage = async () => {
@@ -32,14 +37,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser, isError, age
       ) : (
         <>
           {agentSteps && agentSteps.length > 0 && (
-            <details className='agent-steps'>
-              <summary>Explored workspace — {agentSteps.length} step{agentSteps.length === 1 ? '' : 's'}</summary>
-              <ul>
-                {agentSteps.map((step, i) => (
-                  <li key={i}>{step}</li>
-                ))}
-              </ul>
-            </details>
+            <AgentTimeline steps={agentSteps} durationMs={turnSummary?.durationMs} />
           )}
           <div className="message-content markdown-content">
             <ReactMarkdown
@@ -50,6 +48,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser, isError, age
               {content}
             </ReactMarkdown>
           </div>
+          {turnSummary && turnSummary.filesChanged.length > 0 && (
+            <FilesChangedBar summary={turnSummary} />
+          )}
           {!isError && (
             <button
               type='button'

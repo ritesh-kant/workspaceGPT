@@ -6,6 +6,9 @@
 > billing/privacy backbone) and [ARCHITECTURE.md](ARCHITECTURE.md). This doc
 > answers: *what does it take to be a credible alternative to Cursor and
 > Claude Code, and in what order?*
+>
+> The canonical statement of the positioning lives in
+> [NORTH-STAR.md](NORTH-STAR.md) — §1 below is the working version of it.
 
 ---
 

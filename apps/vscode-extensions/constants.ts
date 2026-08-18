@@ -13,15 +13,30 @@ export const MESSAGE_TYPES = {
   STOP_MESSAGE: 'stop-message',
   // Retrieval pipeline status (shown to user while loading)
   RETRIEVAL_STATUS: 'retrieval-status',
-  // One completed agent exploration step — accumulated by the webview and
-  // persisted on the answer, unlike the transient RETRIEVAL_STATUS label.
+  // One agent exploration step (structured: kind/title/detail/path) —
+  // accumulated by the webview and persisted on the answer, unlike the
+  // transient RETRIEVAL_STATUS label.
   AGENT_STEP: 'agent-step',
+  // Completion of a previously announced step (matched by id): result summary
+  // ("28 results", "+2 −2", "exit 0"), status done/error, optional meta
+  // (command output tail) — turns "Searched city" into "Searched city · 28 results".
+  AGENT_STEP_UPDATE: 'agent-step-update',
+  // End-of-turn rollup for agent turns: how long the run took and which files
+  // changed (+added/−removed per file). Rendered as the "N files changed" bar.
+  AGENT_TURN_SUMMARY: 'agent-turn-summary',
+  // Webview → host: open a diff of an agent-changed file (original vs current).
+  OPEN_DIFF_IN_EDITOR: 'open-diff-in-editor',
 
   // Agent write tools: host → webview review card, webview → host decision.
   // The agent loop BLOCKS on the decision (worker awaits tool_response), so
   // every write is human-approved before it touches the workspace.
   AGENT_WRITE_REVIEW: 'agent-write-review',
   AGENT_WRITE_DECISION: 'agent-write-decision',
+  // Host → webview: every parked review was auto-rejected (stop/worker death);
+  // cards should collapse their buttons instead of dangling as live no-ops.
+  AGENT_WRITE_REVIEWS_CLOSED: 'agent-write-reviews-closed',
+  // Webview → host: open a reviewed file (edit/create/delete) in the editor.
+  OPEN_FILE_IN_EDITOR: 'open-file-in-editor',
 
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',

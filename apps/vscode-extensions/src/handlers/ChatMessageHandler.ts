@@ -1,9 +1,12 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { MESSAGE_TYPES, MODEL, MODEL_PROVIDERS } from '../../constants';
 import { ChatService } from '../services/chatService';
 import { HistoryService } from '../services/historyService';
 import { AnalyticsService } from '../services/analyticsService';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
+import { getNamedRoots, resolveAgainstRoots } from '../services/codebase/codebaseTools';
+import { openAgentDiff } from '../services/agent/agentDiffProvider';
 
 export class ChatMessageHandler {
   private chatService?: ChatService;
@@ -60,6 +63,12 @@ export class ChatMessageHandler {
         this.analyticsService.trackEvent('agent_write_decision', { approved: !!data.approved, scope: data.scope });
         this.chatService?.resolveAgentWrite(data.id, !!data.approved, data.feedback, data.scope);
         return true;
+      case MESSAGE_TYPES.OPEN_FILE_IN_EDITOR:
+        await this.handleOpenFileInEditor(data.path);
+        return true;
+      case MESSAGE_TYPES.OPEN_DIFF_IN_EDITOR:
+        await this.handleOpenDiffInEditor(data.path);
+        return true;
       case MESSAGE_TYPES.UPDATE_MODEL:
         this.analyticsService.trackEvent('model_updated', {
           modelId: data.modelId,
@@ -112,6 +121,41 @@ export class ChatMessageHandler {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
       this.handleError('Error:', error);
+    }
+  }
+
+  /** Open a reviewed file (workspace-relative, possibly root-prefixed) in the editor. */
+  private async handleOpenFileInEditor(relOrPrefixed: string): Promise<void> {
+    if (!relOrPrefixed) return;
+    try {
+      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const resolved = resolveAgainstRoots(roots, relOrPrefixed);
+      if (!resolved) {
+        vscode.window.showWarningMessage(`Could not resolve "${relOrPrefixed}" in the current workspace.`);
+        return;
+      }
+      const absPath = path.resolve(resolved.root.uri.fsPath, resolved.relPath);
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
+      await vscode.window.showTextDocument(doc, { preview: false });
+    } catch (error) {
+      this.handleError('Error opening file:', error);
+    }
+  }
+
+  /** Open a review diff (original ⟷ current) for a file the agent changed this session. */
+  private async handleOpenDiffInEditor(relOrPrefixed: string): Promise<void> {
+    if (!relOrPrefixed) return;
+    try {
+      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const resolved = resolveAgainstRoots(roots, relOrPrefixed);
+      if (!resolved) {
+        vscode.window.showWarningMessage(`Could not resolve "${relOrPrefixed}" in the current workspace.`);
+        return;
+      }
+      const absPath = path.resolve(resolved.root.uri.fsPath, resolved.relPath);
+      await openAgentDiff(this.context, absPath);
+    } catch (error) {
+      this.handleError('Error opening diff:', error);
     }
   }
 

@@ -1,5 +1,9 @@
 # Workspace GPT 🧠🚀 (In Development)
 
+> 🧭 **Where this project is headed:** [NORTH-STAR.md](NORTH-STAR.md) — *the
+> coding agent that knows your whole org, and can prove it never stores your
+> data.* Read it before proposing or building any feature.
+
 **Stop losing time searching for information!** Workspace GPT is an AI-powered knowledge assistant designed to break down data silos and make your organization's collective knowledge instantly accessible **from inside your IDE**. This **Retrieval-Augmented Generation (RAG)** system is **local-first**: by default it runs on a local model (**LLaMA 3.2** via [Ollama](https://ollama.com/)) with local embeddings and a local vector store, so your data can stay entirely on your machine. If you prefer, you can also plug in a cloud provider (OpenAI, Gemini, Groq, and others) — the tradeoff is yours to make.
 
 **Who is this for?** Workspace GPT is designed for developers, product owners, managers, and anyone in your organization who needs quick access to relevant information **without compromising data privacy**.

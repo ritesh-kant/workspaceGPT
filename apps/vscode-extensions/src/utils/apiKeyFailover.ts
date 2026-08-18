@@ -32,6 +32,8 @@ export function isRateLimitError(err: any): boolean {
 export async function withKeyFailover<T>(
   keys: Array<string | undefined | null>,
   fn: (key: string, index: number) => Promise<T>,
+  /** Called (in addition to the console.warn) whenever a key rotates, so callers can surface it in the UI instead of leaving it silent in the extension host log. */
+  onRotate?: (message: string) => void,
 ): Promise<T> {
   const candidates = keys.map((k) => (k ?? '').trim()).filter((k) => k.length > 0);
   const list = candidates.length > 0 ? candidates : [''];
@@ -44,9 +46,9 @@ export async function withKeyFailover<T>(
       lastErr = err;
       const canRotate = isRateLimitError(err) && i < list.length - 1;
       if (!canRotate) throw err;
-      console.warn(
-        `[workspaceGPT] API key #${i + 1} rate-limited (429) — failing over to key #${i + 2} of ${list.length}.`,
-      );
+      const message = `API key #${i + 1} rate-limited (429) — failing over to key #${i + 2} of ${list.length}.`;
+      console.warn(`[workspaceGPT] ${message}`);
+      onRotate?.(message);
     }
   }
   throw lastErr;

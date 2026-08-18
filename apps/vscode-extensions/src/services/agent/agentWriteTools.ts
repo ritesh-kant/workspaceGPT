@@ -111,6 +111,62 @@ async function documentText(uri: vscode.Uri): Promise<string> {
 const countOccurrences = (haystack: string, needle: string): number =>
   needle === '' ? 0 : haystack.split(needle).length - 1;
 
+/**
+ * Best-effort locator for a mis-copied oldString: finds the file line most
+ * similar to oldString's first line and returns that region verbatim (a bit
+ * longer than the target), so the caller can copy real bytes instead of
+ * guessing again. Null when nothing plausibly matches.
+ */
+function closestSnippet(content: string, oldString: string): string | null {
+  const firstTarget = oldString
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)[0];
+  if (!firstTarget) return null;
+  const targetTokens = new Set(firstTarget.split(/\W+/).filter((w) => w.length > 2));
+  const fileLines = content.split('\n');
+  let bestIdx = -1;
+  let bestScore = 0;
+  fileLines.forEach((line, i) => {
+    const t = line.trim();
+    if (!t) return;
+    let score = 0;
+    if (t === firstTarget) score = 1000;
+    else for (const w of t.split(/\W+/)) if (targetTokens.has(w)) score++;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  });
+  if (bestIdx < 0 || bestScore < 2) return null;
+  const targetLineCount = oldString.split('\n').length;
+  const start = Math.max(0, bestIdx - 1);
+  const end = Math.min(fileLines.length, bestIdx + Math.max(targetLineCount + 2, 5));
+  return fileLines.slice(start, end).join('\n');
+}
+
+/** One line per occurrence: its line number and the nearest non-blank line above it. */
+function describeOccurrences(content: string, needle: string, cap = 5): string {
+  const lines: string[] = [];
+  let from = 0;
+  for (let n = 1; n <= cap; n++) {
+    const idx = content.indexOf(needle, from);
+    if (idx === -1) break;
+    const lineNo = content.slice(0, idx).split('\n').length;
+    const allLines = content.split('\n');
+    let precedingText = '';
+    for (let i = lineNo - 2; i >= 0; i--) {
+      if (allLines[i].trim()) {
+        precedingText = allLines[i].trim().slice(0, 80);
+        break;
+      }
+    }
+    lines.push(`  ${n}) line ${lineNo}${precedingText ? `, preceded by: "${precedingText}"` : ''}`);
+    from = idx + needle.length;
+  }
+  return lines.join('\n');
+}
+
 // ── prepare phase ──
 
 export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): Promise<PreparedWrite> {
@@ -130,15 +186,30 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
 
   const occurrences = countOccurrences(before, args.oldString);
   if (occurrences === 0) {
+    // Include the closest real region of the file in the error: weak models
+    // write oldString from memory (e.g. a collapsed one-liner of a multi-line
+    // function) even right after reading the file — handing them the exact
+    // bytes to copy is what actually breaks that habit.
+    const snippet = closestSnippet(before, args.oldString);
     throw new Error(
       'oldString was not found in the file. It must match the current file content EXACTLY, ' +
-        'including whitespace and indentation. Re-read the file and copy the text verbatim.'
+        'including whitespace, indentation, and line breaks.' +
+        (snippet
+          ? ` The closest matching region of the actual file is:\n\`\`\`\n${snippet}\n\`\`\`\nCopy oldString EXACTLY from this — including its line breaks.`
+          : ' Re-read the file and copy the text verbatim.')
     );
   }
   if (occurrences > 1 && !args.replaceAll) {
+    // Deliberately does NOT lead with replaceAll: smaller models take the
+    // first suggestion, and blanket-replacing shared text (e.g. two functions
+    // with identical bodies) corrupts unrelated code. Observed live with qwen.
+    // Listing each occurrence's location + preceding line hands the model the
+    // exact disambiguating tokens — "include surrounding lines" alone sends
+    // weak models into a retry loop of the identical failing call.
     throw new Error(
-      `oldString appears ${occurrences} times in the file — include more surrounding lines to make it unique, ` +
-        'or pass replaceAll: true to change every occurrence.'
+      `oldString appears ${occurrences} times in the file:\n${describeOccurrences(before, args.oldString)}\n` +
+        'Extend oldString to ALSO include the preceding line of the ONE occurrence you mean (copied EXACTLY from the file). ' +
+        'Only if you genuinely intend to change every occurrence, pass replaceAll: true instead.'
     );
   }
 

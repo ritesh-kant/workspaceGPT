@@ -86,8 +86,10 @@ export class CheckpointService {
     if (this.initialized) return;
     if (!fs.existsSync(path.join(this.shadowGitDir, 'HEAD'))) {
       fs.mkdirSync(this.shadowGitDir, { recursive: true });
+      // --git-dir is a GLOBAL git flag: it must precede the subcommand.
+      // (`git init --git-dir=X` is rejected by git ≥2.x as an unknown option.)
       await new Promise<void>((resolve, reject) =>
-        execFile('git', ['init', '--quiet', `--git-dir=${this.shadowGitDir}`], { timeout: GIT_TIMEOUT_MS }, (err) =>
+        execFile('git', [`--git-dir=${this.shadowGitDir}`, 'init', '--quiet'], { timeout: GIT_TIMEOUT_MS }, (err) =>
           err ? reject(err) : resolve(),
         ),
       );
@@ -122,6 +124,10 @@ export class CheckpointService {
       }
       await this.git(['commit', '--quiet', '--no-verify', '-m', label]);
       const sha = (await this.git(['rev-parse', 'HEAD'])).trim();
+      // Tag every checkpoint: revertTo() resets HEAD backwards, which would
+      // otherwise leave later checkpoints unreachable (invisible to list(),
+      // eventually GC-ed) — reverting must never destroy the redo timeline.
+      await this.git(['tag', '--force', `cp-${sha.slice(0, 12)}`, sha]);
       return { sha, label, timestamp: Date.now() };
     });
   }
@@ -148,7 +154,9 @@ export class CheckpointService {
         () => false,
       );
       if (!hasHead) return [];
-      const out = await this.git(['log', `--max-count=${limit}`, '--format=%H%x1f%s%x1f%ct']);
+      // --all: checkpoints stay listed (via their cp-* tags) even after a
+      // revert moved HEAD behind them.
+      const out = await this.git(['log', '--all', `--max-count=${limit}`, '--format=%H%x1f%s%x1f%ct']);
       return out
         .trim()
         .split('\n')

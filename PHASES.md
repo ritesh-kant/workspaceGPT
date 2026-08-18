@@ -1,6 +1,6 @@
 # WorkspaceGPT — Master Phase Plan
 
-> Status: **Canonical sequencing** · Owner: Ritesh · Last updated: 2026-08-15
+> Status: **Canonical sequencing** · Owner: Ritesh · Last updated: 2026-08-17
 >
 > One place that orders ALL planned work. Merges the build orders from
 > [CODING-AGENT-ROADMAP.md](CODING-AGENT-ROADMAP.md) (items A1–G5) and
@@ -12,10 +12,19 @@
 > **P2 core ✅** — run_command (denylist → approval → execute), session
 > allowlist, agent-actions.jsonl audit, rules-files injection (.workspacegpt/
 > rules.md, CLAUDE.md, .cursorrules, AGENTS.md). **P3.1 ✅** — search_docs /
-> search_tickets exposed as agent tools. Remaining: P2.4/2.5 worker hardening
-> & context mgmt, P2.8 git write tools, P3.2–3.5, E3 real-terminal capture;
-> B1–B3/P4 blocked on AWS + Stripe accounts. All pending live manual testing
-> in the Extension Development Host.
+> search_tickets exposed as agent tools. **P1.9 ✅ (2026-08-17)** — headless
+> harness (`packages/agent-evals`: `pnpm units` 35 tests + `pnpm smoke` vs
+> local qwen) found+fixed 4 bugs (checkpoint git-init, revert redo-loss,
+> chmod denylist, multi-JSON salvage) and added 7 loop scaffolds (sequential
+> writes, auto-diagnostics, failed-write/phantom-change honesty gates, repeat
+> breaker, self-disambiguating edit errors — most of **P2.4** landed here);
+> EDH write-flow confirmed live (cards → approve → apply → revert pending).
+> Local-model ceiling characterized: qwen-14B ~60% single-edit, compounds on
+> multi-file — D3 boundary, skills (2.9) + remote tier are the mitigations.
+> Remaining: EDH checklist tail (reject-feedback, revert UI, allowlist),
+> P2.5 context mgmt, P2.8 git write tools, P2.9 skills, P3.2–3.6, E3;
+> B1–B3/P4 blocked on AWS + Stripe accounts (unblock: create the accounts;
+> B1 code can start against mocks meanwhile).
 > Those docs own the *what/why*; this doc owns the *when*. Each phase is a
 > shippable cut-line: if work stops after any phase, the product is still
 > better and releasable.
@@ -61,6 +70,7 @@ The category change from assistant to agent. Read tools already exist.
 | 1.5 | B3 diagnostics tool | LSP errors surfaced to the agent after each edit |
 | 1.6 | B4 git read tools | status / diff / log / blame |
 | 1.7 | E1 agent panel (v0) | live tool-call feed + diffs + checkpoint timeline |
+| 1.9 | **Live validation** (added 2026-08-17) | manual test pass of ALL built-but-untested work (P1, P2-core, P3.1) in the Extension Development Host: multi-file edit + review + revert, run_command approval/denylist, org tools; fix what breaks. Blocks every later phase — nothing built after 2026-08-15 has run live |
 
 **Exit demo:** "rename this API and update all call sites" — agent explores,
 edits multiple files, diagnostics verify, user reviews diff, applies, then
@@ -82,6 +92,7 @@ rolls back cleanly. Ships as a pre-release to early users.
 | 2.6 | A9 rules files | `.workspacegpt/rules.md` + read `.cursorrules`/`CLAUDE.md` |
 | 2.7 | F2 audit log | every agent action → `FileAuditLog` JSONL |
 | 2.8 | B4 git write tools | branch / stage / commit (user approves message) |
+| 2.9 | **Skills: carve-out + router** (added 2026-08-17, [SKILLS-DESIGN.md](SKILLS-DESIGN.md) steps 1–2) | `skillFiles.ts` loader + built-in skills carved from `promptTemplates.ts` (behavior-neutral first), then `skillRouter.ts` deterministic selection + analytics. Pairs with 2.5: both shrink per-turn prompt |
 
 **Exit demo:** point the agent at a failing test; it reads the failure, fixes
 the code, reruns the test to green, commits on approval — with every command
@@ -102,6 +113,7 @@ Differentiation on top of a working agent. This phase is the marketing.
 | 3.3 | B1 codebase RAG revival | dormant jina-code path: incremental, hash-skipped, gitignore-aware; semantic `search_code` tool |
 | 3.4 | B2 repo map | `buildRepoOrientation` + LSP symbols, import-graph ranked, in the cached prompt prefix |
 | 3.5 | C2 ticket→PR flow | "implement D2C-1234" end-to-end; record the 3-minute demo (G4) |
+| 3.6 | **Workspace + third-party skills** (added 2026-08-17, [SKILLS-DESIGN.md](SKILLS-DESIGN.md) steps 3–4) | `.workspacegpt/skills/*.md` + authoring guide; `.claude/skills/*/SKILL.md` compat + `triggers.json` overlay. Team-encoded procedures = enterprise stickiness |
 
 **Exit:** the demo video exists and is reproducible on a fresh repo; G5 (X
 pipeline) starts posting agent demos.
@@ -180,7 +192,8 @@ Post-launch, priority-ordered by user feedback; each item independent.
 | 5.3 | E4 agent session resume (tool-call transcripts + checkpoints) |
 | 5.4 | A10 sub-agents / background tasks |
 | 5.5 | C4 deploy-loop agent tools (`release-core` behind approval gates) |
-| 5.6 | D3 local-mode agent tuning + honest capability labels |
+| 5.6 | D3 local-mode agent tuning + honest capability labels — leans on skills (2.9/3.6): recipe-driven small-model workflows |
+| 5.7 | Skills phase 2: descriptions listing + `load_skill` tool ([SKILLS-DESIGN.md](SKILLS-DESIGN.md) step 5) |
 
 ---
 

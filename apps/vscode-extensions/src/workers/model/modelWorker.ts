@@ -329,6 +329,12 @@ const KNOWN_TOOL_NAMES = new Set(
   TOOL_DEFS.map((d: any) => d.function?.name).filter(Boolean)
 );
 
+/** Tools that change workspace state — never executed concurrently. */
+const MUTATING_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 'run_command']);
+
+/** File-mutating subset whose success must be verified by diagnostics before the run may end. */
+const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file']);
+
 /**
  * Salvages tool calls that a model emitted as plain text instead of the
  * structured tool_calls field. Smaller local models (qwen2.5-coder via
@@ -337,17 +343,54 @@ const KNOWN_TOOL_NAMES = new Set(
  * case the loop would otherwise treat the turn as a final answer and stop
  * mid-exploration.
  */
+/**
+ * Scans text for top-level balanced `{...}` blocks (string-aware), so several
+ * back-to-back JSON objects are each recovered — local models routinely emit
+ * `{"name": ...} {"name": ...}` as one blob, which a plain JSON.parse rejects.
+ */
+function extractBalancedJsonObjects(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}') {
+      if (depth > 0 && --depth === 0 && start >= 0) {
+        out.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return out;
+}
+
 function extractTextToolCalls(content: string): BufferedToolCall[] {
   if (!content) return [];
 
-  const candidates: string[] = [];
+  const wrapped: string[] = [];
   const tagRe = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
   const fenceRe = /```(?:json|tool_call|tool_code)?\s*([\s\S]*?)```/g;
   let m: RegExpExecArray | null;
-  while ((m = tagRe.exec(content))) candidates.push(m[1]);
-  while ((m = fenceRe.exec(content))) candidates.push(m[1]);
-  const trimmed = content.trim();
-  if (candidates.length === 0 && trimmed.startsWith('{')) candidates.push(trimmed);
+  while ((m = tagRe.exec(content))) wrapped.push(m[1]);
+  while ((m = fenceRe.exec(content))) wrapped.push(m[1]);
+  // Each wrapper may itself hold several objects; with no wrappers at all,
+  // scan the whole reply — the KNOWN_TOOL_NAMES filter below keeps prose that
+  // merely mentions JSON from producing false positives.
+  const candidates = wrapped.length
+    ? wrapped.flatMap((w) => extractBalancedJsonObjects(w))
+    : extractBalancedJsonObjects(content);
 
   const calls: BufferedToolCall[] = [];
   for (const candidate of candidates) {
@@ -487,6 +530,11 @@ async function consumeStream(stream: AsyncIterable<any>): Promise<StreamOutcome>
   };
 }
 
+/** Surfaces a key-rotation event to the main thread so it can show it in the UI instead of leaving it silent in the extension host console. */
+function notifyKeyFailover(message: string): void {
+  parentPort?.postMessage({ type: 'key_failover', message });
+}
+
 async function generateWithOpenAIStream(prompt: string, model: string, baseURL: string, apiKeys: string[]): Promise<void> {
   // Create the stream with key failover. A 429 surfaces at creation (before any
   // chunk), so rotating to the next key here is safe — no partial output yet.
@@ -504,7 +552,7 @@ async function generateWithOpenAIStream(prompt: string, model: string, baseURL: 
       max_tokens: 4096,
       stream: true,
     });
-  });
+  }, notifyKeyFailover);
 
   const outcome = await consumeStream(stream);
   parentPort?.postMessage({ type: 'done', content: outcome.content });
@@ -517,8 +565,7 @@ async function generateWithOpenAIStream(prompt: string, model: string, baseURL: 
  * soon as its response arrives, since several tool calls happen sequentially
  * within the same worker lifetime.
  */
-function requestTool(name: string, args: unknown): Promise<unknown> {
-  const id = randomUUID();
+function requestTool(name: string, args: unknown, id: string = randomUUID()): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const handler = (msg: any) => {
       if (msg?.type === 'tool_response' && msg.id === id) {
@@ -568,7 +615,7 @@ async function runToolTurn(
       max_tokens: 8192,
       stream: false,
     });
-  });
+  }, notifyKeyFailover);
 
   const message = response.choices[0]?.message;
   const toolCalls: BufferedToolCall[] = (message?.tool_calls ?? []).map((tc: any) => ({
@@ -604,6 +651,23 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   let toolCharsUsed = 0;
   let toolCallsExecuted = 0;
   let planNudgesUsed = 0;
+  // Verification discipline (P2.4): a run that APPLIED file writes may not end
+  // without a diagnostics check, and may not end silently. Models — local ones
+  // especially — skip both when left to their own devices.
+  let writesApplied = 0;
+  let writesSinceDiagnostics = 0;
+  let autoDiagnosticsRan = false;
+  let summaryNudgeUsed = false;
+  // Repeating an identical call that already failed burns turns for nothing —
+  // qwen retried the SAME failing edit 6× in one observed run. Short-circuit
+  // repeats with escalating guidance instead of executing them.
+  const failedCalls = new Map<string, number>();
+  // Last write outcome per file: a run must not end claiming success while
+  // some file's most recent write attempt failed (models happily do this).
+  const lastWriteOutcome = new Map<string, boolean>();
+  let failedWritesNudgeUsed = false;
+  let anyWriteAttempted = false;
+  let phantomChangesNudgeUsed = false;
   // Smaller local models often ANNOUNCE their tool plan in prose ("I will use
   // find_files to...") without ever emitting a call. A couple of corrective
   // turns rescues those runs; past that, return whatever the model has.
@@ -623,7 +687,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   };
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    const turnStarted = Date.now();
     const outcome = await runToolTurn(messages, model, baseURL, apiKeys, true);
+    const thoughtMs = Date.now() - turnStarted;
 
     // Exit on absence of tool calls only — several OpenAI-compat providers
     // (Gemini, Ollama) report finish_reason 'stop' even when tool_calls are
@@ -637,6 +703,65 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
 
     if (toolCalls.length === 0) {
+      // The model wants to finish — but unverified writes block that. Run
+      // get_diagnostics OURSELVES as a synthetic tool exchange (deterministic,
+      // unlike nudging): the model then sees the result and either confirms or
+      // fixes what it broke. Once per run — a model that ignores the result
+      // shouldn't loop forever.
+      if (writesSinceDiagnostics > 0 && !autoDiagnosticsRan) {
+        autoDiagnosticsRan = true;
+        const diagCallId = 'auto_diagnostics_check';
+        messages.push({
+          role: 'assistant',
+          content: outcome.content || null,
+          tool_calls: [{ id: diagCallId, type: 'function', function: { name: 'get_diagnostics', arguments: '{}' } }],
+        });
+        const diagTransportId = randomUUID();
+        parentPort?.postMessage({ type: 'tool_status', id: diagTransportId, name: 'get_diagnostics', arguments: { auto: true } });
+        let diagResult: unknown;
+        try {
+          diagResult = await requestTool('get_diagnostics', {}, diagTransportId);
+        } catch (e) {
+          diagResult = { error: e instanceof Error ? e.message : String(e) };
+        }
+        messages.push({ role: 'tool', tool_call_id: diagCallId, content: serializeToolResult(diagResult) });
+        writesSinceDiagnostics = 0;
+        continue;
+      }
+      // A file whose LAST write attempt failed means the task is incomplete —
+      // models routinely declare success anyway ("renamed across the project"
+      // while math.js was never touched, observed live). Confront once.
+      const failedPaths = [...lastWriteOutcome.entries()].filter(([, ok]) => !ok).map(([p]) => p);
+      if (failedPaths.length > 0 && !failedWritesNudgeUsed) {
+        failedWritesNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content || '(empty response)' });
+        messages.push({
+          role: 'user',
+          content:
+            `STOP: your last edit to ${failedPaths.join(', ')} FAILED — the file was NOT changed and the task is NOT complete. ` +
+            'Re-read the file, retry the edit with an exact snippet from the read result, or state explicitly that this file could not be updated. Do not claim it was changed.',
+        });
+        continue;
+      }
+      // Zero write calls all run, yet the answer narrates completed changes
+      // ("Changes Made: renamed..."): the model role-played the task instead
+      // of doing it — observed live with qwen writing a full markdown story of
+      // edits it never attempted. Confront once.
+      const claimsChanges =
+        /\b(changes made|i (have )?(changed|renamed|updated|modified|created|fixed)|(has|have) been (changed|renamed|updated|modified|created)|were (changed|renamed|updated))\b/i.test(
+          outcome.content
+        );
+      if (!anyWriteAttempted && claimsChanges && !phantomChangesNudgeUsed) {
+        phantomChangesNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            'STOP: you describe changes, but you never called edit_file/create_file/delete_file — NOTHING in the workspace was changed. ' +
+            'If the task requires changing files, make the changes NOW via the edit tools. Otherwise, rewrite your answer without claiming any change was made.',
+        });
+        continue;
+      }
       // A "final answer" that names tools is almost always a narrated plan,
       // not an answer ("I will use find_files to locate..."). Same for an
       // empty response before any tool has run. Push back and let it retry.
@@ -652,9 +777,29 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         });
         continue;
       }
+      // Applied changes deserve at least a one-line report — an empty "done"
+      // after edits looks like a hang to the user.
+      if (!outcome.content.trim() && writesApplied > 0 && !summaryNudgeUsed) {
+        summaryNudgeUsed = true;
+        messages.push({ role: 'assistant', content: '(empty response)' });
+        messages.push({
+          role: 'user',
+          content:
+            'You applied file changes but returned no answer. In 1-2 sentences, state what you changed and whether diagnostics are clean. Do not call more tools unless something is broken.',
+        });
+        continue;
+      }
       if (outcome.content) parentPort?.postMessage({ type: 'chunk', content: outcome.content });
       parentPort?.postMessage({ type: 'done', content: outcome.content });
       return;
+    }
+
+    // The model paused to "think" between tool batches — surface it like the
+    // step timeline expects ("Thought for 2s"), then any prose it wrote
+    // alongside its tool calls (previously swallowed into `messages` only).
+    parentPort?.postMessage({ type: 'thought', ms: thoughtMs });
+    if (!salvaged && outcome.content.trim()) {
+      parentPort?.postMessage({ type: 'agent_note', content: outcome.content.trim() });
     }
 
     messages.push({
@@ -670,28 +815,66 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       })),
     });
 
-    // Models often request several independent lookups in one turn — run them
-    // concurrently (each is a main-thread round trip), then append results in
-    // the original tool_calls order as the OpenAI protocol requires.
-    const results = await Promise.all(
-      toolCalls.map(async (tc) => {
-        let parsedArgs: unknown = {};
-        try {
-          parsedArgs = tc.args ? JSON.parse(tc.args) : {};
-        } catch {
-          parsedArgs = {};
-        }
-        parentPort?.postMessage({ type: 'tool_status', name: tc.name, arguments: parsedArgs });
-        try {
-          return await requestTool(tc.name, parsedArgs);
-        } catch (e) {
-          return { error: e instanceof Error ? e.message : String(e) };
-        }
-      })
-    );
+    // Reads are safe to run concurrently (each is a main-thread round trip).
+    // Turns containing ANY mutating call run strictly sequentially instead:
+    // several edits prepared against the same original file content invalidate
+    // each other on apply ("changed since the edit was prepared"), and a
+    // run_command racing an edit tests stale code — both observed live with
+    // qwen2.5-coder, which happily emits 7 edits in one turn.
+    const hasMutation = toolCalls.some((tc) => MUTATING_TOOL_NAMES.has(tc.name));
+    const executeOne = async (tc: BufferedToolCall) => {
+      let parsedArgs: unknown = {};
+      try {
+        parsedArgs = tc.args ? JSON.parse(tc.args) : {};
+      } catch {
+        parsedArgs = {};
+      }
+      const callKey = `${tc.name}:${tc.args}`;
+      const priorFailures = failedCalls.get(callKey) ?? 0;
+      if (priorFailures >= 1) {
+        // Identical call already failed — don't execute it again, escalate.
+        failedCalls.set(callKey, priorFailures + 1);
+        return {
+          error:
+            `You already made this exact ${tc.name} call and it failed the same way. Repeating it verbatim will always fail. ` +
+            (tc.name === 'edit_file'
+              ? 'Change the call: re-read the file, then copy a LARGER exact snippet — including the enclosing function/JSX line above your target — as oldString.'
+              : 'Change the arguments or take a different approach.'),
+        };
+      }
+      const transportId = randomUUID();
+      parentPort?.postMessage({ type: 'tool_status', id: transportId, name: tc.name, arguments: parsedArgs });
+      try {
+        return await requestTool(tc.name, parsedArgs, transportId);
+      } catch (e) {
+        failedCalls.set(callKey, priorFailures + 1);
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    };
+    const results: unknown[] = [];
+    if (hasMutation) {
+      for (const tc of toolCalls) results.push(await executeOne(tc));
+    } else {
+      results.push(...(await Promise.all(toolCalls.map(executeOne))));
+    }
 
     toolCalls.forEach((tc, idx) => {
       messages.push({ role: 'tool', tool_call_id: tc.id, content: serializeToolResult(results[idx]) });
+      const failed = !!(results[idx] as { error?: unknown } | null)?.error;
+      if (FILE_WRITE_TOOL_NAMES.has(tc.name)) {
+        anyWriteAttempted = true;
+        if (!failed) {
+          writesApplied++;
+          writesSinceDiagnostics++;
+        }
+        try {
+          const p = (JSON.parse(tc.args || '{}') as { path?: string }).path;
+          if (p) lastWriteOutcome.set(p, !failed);
+        } catch {
+          /* unparseable args — nothing to track */
+        }
+      }
+      if (tc.name === 'get_diagnostics') writesSinceDiagnostics = 0;
     });
     toolCallsExecuted += toolCalls.length;
   }

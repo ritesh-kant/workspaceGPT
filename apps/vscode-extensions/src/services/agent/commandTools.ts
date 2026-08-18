@@ -55,7 +55,7 @@ const COMMAND_DENYLIST: { pattern: RegExp; reason: string }[] = [
   { pattern: /\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f)/, reason: 'destructive git on the user repo — use checkpoints instead' },
   { pattern: /(curl|wget)\b[^|;&]*\|\s*(ba|z|fi)?sh\b/, reason: 'piping a download into a shell' },
   { pattern: /\b(shutdown|reboot|halt)\b/, reason: 'system power control' },
-  { pattern: /\bchmod\s+(-[a-z]+\s+)*777\b/, reason: 'world-writable permissions' },
+  { pattern: /\bchmod\s+(-[a-z]+\s+)*777\b/i, reason: 'world-writable permissions' },
   { pattern: /\b(launchctl|systemctl|crontab)\b/, reason: 'system service / scheduler modification' },
   { pattern: />\s*\/dev\/(sd|disk|nvme)/i, reason: 'raw device write' },
 ];

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import './App.css';
 import ChatMessage from './components/ChatMessage';
 import AgentWriteCard from './components/AgentWriteCard';
+import AgentTimeline from './components/AgentTimeline';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
@@ -61,8 +62,12 @@ const App: React.FC = () => {
     statusText,
     setStatusText,
     setWriteReviewDecision,
+    closeAllPendingWriteReviews,
     agentSteps,
     addAgentStep,
+    updateAgentStep,
+    setTurnSummary,
+    finalizeAgentTurn,
   } = useChatStore();
 
   const {
@@ -91,6 +96,12 @@ const App: React.FC = () => {
   >([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Only auto-scroll while the user is already reading the tail of the chat.
+  // Once they scroll up (e.g. to review a diff card), the view must stay put —
+  // a smooth-scroll on every message mutation makes the approve buttons
+  // impossible to reach during a live agent run.
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // When true, discard incoming response chunks that belong to a previous request.
   // useRef so it's always current inside the stale useEffect message-handler closure.
@@ -199,7 +210,7 @@ const App: React.FC = () => {
           setIsStreaming(true);
           startStreamPump();
           break;
-        case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
+        case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE: {
           ignoringStreamRef.current = false;
           setStatusText('');
           setIsLoading(false);
@@ -207,12 +218,49 @@ const App: React.FC = () => {
           // buffer first, then it flips isStreaming off itself.
           streamDoneRef.current = true;
           startStreamPump();
+          // The model finished without any text (rare): the steps and
+          // files-changed rollup accumulated this turn must never vanish —
+          // materialize a fallback answer to carry them.
+          if (pendingTextRef.current.length === 0) {
+            const { messages: currentMsgs } = useChatStore.getState();
+            const last = currentMsgs[currentMsgs.length - 1];
+            if (!last || last.isUser || last.writeReview) {
+              finalizeAgentTurn('Done — see the steps above for what was explored and changed.');
+            }
+          }
           break;
+        }
         case MESSAGE_TYPES.RETRIEVAL_STATUS:
           setStatusText(message.text || '');
           break;
         case MESSAGE_TYPES.AGENT_STEP:
-          if (message.text) addAgentStep(message.text);
+          if (message.step) {
+            addAgentStep({ ...message.step, ...(message.id ? { id: message.id } : {}) });
+          } else if (message.text) {
+            // Back-compat with an older extension host still posting plain text.
+            addAgentStep({ kind: 'info', title: message.text });
+          }
+          break;
+        case MESSAGE_TYPES.AGENT_STEP_UPDATE:
+          if (message.id) {
+            updateAgentStep(message.id, {
+              status: message.status || 'done',
+              summary: message.summary,
+              meta: message.meta,
+            });
+          }
+          break;
+        case MESSAGE_TYPES.AGENT_TURN_SUMMARY:
+          setTurnSummary({
+            durationMs: message.durationMs || 0,
+            filesChanged: message.filesChanged || [],
+          });
+          break;
+        case MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED:
+          // Host auto-rejected every parked review (user hit Stop / run died).
+          // Mark the cards so their buttons don't dangle as live-looking no-ops.
+          closeAllPendingWriteReviews();
+          setStatusText('');
           break;
         case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
           // A proposed agent write — render the diff card. The agent run is
@@ -396,9 +444,18 @@ const App: React.FC = () => {
   }, [modelProviders]);
 
   useEffect(() => {
-    // Scroll to bottom when messages change
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Scroll to bottom when messages change — but never yank the viewport
+    // away from a user who scrolled up to read/approve something.
+    if (nearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
+
+  const handleMessagesScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+  };
 
   useEffect(() => {
     // Auto-focus input on mount
@@ -730,13 +787,17 @@ const App: React.FC = () => {
             </div>
           )
         ) : (
-          <div className='messages-container'>
+          <div className='messages-container' ref={messagesContainerRef} onScroll={handleMessagesScroll}>
             {messages.map((message, index) =>
               message.writeReview ? (
                 <AgentWriteCard
                   key={message.writeReview.id}
                   review={message.writeReview}
-                  onDecided={setWriteReviewDecision}
+                  onDecided={(id, decision) => {
+                    setWriteReviewDecision(id, decision);
+                    // The run resumes host-side; stop claiming we're waiting.
+                    setStatusText('');
+                  }}
                 />
               ) : (
                 <ChatMessage
@@ -745,23 +806,13 @@ const App: React.FC = () => {
                   isUser={message.isUser}
                   isError={message.isError}
                   agentSteps={message.agentSteps}
+                  turnSummary={message.turnSummary}
                 />
               )
             )}
             {isLoading && (
               <div className='loading-indicator'>
-                {agentSteps.length > 0 && (
-                  <details className='agent-steps'>
-                    <summary>
-                      Exploring workspace — {agentSteps.length} step{agentSteps.length === 1 ? '' : 's'}
-                    </summary>
-                    <ul className='agent-steps-live'>
-                      {agentSteps.map((step, i) => (
-                        <li key={i}>{step}</li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
+                {agentSteps.length > 0 && <AgentTimeline steps={agentSteps} live />}
                 <div className='loading-indicator-row'>
                   <span className='loading-pulse' />
                   <span>{statusText || 'Thinking...'}</span>

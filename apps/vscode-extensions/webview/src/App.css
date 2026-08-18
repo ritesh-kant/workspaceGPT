@@ -589,45 +589,300 @@ button:hover:not(:disabled) {
   gap: 0.5rem;
 }
 
-/* Live exploration steps shown above the pulse while the agent works */
-.agent-steps-live {
-  list-style: none;
-  margin: 0;
-  padding: 0 0 0 1rem;
-  border-left: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  opacity: 0.85;
-}
-
-.agent-steps-live li {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Collapsed exploration trail persisted on an answered message */
-.agent-steps {
-  margin: 0 0 0.4rem 0;
+/* ── Agent step timeline (Antigravity-style) ─────────────────────────── */
+.agent-timeline {
+  margin: 0 0 0.5rem 0;
   font-size: 0.75rem;
   color: var(--vscode-descriptionForeground);
 }
 
-.agent-steps summary {
+.agent-timeline > summary {
   cursor: pointer;
   user-select: none;
   opacity: 0.9;
+  font-weight: 500;
 }
 
-.agent-steps ul {
-  list-style: none;
-  margin: 0.3rem 0 0 0;
-  padding: 0 0 0 1rem;
-  border-left: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+.agent-timeline > summary:hover {
+  color: var(--vscode-foreground);
+}
+
+.agent-timeline-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+  padding-left: 0.15rem;
+}
+
+.agent-timeline--live .agent-timeline-body {
+  margin-top: 0;
+}
+
+/* A group of read-only exploration steps ("Explored 2 files, 1 search") */
+.agent-step-group summary {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.9;
+  padding: 1px 0;
+}
+
+.agent-step-group summary:hover .agent-step-group-label {
+  color: var(--vscode-foreground);
+}
+
+.agent-step-group-items {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  margin: 0.25rem 0 0.25rem 0.45rem;
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+/* One step row: dot · title · file chip · detail · result summary */
+.agent-step-row {
+  min-width: 0;
+}
+
+.agent-step-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 1px 0;
+}
+
+.agent-step-row.is-error .agent-step-summary {
+  color: var(--vscode-charts-red, #f85149);
+}
+
+.step-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.step-dot--running {
+  background: var(--vscode-textLink-foreground);
+  opacity: 1;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.step-dot--error {
+  background: var(--vscode-charts-red, #f85149);
+  opacity: 1;
+}
+
+.agent-step-title {
+  flex-shrink: 0;
+}
+
+.agent-step-file {
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-badge-foreground, inherit);
+  border: none;
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 0.72rem;
+  font-family: var(--vscode-editor-font-family, monospace);
+  cursor: pointer;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+.agent-step-file:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.3));
+  text-decoration: underline;
+}
+
+.agent-step-detail {
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.agent-step-summary {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 0.5rem;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Thought for 2s" separator rows */
+.agent-step-row--thought {
+  opacity: 0.6;
+  font-style: italic;
+  padding: 1px 0;
+}
+
+/* Prose the model narrated between tool batches */
+.agent-step-row--note {
+  opacity: 0.85;
+  padding: 2px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Command rows: "Ran `npm run check`" + collapsible output box */
+.agent-step-command {
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.12));
+  border-radius: 3px;
+  padding: 0 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.agent-step-output-toggle {
+  background: none;
+  border: none;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+
+.agent-step-output-toggle:hover {
+  text-decoration: underline;
+  background: none;
+}
+
+.agent-step-output {
+  margin: 0.3rem 0 0.2rem 0.9rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.25));
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+  border-radius: 4px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.7rem;
+  line-height: 1.45;
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── Files-changed rollup bar ("1 file changed +2 −2 · Review") ──────── */
+.files-changed-bar {
+  margin-top: 0.5rem;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 5px;
+  font-size: 0.75rem;
+  overflow: hidden;
+}
+
+.files-changed-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 4px 8px;
+}
+
+.files-changed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  padding: 2px 0;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.files-changed-toggle:hover {
+  background: none;
+}
+
+.files-changed-toggle svg {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.files-changed-stats {
+  display: flex;
+  gap: 6px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.files-changed-stats .stat-added { color: var(--vscode-charts-green, #3fb950); }
+.files-changed-stats .stat-removed { color: var(--vscode-charts-red, #f85149); }
+
+.files-changed-review {
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-button-secondaryForeground, inherit);
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 4px;
+  padding: 1px 10px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.files-changed-review:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.3));
+}
+
+.files-changed-list {
+  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+  display: flex;
+  flex-direction: column;
+}
+
+.files-changed-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 3px 8px;
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  min-width: 0;
+  text-align: left;
+}
+
+.files-changed-row:hover {
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12));
+}
+
+.files-changed-row.is-deleted {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.files-changed-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  flex-shrink: 0;
+}
+
+.files-changed-path {
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
 }
 
 .loading-pulse {
@@ -1092,6 +1347,12 @@ button:hover:not(:disabled) {
   overflow: hidden;
   background: var(--vscode-editorWidget-background);
   font-size: 12px;
+  /* A flex item with non-visible overflow gets an automatic min-height of 0
+     (CSS flexbox spec), so the messages-container flex column can shrink this
+     card below its content height instead of scrolling — clipping whatever's
+     at the bottom (usually the Approve/Reject row). flex-shrink: 0 pins it to
+     its content height so the container scrolls instead of crushing it. */
+  flex-shrink: 0;
 }
 
 .agent-write-header {
@@ -1121,9 +1382,29 @@ button:hover:not(:disabled) {
   white-space: nowrap;
   direction: rtl; /* keep the filename end visible when the path truncates */
   text-align: left;
+  min-width: 0;
 }
 
-.agent-write-stats { display: flex; gap: 6px; font-weight: 600; }
+.agent-write-collapse,
+.agent-write-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--vscode-icon-foreground, inherit);
+  opacity: 0.7;
+  cursor: pointer;
+}
+.agent-write-collapse:hover,
+.agent-write-open:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); border-radius: 3px; }
+.agent-write-collapse svg { transition: transform 0.15s ease; }
+
+.agent-write-stats { display: flex; gap: 6px; font-weight: 600; flex-shrink: 0; }
 .agent-write-stats .stat-added { color: var(--vscode-charts-green, #3fb950); }
 .agent-write-stats .stat-removed { color: var(--vscode-charts-red, #f85149); }
 
@@ -1143,10 +1424,13 @@ button:hover:not(:disabled) {
 
 .agent-write-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px 10px;
   border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+  flex-shrink: 0;
 }
+.agent-write-actions button { white-space: nowrap; }
 
 .agent-write-approve {
   background: var(--vscode-button-background);

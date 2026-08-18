@@ -44,6 +44,7 @@ import {
   PreparedWrite,
 } from './agent/agentWriteTools';
 import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
+import { recordOriginalContent } from './agent/agentDiffProvider';
 import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
 import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/inspectTools';
 import {
@@ -59,6 +60,26 @@ import { loadWorkspaceRules } from './agent/rulesFiles';
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+/** One structured agent-timeline step, as the webview renders it. */
+interface AgentStepStart {
+  /** Groupable kind: search | read | check | edit | command | thought | note | info. */
+  kind: string;
+  /** Verb-first label, e.g. "Searched", "Analyzed", "Edited". */
+  title: string;
+  /** Free-form payload after the title, e.g. the query or "#L150-250". */
+  detail?: string;
+  /** Workspace-relative file/dir path, when the step targets one (clickable in UI). */
+  path?: string;
+}
+
+/** One applied file change within the current agent turn. */
+interface TurnFileChange {
+  path: string;
+  kind: 'edit' | 'create' | 'delete';
+  added: number;
+  removed: number;
 }
 
 // Re-export for use within this file — keeps the rest of the class unchanged
@@ -80,6 +101,10 @@ export class ChatService {
   private checkpointService: CheckpointService | null = null;
   /** Commands the user approved "for this session" (exact string match). */
   private sessionCommandAllowlist = new Set<string>();
+  /** When the in-flight turn started — reported as "Worked for Xs". */
+  private turnStartMs = 0;
+  /** Files changed (applied writes only) during the in-flight turn, keyed by display path. */
+  private turnFilesChanged = new Map<string, TurnFileChange>();
 
   constructor(
     webviewView: vscode.WebviewView,
@@ -221,8 +246,10 @@ export class ChatService {
   }
 
   public stopMessage(): void {
-    // Unpark any write approvals first — their worker is about to die.
+    // Unpark any write approvals first — their worker is about to die — and
+    // tell the webview so pending cards don't keep live-looking buttons.
     this.agentWriteGate.rejectAll('Run stopped by the user.');
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED });
     if (this.currentModelWorker) {
       this.currentModelWorker.terminate();
       this.currentModelWorker = null;
@@ -260,6 +287,8 @@ export class ChatService {
   ): Promise<void> {
     try {
       this.chatHistory.push({ role: 'user', content: message });
+      this.turnStartMs = Date.now();
+      this.turnFilesChanged.clear();
 
       const mode = getMode(this.context);
 
@@ -681,6 +710,9 @@ export class ChatService {
     } catch (e) {
       console.warn('WorkspaceGPT: checkpoint failed (continuing with the write):', e);
     }
+    // Remember the pre-agent content (first touch wins) so the files-changed
+    // bar's Review action can open a native original ⟷ current diff.
+    recordOriginalContent(write.uri.fsPath, write.before);
     try {
       await applyWrite(write);
     } catch (e) {
@@ -688,7 +720,14 @@ export class ChatService {
       throw e;
     }
     await this.audit(write.kind, write.summary, 'approved', 'applied');
-    return { applied: true, path: write.displayPath, summary: write.summary };
+    const prior = this.turnFilesChanged.get(write.displayPath);
+    this.turnFilesChanged.set(write.displayPath, {
+      path: write.displayPath,
+      kind: write.kind,
+      added: (prior?.added ?? 0) + diff.added,
+      removed: (prior?.removed ?? 0) + diff.removed,
+    });
+    return { applied: true, path: write.displayPath, summary: write.summary, added: diff.added, removed: diff.removed };
   }
 
   /** Lazily construct the per-workspace shadow-git checkpoint service. */
@@ -702,6 +741,109 @@ export class ChatService {
   /** Webview AGENT_WRITE_DECISION handler — resolves the parked write gate. */
   public resolveAgentWrite(id: string, approved: boolean, feedback?: string, scope?: 'once' | 'session'): void {
     this.agentWriteGate.resolve(id, approved, feedback, scope);
+  }
+
+  /**
+   * Structured step descriptor for a starting tool call — the persistent
+   * timeline entry ("Analyzed LeadsView.tsx #L150-250"), unlike the transient
+   * describeToolCall() label below.
+   */
+  private describeToolStart(name: string, args: any): AgentStepStart {
+    switch (name) {
+      case 'search_codebase':
+        return { kind: 'search', title: 'Searched', detail: args?.query ?? '' };
+      case 'find_files':
+        return { kind: 'search', title: 'Globbed', detail: args?.pattern ?? '' };
+      case 'find_symbol':
+        return { kind: 'search', title: 'Looked up', detail: args?.query ?? '' };
+      case 'find_references':
+        return { kind: 'search', title: 'Found references to', detail: args?.symbol ?? '' };
+      case 'go_to_definition':
+        return { kind: 'search', title: 'Went to definition of', detail: args?.symbol ?? '' };
+      case 'search_docs':
+        return { kind: 'search', title: 'Searched Confluence', detail: args?.query ?? '' };
+      case 'search_tickets':
+        return { kind: 'search', title: 'Searched Azure DevOps', detail: args?.query ?? '' };
+      case 'read_file': {
+        const range = args?.startLine
+          ? `#L${args.startLine}${args?.endLine ? `-${args.endLine}` : ''}`
+          : undefined;
+        return { kind: 'read', title: 'Analyzed', path: args?.path, detail: range };
+      }
+      case 'list_directory':
+        return { kind: 'read', title: 'Explored', path: args?.path || '.' };
+      case 'get_diagnostics':
+        return { kind: 'check', title: 'Checked problems', path: args?.path };
+      case 'git_status':
+        return { kind: 'read', title: 'Read git status' };
+      case 'git_diff':
+        return { kind: 'read', title: 'Read git diff', path: args?.path };
+      case 'git_log':
+        return { kind: 'read', title: 'Read git history', path: args?.path };
+      case 'git_blame':
+        return { kind: 'read', title: 'Read git blame', path: args?.path };
+      case 'edit_file':
+        return { kind: 'edit', title: 'Edited', path: args?.path };
+      case 'create_file':
+        return { kind: 'edit', title: 'Created', path: args?.path };
+      case 'delete_file':
+        return { kind: 'edit', title: 'Deleted', path: args?.path };
+      case 'run_command':
+        return { kind: 'command', title: 'Ran', detail: args?.command ?? '' };
+      default:
+        return { kind: 'info', title: name };
+    }
+  }
+
+  /**
+   * One-phrase completion summary for a finished step ("28 results", "+2 −2",
+   * "exit 0"), plus optional meta the UI renders inline (command output tail).
+   */
+  private summarizeToolResult(
+    name: string,
+    result: any
+  ): { summary?: string; meta?: Record<string, unknown> } {
+    const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+    switch (name) {
+      case 'search_codebase': {
+        const n = result?.totalMatches ?? result?.matches?.length ?? result?.files?.length ?? 0;
+        return { summary: plural(n, 'result') };
+      }
+      case 'find_files':
+        return { summary: plural(result?.files?.length ?? 0, 'file') };
+      case 'find_symbol':
+        return { summary: plural(result?.symbols?.length ?? 0, 'match', 'matches') };
+      case 'find_references':
+        return { summary: plural(result?.references?.length ?? result?.locations?.length ?? 0, 'reference') };
+      case 'read_file':
+        return result?.totalLines ? { summary: `${result.totalLines} lines` } : {};
+      case 'list_directory':
+        return { summary: plural(result?.entries?.length ?? 0, 'entry', 'entries') };
+      case 'get_diagnostics': {
+        const total = result?.totalProblems ?? 0;
+        if (total === 0) return { summary: 'no problems' };
+        const errors = (result?.diagnostics ?? []).filter((d: any) => d?.severity === 'error').length;
+        return { summary: errors > 0 ? `${plural(errors, 'error')} · ${total} total` : plural(total, 'problem') };
+      }
+      case 'run_command':
+        return {
+          summary: result?.timedOut ? 'timed out' : `exit ${result?.exitCode ?? '?'}`,
+          meta: {
+            exitCode: result?.exitCode ?? null,
+            durationMs: result?.durationMs,
+            output: typeof result?.output === 'string' ? result.output.slice(0, 4000) : '',
+          },
+        };
+      case 'edit_file':
+      case 'create_file':
+      case 'delete_file':
+        return result?.applied ? { summary: `+${result.added ?? 0} −${result.removed ?? 0}` } : {};
+      case 'search_docs':
+      case 'search_tickets':
+        return { summary: plural(result?.results?.length ?? 0, 'result') };
+      default:
+        return {};
+    }
   }
 
   /** Human-readable status text for a codebase tool call, shown in the loading indicator. */
@@ -853,15 +995,19 @@ Respond with a JSON object only, no markdown: {"intent": "<intent>", "sources": 
 
 Query: "${query}"`;
 
-      const response = await withKeyFailover(effApiKeys, (apiKey) => {
-        const client = new OpenAI({ apiKey, baseURL: providerConfig.BASE_URL });
-        return client.chat.completions.create({
-          model: effModelId,
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 60,
-          temperature: 0,
-        });
-      });
+      const response = await withKeyFailover(
+        effApiKeys,
+        (apiKey) => {
+          const client = new OpenAI({ apiKey, baseURL: providerConfig.BASE_URL });
+          return client.chat.completions.create({
+            model: effModelId,
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 60,
+            temperature: 0,
+          });
+        },
+        (message) => this.postStatus(message),
+      );
 
       const raw = response.choices[0]?.message?.content?.trim() || '{}';
       // Strip markdown code fences if present
@@ -970,6 +1116,15 @@ Query: "${query}"`;
                 error.message
               );
             }
+            // Agent turns get an end-of-run rollup (duration + files changed)
+            // before DONE, so the webview can attach it to the final answer.
+            if (codebaseRoots?.length) {
+              this.webviewView.webview.postMessage({
+                type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
+                durationMs: Date.now() - this.turnStartMs,
+                filesChanged: [...this.turnFilesChanged.values()],
+              });
+            }
             this.webviewView.webview.postMessage({
               type: MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
             });
@@ -989,6 +1144,7 @@ Query: "${query}"`;
             id?: string;
             name?: string;
             arguments?: any;
+            ms?: number;
           }) => {
             switch (result.type) {
               case 'chunk':
@@ -1012,16 +1168,37 @@ Query: "${query}"`;
 
               case 'tool_status': {
                 // A tool the model just decided to call — surfaced as a
-                // transient status label, and also as a persistent step so
-                // the exploration remains visible in the transcript.
-                const label = this.describeToolCall(result.name!, result.arguments);
-                this.postStatus(label);
+                // transient status label, and also as a persistent structured
+                // step so the exploration remains visible in the transcript.
+                this.postStatus(this.describeToolCall(result.name!, result.arguments));
                 this.webviewView.webview.postMessage({
                   type: MESSAGE_TYPES.AGENT_STEP,
-                  text: label.replace(/\.\.\.$/, ''),
+                  id: result.id,
+                  step: { ...this.describeToolStart(result.name!, result.arguments), status: 'running' },
                 });
                 break;
               }
+
+              case 'thought': {
+                // Model latency between tool batches — the "Thought for 2s"
+                // rows the timeline shows between exploration groups.
+                const sec = Math.max(1, Math.round((result.ms ?? 0) / 1000));
+                this.webviewView.webview.postMessage({
+                  type: MESSAGE_TYPES.AGENT_STEP,
+                  step: { kind: 'thought', title: `Thought for ${sec}s` },
+                });
+                break;
+              }
+
+              case 'agent_note':
+                // Prose the model wrote ALONGSIDE tool calls (progress
+                // narration) — previously swallowed into the conversation
+                // history without ever reaching the user.
+                this.webviewView.webview.postMessage({
+                  type: MESSAGE_TYPES.AGENT_STEP,
+                  step: { kind: 'note', title: '', detail: result.content ?? '' },
+                });
+                break;
 
               case 'tool_request':
                 // Codebase tools need the `vscode` workspace APIs, which this
@@ -1032,11 +1209,29 @@ Query: "${query}"`;
                   .then((toolResult) => {
                     const summary = JSON.stringify(toolResult);
                     console.log(`[codebase-tool] ← ${result.name}: ${summary.length} chars${summary.length <= 300 ? ` — ${summary}` : ''}`);
+                    const done = this.summarizeToolResult(result.name!, toolResult);
+                    this.webviewView.webview.postMessage({
+                      type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+                      id: result.id,
+                      status: 'done',
+                      summary: done.summary,
+                      meta: done.meta,
+                    });
                     modelWorker.postMessage({ type: 'tool_response', id: result.id, result: toolResult });
                   })
                   .catch((err) => {
                     const message = err instanceof Error ? err.message : String(err);
                     console.log(`[codebase-tool] ← ${result.name} ERROR: ${message}`);
+                    this.webviewView.webview.postMessage({
+                      type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+                      id: result.id,
+                      status: 'error',
+                      summary: /rejected/i.test(message)
+                        ? 'rejected'
+                        : message.length > 120
+                          ? `${message.slice(0, 120)}…`
+                          : message,
+                    });
                     modelWorker.postMessage({
                       type: 'tool_response',
                       id: result.id,
@@ -1049,6 +1244,18 @@ Query: "${query}"`;
                 this.webviewView.webview.postMessage({
                   type: MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS,
                   progress: result.progress,
+                });
+                break;
+
+              case 'key_failover':
+                // A configured key hit a 429 and we rotated to the next one —
+                // previously only a console.warn in the extension host log.
+                // Surface it as a transient status label and a persistent
+                // transcript step so the user knows why the response is slower.
+                this.postStatus(result.message || 'Rate limited — switching API key…');
+                this.webviewView.webview.postMessage({
+                  type: MESSAGE_TYPES.AGENT_STEP,
+                  step: { kind: 'info', title: result.message || 'Rate limited — switching API key' },
                 });
                 break;
             }
