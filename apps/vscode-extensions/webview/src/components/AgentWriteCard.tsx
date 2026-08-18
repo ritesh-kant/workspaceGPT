@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
 import { WriteReview } from '../store/chatStore';
@@ -30,6 +30,13 @@ const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) =>
   const [rejecting, setRejecting] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [expanded, setExpanded] = useState(!review.decision);
+
+  // The decision arrives asynchronously (approve/reject click, or a
+  // rehydrated history card resolving) — collapse the diff the moment it
+  // does, instead of leaving it expanded forever alongside the Applied badge.
+  useEffect(() => {
+    if (review.decision) setExpanded(false);
+  }, [review.decision]);
 
   const decide = (approved: boolean, scope: 'once' | 'session' = 'once') => {
     vscode.postMessage({

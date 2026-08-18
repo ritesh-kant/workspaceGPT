@@ -1226,11 +1226,7 @@ Query: "${query}"`;
                       type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
                       id: result.id,
                       status: 'error',
-                      summary: /rejected/i.test(message)
-                        ? 'rejected'
-                        : message.length > 120
-                          ? `${message.slice(0, 120)}…`
-                          : message,
+                      summary: /rejected/i.test(message) ? 'rejected' : 'failed',
                     });
                     modelWorker.postMessage({
                       type: 'tool_response',
