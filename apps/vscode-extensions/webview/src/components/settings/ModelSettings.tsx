@@ -28,10 +28,20 @@ const ModelSettings: React.FC = () => {
   // Create a debounced version of fetchAvailableModels
   const debouncedFetchModels = useCallback(
     debounce((apiKey: string) => {
-      fetchAvailableModels(selectedModelProvider.provider, apiKey);
+      fetchAvailableModels(selectedModelProvider.provider, apiKey, selectedModelProvider.baseUrl);
     }, 500),
-    [selectedModelProvider.provider]
+    [selectedModelProvider.provider, selectedModelProvider.baseUrl]
   );
+
+  const isCustomProvider = selectedModelProvider.provider === 'Custom';
+
+  const updateBaseUrl = (value: string) => {
+    updateModelProvider(selectedModelProvider.provider, 'baseUrl', value);
+    updateSelectedModelProvider({ ...selectedModelProvider, baseUrl: value });
+    if (selectedModelProvider.apiKey) {
+      debouncedFetchModels(selectedModelProvider.apiKey);
+    }
+  };
 
   // The configured keys for this provider (falls back to the legacy single key).
   const apiKeys: string[] =
@@ -62,7 +72,8 @@ const ModelSettings: React.FC = () => {
     // Fetch available models for the selected provider whenever component mounts or selectedProvider changes
     fetchAvailableModels(
       selectedModelProvider.provider,
-      selectedModelProvider.apiKey
+      selectedModelProvider.apiKey,
+      selectedModelProvider.baseUrl
     );
   }, []);
   useEffect(() => {
@@ -147,6 +158,22 @@ const ModelSettings: React.FC = () => {
             ))}
           </select>
         </div>
+
+        {isCustomProvider && (
+          <div className='form-group'>
+            <label htmlFor='base-url'>Base URL</label>
+            <input
+              id='base-url'
+              type='text'
+              value={selectedModelProvider.baseUrl ?? ''}
+              onChange={(e) => updateBaseUrl(e.target.value)}
+              placeholder='https://your-endpoint.example.com/v1'
+            />
+            <small className='form-text'>
+              Any OpenAI-compatible endpoint (self-hosted, proxy, etc.).
+            </small>
+          </div>
+        )}
 
         {/* Show API Key input field if the selected provider requires it */}
         {MODEL_PROVIDERS.find(

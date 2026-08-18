@@ -75,7 +75,10 @@ export function getLlmSettings(
   const model = context.globalState.get(STORAGE_KEYS.MODEL) as any;
   const sel = model?.state?.selectedModelProvider;
   if (!sel) return { apiKeys: [] };
-  const baseUrl = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === sel.provider)?.BASE_URL;
+  // 'Custom' (and any future user-configurable provider) stores its own base
+  // URL per-config; that always wins over the static per-provider table.
+  const baseUrl =
+    sel.baseUrl || MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === sel.provider)?.BASE_URL;
   const apiKeys = normalizeApiKeys(sel.apiKeys, sel.apiKey);
   return {
     provider: sel.provider,

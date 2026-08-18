@@ -176,12 +176,14 @@ export const handleInputChange = (
 // Modified to accept providerName and apiKey
 export const fetchAvailableModels = (
   providerName: string,
-  apiKeyToUse?: string
+  apiKeyToUse?: string,
+  baseUrl?: string
 ) => {
   vscode.postMessage({
     type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS,
     provider: providerName,
     apiKey: apiKeyToUse,
+    baseUrl,
   });
 };
 export function changeProviderHandler(provider: string) {
@@ -201,5 +203,5 @@ export function changeProviderHandler(provider: string) {
   if(!selectedModelProvider?.apiKey){
     return
   }
-  fetchAvailableModels(provider, selectedModelProvider.apiKey);
+  fetchAvailableModels(provider, selectedModelProvider.apiKey, selectedModelProvider.baseUrl);
 }

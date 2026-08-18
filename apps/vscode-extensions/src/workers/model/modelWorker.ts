@@ -15,6 +15,8 @@ interface WorkerData {
   apiKey?: string;
   /** All configured keys, tried in order with failover on rate-limit (429). */
   apiKeys?: string[];
+  /** User-supplied base URL for the 'Custom' provider; overrides MODEL_PROVIDERS. */
+  baseUrl?: string;
   currentUserName?: string;
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null;
   /** When enabled, the model gets live codebase tools instead of embedding search results. */
@@ -33,6 +35,7 @@ const {
   provider,
   apiKey,
   apiKeys,
+  baseUrl,
   currentUserName,
   currentSprint,
   codebaseTools,
@@ -426,7 +429,8 @@ async function generateResponse(): Promise<void> {
   try {
     // Get provider configuration
     const providerConfig = MODEL_PROVIDERS.find(p => p.MODEL_PROVIDER === provider);
-    if (!providerConfig || !modelId || !failoverKeys.length) {
+    const resolvedBaseUrl = providerConfig?.BASE_URL || baseUrl;
+    if (!resolvedBaseUrl || !modelId || !failoverKeys.length) {
       throw new Error(`Provider ${provider} or modelId not found`);
     }
 
@@ -440,9 +444,9 @@ async function generateResponse(): Promise<void> {
     );
 
     if (codebaseTools?.enabled) {
-      await runAgentLoop(structuredPrompt, modelId, providerConfig.BASE_URL, failoverKeys);
+      await runAgentLoop(structuredPrompt, modelId, resolvedBaseUrl, failoverKeys);
     } else {
-      await generateWithOpenAIStream(structuredPrompt, modelId, providerConfig.BASE_URL, failoverKeys);
+      await generateWithOpenAIStream(structuredPrompt, modelId, resolvedBaseUrl, failoverKeys);
     }
   } catch (error) {
     parentPort?.postMessage({

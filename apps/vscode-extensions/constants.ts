@@ -372,6 +372,16 @@ export const MODEL_PROVIDERS = [
     BASE_URL: 'https://integrate.api.nvidia.com/v1',
     DEFAULT_CHAT_MODEL: 'moonshotai/kimi-k2-instruct',
   },
+  {
+    // OpenAI-compatible provider with a user-supplied base URL (self-hosted,
+    // proxy, or any endpoint not listed above). BASE_URL is intentionally
+    // empty here — the real value lives per-config in ModelConfig.baseUrl
+    // and overrides this at every lookup site (see getLlmSettings.ts).
+    MODEL_PROVIDER: 'Custom',
+    requireApiKey: true,
+    BASE_URL: '',
+    DEFAULT_CHAT_MODEL: '',
+  },
 ];
 
 export const WORKER_STATUS = {

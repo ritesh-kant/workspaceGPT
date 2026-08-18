@@ -201,6 +201,8 @@ export interface ModelConfig {
   apiKey?: string;
   /** All configured keys, tried in order with failover on rate-limit (429). */
   apiKeys?: string[];
+  /** User-supplied base URL for the 'Custom' (OpenAI-compatible) provider. */
+  baseUrl?: string;
   downloadProgress: number;
   downloadStatus: 'idle' | 'downloading' | 'completed' | 'error';
   errorMessage?: string;

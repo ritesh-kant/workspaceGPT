@@ -197,7 +197,8 @@ export class ChatMessageHandler {
   }
 
   private async handleFetchAvailableModels(data: any) {
-    const baseURL = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === data.provider)?.BASE_URL;
+    const baseURL =
+      data.baseUrl || MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === data.provider)?.BASE_URL;
     const apiKey = data.apiKey;
     if (!baseURL || !apiKey) return;
     try {

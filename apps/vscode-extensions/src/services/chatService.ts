@@ -298,8 +298,12 @@ export class ChatService {
       // task is re-resolved once `useCodebaseTools` is final, right before the
       // model actually runs (see the generateModelResponse call below).
       // Falls back to the single key the webview sent.
-      const apiKeys = getLlmSettings(this.context, 'chat').apiKeys;
+      const chatLlm = getLlmSettings(this.context, 'chat');
+      const apiKeys = chatLlm.apiKeys;
       const failoverKeys = apiKeys.length ? apiKeys : apiKey ? [apiKey] : [];
+      // 'Custom' provider's user-supplied base URL (undefined for built-in
+      // providers, which resolve their base URL from MODEL_PROVIDERS instead).
+      const baseUrl = chatLlm.baseUrl;
 
       const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       const isConfluenceConnected =
@@ -391,7 +395,7 @@ export class ChatService {
         // - BOTH sources are connected (single-source: intent only shifts topK by ±5, not worth it)
         const isCloudProvider =
           mode === 'remote' ||
-          (MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === provider)?.BASE_URL !== undefined &&
+          (!!(MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === provider)?.BASE_URL || baseUrl) &&
             !!apiKey);
         const needsLLM =
           classification.confidence === 'low' &&
@@ -407,7 +411,7 @@ export class ChatService {
             )
           ),
           needsLLM
-            ? this.classifyIntentWithLLM(message, classification, modelId, failoverKeys, provider, availableSources)
+            ? this.classifyIntentWithLLM(message, classification, modelId, failoverKeys, provider, availableSources, baseUrl)
             : Promise.resolve({ intent: classification.intent, sources: undefined as DataSource[] | undefined }),
         ]);
 
@@ -469,6 +473,7 @@ export class ChatService {
       const effModelId = finalLlm?.model ?? modelId;
       const effProvider = finalLlm?.provider ?? provider;
       const effApiKeys = finalLlm?.apiKeys.length ? finalLlm.apiKeys : failoverKeys;
+      const effBaseUrl = finalLlm?.baseUrl ?? baseUrl;
 
       this.postStatus('Thinking...');
       const modelResponse = await this.generateModelResponse(
@@ -479,7 +484,8 @@ export class ChatService {
         effApiKeys,
         userDisplayName,
         currentSprint,
-        useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined
+        useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined,
+        effBaseUrl
       );
 
       this.chatHistory.push({ role: 'assistant', content: modelResponse });
@@ -950,21 +956,25 @@ export class ChatService {
     modelId: string,
     apiKeys: string[],
     provider: string,
-    availableSources: DataSource[] = []
+    availableSources: DataSource[] = [],
+    baseUrl?: string
   ): Promise<{ intent: QueryClassification['intent']; sources?: DataSource[] }> {
     try {
       let effModelId = modelId;
       let effApiKeys = apiKeys;
       let effProvider = provider;
+      let effBaseUrl = baseUrl;
       if (getMode(this.context) === 'remote') {
         const llm = getLlmSettings(this.context, 'classification');
         effModelId = llm.model ?? effModelId;
         effProvider = llm.provider ?? effProvider;
         effApiKeys = llm.apiKeys.length ? llm.apiKeys : effApiKeys;
+        effBaseUrl = llm.baseUrl ?? effBaseUrl;
       }
 
       const providerConfig = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === effProvider);
-      if (!providerConfig || !effApiKeys.length) {
+      const resolvedBaseUrl = providerConfig?.BASE_URL || effBaseUrl;
+      if (!resolvedBaseUrl || !effApiKeys.length) {
         return { intent: fallback.intent };
       }
 
@@ -998,7 +1008,7 @@ Query: "${query}"`;
       const response = await withKeyFailover(
         effApiKeys,
         (apiKey) => {
-          const client = new OpenAI({ apiKey, baseURL: providerConfig.BASE_URL });
+          const client = new OpenAI({ apiKey, baseURL: resolvedBaseUrl });
           return client.chat.completions.create({
             model: effModelId,
             messages: [{ role: 'user', content: prompt }],
@@ -1037,7 +1047,8 @@ Query: "${query}"`;
     apiKeys: string[],
     currentUserName: string = '',
     currentSprint: { name: string; iterationPath: string; startDate: string; endDate: string } | null = null,
-    codebaseRoots?: NamedRoot[]
+    codebaseRoots?: NamedRoot[],
+    baseUrl?: string
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -1077,6 +1088,7 @@ Query: "${query}"`;
           provider: provider,
           apiKey: apiKeys[0],
           apiKeys: apiKeys,
+          baseUrl,
           currentUserName: currentUserName || undefined,
           currentSprint: currentSprint || undefined,
           codebaseTools: codebaseRoots ? { enabled: true } : undefined,
