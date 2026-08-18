@@ -1,7 +1,8 @@
 import { workerData, parentPort } from 'worker_threads';
 import { readFile, readdir } from 'fs/promises';
 import * as path from 'path';
-import { pipeline } from '@xenova/transformers';
+import { MODEL } from '../../../constants';
+import { initializeEmbeddingModel } from '../utils/initializeEmbeddingModel';
 
 // Define worker data interface
 interface WorkerData {
@@ -97,7 +98,11 @@ function cosineSimilarity(a: number[], b: number[]): number {
 async function searchEmbeddings(): Promise<void> {
   try {
     // Initialize the model using direct import
-    const extractor = await pipeline('feature-extraction', 'jinaai/jina-embeddings-v2-base-code');
+    const extractor = await initializeEmbeddingModel(
+      MODEL.DEFAULT_CODE_EMBEDDING_MODEL,
+      Array.isArray(embeddingDirPath) ? embeddingDirPath[0] : embeddingDirPath,
+      () => {}
+    );
     
     // Generate embedding for the query
     const queryEmbedding = await extractor(query, { pooling: 'mean', normalize: true });

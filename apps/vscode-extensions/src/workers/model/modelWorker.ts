@@ -323,7 +323,16 @@ const TOOL_DEFS = [
   },
 ];
 
-const MAX_TOOL_ITERATIONS = 10;
+// Ollama is the only provider running against a local, typically small-context
+// model — everything else (Requesty, OpenRouter, NVIDIA, hosted OpenAI/Gemini/
+// Groq) fronts models with much larger context windows and can afford to read
+// a lot more of the repo before answering. A fixed budget sized for local
+// models starved remote agent runs on large monorepos (see P: monorepo tool
+// budget exhaustion) — the model burned its full result budget in 2-3 search/
+// read calls, then spent the rest of MAX_TOOL_ITERATIONS calling tools that
+// came back with nothing but "[budget exhausted]".
+const isLocalProvider = (provider ?? '').toLowerCase() === 'ollama';
+const MAX_TOOL_ITERATIONS = isLocalProvider ? 10 : 25;
 
 const KNOWN_TOOL_NAMES = new Set(
   TOOL_DEFS.map((d: any) => d.function?.name).filter(Boolean)
@@ -601,7 +610,9 @@ async function runToolTurn(
   model: string,
   baseURL: string,
   apiKeys: string[],
-  withTools: boolean
+  withTools: boolean,
+  maxTokens: number = 8192,
+  allowLengthRetry: boolean = true
 ): Promise<ToolTurnOutcome> {
   const response = await withKeyFailover(apiKeys, (apiKey) => {
     const openai = new OpenAI({ apiKey, baseURL });
@@ -610,9 +621,10 @@ async function runToolTurn(
       messages,
       ...(withTools ? { tools: TOOL_DEFS as any, tool_choice: 'auto' as const } : {}),
       temperature: 0.3,
-      // Reasoning models (Gemini 2.5+) spend "thinking" tokens out of this same
-      // budget — 4096 can be exhausted before any visible output is produced.
-      max_tokens: 8192,
+      // Reasoning models (Gemini 2.5+, Nemotron) spend "thinking" tokens out of
+      // this same budget — 4096 can be exhausted before any visible output is
+      // produced.
+      max_tokens: maxTokens,
       stream: false,
     });
   }, notifyKeyFailover);
@@ -623,9 +635,21 @@ async function runToolTurn(
     name: tc.function?.name ?? '',
     args: tc.function?.arguments ?? '',
   }));
+  const content = (message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const finishReason = response.choices[0]?.finish_reason ?? null;
+  // Some OpenAI-compatible providers (Nemotron via Requesty, Gemini 2.5+)
+  // return reasoning in a separate field instead of/alongside `content`. A
+  // response that is all reasoning and no visible content, cut off by the
+  // token cap, looks identical to a genuinely empty answer unless we check
+  // for it — retry once with a much larger budget so the model gets a turn
+  // to actually answer instead of just think.
+  const reasoningContent: string = (message as any)?.reasoning_content ?? (message as any)?.reasoning ?? '';
+  if (!content && toolCalls.length === 0 && allowLengthRetry && (finishReason === 'length' || reasoningContent)) {
+    return runToolTurn(messages, model, baseURL, apiKeys, withTools, Math.max(maxTokens * 2, 16384), false);
+  }
 
   return {
-    content: (message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim(),
+    content,
     toolCalls,
     finishReason: response.choices[0]?.finish_reason ?? null,
   };
@@ -643,8 +667,8 @@ async function runToolTurn(
 // Bounds on tool output fed back into the conversation. `messages` grows every
 // iteration, so without a cumulative cap a long exploration can blow the
 // context window (especially on local models) before the model ever answers.
-const MAX_TOOL_RESULT_CHARS = 12_000;
-const MAX_TOTAL_TOOL_CHARS = 48_000;
+const MAX_TOOL_RESULT_CHARS = isLocalProvider ? 12_000 : 20_000;
+const MAX_TOTAL_TOOL_CHARS = isLocalProvider ? 48_000 : 200_000;
 
 async function runAgentLoop(initialPrompt: string, model: string, baseURL: string, apiKeys: string[]): Promise<void> {
   const messages: any[] = [{ role: 'user', content: initialPrompt }];
@@ -673,6 +697,14 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // turns rescues those runs; past that, return whatever the model has.
   const MAX_PLAN_NUDGES = 2;
 
+  // Once the cumulative tool-output budget is gone, every further tool call
+  // gets back nothing but the "[budget exhausted]" marker — the model can't
+  // see any new data, yet without this flag it kept spending whole
+  // iterations calling tools anyway (observed: 7 of 10 rounds wasted this way
+  // on a large monorepo query). Once set, the round-robin loop below stops
+  // accepting further tool calls and forces the final answer immediately.
+  let budgetExhausted = false;
+
   const serializeToolResult = (result: unknown): string => {
     let s = JSON.stringify(result);
     if (s.length > MAX_TOOL_RESULT_CHARS) {
@@ -681,9 +713,49 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     const remaining = MAX_TOTAL_TOOL_CHARS - toolCharsUsed;
     if (s.length > remaining) {
       s = s.slice(0, Math.max(0, remaining)) + '\n…[tool output budget exhausted — answer now with what you have]';
+      budgetExhausted = true;
     }
     toolCharsUsed += s.length;
     return s;
+  };
+
+  // ── Microcompaction (token-pressure relief) ──
+  // Every iteration resends the whole conversation, so tool results are
+  // re-billed on every subsequent round. `messages` stays strictly append-only
+  // while there's headroom — providers with implicit prefix caching (Gemini,
+  // OpenAI-compat routers) then serve the shared prefix from cache. Only when
+  // usage crosses the pressure threshold do we rewrite: the OLDEST large tool
+  // results collapse to a short head + marker, freeing budget for further
+  // exploration. Recent rounds are always kept intact — they're what the model
+  // is actively reasoning over.
+  interface ToolResultLogEntry {
+    msgIndex: number;
+    name: string;
+    round: number;
+    chars: number;
+    compacted: boolean;
+  }
+  const toolResultLog: ToolResultLogEntry[] = [];
+  const COMPACT_PRESSURE_THRESHOLD = Math.floor(MAX_TOTAL_TOOL_CHARS * 0.7);
+  const KEEP_RECENT_ROUNDS = 2; // never compact the last N rounds' results
+  const COMPACT_MIN_CHARS = 600; // small results aren't worth rewriting
+  const COMPACT_HEAD_CHARS = 200; // keep the head (file path, match count…) as an anchor
+
+  const recordToolResult = (name: string, round: number, content: string) => {
+    toolResultLog.push({ msgIndex: messages.length - 1, name, round, chars: content.length, compacted: false });
+  };
+
+  const compactOldToolResults = (currentRound: number): void => {
+    if (toolCharsUsed < COMPACT_PRESSURE_THRESHOLD) return;
+    for (const entry of toolResultLog) {
+      if (entry.compacted || entry.chars < COMPACT_MIN_CHARS) continue;
+      if (entry.round > currentRound - KEEP_RECENT_ROUNDS) continue;
+      const msg = messages[entry.msgIndex];
+      const head = String(msg.content).slice(0, COMPACT_HEAD_CHARS);
+      msg.content = head + '…[older ' + entry.name + ' result compacted to save context — call the tool again if you still need it]';
+      toolCharsUsed -= Math.max(0, entry.chars - msg.content.length);
+      entry.compacted = true;
+    }
   };
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
@@ -725,6 +797,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           diagResult = { error: e instanceof Error ? e.message : String(e) };
         }
         messages.push({ role: 'tool', tool_call_id: diagCallId, content: serializeToolResult(diagResult) });
+        recordToolResult('get_diagnostics', i, messages[messages.length - 1].content);
         writesSinceDiagnostics = 0;
         continue;
       }
@@ -821,6 +894,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // each other on apply ("changed since the edit was prepared"), and a
     // run_command racing an edit tests stale code — both observed live with
     // qwen2.5-coder, which happily emits 7 edits in one turn.
+    // Relieve token pressure BEFORE running this round's tools, so their
+    // results land in freed space instead of being truncated to nothing.
+    compactOldToolResults(i);
+
     const hasMutation = toolCalls.some((tc) => MUTATING_TOOL_NAMES.has(tc.name));
     const executeOne = async (tc: BufferedToolCall) => {
       let parsedArgs: unknown = {};
@@ -860,6 +937,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
 
     toolCalls.forEach((tc, idx) => {
       messages.push({ role: 'tool', tool_call_id: tc.id, content: serializeToolResult(results[idx]) });
+      recordToolResult(tc.name, i, messages[messages.length - 1].content);
       const failed = !!(results[idx] as { error?: unknown } | null)?.error;
       if (FILE_WRITE_TOOL_NAMES.has(tc.name)) {
         anyWriteAttempted = true;
@@ -877,12 +955,50 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       if (tc.name === 'get_diagnostics') writesSinceDiagnostics = 0;
     });
     toolCallsExecuted += toolCalls.length;
+    if (budgetExhausted) {
+      // Before treating exhaustion as terminal, try compacting older results —
+      // if that frees enough room for at least one more full-size result, the
+      // exploration can continue instead of being cut off mid-trace.
+      compactOldToolResults(i);
+      if (MAX_TOTAL_TOOL_CHARS - toolCharsUsed >= MAX_TOOL_RESULT_CHARS) {
+        budgetExhausted = false;
+      }
+    }
+    if (budgetExhausted) break;
   }
 
-  // Hit MAX_TOOL_ITERATIONS: force a final answer without tools so the user
-  // always gets a response instead of hanging or erroring.
-  const finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
-  if (finalOutcome.content) parentPort?.postMessage({ type: 'chunk', content: finalOutcome.content });
+  // Either MAX_TOOL_ITERATIONS or the tool-output budget was hit: force a
+  // final answer without tools so the user always gets a response instead of
+  // hanging or erroring.
+  let finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
+  if (!finalOutcome.content.trim()) {
+    // Empty even after runToolTurn's own reasoning-budget retry — give it one
+    // more explicit nudge before giving up, since a forced no-tools turn with
+    // a long tool-result history is exactly the shape that starves smaller
+    // output budgets.
+    messages.push({ role: 'assistant', content: '(empty response)' });
+    messages.push({
+      role: 'user',
+      content: `Answer now, in plain prose, using the ${toolCallsExecuted} tool result(s) already gathered above. Do not call any more tools.`,
+    });
+    finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
+  }
+  if (!finalOutcome.content.trim()) {
+    // Still nothing — telling the user "Done" here would be a lie (nothing
+    // was answered, and if writesApplied === 0, nothing changed either). Say
+    // so plainly instead of letting the webview's generic fallback text imply
+    // the task succeeded.
+    parentPort?.postMessage({
+      type: 'error',
+      message:
+        `The model returned no answer after ${toolCallsExecuted} tool call(s). ` +
+        (budgetExhausted
+          ? 'It exhausted the tool-output budget before finishing its exploration — try narrowing the question.'
+          : 'It likely spent its whole output budget on internal reasoning — try a model with a larger max-output limit, or narrow the question.'),
+    });
+    return;
+  }
+  parentPort?.postMessage({ type: 'chunk', content: finalOutcome.content });
   parentPort?.postMessage({ type: 'done', content: finalOutcome.content });
 }
 

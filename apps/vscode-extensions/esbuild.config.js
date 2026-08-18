@@ -98,8 +98,36 @@ function createDependencyFilter() {
       return true;
     }
 
+    const segments = srcPath.split(path.sep);
+
+    // HuggingFace caches accumulate inside @xenova/transformers/.cache during
+    // local runs. Models belong in dist/models/ (see download-models.mjs), not
+    // inside the copied npm package — otherwise the VSIX ships every model
+    // ever downloaded, plus duplicates of the ones we already bundle.
+    if (segments.includes('.cache')) {
+      return true;
+    }
+
+    // protobufjs ships a full CLI (jsdoc, lodash, babel, …) that is thousands
+    // of JS files and is never imported at runtime.
+    const protobufIdx = segments.lastIndexOf('protobufjs');
+    if (protobufIdx !== -1 && segments[protobufIdx + 1] === 'cli') {
+      return true;
+    }
+
+    // Type packages and onnxruntime-web docs/types are unused at runtime.
+    if (segments.includes('@types') || segments.includes('undici-types')) {
+      return true;
+    }
+    const ortWebIdx = segments.lastIndexOf('onnxruntime-web');
+    if (ortWebIdx !== -1) {
+      const next = segments[ortWebIdx + 1];
+      if (next === 'docs' || next === 'types') {
+        return true;
+      }
+    }
+
     if (targetPlatform) {
-      const segments = srcPath.split(path.sep);
       const napiIdx = segments.lastIndexOf('napi-v3');
       if (napiIdx !== -1 && segments[napiIdx - 1] === 'bin') {
         const [platform, arch] = segments.slice(napiIdx + 1, napiIdx + 3);
@@ -279,6 +307,9 @@ async function copyDependencies() {
     'detect-libc',
     'color',
     'semver',
+    '@types/node',
+    '@types/long',
+    'undici-types',
     // Exclude platform-specific sharp dependencies
     '@img/sharp-darwin-arm64',
     '@img/sharp-darwin-x64',
