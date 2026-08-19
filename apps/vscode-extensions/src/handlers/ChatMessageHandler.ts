@@ -64,7 +64,7 @@ export class ChatMessageHandler {
         this.chatService?.resolveAgentWrite(data.id, !!data.approved, data.feedback, data.scope);
         return true;
       case MESSAGE_TYPES.OPEN_FILE_IN_EDITOR:
-        await this.handleOpenFileInEditor(data.path);
+        await this.handleOpenFileInEditor(data.path, data.line, data.endLine);
         return true;
       case MESSAGE_TYPES.OPEN_DIFF_IN_EDITOR:
         await this.handleOpenDiffInEditor(data.path);
@@ -125,7 +125,7 @@ export class ChatMessageHandler {
   }
 
   /** Open a reviewed file (workspace-relative, possibly root-prefixed) in the editor. */
-  private async handleOpenFileInEditor(relOrPrefixed: string): Promise<void> {
+  private async handleOpenFileInEditor(relOrPrefixed: string, line?: number, endLine?: number): Promise<void> {
     if (!relOrPrefixed) return;
     try {
       const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
@@ -136,7 +136,13 @@ export class ChatMessageHandler {
       }
       const absPath = path.resolve(resolved.root.uri.fsPath, resolved.relPath);
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
-      await vscode.window.showTextDocument(doc, { preview: false });
+      const editor = await vscode.window.showTextDocument(doc, { preview: false });
+      if (line) {
+        const start = new vscode.Position(Math.max(0, line - 1), 0);
+        const end = new vscode.Position(Math.max(0, (endLine ?? line) - 1), 0);
+        editor.selection = new vscode.Selection(start, start);
+        editor.revealRange(new vscode.Range(start, end), vscode.TextEditorRevealType.InCenter);
+      }
     } catch (error) {
       this.handleError('Error opening file:', error);
     }

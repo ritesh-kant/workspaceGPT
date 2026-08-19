@@ -1,4 +1,10 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useCallback,
+} from 'react';
 import './App.css';
 import ChatMessage from './components/ChatMessage';
 import AgentWriteCard from './components/AgentWriteCard';
@@ -575,11 +581,24 @@ const App: React.FC = () => {
   };
 
   // Auto-grow the composer up to ~7 lines, then let it scroll internally.
+  const AUTOSIZE_MAX_HEIGHT = 168;
   const autosizeInput = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
+    // Collapse first so scrollHeight reports the content height rather than
+    // the previously-set height.
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+    const contentHeight = el.scrollHeight;
+    el.style.height = `${Math.min(contentHeight, AUTOSIZE_MAX_HEIGHT)}px`;
+    // Only show the internal scrollbar once content actually exceeds the cap.
+    el.style.overflowY = contentHeight > AUTOSIZE_MAX_HEIGHT ? 'auto' : 'hidden';
   };
+
+  // Resize for every value change, not just typing — starter prompts and the
+  // reset-to-empty after send set inputValue programmatically, and those must
+  // shrink/grow the box too. Layout effect so it lands before paint.
+  useLayoutEffect(() => {
+    autosizeInput(inputRef.current);
+  }, [inputValue]);
 
   const handleStarterPrompt = (promptText: string) => {
     setInputValue(promptText);
@@ -828,10 +847,7 @@ const App: React.FC = () => {
               ref={inputRef}
               rows={1}
               value={inputValue}
-              onChange={(e) => {
-                setInputValue(e.target.value);
-                autosizeInput(e.target);
-              }}
+              onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
                 mode === 'remote'

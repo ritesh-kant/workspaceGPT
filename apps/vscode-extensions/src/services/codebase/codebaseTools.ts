@@ -171,6 +171,48 @@ function expandTokens(tokens: string[]): string[] {
   return [...out];
 }
 
+// The token-union fallback ORs the query words, so on a multi-word query a
+// single common word ("product") can flood the result set. Ripgrep emits
+// matches in file-traversal (≈alphabetical) order, and slicing that to
+// MAX_MATCHES means the page the model sees is whichever app sorts first —
+// not whichever matches the query best (a "product enricher" query returned
+// only apps/ethelm/* "product" hits while apps/generic/product-enricher never
+// made the page). Rank by distinct-token coverage before slicing: path hits
+// count most (the file lives in the thing being asked about), then line hits,
+// then surrounding-context hits.
+function rankTokenMatches(matches: SearchCodebaseMatch[], tokens: string[]): SearchCodebaseMatch[] {
+  const lowered = tokens.map((t) => t.toLowerCase());
+  const score = (m: SearchCodebaseMatch): number => {
+    const path = m.file.toLowerCase();
+    const line = m.text.toLowerCase();
+    const context = (m.context ?? '').toLowerCase();
+    let s = 0;
+    for (const t of lowered) {
+      if (path.includes(t)) s += 3;
+      if (line.includes(t)) s += 2;
+      else if (context.includes(t)) s += 1;
+    }
+    return s;
+  };
+  return matches
+    .map((m, i) => ({ m, i, s: score(m) }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map((x) => x.m);
+}
+
+/** Same idea for files_with_matches mode — surface files whose PATH carries more of the query's tokens. */
+function rankTokenFiles(files: string[], tokens: string[]): string[] {
+  const lowered = tokens.map((t) => t.toLowerCase());
+  return files
+    .map((f, i) => ({
+      f,
+      i,
+      s: lowered.reduce((acc, t) => acc + (f.toLowerCase().includes(t) ? 1 : 0), 0),
+    }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map((x) => x.f);
+}
+
 /**
  * Ripgrep anchors slash-containing globs to its *cwd*, not to the search
  * paths — and the extension host's cwd can be `/` when VS Code is launched
@@ -375,7 +417,7 @@ async function searchCodebaseViaRipgrep(
       if (tokenFiles && tokenFiles.length > 0) {
         return {
           matches: [],
-          files: tokenFiles.slice(0, 100),
+          files: rankTokenFiles(tokenFiles, tokens).slice(0, 100),
           truncated: tokenFiles.length > 100,
           totalMatches: tokenFiles.length,
           note: `No exact match for "${args.query}" — files matching any of: ${tokens.join(', ')}.`,
@@ -413,10 +455,10 @@ async function searchCodebaseViaRipgrep(
   }
 
   return {
-    matches: tokenMatches.slice(0, MAX_MATCHES),
+    matches: rankTokenMatches(tokenMatches, tokens).slice(0, MAX_MATCHES),
     truncated: tokenMatches.length > MAX_MATCHES,
     totalMatches: tokenMatches.length,
-    note: `No exact match for "${args.query}" — showing lines matching any of: ${tokens.join(', ')}.`,
+    note: `No exact match for "${args.query}" — showing lines matching any of: ${tokens.join(', ')}, ranked by how many keywords each hit.`,
   };
 }
 
@@ -515,10 +557,10 @@ async function searchCodebaseViaJsScan(
 
   if (tokenMatches.length > 0) {
     return {
-      matches: tokenMatches,
+      matches: rankTokenMatches(tokenMatches, tokens),
       truncated: tokenTruncated,
       totalMatches: tokenMatches.length,
-      note: `No exact match for "${args.query}" — showing lines matching any of: ${tokens.join(', ')}.`,
+      note: `No exact match for "${args.query}" — showing lines matching any of: ${tokens.join(', ')}, ranked by how many keywords each hit.`,
     };
   }
 

@@ -700,6 +700,22 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // find_files to...") without ever emitting a call. A couple of corrective
   // turns rescues those runs; past that, return whatever the model has.
   const MAX_PLAN_NUDGES = 2;
+  // Models also stop mid-task with a partial answer that ANNOUNCES the
+  // remaining work instead of doing it ("the cloudwatch.tf file needs to be
+  // examined to see the schedule") — observed live with gemini-2.5-flash,
+  // forcing the user to type "continue". The plan-nudge above can't catch it:
+  // these answers name files, not tools. Same bounded treatment.
+  // Even when nothing is self-declared missing, fast models satisfice: asked
+  // "how is X triggered", gemini-2.5-flash found ONE trigger (the CloudWatch
+  // rule) and confidently answered, missing the event subscription and manual
+  // invocation defined in the same app. A regex can't detect incompleteness
+  // the model doesn't admit to — so every tool-using run gets exactly one
+  // reflection round before its answer is accepted: re-check coverage, verify
+  // gaps with tools, or return the same answer.
+  let completenessReflectionUsed = false;
+  let incompleteAnswerNudgesUsed = 0;
+  const INCOMPLETE_ANSWER_RE =
+    /\b(needs? to be (examined|checked|read|inspected|verified|investigated|explored)|need(s)? to (examine|check|read|inspect|verify|investigate|explore)|would need to (look|check|read|examine|verify)|further (investigation|examination|analysis|exploration) (is|would be) (needed|required)|next step (is|would be) to|(I|let me) (will |shall |now )?(now )?(check|examine|read|look at|inspect|verify|investigate)\b|remains? to be (seen|checked|examined|verified)|have (not|n't) (yet )?(checked|examined|read|verified))/i;
 
   // Once the cumulative tool-output budget is gone, every further tool call
   // gets back nothing but the "[budget exhausted]" marker — the model can't
@@ -851,6 +867,48 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           role: 'user',
           content:
             'Do not describe your plan — EXECUTE it. Invoke the tools now via the function-calling mechanism (not as text or JSON in your reply). Do not write any prose until you have tool results to report.',
+        });
+        continue;
+      }
+      // An answer that announces remaining work ("cloudwatch.tf needs to be
+      // examined to see the schedule") is a partial answer, not a final one —
+      // the model is asking the user to type "continue". Send it back to
+      // finish the job itself. Skipped once the tool budget is gone: at that
+      // point continuing is impossible and a partial answer is the best we have.
+      if (
+        !budgetExhausted &&
+        INCOMPLETE_ANSWER_RE.test(outcome.content) &&
+        incompleteAnswerNudgesUsed < MAX_PLAN_NUDGES
+      ) {
+        incompleteAnswerNudgesUsed++;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            'Your answer says something still needs to be examined or checked — do NOT stop to announce remaining work, and do NOT wait for the user to say "continue". ' +
+            'Do the remaining examination NOW with your tools, then give ONE complete final answer that includes what you find.',
+        });
+        continue;
+      }
+      // One-shot completeness reflection before accepting a tool-grounded
+      // answer (see completenessReflectionUsed above). The nudged turn passes
+      // back through every gate here, so a reflection that surfaces new work
+      // still gets diagnostics/honesty checks before the run can end.
+      if (
+        !completenessReflectionUsed &&
+        !budgetExhausted &&
+        toolCallsExecuted > 0 &&
+        outcome.content.trim()
+      ) {
+        completenessReflectionUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            'Before this is accepted: re-read the original question and check your answer covers ALL of it. ' +
+            'Common gap: questions like "how is X triggered/used/configured/deployed" usually have SEVERAL answers — an app can have event subscriptions, schedules, queue consumers, HTTP endpoints, AND manual/CLI invocations at the same time; you may have described only the first one you found. ' +
+            'Check the app\'s full configuration (serverless.yml, terraform/*.tf, package.json scripts) for mechanisms you did not mention. ' +
+            'If something is missing, verify it with tools NOW and give the complete answer. If your answer already covers everything, return it again unchanged.',
         });
         continue;
       }

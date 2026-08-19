@@ -49,11 +49,16 @@ function groupSteps(steps: AgentStep[]): TimelineItem[] {
 }
 
 function groupLabel(steps: AgentStep[]): string {
-  const files = steps.filter((s) => s.kind === 'read').length;
+  // 'read' covers both file reads ("Analyzed") and directory listings
+  // ("Explored") — split those out so the label can say "N files, M folders"
+  // the way Antigravity's trace does, instead of lumping them together.
+  const files = steps.filter((s) => s.kind === 'read' && s.title !== 'Explored').length;
+  const folders = steps.filter((s) => s.kind === 'read' && s.title === 'Explored').length;
   const searches = steps.filter((s) => s.kind === 'search').length;
   const checks = steps.filter((s) => s.kind === 'check').length;
   const parts: string[] = [];
   if (files > 0) parts.push(`${files} file${files === 1 ? '' : 's'}`);
+  if (folders > 0) parts.push(`${folders} folder${folders === 1 ? '' : 's'}`);
   if (searches > 0) parts.push(`${searches} search${searches === 1 ? '' : 'es'}`);
   if (checks > 0) parts.push(`${checks} check${checks === 1 ? '' : 's'}`);
   return parts.length ? `Explored ${parts.join(', ')}` : `Explored ${steps.length} step${steps.length === 1 ? '' : 's'}`;
@@ -136,7 +141,14 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
 const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }) => {
   const normalized = steps.map(normalizeAgentStep);
   if (normalized.length === 0) return null;
-  const items = groupSteps(normalized);
+  // "Thought for Ns" rows mark model latency between tool batches — useful to
+  // watch scroll by live, but once a turn is done they just fragment a single
+  // exploration run into several tiny "Explored 1 search" groups (the
+  // duration is already summarized in the "Worked for Xs" header). Drop them
+  // from the collapsed view so consecutive read/search/check steps merge into
+  // one group, matching Antigravity's single "Explored N files..." block.
+  const displaySteps = live ? normalized : normalized.filter((s) => s.kind !== 'thought');
+  const items = groupSteps(displaySteps);
   const anyRunning = live && normalized.some((s) => s.status === 'running');
 
   const body = (

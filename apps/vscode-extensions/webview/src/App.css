@@ -477,9 +477,12 @@ input:focus {
 }
 
 /* Composer textarea — auto-grows (see autosizeInput in App.tsx) up to ~7
-   lines, then scrolls internally. Mirrors the plain `input` look above. */
+   lines, then scrolls internally. Mirrors the plain `input` look above.
+   `flex: 0 0 auto` is required: .input-wrapper is a column flex container,
+   so a `flex: 1` basis of 0% would be treated as the height and override
+   the inline height autosizeInput sets, collapsing this to one row. */
 .input-wrapper textarea {
-  flex: 1;
+  flex: 0 0 auto;
   width: 100%;
   padding: 0.5rem;
   background-color: var(--vscode-input-background);
@@ -487,8 +490,9 @@ input:focus {
   border-radius: 4px;
   font-family: inherit;
   font-size: inherit;
+  line-height: 1.4;
   resize: none;
-  overflow-y: auto;
+  overflow-y: hidden;
   max-height: 168px;
   box-sizing: border-box;
 }
@@ -932,6 +936,24 @@ button:hover:not(:disabled) {
   padding: 0.2em 0.4em;
   border-radius: 3px;
   font-size: 0.8em;
+}
+
+/* Inline file citation inside prose, e.g. `terraform/lambda.tf:L69-L106` — clickable, opens in editor */
+.inline-file-ref {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.8em;
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-textLink-foreground);
+  border: none;
+  border-radius: 3px;
+  padding: 0.2em 0.4em;
+  cursor: pointer;
+  line-height: 1.3;
+}
+
+.inline-file-ref:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.3));
+  text-decoration: underline;
 }
 
 .markdown-content pre {

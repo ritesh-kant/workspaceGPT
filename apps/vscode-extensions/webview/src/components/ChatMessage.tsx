@@ -5,7 +5,35 @@ import rehypeHighlight from 'rehype-highlight';
 import CodeBlock from './CodeBlock';
 import AgentTimeline from './AgentTimeline';
 import FilesChangedBar from './FilesChangedBar';
+import InlineFileRef from './InlineFileRef';
+import { parseFileRef } from '../utils/fileRefs';
 import { AgentStep, TurnSummary } from '../store/chatStore';
+
+type InlineCodeProps = React.ComponentPropsWithoutRef<'code'>;
+
+/**
+ * react-markdown's `code` renderer. Fenced code blocks get a `language-*`
+ * className from rehype-highlight — those render as plain `<code>` (the
+ * highlighting spans are already inside `children`). Inline code with no
+ * className is checked against `parseFileRef`: a recognized file path (e.g.
+ * `terraform/lambda.tf:L69-L106`) renders as a clickable pill instead of a
+ * dead code span — mirrors Antigravity-style file citations.
+ */
+const InlineCode: React.FC<InlineCodeProps> = ({ className, children, ...rest }) => {
+  if (className) {
+    return (
+      <code className={className} {...rest}>
+        {children}
+      </code>
+    );
+  }
+  const text = typeof children === 'string' ? children : Array.isArray(children) ? children.join('') : '';
+  const fileRef = parseFileRef(text);
+  if (fileRef) return <InlineFileRef text={text} fileRef={fileRef} />;
+  return (
+    <code {...rest}>{children}</code>
+  );
+};
 
 interface ChatMessageProps {
   content: string;
@@ -43,7 +71,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser, isError, age
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
-              components={{ pre: CodeBlock }}
+              components={{ pre: CodeBlock, code: InlineCode }}
             >
               {content}
             </ReactMarkdown>
