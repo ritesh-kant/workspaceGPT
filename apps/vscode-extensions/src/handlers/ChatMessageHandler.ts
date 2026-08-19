@@ -66,6 +66,10 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.OPEN_FILE_IN_EDITOR:
         await this.handleOpenFileInEditor(data.path, data.line, data.endLine);
         return true;
+      case MESSAGE_TYPES.AGENT_REVERT_CHECKPOINT:
+        this.analyticsService.trackEvent('agent_revert_checkpoint_triggered');
+        await this.handleRevertCheckpoint(data.sha);
+        return true;
       case MESSAGE_TYPES.OPEN_DIFF_IN_EDITOR:
         await this.handleOpenDiffInEditor(data.path);
         return true;
@@ -162,6 +166,28 @@ export class ChatMessageHandler {
       await openAgentDiff(this.context, absPath);
     } catch (error) {
       this.handleError('Error opening diff:', error);
+    }
+  }
+
+  /** Webview AGENT_REVERT_CHECKPOINT handler — confirm, then hard-reset to that turn's snapshot. */
+  private async handleRevertCheckpoint(sha: string): Promise<void> {
+    if (!sha) return;
+    try {
+      const confirm = await vscode.window.showWarningMessage(
+        'Undo all changes made since this message? Anything you edited yourself afterward, and never checkpointed, is left alone.',
+        { modal: true },
+        'Undo'
+      );
+      if (confirm !== 'Undo') return;
+      if (!this.chatService) {
+        this.chatService = new ChatService(this.webviewView, this.context);
+      }
+      await this.chatService.revertToCheckpoint(sha);
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_REVERT_DONE, sha, ok: true });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`WorkspaceGPT: could not undo — ${errorMessage}`);
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_REVERT_DONE, sha, ok: false, error: errorMessage });
     }
   }
 

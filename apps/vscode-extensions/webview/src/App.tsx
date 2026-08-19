@@ -54,6 +54,7 @@ const App: React.FC = () => {
     currentSessionId,
     historyList,
     addMessage,
+    removeMessageAt,
     appendToLastMessage,
     clearMessages,
     setInputValue,
@@ -100,6 +101,10 @@ const App: React.FC = () => {
       model?: string;
     }[]
   >([]);
+
+  // Sha currently being reverted to — disables the triggering message's undo
+  // button until the host confirms (AGENT_REVERT_DONE).
+  const [revertingSha, setRevertingSha] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // Only auto-scroll while the user is already reading the tail of the chat.
@@ -260,7 +265,15 @@ const App: React.FC = () => {
           setTurnSummary({
             durationMs: message.durationMs || 0,
             filesChanged: message.filesChanged || [],
+            checkpointSha: message.checkpointSha,
           });
+          break;
+        case MESSAGE_TYPES.AGENT_REVERT_DONE:
+          setRevertingSha(null);
+          if (message.ok) {
+            setStatusText('Undone.');
+            setTimeout(() => setStatusText(''), 2000);
+          }
           break;
         case MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED:
           // Host auto-rejected every parked review (user hit Stop / run died).
@@ -668,6 +681,30 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUndo = (sha: string) => {
+    setRevertingSha(sha);
+    vscode.postMessage({ type: MESSAGE_TYPES.AGENT_REVERT_CHECKPOINT, sha });
+  };
+
+  // Resend a message that errored out — drops its error bubble and re-runs
+  // the same request, without re-adding the user bubble (already on screen).
+  const handleRetry = (content: string, errorIndex: number) => {
+    if (isLoading) return;
+    removeMessageAt(errorIndex);
+    ignoringStreamRef.current = false;
+    resetStreamBuffer();
+    setIsLoading(true);
+    setIsStreaming(false);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      message: content,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+    });
+  };
+
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
     const now = new Date();
@@ -826,6 +863,17 @@ const App: React.FC = () => {
                   isError={message.isError}
                   agentSteps={message.agentSteps}
                   turnSummary={message.turnSummary}
+                  timestamp={message.timestamp}
+                  checkpointSha={message.isUser ? messages[index + 1]?.turnSummary?.checkpointSha : undefined}
+                  isReverting={
+                    message.isUser && revertingSha === messages[index + 1]?.turnSummary?.checkpointSha
+                  }
+                  onUndo={handleUndo}
+                  onRetry={
+                    message.isUser && messages[index + 1]?.isError
+                      ? () => handleRetry(message.content, index + 1)
+                      : undefined
+                  }
                 />
               )
             )}

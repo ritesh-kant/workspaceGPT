@@ -353,43 +353,84 @@
   background-color: var(--vscode-inputValidation-errorBackground) !important;
   border: 1px solid var(--vscode-inputValidation-errorBorder) !important;
   color: var(--vscode-inputValidation-errorForeground) !important;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem;
-  margin: 0.5rem 0;
-  border-radius: 8px;
-  animation: shake 0.5s ease-in-out;
+  padding: 0.6rem 0.75rem;
+  margin: 0.4rem 0;
+  border-radius: 6px;
   max-width: 100%;
-}
-
-.error-message::before {
-  content: '⚠️';
-  font-size: 1.2rem;
-  margin-right: 0.5rem;
+  line-height: 1.4;
 }
 
 .error-message .message-content {
   color: var(--vscode-inputValidation-errorForeground) !important;
 }
 
-@keyframes shake {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  25% {
-    transform: translateX(-5px);
-  }
-  75% {
-    transform: translateX(5px);
-  }
+.error-message .message-content p {
+  margin: 0;
+}
+
+.error-message code {
+  padding: 0.1em 0.3em;
+  font-size: 0.85em;
 }
 
 .user-message {
   align-self: flex-end;
   background-color: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
+}
+
+.user-message-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.user-message:hover .user-message-meta,
+.user-message:focus-within .user-message-meta {
+  opacity: 1;
+}
+
+.user-message-timestamp {
+  font-size: 0.68rem;
+  color: var(--vscode-button-foreground);
+  opacity: 0.75;
+  margin-right: 0.1rem;
+  white-space: nowrap;
+}
+
+.user-message-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  color: var(--vscode-button-foreground);
+  opacity: 0.8;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+.user-message-icon-button:hover:not(:disabled) {
+  opacity: 1;
+  background-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.user-message-icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.user-message-icon-button svg {
+  width: 13px;
+  height: 13px;
 }
 
 .assistant-message {

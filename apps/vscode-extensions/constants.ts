@@ -38,6 +38,12 @@ export const MESSAGE_TYPES = {
   // Webview → host: open a reviewed file (edit/create/delete) in the editor.
   OPEN_FILE_IN_EDITOR: 'open-file-in-editor',
 
+  // Webview → host: revert the workspace to the checkpoint taken right before
+  // a given user turn's changes (per-message "Undo changes up to this point").
+  // Host → webview: the outcome, so the button can clear or surface an error.
+  AGENT_REVERT_CHECKPOINT: 'agent-revert-checkpoint',
+  AGENT_REVERT_DONE: 'agent-revert-done',
+
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',
   GET_CHAT_HISTORY_LIST: 'get-chat-history-list',

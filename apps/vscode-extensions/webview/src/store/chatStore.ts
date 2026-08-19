@@ -46,6 +46,8 @@ export const normalizeAgentStep = (step: AgentStep | string): AgentStep =>
 export interface TurnSummary {
   durationMs: number;
   filesChanged: { path: string; kind: 'edit' | 'create' | 'delete'; added: number; removed: number }[];
+  /** Sha of the checkpoint taken before this turn's first change — undo target for the triggering user message. */
+  checkpointSha?: string;
 }
 
 interface Message {
@@ -57,6 +59,8 @@ interface Message {
   agentSteps?: (AgentStep | string)[];
   /** Duration + files-changed rollup for the agent turn that produced this answer. */
   turnSummary?: TurnSummary;
+  /** When this message was added — shown on hover for user messages. */
+  timestamp?: number;
 }
 
 interface ChatSessionPreview {
@@ -81,6 +85,8 @@ interface ChatState {
   pendingTurnSummary: TurnSummary | null;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
+  /** Drop one message by index — used to clear a failed turn's error bubble before retrying it. */
+  removeMessageAt: (index: number) => void;
   appendToLastMessage: (content: string) => void;
   addAgentStep: (step: AgentStep) => void;
   updateAgentStep: (id: string, patch: Partial<AgentStep>) => void;
@@ -149,7 +155,8 @@ export const useChatStore = create<ChatState>()(
       // was generated.
       addMessage: (message) => set((state) => {
         if (message.isUser) {
-          return { messages: [...state.messages, message], agentSteps: [], pendingTurnSummary: null };
+          const stamped = { ...message, timestamp: message.timestamp ?? Date.now() };
+          return { messages: [...state.messages, stamped], agentSteps: [], pendingTurnSummary: null };
         }
         const adopt = !message.writeReview && (state.agentSteps.length > 0 || !!state.pendingTurnSummary);
         return {
@@ -167,6 +174,9 @@ export const useChatStore = create<ChatState>()(
           pendingTurnSummary: adopt ? null : state.pendingTurnSummary,
         };
       }),
+      removeMessageAt: (index) => set((state) => ({
+        messages: state.messages.filter((_, i) => i !== index),
+      })),
       appendToLastMessage: (content) => set((state) => {
         const msgs = [...state.messages];
         const last = msgs[msgs.length - 1];

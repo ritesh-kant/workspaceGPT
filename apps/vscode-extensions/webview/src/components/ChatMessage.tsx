@@ -35,6 +35,13 @@ const InlineCode: React.FC<InlineCodeProps> = ({ className, children, ...rest })
   );
 };
 
+/** "16:21, 13/07/2026" — matches the format shown in Antigravity's message footer. */
+const formatTimestamp = (ts: number): string => {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+};
+
 interface ChatMessageProps {
   content: string;
   isUser: boolean;
@@ -43,9 +50,29 @@ interface ChatMessageProps {
   agentSteps?: (AgentStep | string)[];
   /** Duration + files-changed rollup for the agent turn that produced this answer. */
   turnSummary?: TurnSummary;
+  /** When this message was sent — shown in the hover-revealed footer for user messages. */
+  timestamp?: number;
+  /** Checkpoint to hard-reset to if the user undoes this turn's changes; absent when the turn made none. */
+  checkpointSha?: string;
+  /** True while a revert to this message's checkpoint is in flight. */
+  isReverting?: boolean;
+  onUndo?: (sha: string) => void;
+  /** Present when the turn this message triggered errored out — resends it. */
+  onRetry?: () => void;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser, isError, agentSteps, turnSummary }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({
+  content,
+  isUser,
+  isError,
+  agentSteps,
+  turnSummary,
+  timestamp,
+  checkpointSha,
+  isReverting,
+  onUndo,
+  onRetry,
+}) => {
   const [copied, setCopied] = useState(false);
 
   const copyMessage = async () => {
@@ -61,7 +88,59 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ content, isUser, isError, age
   return (
     <div className={`message ${isError ? 'error-message' : isUser ? 'user-message' : 'assistant-message'}`}>
       {isUser ? (
-        <div className="message-content">{content}</div>
+        <>
+          <div className="message-content">{content}</div>
+          <div className="user-message-meta">
+            {timestamp && <span className="user-message-timestamp">{formatTimestamp(timestamp)}</span>}
+            <button
+              type="button"
+              className="user-message-icon-button"
+              onClick={copyMessage}
+              title={copied ? 'Copied' : 'Copy message'}
+              aria-label="Copy message"
+            >
+              {copied ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              )}
+            </button>
+            {checkpointSha && onUndo && (
+              <button
+                type="button"
+                className="user-message-icon-button"
+                onClick={() => onUndo(checkpointSha)}
+                disabled={isReverting}
+                title="Undo changes up to this point"
+                aria-label="Undo changes up to this point"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 14 4 9 9 4" />
+                  <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+                </svg>
+              </button>
+            )}
+            {onRetry && (
+              <button
+                type="button"
+                className="user-message-icon-button"
+                onClick={onRetry}
+                title="Retry"
+                aria-label="Retry"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="23 4 23 10 17 10" />
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </>
       ) : (
         <>
           {agentSteps && agentSteps.length > 0 && (

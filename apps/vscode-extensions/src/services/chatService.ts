@@ -105,6 +105,8 @@ export class ChatService {
   private turnStartMs = 0;
   /** Files changed (applied writes only) during the in-flight turn, keyed by display path. */
   private turnFilesChanged = new Map<string, TurnFileChange>();
+  /** Sha of the FIRST checkpoint taken this turn — reverting to it undoes the whole turn. */
+  private turnFirstCheckpointSha: string | null = null;
 
   constructor(
     webviewView: vscode.WebviewView,
@@ -289,6 +291,7 @@ export class ChatService {
       this.chatHistory.push({ role: 'user', content: message });
       this.turnStartMs = Date.now();
       this.turnFilesChanged.clear();
+      this.turnFirstCheckpointSha = null;
 
       const mode = getMode(this.context);
 
@@ -614,7 +617,8 @@ export class ChatService {
 
     // Commands can mutate the workspace — same snapshot rule as file writes.
     try {
-      await this.checkpoints(roots).checkpoint(summary);
+      const cp = await this.checkpoints(roots).checkpoint(summary);
+      if (!this.turnFirstCheckpointSha) this.turnFirstCheckpointSha = cp.sha;
     } catch (e) {
       console.warn('WorkspaceGPT: checkpoint before command failed (continuing):', e);
     }
@@ -712,7 +716,8 @@ export class ChatService {
 
     // Snapshot BEFORE mutating, so "revert this step" is always available.
     try {
-      await this.checkpoints(roots).checkpoint(write.summary);
+      const cp = await this.checkpoints(roots).checkpoint(write.summary);
+      if (!this.turnFirstCheckpointSha) this.turnFirstCheckpointSha = cp.sha;
     } catch (e) {
       console.warn('WorkspaceGPT: checkpoint failed (continuing with the write):', e);
     }
@@ -742,6 +747,13 @@ export class ChatService {
       this.checkpointService = checkpointServiceFor(this.context.globalStorageUri.fsPath, roots[0].uri.fsPath);
     }
     return this.checkpointService;
+  }
+
+  /** Per-message "Undo changes up to this point" — hard-resets to a turn's first checkpoint. */
+  public async revertToCheckpoint(sha: string): Promise<void> {
+    const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+    if (!roots.length) throw new Error('No workspace folder is open.');
+    await this.checkpoints(roots).revertTo(sha);
   }
 
   /** Webview AGENT_WRITE_DECISION handler — resolves the parked write gate. */
@@ -1135,6 +1147,7 @@ Query: "${query}"`;
                 type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
                 durationMs: Date.now() - this.turnStartMs,
                 filesChanged: [...this.turnFilesChanged.values()],
+                checkpointSha: this.turnFilesChanged.size > 0 ? this.turnFirstCheckpointSha ?? undefined : undefined,
               });
             }
             this.webviewView.webview.postMessage({
