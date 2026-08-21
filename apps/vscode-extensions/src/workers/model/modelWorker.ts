@@ -480,7 +480,7 @@ async function consumeStream(stream: AsyncIterable<any>): Promise<StreamOutcome>
 
   try {
     for await (const chunk of stream) {
-      const choice = chunk.choices[0];
+      const choice = chunk.choices?.[0];
       const delta = choice?.delta;
 
       const contentDelta = delta?.content;
@@ -632,6 +632,16 @@ async function runToolTurn(
       stream: false,
     });
   }, notifyKeyFailover);
+
+  // Some providers (OpenRouter free-tier models especially, under load or
+  // rate limiting) return HTTP 200 with an error payload instead of a real
+  // completion — no `choices` array at all. The OpenAI SDK only throws on
+  // non-2xx responses, so this slips through as a malformed success and
+  // must be checked explicitly instead of indexing into `choices` directly.
+  if (!response.choices?.length) {
+    const apiError = (response as any)?.error;
+    throw new Error(apiError?.message || 'Model provider returned no choices (malformed or error response)');
+  }
 
   const message = response.choices[0]?.message;
   const toolCalls: BufferedToolCall[] = (message?.tool_calls ?? []).map((tc: any) => ({
