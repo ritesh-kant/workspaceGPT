@@ -1279,6 +1279,14 @@ Query: "${query}"`;
                   step: { kind: 'info', title: result.message || 'Rate limited — switching API key' },
                 });
                 break;
+
+              case 'metrics':
+                // Agent-loop efficiency summary (turns, tokens, budget/compaction
+                // events) — not surfaced in the webview, just logged so it shows
+                // up in the extension host output for real chats too. Consumed
+                // properly by packages/agent-evals.
+                console.log('[agent-metrics]', JSON.stringify(result));
+                break;
             }
           }
         );

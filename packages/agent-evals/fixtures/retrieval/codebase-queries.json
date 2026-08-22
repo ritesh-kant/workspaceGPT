@@ -1,0 +1,15 @@
+[
+  {
+    "id": "q1-content",
+    "args": { "query": "product enricher", "outputMode": "content" },
+    "expectedFiles": ["apps/generic/product-enricher/enricher.ts"]
+  },
+  {
+    "id": "q1-files",
+    "args": { "query": "product enricher", "outputMode": "files_with_matches" },
+    "expectedFiles": [
+      "apps/generic/product-enricher/enricher.ts",
+      "apps/generic/product-enricher/index.ts"
+    ]
+  }
+]

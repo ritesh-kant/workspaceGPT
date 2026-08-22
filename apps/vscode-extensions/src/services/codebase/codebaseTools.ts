@@ -180,7 +180,13 @@ function expandTokens(tokens: string[]): string[] {
 // made the page). Rank by distinct-token coverage before slicing: path hits
 // count most (the file lives in the thing being asked about), then line hits,
 // then surrounding-context hits.
+// Eval-only escape hatch (packages/agent-evals) for an A/B measurement of
+// whether this ranking actually helps — nothing in the extension itself sets
+// this, so production behavior is unaffected. Not a user-facing setting.
+const rankingDisabledForEval = () => process.env.WGPT_DISABLE_CODEBASE_RANKING === '1';
+
 function rankTokenMatches(matches: SearchCodebaseMatch[], tokens: string[]): SearchCodebaseMatch[] {
+  if (rankingDisabledForEval()) return matches;
   const lowered = tokens.map((t) => t.toLowerCase());
   const score = (m: SearchCodebaseMatch): number => {
     const path = m.file.toLowerCase();
@@ -202,6 +208,7 @@ function rankTokenMatches(matches: SearchCodebaseMatch[], tokens: string[]): Sea
 
 /** Same idea for files_with_matches mode — surface files whose PATH carries more of the query's tokens. */
 function rankTokenFiles(files: string[], tokens: string[]): string[] {
+  if (rankingDisabledForEval()) return files;
   const lowered = tokens.map((t) => t.toLowerCase());
   return files
     .map((f, i) => ({

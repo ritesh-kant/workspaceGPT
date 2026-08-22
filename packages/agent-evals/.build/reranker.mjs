@@ -1,0 +1,61 @@
+// ../../apps/vscode-extensions/constants.ts
+var RETRIEVAL_THRESHOLDS = {
+  // Per-intent minimum combined (cosine + BM25) score to include a result
+  LOOKUP_MIN_SCORE: 0.2,
+  AGGREGATION_MIN_SCORE: 0.2,
+  SEMANTIC_MIN_SCORE: 0.3,
+  COMPARISON_MIN_SCORE: 0.3,
+  // If the best pass-1 score is below this, a second retrieval pass is triggered (semantic only)
+  SEMANTIC_PASS2_TRIGGER: 0.45,
+  // Reranker blend weights (must sum to 1.0)
+  COSINE_WEIGHT: 0.65,
+  BM25_WEIGHT: 0.35
+};
+var SYNC_INTERVAL_MS = 15 * 60 * 1e3;
+
+// ../../apps/vscode-extensions/src/utils/reranker.ts
+function deduplicateByFileName(results) {
+  const best = /* @__PURE__ */ new Map();
+  for (const result of results) {
+    const key = result.data.fileName;
+    const existing = best.get(key);
+    if (!existing || result.score > existing.score) {
+      best.set(key, result);
+    }
+  }
+  return Array.from(best.values());
+}
+function computeBm25Score(query, text) {
+  const queryTerms = tokenize(query);
+  if (queryTerms.length === 0) {
+    return 0;
+  }
+  const textLower = text.toLowerCase();
+  const matchCount = queryTerms.filter((term) => textLower.includes(term)).length;
+  return matchCount / queryTerms.length;
+}
+function tokenize(text) {
+  return [
+    ...new Set(
+      text.toLowerCase().split(/\W+/).filter((t) => t.length >= 2)
+    )
+  ];
+}
+function rerank(query, results, plan) {
+  if (results.length === 0 || plan.finalTopK === 0) {
+    return [];
+  }
+  const deduplicated = deduplicateByFileName(results);
+  const scored = deduplicated.map((result) => {
+    const bm25 = computeBm25Score(query, result.text);
+    const combined = result.score * RETRIEVAL_THRESHOLDS.COSINE_WEIGHT + bm25 * RETRIEVAL_THRESHOLDS.BM25_WEIGHT;
+    return { ...result, score: combined };
+  });
+  const filtered = plan.similarityThreshold > 0 ? scored.filter((r) => r.score >= plan.similarityThreshold) : scored;
+  return filtered.sort((a, b) => b.score - a.score).slice(0, plan.finalTopK);
+}
+export {
+  computeBm25Score,
+  deduplicateByFileName,
+  rerank
+};

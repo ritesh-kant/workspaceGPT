@@ -8,7 +8,15 @@
  * an Extension-Development-Host concern) but follow the real order:
  * checkpoint → prepare → apply → diagnostics.
  *
- * Run: node src/headless/agent-smoke.mjs [--model qwen2.5-coder:14b-ctx24k] [--scenarios s1,s2,s3]
+ * Also the efficiency-benchmark harness for the agent loop: captures the
+ * worker's `metrics` summary (turns, tokens, budget/compaction events) plus
+ * host-measured per-tool latency, and accumulates results across `--runs`
+ * into results/agent-smoke.json (merge-on-rerun, see run.mjs) so regressions
+ * in modelWorker.ts's loop are visible instead of just pass/fail.
+ *
+ * Run: node src/headless/agent-smoke.mjs [--model M] [--provider P] [--scenarios s1,s2,s3] [--runs 5] [--timeout-min 10]
+ * Model/provider/apiKey/baseUrl can also come from packages/agent-evals/.env
+ * (see .env.example); precedence is CLI flag > shell env > .env > default.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -18,20 +26,44 @@ import { promisify } from 'util';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import { buildUnits } from './build-units.mjs';
+import { loadEnv } from '../env.mjs';
 
 const pexecFile = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../../..');
 const WORKER_PATH = path.join(repoRoot, 'apps/vscode-extensions/dist/workers/model/modelWorker.js');
+const WORKER_SRC_PATH = path.join(repoRoot, 'apps/vscode-extensions/src/workers/model/modelWorker.ts');
 
 const argv = process.argv.slice(2);
 const argOf = (name, dflt) => {
   const i = argv.indexOf(`--${name}`);
   return i >= 0 ? argv[i + 1] : dflt;
 };
-const MODEL = argOf('model', 'qwen2.5-coder:14b-ctx24k');
+
+loadEnv();
+const MODEL = argOf('model', process.env.WGPT_BENCH_MODEL ?? 'qwen2.5-coder:14b-ctx24k');
+const PROVIDER = argOf('provider', process.env.WGPT_BENCH_PROVIDER ?? 'Ollama');
+// Remote providers need a real key; Ollama ignores it but the OpenAI client
+// requires a non-empty string. Comma-separated keys feed withKeyFailover.
+const API_KEY = argOf('api-key', process.env.WGPT_BENCH_API_KEY ?? 'DUMMY_API_KEY');
+const BASE_URL = argOf('base-url', process.env.WGPT_BENCH_BASE_URL); // Custom provider only
 const ONLY = argOf('scenarios', 's1,s2,s3').split(',');
-const SCENARIO_TIMEOUT_MS = 10 * 60 * 1000;
+const RUNS = Math.max(1, parseInt(argOf('runs', '1'), 10) || 1);
+const SCENARIO_TIMEOUT_MS = Math.round(parseFloat(argOf('timeout-min', '10')) * 60 * 1000);
+
+// A stale dist bundle silently produces runs with no `metrics` message (the
+// field just stays undefined) — warn instead of letting that look like a
+// real zero.
+try {
+  if (fs.statSync(WORKER_PATH).mtimeMs < fs.statSync(WORKER_SRC_PATH).mtimeMs) {
+    console.warn(
+      `⚠️  ${path.relative(repoRoot, WORKER_PATH)} is older than its source — rebuild with ` +
+        `\`cd apps/vscode-extensions && node esbuild.config.js\` or metrics may be missing/stale.`,
+    );
+  }
+} catch {
+  /* dist bundle missing entirely — the Worker constructor below will fail loudly */
+}
 
 const outDir = await buildUnits();
 const writeTools = await import(path.join(outDir, 'agentWriteTools.mjs'));
@@ -112,6 +144,26 @@ const globToRegex = (glob) =>
 
 function makeToolHost(ws, log) {
   const roots = [{ name: path.basename(ws), uri: { fsPath: ws } }];
+
+  /** Declaration scan backing find_symbol/go_to_definition (shape mirrors codebaseTools.SymbolHit). */
+  function findDeclarations(query) {
+    const q = query.toLowerCase();
+    const symbols = [];
+    if (!q) return symbols;
+    for (const rel of walk(ws).filter((f) => /\.(js|ts|mjs|cjs)$/.test(f))) {
+      fs.readFileSync(path.join(ws, rel), 'utf8').split('\n').forEach((text, i) => {
+        const m =
+          /^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/.exec(text) ||
+          /^\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/.exec(text) ||
+          /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/.exec(text);
+        if (m && m[1].toLowerCase().startsWith(q)) {
+          const kind = /\bclass\b/.test(m[0]) ? 'class' : /\bfunction\b/.test(m[0]) ? 'function' : 'variable';
+          symbols.push({ name: m[1], kind, file: rel, line: i + 1 });
+        }
+      });
+    }
+    return symbols;
+  }
   const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-smoke-shadow-'));
   const checkpoints = new CheckpointService(path.join(shadow, 'cp'), ws);
   const audit = [];
@@ -153,7 +205,12 @@ function makeToolHost(ws, log) {
       const lines = fs.readFileSync(abs, 'utf8').split('\n');
       const s = startLine ? startLine - 1 : 0;
       const e = endLine ?? lines.length;
-      return { path: rel, totalLines: lines.length, content: lines.slice(s, e).map((l, i) => `${s + i + 1}: ${l}`).join('\n') };
+      // Shape mirrors the REAL codebaseTools.readFile: raw content, no
+      // line-number prefixes. The harness used to prefix every line with
+      // "N: ", which production never does — it made "copy oldString
+      // verbatim from read_file output" literally impossible and skewed the
+      // edit-failure rate the benchmark exists to measure.
+      return { content: lines.slice(s, e).join('\n'), totalLines: lines.length, truncated: e < lines.length };
     },
     list_directory: async ({ path: rel } = {}) => {
       const abs = path.join(ws, (rel ?? '.').replace(/^\.?\//, ''));
@@ -200,9 +257,31 @@ function makeToolHost(ws, log) {
       }
       return { matches, totalMatches: matches.length, truncated: matches.length >= 50 };
     },
-    find_symbol: async () => ({ error: 'Language services are unavailable in this environment — use search_codebase to locate the symbol instead.' }),
-    find_references: async () => ({ error: 'Language services are unavailable in this environment — use search_codebase to find usages instead.' }),
-    go_to_definition: async () => ({ error: 'Language services are unavailable in this environment — use search_codebase instead.' }),
+    // Working language-service equivalents (regex declaration scan — plenty
+    // for the fixture). The old stubs returned a permanent error, which
+    // production never does: in the product these are backed by VS Code's
+    // language index. A failed FIRST find_symbol call reliably framed weak
+    // models into "the symbol does not exist" for the rest of the run (three
+    // separate s1 failures with the identical "add is not found" answer),
+    // so erroring here made the eval environment HARDER than production.
+    find_symbol: async ({ query }) => {
+      const symbols = findDeclarations(String(query ?? ''));
+      return { symbols: symbols.slice(0, 20), truncated: symbols.length > 20 };
+    },
+    find_references: async ({ symbol }) => {
+      const re = new RegExp(`\\b${String(symbol ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+      const locations = [];
+      for (const rel of walk(ws)) {
+        fs.readFileSync(path.join(ws, rel), 'utf8').split('\n').forEach((text, i) => {
+          if (re.test(text)) locations.push({ file: rel, line: i + 1, preview: text.trim().slice(0, 200) });
+        });
+      }
+      return { locations: locations.slice(0, 50), truncated: locations.length > 50 };
+    },
+    go_to_definition: async ({ symbol }) => {
+      const symbols = findDeclarations(String(symbol ?? ''));
+      return { locations: symbols.map((s) => ({ file: s.file, line: s.line, preview: `${s.kind} ${s.name}` })), truncated: false };
+    },
     get_diagnostics: diagnostics,
     search_docs: async () => ({ results: [], note: 'No documentation is indexed in this environment.' }),
     search_tickets: async () => ({ results: [], note: 'No tickets are indexed in this environment.' }),
@@ -233,6 +312,12 @@ function makeToolHost(ws, log) {
 function runAgent(ws, prompt, log) {
   const { tools, audit, checkpoints } = makeToolHost(ws, log);
   const toolCalls = [];
+  const toolTimings = [];
+  const thoughtMs = [];
+  let metrics = null;
+  let notes = 0;
+  let chunks = 0;
+  let failovers = 0;
 
   return new Promise((resolve) => {
     const worker = new Worker(WORKER_PATH, {
@@ -240,8 +325,9 @@ function runAgent(ws, prompt, log) {
         prompt,
         searchResults: [],
         modelId: MODEL,
-        provider: 'Ollama',
-        apiKey: 'DUMMY_API_KEY',
+        provider: PROVIDER,
+        apiKey: API_KEY,
+        ...(BASE_URL ? { baseUrl: BASE_URL } : {}),
         chatHistory: '',
         codebaseTools: { enabled: true },
         repoOrientation: orientationFor(ws),
@@ -251,7 +337,7 @@ function runAgent(ws, prompt, log) {
     const finish = (outcome) => {
       clearTimeout(timer);
       worker.terminate();
-      resolve({ ...outcome, toolCalls, audit, checkpoints });
+      resolve({ ...outcome, toolCalls, toolTimings, thoughtMs, metrics, notes, chunks, failovers, audit, checkpoints });
     };
     const timer = setTimeout(() => finish({ ok: false, error: 'scenario timeout' }), SCENARIO_TIMEOUT_MS);
 
@@ -260,22 +346,41 @@ function runAgent(ws, prompt, log) {
         const impl = tools[msg.name];
         toolCalls.push({ name: msg.name, args: msg.arguments });
         log(`   -> ${msg.name} ${JSON.stringify(msg.arguments ?? {}).slice(0, 140)}`);
+        const startedAt = Date.now();
         if (!impl) {
+          toolTimings.push({ name: msg.name, ms: Date.now() - startedAt, error: true });
           worker.postMessage({ type: 'tool_response', id: msg.id, error: `Unknown tool: ${msg.name}` });
           return;
         }
         try {
           const result = await impl(msg.arguments ?? {});
+          toolTimings.push({ name: msg.name, ms: Date.now() - startedAt, error: false });
           worker.postMessage({ type: 'tool_response', id: msg.id, result });
         } catch (e) {
           log(`      TOOL ERROR: ${e.message.split('\n')[0]}`);
+          toolTimings.push({ name: msg.name, ms: Date.now() - startedAt, error: true });
           worker.postMessage({ type: 'tool_response', id: msg.id, error: e.message });
         }
+      } else if (msg.type === 'thought') {
+        thoughtMs.push(msg.ms);
+      } else if (msg.type === 'agent_note') {
+        notes++;
+      } else if (msg.type === 'chunk') {
+        chunks++;
+      } else if (msg.type === 'key_failover') {
+        failovers++;
+      } else if (msg.type === 'metrics') {
+        const { type, ...rest } = msg;
+        metrics = rest;
       } else if (msg.type === 'done') {
         finish({ ok: true, answer: msg.content ?? '' });
       } else if (msg.type === 'error') {
         finish({ ok: false, error: msg.message });
       }
+      // tool_status is UI-only (fired immediately before its paired
+      // tool_request, from the same synchronous call site) — per-tool
+      // latency above is measured directly around the real execution
+      // instead, which is more accurate than pairing the two events.
     });
     worker.on('error', (e) => finish({ ok: false, error: `worker crashed: ${e.message}` }));
   });
@@ -340,60 +445,139 @@ const SCENARIOS = [
   },
 ];
 
+// ── aggregation helpers ──────────────────────────────────────────────────
+
+const median = (xs) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+};
+const spread = (xs) => (xs.length ? `${Math.min(...xs)}–${Math.max(...xs)}` : '—');
+const fmt = (n) => (n === null || n === undefined ? '—' : Math.round(n));
+
 // ── main ───────────────────────────────────────────────────────────────
 
 const log = (s) => console.log(s);
-log(`agent-smoke: model=${MODEL} worker=${path.relative(repoRoot, WORKER_PATH)}`);
 
-const report = [];
-for (const sc of SCENARIOS.filter((s) => ONLY.includes(s.id))) {
-  log(`\n━━ ${sc.id}: ${sc.title}`);
-  const ws = makeWorkspace();
-  await pexecFile('git', ['-C', ws, 'init', '--quiet']);
-  await pexecFile('git', ['-C', ws, 'config', 'user.email', 't@t']);
-  await pexecFile('git', ['-C', ws, 'config', 'user.name', 't']);
-  await pexecFile('git', ['-C', ws, 'add', '-A']);
-  await pexecFile('git', ['-C', ws, 'commit', '--quiet', '-m', 'fixture']);
+log(`model: ${MODEL} · provider: ${PROVIDER}${BASE_URL ? ` · baseUrl: ${BASE_URL}` : ''} · runs: ${RUNS} · scenarios: ${ONLY.join(',')}`);
+log(`agent-smoke: model=${MODEL} worker=${path.relative(repoRoot, WORKER_PATH)} runs=${RUNS}`);
 
-  const started = Date.now();
-  const r = await runAgent(ws, sc.prompt, log);
-  const secs = Math.round((Date.now() - started) / 1000);
+const selected = SCENARIOS.filter((s) => ONLY.includes(s.id));
+const runRecords = [];
 
-  let checks = [];
-  if (r.ok) checks = await sc.verify(ws, r);
-  else checks = [['agent completed', false, r.error]];
-  const passed = checks.every(([, ok]) => ok);
+for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
+  for (const sc of selected) {
+    log(`\n━━ [run ${runIndex}/${RUNS}] ${sc.id}: ${sc.title}`);
+    const ws = makeWorkspace();
+    await pexecFile('git', ['-C', ws, 'init', '--quiet']);
+    await pexecFile('git', ['-C', ws, 'config', 'user.email', 't@t']);
+    await pexecFile('git', ['-C', ws, 'config', 'user.name', 't']);
+    await pexecFile('git', ['-C', ws, 'add', '-A']);
+    await pexecFile('git', ['-C', ws, 'commit', '--quiet', '-m', 'fixture']);
 
-  log(`   ${passed ? 'PASS' : 'FAIL'} (${secs}s, ${r.toolCalls.length} tool calls)`);
-  for (const [name, ok] of checks) log(`     ${ok ? '✓' : '✗'} ${name}`);
-  if (r.answer) log(`   answer: ${r.answer.slice(0, 300).replace(/\n/g, ' ')}`);
+    const startedAt = new Date().toISOString();
+    const started = Date.now();
+    const r = await runAgent(ws, sc.prompt, log);
+    const wallMs = Date.now() - started;
 
-  report.push({
-    scenario: `${sc.id} ${sc.title}`,
-    pass: passed,
-    seconds: secs,
-    toolCalls: r.toolCalls.map((c) => c.name),
-    checks: checks.map(([name, ok]) => ({ name, ok })),
-    error: r.error,
-    answer: (r.answer ?? '').slice(0, 1500),
-  });
+    let checks = [];
+    if (r.ok) checks = await sc.verify(ws, r);
+    else checks = [['agent completed', false, r.error]];
+    const passed = checks.every(([, ok]) => ok);
+
+    log(`   ${passed ? 'PASS' : 'FAIL'} (${Math.round(wallMs / 1000)}s, ${r.toolCalls.length} tool calls)`);
+    for (const [name, ok] of checks) log(`     ${ok ? '✓' : '✗'} ${name}`);
+    if (r.answer) log(`   answer: ${r.answer.slice(0, 300).replace(/\n/g, ' ')}`);
+    if (!r.metrics) log(`   ⚠️  no metrics message received from worker — dist bundle may be stale`);
+
+    runRecords.push({
+      model: MODEL,
+      provider: PROVIDER,
+      scenario: sc.id,
+      title: sc.title,
+      runIndex,
+      startedAt,
+      pass: passed,
+      checks: checks.map(([name, ok]) => ({ name, ok })),
+      error: r.error ?? null,
+      wallMs,
+      metrics: r.metrics,
+      toolTimings: r.toolTimings,
+      toolCalls: r.toolCalls.map((c) => c.name),
+      answerHead: (r.answer ?? '').slice(0, 1500),
+    });
+  }
 }
+
+// ── results.json (merge-on-rerun, keyed by model|provider|scenario) ──────
 
 const resultsDir = path.join(here, '../../results');
 fs.mkdirSync(resultsDir, { recursive: true });
-const md = [
-  `# Agent smoke test — ${MODEL}`,
-  `Run: ${new Date().toISOString()} · worker: real dist bundle · tools: real service modules (headless host)`,
-  '',
-  ...report.map(
-    (r) =>
-      `## ${r.scenario} — ${r.pass ? 'PASS' : 'FAIL'} (${r.seconds}s)\n` +
-      `Tool calls: ${r.toolCalls.join(', ') || '(none)'}\n` +
-      r.checks.map((c) => `- ${c.ok ? '✅' : '❌'} ${c.name}`).join('\n') +
-      (r.error ? `\n- error: ${r.error}` : '') +
-      (r.answer ? `\n\n> ${r.answer.replace(/\n/g, '\n> ')}` : ''),
-  ),
-].join('\n');
+const jsonPath = path.join(resultsDir, 'agent-smoke.json');
+// Older records have no provider field — treat them as Ollama (the only
+// provider the harness supported before it became configurable).
+const keyOf = (r) => `${r.model}|${r.provider ?? 'Ollama'}|${r.scenario}`;
+const ranKeys = new Set(runRecords.map(keyOf));
+let merged = runRecords;
+if (fs.existsSync(jsonPath)) {
+  const prior = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+  merged = [...prior.filter((r) => !ranKeys.has(keyOf(r))), ...runRecords];
+}
+fs.writeFileSync(jsonPath, JSON.stringify(merged, null, 2));
+
+// ── agent-smoke.md — per model×scenario summary + per-tool latency ────────
+
+const modelLabel = (r) => `${r.model}${r.provider && r.provider !== 'Ollama' ? ` (${r.provider})` : ''}`;
+const reportModels = [...new Set(merged.map(modelLabel))];
+const reportScenarios = [...new Set(merged.map((r) => r.scenario))];
+
+let md = `# Agent smoke test\n\nRun: ${new Date().toISOString()} · worker: real dist bundle · tools: real service modules (headless host)\n\n`;
+md += `| model | scenario | pass rate | wall s (median, min–max) | turns (median) | tool calls (median) | prompt tok (median) | completion tok (median) | Σ budget-exhausted | Σ compactions | Σ nudges |\n`;
+md += `|---|---|---|---|---|---|---|---|---|---|---|\n`;
+for (const model of reportModels) {
+  for (const scenario of reportScenarios) {
+    const rs = merged.filter((r) => modelLabel(r) === model && r.scenario === scenario);
+    if (!rs.length) continue;
+    const title = rs[0].title;
+    const passRate = `${Math.round((100 * rs.filter((r) => r.pass).length) / rs.length)}%`;
+    const wallS = rs.map((r) => r.wallMs / 1000);
+    const withMetrics = rs.filter((r) => r.metrics);
+    const turns = withMetrics.map((r) => r.metrics.turns);
+    const toolCalls = rs.map((r) => r.toolCalls.length);
+    const promptTok = withMetrics.map((r) => r.metrics.promptTokens);
+    const completionTok = withMetrics.map((r) => r.metrics.completionTokens);
+    const budgetExhausted = withMetrics.filter((r) => r.metrics.budgetExhausted).length;
+    const compactions = withMetrics.reduce((a, r) => a + (r.metrics.compactions ?? 0), 0);
+    const nudges = withMetrics.reduce((a, r) => {
+      const n = r.metrics.nudges ?? {};
+      return a + (n.plan ?? 0) + (n.incompleteAnswer ?? 0) + (n.failedWrites ?? 0) + (n.phantomChanges ?? 0) + (n.summary ?? 0);
+    }, 0);
+    md += `| ${model} | ${scenario} ${title} | ${passRate} | ${fmt(median(wallS))} (${spread(wallS.map(Math.round))}) | ${fmt(median(turns))} | ${fmt(median(toolCalls))} | ${fmt(median(promptTok))} | ${fmt(median(completionTok))} | ${budgetExhausted}/${withMetrics.length} | ${compactions} | ${nudges} |\n`;
+  }
+}
+
+// per-tool median latency across every run in the merged set
+const byTool = new Map();
+for (const r of merged) {
+  for (const t of r.toolTimings ?? []) {
+    if (!byTool.has(t.name)) byTool.set(t.name, []);
+    byTool.get(t.name).push(t.ms);
+  }
+}
+if (byTool.size) {
+  md += `\n## Per-tool latency (ms, across all runs)\n\n| tool | calls | median ms | min–max ms |\n|---|---|---|---|\n`;
+  for (const [name, ms] of [...byTool.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    md += `| ${name} | ${ms.length} | ${fmt(median(ms))} | ${spread(ms)} |\n`;
+  }
+}
+
+md += `\n## Failures\n\n`;
+for (const r of merged.filter((r) => !r.pass)) {
+  const failed = r.checks.filter((c) => !c.ok).map((c) => c.name);
+  md += `- **${r.model} × ${r.scenario} (run ${r.runIndex})** — ${failed.join('; ') || 'agent did not complete'}${r.error ? ` — error: ${r.error}` : ''}\n`;
+}
+
 fs.writeFileSync(path.join(resultsDir, 'agent-smoke.md'), md);
-log(`\nreport → results/agent-smoke.md`);
-process.exit(report.every((r) => r.pass) ? 0 : 1);
+log(`\nreport → results/agent-smoke.json, results/agent-smoke.md`);
+process.exit(runRecords.every((r) => r.pass) ? 0 : 1);

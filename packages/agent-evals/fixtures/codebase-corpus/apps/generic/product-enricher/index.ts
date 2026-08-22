@@ -1,0 +1,1 @@
+export { enrichProductRecord } from './enricher';

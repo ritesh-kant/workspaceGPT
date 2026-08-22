@@ -46,3 +46,123 @@ search/replace uniqueness handling; `large-file-edit` is the full-file killer;
 `multi-file-rename` tests cross-file edits.
 
 Write the decision into CODING-AGENT-ROADMAP.md open item 1 when done.
+
+## Benchmark suite (efficiency)
+
+Beyond the format spike above, this package also benchmarks the extension's
+efficiency-critical surfaces: the agent loop, retrieval quality, and indexing
+throughput. Everything below drives the REAL built `dist/` bundles — no
+mocked pipeline stages — so numbers reflect actual production code paths.
+
+### Agent efficiency — `bench:agent`
+
+```bash
+pnpm bench:agent   # = agent-smoke.mjs --runs 5
+```
+
+Extends the P1.9 smoke harness (`src/headless/agent-smoke.mjs`) to capture,
+per scenario run: turns, API calls (incl. length-retry double-calls), prompt/
+completion tokens, per-tool latency, budget-exhaustion and microcompaction
+counts, and nudge counts — all read from a `metrics` message the agent loop
+(`modelWorker.ts`'s `runAgentLoop`) emits right before its terminal `done`/
+`error` message. Chat's `chatService.ts` ignores/logs that message type; it
+changes nothing about the production chat path.
+
+Results: `results/agent-smoke.json` (merge-on-rerun, keyed
+`model|provider|scenario`) + `results/agent-smoke.md` (median/min–max per
+cell, plus a per-tool latency table). Use `--runs N` for repeat baselines;
+local-model variance is high enough that a single run will mislead you.
+
+**Model/provider config:** copy `.env.example` to `.env` (gitignored) to set
+`WGPT_BENCH_MODEL`, `WGPT_BENCH_PROVIDER` (Ollama | OpenAI | Gemini | Groq |
+Requesty | OpenRouter | NVIDIA | Custom), `WGPT_BENCH_API_KEY`
+(comma-separate multiple keys for failover rotation), and
+`WGPT_BENCH_BASE_URL` (Custom provider only). Precedence: CLI flag
+(`--model/--provider/--api-key/--base-url`) > shell env > `.env` > default
+(qwen2.5-coder:14b-ctx24k on Ollama).
+
+**Staleness warning:** if `dist/workers/model/modelWorker.js` is older than
+its source, the script warns — rebuild with
+`cd apps/vscode-extensions && node esbuild.config.js` first.
+
+### Retrieval quality — `bench:retrieval`
+
+```bash
+pnpm bench:retrieval:index   # one-time (cached) embed of the fixture corpus
+pnpm bench:retrieval         # = retrieval-eval.mjs --rerank
+```
+
+Drives the real `dist/workers/common/searchProcess.js` against a committed,
+28-page fixture corpus (`fixtures/retrieval/corpus/*.md` — wiki-style pages
++ `ADO-<id>`-style tickets) and a hand-labeled query set
+(`fixtures/retrieval/queries.json`, 26 queries: semantic + numeric
+id-lookup). The index is built once via the real
+`dist/workers/common/createEmbeddingForText.js` (local ONNX, fully offline)
+and cached by a hash of the corpus — `build-fixture-index.mjs --rebuild`
+forces a re-embed.
+
+Reports recall@1/3/5, MRR@10, and search latency p50/p95. `--rerank` also
+runs each query's raw results through the real reranker/queryPlanner/
+queryClassifier pipeline (`src/utils/*.ts`, compiled headlessly via
+`build-units.mjs`) to quantify what the cosine/BM25 blend in
+`RETRIEVAL_THRESHOLDS` buys over raw vector search.
+
+Results: `results/retrieval-eval.json` (merge key `stage|corpusHash`) +
+`results/retrieval-eval.md`.
+
+### Codebase-ranking A/B — `bench:codebase-rank`
+
+```bash
+pnpm bench:codebase-rank
+```
+
+A/B eval for the codebase-aware ranking added in commit `28ceeda`
+(`rankTokenMatches`/`rankTokenFiles` in
+`apps/vscode-extensions/src/services/codebase/codebaseTools.ts`). Drives the
+real `searchCodebase` (real ripgrep, via an esbuild external-resolve plugin
+in `build-units.mjs` that keeps `@vscode/ripgrep` unbundled — bundling it
+breaks its own runtime binary-path resolution) against a fixture
+mini-monorepo (`fixtures/codebase-corpus/`) designed so the exact-phrase
+search misses and the answer file is heavily outnumbered by noise files
+sharing only one of the two query tokens.
+
+Toggles ranking off via `WGPT_DISABLE_CODEBASE_RANKING=1` — a seam added
+purely for this eval; nothing in the extension itself sets it — to compare
+against production behavior on the same queries. Confirmed: baseline never
+finds the answer in content mode (buried past the 50-match cap) and ranks it
+41st of 42 in files-with-matches mode; ranked finds it at rank 1 either way.
+
+Results: `results/codebase-rank-eval.json` (merge key `queryId`) +
+`results/codebase-rank-eval.md`.
+
+### Indexing throughput — `bench:index`
+
+```bash
+pnpm bench:index   # = index-bench.mjs --multiply 10
+```
+
+Measures files/min, wall clock, and peak RSS for the real two-stage codebase
+pipeline — `dist/workers/codebase/codebaseWorker.js` (file collection,
+worker_threads) and `dist/workers/codebase/codebaseEmbeddingProcess.js`
+(embedding, forked child) — over a scratch copy of the fixture corpus.
+`--multiply N` replicates the fixture with unique basenames to scale up the
+file count. `--docs` also benchmarks `createEmbeddingForText.js` against the
+retrieval fixture corpus.
+
+Results: `results/index-bench.json` (merge key `corpusId|multiply|stage`,
+historical rows kept per corpus) + `results/index-bench.md`.
+
+### Run everything
+
+```bash
+pnpm bench:full
+```
+
+### Requirements
+
+- **Agent bench** needs a local Ollama with the target model pulled
+  (default `qwen2.5-coder:14b-ctx24k`).
+- **Retrieval / codebase-rank / indexing benches** need no network or API
+  key — embedding runs fully offline via the bundled local ONNX model
+  (`apps/vscode-extensions/dist/models`). They do need the extension's
+  worker bundles built: `cd apps/vscode-extensions && node esbuild.config.js`.

@@ -145,26 +145,81 @@ function closestSnippet(content: string, oldString: string): string | null {
   return fileLines.slice(start, end).join('\n');
 }
 
-/** One line per occurrence: its line number and the nearest non-blank line above it. */
-function describeOccurrences(content: string, needle: string, cap = 5): string {
-  const lines: string[] = [];
+/**
+ * Whitespace-tolerant fallback for a missed exact match. The dominant weak-model
+ * failure (measured: ~2/3 of edit_file calls failing in agent-evals s2/s3) is
+ * writing oldString from memory with the right characters but the wrong layout —
+ * typically a multi-line function collapsed onto one line — even immediately
+ * after read_file returned the real text. The non-whitespace content is intact,
+ * so match on that: escape oldString for regex, then let every whitespace run
+ * match any whitespace run. Never loosens WHAT is matched, only HOW it is laid out.
+ */
+function flexibleMatches(content: string, oldString: string): { index: number; text: string }[] {
+  const trimmed = oldString.trim();
+  if (!trimmed) return [];
+  const pattern = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  let re: RegExp;
+  try {
+    re = new RegExp(pattern, 'g');
+  } catch {
+    return [];
+  }
+  const matches: { index: number; text: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content))) {
+    matches.push({ index: m.index, text: m[0] });
+    if (matches.length > 8) break; // enough to know it's hopelessly ambiguous
+  }
+  return matches;
+}
+
+/**
+ * Re-lays newString onto the REAL matched region's whitespace skeleton, so a
+ * flexible match doesn't flatten a multi-line region into the model's one-liner.
+ * Only safe for substitution-style edits — same token count AND most tokens
+ * unchanged in place (renames, operator fixes, literal swaps). A structural
+ * rewrite can coincidentally have the same token count, but pouring it into
+ * the old region's line breaks produces arbitrary mid-statement wrapping;
+ * null means "can't do this faithfully" and the caller must not guess.
+ */
+function reflowReplacement(matchedText: string, oldString: string, newString: string): string | null {
+  const oldTokens = oldString.trim().split(/\s+/);
+  const newTokens = newString.trim().split(/\s+/);
+  if (newTokens.length !== oldTokens.length) return null;
+  const differing = newTokens.filter((t, i) => t !== oldTokens[i]).length;
+  if (differing > Math.max(1, Math.floor(newTokens.length / 2))) return null;
+  let ti = 0;
+  const rebuilt = matchedText
+    .split(/(\s+)/)
+    .map((part) => (part === '' || /^\s+$/.test(part) ? part : newTokens[ti++]))
+    .join('');
+  return ti === newTokens.length ? rebuilt : null;
+}
+
+/**
+ * One ready-to-copy block per occurrence: the raw file lines from the nearest
+ * non-blank line above the occurrence through its end. Handing the model a
+ * complete disambiguated oldString to copy is what works — "extend oldString
+ * with the preceding line" as an instruction sent qwen into a loop of
+ * re-reading the file and retrying the identical ambiguous string (observed
+ * across agent-evals s3 runs: 2 ambiguity errors, 12 thrash calls, no fix).
+ */
+function occurrenceSnippets(content: string, needle: string, cap = 3): string[] {
+  const rawLines = content.split('\n');
+  const needleLineCount = needle.split('\n').length;
+  const out: string[] = [];
   let from = 0;
-  for (let n = 1; n <= cap; n++) {
+  for (let n = 0; n < cap; n++) {
     const idx = content.indexOf(needle, from);
     if (idx === -1) break;
-    const lineNo = content.slice(0, idx).split('\n').length;
-    const allLines = content.split('\n');
-    let precedingText = '';
-    for (let i = lineNo - 2; i >= 0; i--) {
-      if (allLines[i].trim()) {
-        precedingText = allLines[i].trim().slice(0, 80);
-        break;
-      }
-    }
-    lines.push(`  ${n}) line ${lineNo}${precedingText ? `, preceded by: "${precedingText}"` : ''}`);
+    const startLine = content.slice(0, idx).split('\n').length - 1;
+    let ctxStart = Math.max(0, startLine - 1);
+    while (ctxStart > 0 && !rawLines[ctxStart].trim()) ctxStart--;
+    const endLine = startLine + needleLineCount - 1;
+    out.push(rawLines.slice(ctxStart, endLine + 1).join('\n'));
     from = idx + needle.length;
   }
-  return lines.join('\n');
+  return out;
 }
 
 // ── prepare phase ──
@@ -186,6 +241,87 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
 
   const occurrences = countOccurrences(before, args.oldString);
   if (occurrences === 0) {
+    // Whitespace-tolerant rescue before erroring: if the file contains exactly
+    // ONE region whose non-whitespace content equals oldString's, the model
+    // meant that region — apply the edit there, re-laid onto the region's real
+    // formatting when possible. Turn budgets on local models are tight enough
+    // that converting this from an error round-trip into a success is what
+    // moves the eval pass rate (see packages/agent-evals, scenarios s2/s3).
+    const flex = flexibleMatches(before, args.oldString);
+    if (flex.length === 1) {
+      const { index, text: matchedText } = flex[0];
+      const replacement = reflowReplacement(matchedText, args.oldString, args.newString);
+      if (replacement !== null && replacement !== matchedText) {
+        const after = before.slice(0, index) + replacement + before.slice(index + matchedText.length);
+        return {
+          kind: 'edit',
+          displayPath,
+          uri,
+          before,
+          after,
+          // Read by the model (tool result), the user (review card), and the
+          // audit log alike — states plainly that the match was not verbatim.
+          summary:
+            `Edit ${displayPath} (1 replacement — oldString did not match the file's whitespace/line breaks verbatim; ` +
+            'matched ignoring layout, applied with the file\'s original formatting preserved)',
+        };
+      }
+      // Unique region found but new/old token counts differ — re-flowing the
+      // replacement faithfully is impossible, and inserting the model's
+      // (likely collapsed) newString as-is could corrupt layout-sensitive
+      // code. Hand back the real bytes instead: the retry is then a plain
+      // copy job, and differs from this call so the repeat short-circuit
+      // in modelWorker won't block it.
+      throw new Error(
+        'oldString was not found verbatim, but exactly one region of the file matches it when whitespace is ignored. ' +
+          `That region ACTUALLY reads:\n\`\`\`\n${matchedText}\n\`\`\`\n` +
+          'Retry with oldString copied EXACTLY from this snippet (same line breaks and indentation), ' +
+          'and write newString as full lines in the same multi-line style.'
+      );
+    }
+    if (flex.length > 1) {
+      throw new Error(
+        `oldString was not found verbatim, and ignoring whitespace it matches ${flex.length} places in the file — ambiguous. ` +
+          'Re-read the file and copy a LONGER snippet EXACTLY (including line breaks and the line above your target) that identifies the ONE place you mean.'
+      );
+    }
+    // Stitched-span detection: every line of oldString exists in the file, in
+    // order, but with real code between them that oldString omits — the model
+    // concatenated non-adjacent regions (recurring signature: a function
+    // definition + the module.exports line, skipping the code between). The
+    // generic "copy verbatim" hint can't fix that; naming the actual problem
+    // and demanding one edit per region can.
+    const oldLines = args.oldString.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (oldLines.length >= 2) {
+      const rawFileLines = before.split('\n');
+      const trimmedFileLines = rawFileLines.map((l) => l.trim());
+      const positions: number[] = [];
+      let cursor = 0;
+      for (const ol of oldLines) {
+        const idx = trimmedFileLines.indexOf(ol, cursor);
+        if (idx === -1) {
+          positions.length = 0;
+          break;
+        }
+        positions.push(idx);
+        cursor = idx + 1;
+      }
+      const hasContentBetween = (a: number, b: number): boolean => {
+        for (let j = a + 1; j < b; j++) if (trimmedFileLines[j]) return true;
+        return false;
+      };
+      if (positions.length === oldLines.length && positions.some((p, i) => i > 0 && hasContentBetween(positions[i - 1], p))) {
+        // Quote the first contiguous region verbatim so edit #1 is a copy job.
+        let firstEnd = 0;
+        while (firstEnd + 1 < positions.length && !hasContentBetween(positions[firstEnd], positions[firstEnd + 1])) firstEnd++;
+        const firstRegion = rawFileLines.slice(positions[0], positions[firstEnd] + 1).join('\n');
+        throw new Error(
+          'oldString stitches together NON-ADJACENT parts of the file — its lines all exist, but the file has other code between them that your oldString skips over. ' +
+            'Make a SEPARATE edit_file call for EACH contiguous region. The first region actually reads:\n' +
+            `\`\`\`\n${firstRegion}\n\`\`\`\nStart by editing exactly that, then make further edit_file calls for the other region(s).`
+        );
+      }
+    }
     // Include the closest real region of the file in the error: weak models
     // write oldString from memory (e.g. a collapsed one-liner of a multi-line
     // function) even right after reading the file — handing them the exact
@@ -196,20 +332,22 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
         'including whitespace, indentation, and line breaks.' +
         (snippet
           ? ` The closest matching region of the actual file is:\n\`\`\`\n${snippet}\n\`\`\`\nCopy oldString EXACTLY from this — including its line breaks.`
-          : ' Re-read the file and copy the text verbatim.')
+          : ` The text does not appear in ${displayPath} at all, even ignoring whitespace — you may be editing the WRONG FILE ` +
+            '(e.g. trying to change a definition in a file that only imports it). Use search_codebase to find which file actually contains this text, then read_file THAT file and copy oldString exactly.')
     );
   }
   if (occurrences > 1 && !args.replaceAll) {
     // Deliberately does NOT lead with replaceAll: smaller models take the
     // first suggestion, and blanket-replacing shared text (e.g. two functions
     // with identical bodies) corrupts unrelated code. Observed live with qwen.
-    // Listing each occurrence's location + preceding line hands the model the
-    // exact disambiguating tokens — "include surrounding lines" alone sends
-    // weak models into a retry loop of the identical failing call.
+    // Each occurrence is shown as a complete, copy-ready block (context line
+    // included) so the retry is a copy job, not a construction job.
+    const snippets = occurrenceSnippets(before, args.oldString);
     throw new Error(
-      `oldString appears ${occurrences} times in the file:\n${describeOccurrences(before, args.oldString)}\n` +
-        'Extend oldString to ALSO include the preceding line of the ONE occurrence you mean (copied EXACTLY from the file). ' +
-        'Only if you genuinely intend to change every occurrence, pass replaceAll: true instead.'
+      `oldString appears ${occurrences} times in the file — ambiguous. To change ONE of them, retry with oldString set to the ENTIRE block below for the occurrence you mean (copied EXACTLY, all lines), and newString to that same block with your change applied:\n` +
+        snippets.map((s, i) => `${i + 1})\n\`\`\`\n${s}\n\`\`\``).join('\n') +
+        (occurrences > snippets.length ? `\n(${occurrences - snippets.length} more occurrence(s) not shown)` : '') +
+        '\nOnly if you genuinely intend to change every occurrence, pass replaceAll: true instead.'
     );
   }
 

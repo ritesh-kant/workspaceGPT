@@ -5,6 +5,8 @@ import { MODEL_PROVIDERS } from '../../../constants';
 import OpenAI from 'openai';
 import { EmbeddingSearchResult } from 'src/types/types';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
+import { extractBalancedJsonObjects } from './jsonExtract';
+import { runExplorationPhase, defaultExplorationConfig } from './explorationPhase';
 
 interface WorkerData {
   prompt: string;
@@ -265,7 +267,7 @@ const TOOL_DEFS = [
     function: {
       name: 'edit_file',
       description:
-        'Replace text in a workspace file. oldString must be copied EXACTLY from the current file (use read_file first) including whitespace/indentation, and must appear exactly once — include surrounding lines to disambiguate, or set replaceAll to change every occurrence. The user reviews and approves each edit before it is applied; a rejection comes back as an error with their feedback.',
+        'Replace text in a workspace file. oldString must be copied character-for-character from the read_file output — KEEP the original line breaks and indentation, NEVER collapse multiple lines onto one line or retype code from memory — and must appear exactly once. A short line like "return a + b;" often occurs in SEVERAL functions: make oldString the WHOLE enclosing block from its header line down (e.g. the full function), so the match is unique on the first try. Set replaceAll only to change every occurrence. The user reviews and approves each edit before it is applied; a rejection comes back as an error with their feedback.',
       parameters: {
         type: 'object',
         properties: {
@@ -335,7 +337,14 @@ const TOOL_DEFS = [
 // read calls, then spent the rest of MAX_TOOL_ITERATIONS calling tools that
 // came back with nothing but "[budget exhausted]".
 const isLocalProvider = (provider ?? '').toLowerCase() === 'ollama';
-const MAX_TOOL_ITERATIONS = isLocalProvider ? 10 : 25;
+// 20 for local (was 10): edit-heavy tasks need recovery headroom — a weak
+// model spends turns redundantly (5 get_diagnostics + 3 test runs observed in
+// one 4-edit rename) yet productively, and agent-evals s2 runs kept ending AT
+// the cap with the rename nearly complete and the final forced answer merely
+// announcing the remaining edit. The tool-output char budget (below) still
+// bounds context growth independently, and the harness/UI wall-clock stays
+// well inside its timeout at this depth.
+const MAX_TOOL_ITERATIONS = isLocalProvider ? 20 : 25;
 
 const KNOWN_TOOL_NAMES = new Set(
   TOOL_DEFS.map((d: any) => d.function?.name).filter(Boolean)
@@ -355,39 +364,6 @@ const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file'
  * case the loop would otherwise treat the turn as a final answer and stop
  * mid-exploration.
  */
-/**
- * Scans text for top-level balanced `{...}` blocks (string-aware), so several
- * back-to-back JSON objects are each recovered — local models routinely emit
- * `{"name": ...} {"name": ...}` as one blob, which a plain JSON.parse rejects.
- */
-function extractBalancedJsonObjects(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = -1;
-  let inStr = false;
-  let esc = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === '\\') esc = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') inStr = true;
-    else if (ch === '{') {
-      if (depth === 0) start = i;
-      depth++;
-    } else if (ch === '}') {
-      if (depth > 0 && --depth === 0 && start >= 0) {
-        out.push(text.slice(start, i + 1));
-        start = -1;
-      }
-    }
-  }
-  return out;
-}
-
 function extractTextToolCalls(content: string): BufferedToolCall[] {
   if (!content) return [];
 
@@ -591,11 +567,32 @@ function requestTool(name: string, args: unknown, id: string = randomUUID()): Pr
   });
 }
 
+/** Token usage for one (or more, if retried) API call(s) backing a turn. */
+interface TurnUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** true if the provider's response carried no `usage` field at all. */
+  missing: boolean;
+}
+
 /** A single (non-streamed) tool-calling turn's outcome. */
 interface ToolTurnOutcome {
   content: string;
   toolCalls: BufferedToolCall[];
   finishReason: string | null;
+  usage: TurnUsage;
+  /** Number of underlying API calls this outcome represents (>1 when the length-retry fired). */
+  apiCalls: number;
+}
+
+function addUsage(a: TurnUsage, b: TurnUsage): TurnUsage {
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+    missing: a.missing && b.missing,
+  };
 }
 
 /**
@@ -658,14 +655,24 @@ async function runToolTurn(
   // for it — retry once with a much larger budget so the model gets a turn
   // to actually answer instead of just think.
   const reasoningContent: string = (message as any)?.reasoning_content ?? (message as any)?.reasoning ?? '';
+  const rawUsage = (response as any)?.usage;
+  const usage: TurnUsage = {
+    promptTokens: rawUsage?.prompt_tokens ?? 0,
+    completionTokens: rawUsage?.completion_tokens ?? 0,
+    totalTokens: rawUsage?.total_tokens ?? 0,
+    missing: !rawUsage,
+  };
   if (!content && toolCalls.length === 0 && allowLengthRetry && (finishReason === 'length' || reasoningContent)) {
-    return runToolTurn(messages, model, baseURL, apiKeys, withTools, Math.max(maxTokens * 2, 16384), false);
+    const retried = await runToolTurn(messages, model, baseURL, apiKeys, withTools, Math.max(maxTokens * 2, 16384), false);
+    return { ...retried, apiCalls: retried.apiCalls + 1, usage: addUsage(usage, retried.usage) };
   }
 
   return {
     content,
     toolCalls,
     finishReason: response.choices[0]?.finish_reason ?? null,
+    usage,
+    apiCalls: 1,
   };
 }
 
@@ -686,6 +693,37 @@ const MAX_TOTAL_TOOL_CHARS = isLocalProvider ? 48_000 : 200_000;
 
 async function runAgentLoop(initialPrompt: string, model: string, baseURL: string, apiKeys: string[]): Promise<void> {
   const messages: any[] = [{ role: 'user', content: initialPrompt }];
+  // ── Efficiency metrics (consumed by packages/agent-evals, not the chat UI) ──
+  const runStarted = Date.now();
+  interface PerTurnMetric {
+    turn: number;
+    ms: number;
+    apiCalls: number;
+    promptTokens: number;
+    completionTokens: number;
+    toolCallsRequested: number;
+    salvaged: boolean;
+  }
+  const perTurn: PerTurnMetric[] = [];
+  let apiCallsTotal = 0;
+  let promptTokensTotal = 0;
+  let completionTokensTotal = 0;
+  let usageMissingTurns = 0;
+  const noteTurn = (ms: number, outcome: ToolTurnOutcome, toolCallsRequested: number, salvaged: boolean) => {
+    perTurn.push({
+      turn: perTurn.length,
+      ms,
+      apiCalls: outcome.apiCalls,
+      promptTokens: outcome.usage.promptTokens,
+      completionTokens: outcome.usage.completionTokens,
+      toolCallsRequested,
+      salvaged,
+    });
+    apiCallsTotal += outcome.apiCalls;
+    promptTokensTotal += outcome.usage.promptTokens;
+    completionTokensTotal += outcome.usage.completionTokens;
+    if (outcome.usage.missing) usageMissingTurns++;
+  };
   let toolCharsUsed = 0;
   let toolCallsExecuted = 0;
   let planNudgesUsed = 0;
@@ -700,12 +738,32 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // qwen retried the SAME failing edit 6× in one observed run. Short-circuit
   // repeats with escalating guidance instead of executing them.
   const failedCalls = new Map<string, number>();
+  // Files whose CURRENT content the model has seen (read_file succeeded, or it
+  // authored the content via create_file). An edit_file against any other file
+  // is guaranteed to be oldString-from-memory — observed live with qwen editing
+  // app.js/test.js with fully invented content ("// Output: 5") having never
+  // read them. Instead of executing the doomed edit, hand back the real file
+  // so the very next attempt can copy verbatim.
+  const readPaths = new Set<string>();
+  const normPath = (p: unknown): string => String(p ?? '').replace(/^\.?\//, '');
+  const EDIT_UNREAD_CONTENT_CAP = 4_000;
   // Last write outcome per file: a run must not end claiming success while
   // some file's most recent write attempt failed (models happily do this).
   const lastWriteOutcome = new Map<string, boolean>();
   let failedWritesNudgeUsed = false;
   let anyWriteAttempted = false;
-  let phantomChangesNudgeUsed = false;
+  // Two attempts, not one: observed live, qwen answered the first phantom
+  // nudge with "I apologize for the confusion. The function has been
+  // successfully renamed..." — an apology plus the SAME false claim — and the
+  // once-only gate let that second claim through.
+  let phantomChangesNudgesUsed = 0;
+  // An answer grounded in ZERO successful tool results is a guess, whatever it
+  // claims — observed live: find_symbol errored ("language services
+  // unavailable"), find_references was called with literal placeholder args
+  // ("<path-to-add-function>") and errored too, and the model answered "the
+  // function is not found in the codebase". Challenge that once.
+  let okToolResults = 0;
+  let allErrorsNudgeUsed = false;
   // Smaller local models often ANNOUNCE their tool plan in prose ("I will use
   // find_files to...") without ever emitting a call. A couple of corrective
   // turns rescues those runs; past that, return whatever the model has.
@@ -725,7 +783,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   let completenessReflectionUsed = false;
   let incompleteAnswerNudgesUsed = 0;
   const INCOMPLETE_ANSWER_RE =
-    /\b(needs? to be (examined|checked|read|inspected|verified|investigated|explored)|need(s)? to (examine|check|read|inspect|verify|investigate|explore)|would need to (look|check|read|examine|verify)|further (investigation|examination|analysis|exploration) (is|would be) (needed|required)|next step (is|would be) to|(I|let me) (will |shall |now )?(now )?(check|examine|read|look at|inspect|verify|investigate)\b|remains? to be (seen|checked|examined|verified)|have (not|n't) (yet )?(checked|examined|read|verified))/i;
+    /\b(needs? to be (examined|checked|read|inspected|verified|investigated|explored)|need(s)? to (examine|check|read|inspect|verify|investigate|explore)|would need to (look|check|read|examine|verify)|further (investigation|examination|analysis|exploration) (is|would be|may be|might be) (needed|required)|next step (is|would be) to|(I|let me|let'?s|let us) (will |shall |now )?(now )?(check|examine|read|look at|inspect|verify|investigate|search|find|locate|update|fix|rename|edit|modify|apply|retry|re-?run)\b|remains? to be (seen|checked|examined|verified)|have (not|n't) (yet )?(checked|examined|read|verified))/i;
 
   // Once the cumulative tool-output budget is gone, every further tool call
   // gets back nothing but the "[budget exhausted]" marker — the model can't
@@ -734,6 +792,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // on a large monorepo query). Once set, the round-robin loop below stops
   // accepting further tool calls and forces the final answer immediately.
   let budgetExhausted = false;
+  // Populated by the exploration phase below, if it ran — surfaced in metrics
+  // so its token cost is visible against the baseline it's meant to beat.
+  let explorationStats: import('./explorationPhase').ExplorationStats | null = null;
 
   const serializeToolResult = (result: unknown): string => {
     let s = JSON.stringify(result);
@@ -788,6 +849,88 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
   };
 
+  const emitMetrics = () => {
+    parentPort?.postMessage({
+      type: 'metrics',
+      wallMs: Date.now() - runStarted,
+      turns: perTurn.length,
+      apiCalls: apiCallsTotal,
+      promptTokens: promptTokensTotal,
+      completionTokens: completionTokensTotal,
+      totalTokens: promptTokensTotal + completionTokensTotal,
+      usageMissingTurns,
+      toolCallsExecuted,
+      writesApplied,
+      failedToolCalls: [...failedCalls.values()].reduce((a, b) => a + b, 0),
+      toolCharsUsed,
+      budgetExhausted,
+      compactions: toolResultLog.filter((e) => e.compacted).length,
+      exploration: explorationStats,
+      nudges: {
+        plan: planNudgesUsed,
+        incompleteAnswer: incompleteAnswerNudgesUsed,
+        failedWrites: failedWritesNudgeUsed ? 1 : 0,
+        phantomChanges: phantomChangesNudgesUsed,
+        summary: summaryNudgeUsed ? 1 : 0,
+        completenessReflectionUsed,
+        autoDiagnosticsRan,
+      },
+      perTurn,
+    });
+  };
+
+  // ── Exploration decomposition (pre-loop) ──
+  // For questions whose answer is spread across several parts of the repo,
+  // read the bulk of that spread here — via disposable, tool-less explorer
+  // completions that are paid once and discarded — instead of letting the
+  // main loop accumulate raw file dumps in `messages` across many rounds.
+  // Deterministic scout/cluster/merge; the model is only ever asked to
+  // answer, never to plan the split. See EXPLORATION-DECOMPOSITION-DESIGN.md.
+  // Best-effort throughout: any failure here falls through to the loop below
+  // running exactly as it does today.
+  const exploration = await runExplorationPhase(
+    prompt,
+    model,
+    baseURL,
+    apiKeys,
+    {
+      requestTool,
+      onProgress: (label) => {
+        const id = randomUUID();
+        parentPort?.postMessage({ type: 'tool_status', id, name: 'explore_codebase', arguments: { label } });
+      },
+      notifyRotate: notifyKeyFailover,
+    },
+    defaultExplorationConfig(isLocalProvider),
+    isLocalProvider
+  );
+  explorationStats = exploration.stats;
+  if (exploration.stats.apiCalls > 0) {
+    apiCallsTotal += exploration.stats.apiCalls;
+    promptTokensTotal += exploration.stats.promptTokens;
+    completionTokensTotal += exploration.stats.completionTokens;
+  }
+  if (exploration.claimTableMarkdown) {
+    const exploreCallId = 'auto_explore_codebase';
+    messages.push({
+      role: 'assistant',
+      content: null,
+      tool_calls: [
+        { id: exploreCallId, type: 'function', function: { name: 'explore_codebase', arguments: JSON.stringify({ question: prompt }) } },
+      ],
+    });
+    const claimContent =
+      exploration.claimTableMarkdown +
+      '\n\n(These are cited leads from a preliminary scan, not verified truth. Open any cited range ' +
+      'with read_file before relying on it for an edit. Unexplored files above are just names — ' +
+      'investigate them with tools if the question requires it.)';
+    messages.push({ role: 'tool', tool_call_id: exploreCallId, content: claimContent });
+    // Deliberately NOT passed through recordToolResult: this table is the map
+    // for the whole run and must survive microcompaction, which only rewrites
+    // entries present in toolResultLog. It still counts against the budget.
+    toolCharsUsed += claimContent.length;
+  }
+
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const turnStarted = Date.now();
     const outcome = await runToolTurn(messages, model, baseURL, apiKeys, true);
@@ -803,6 +946,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       toolCalls = extractTextToolCalls(outcome.content);
       salvaged = toolCalls.length > 0;
     }
+    noteTurn(thoughtMs, outcome, toolCalls.length, salvaged);
 
     if (toolCalls.length === 0) {
       // The model wants to finish — but unverified writes block that. Run
@@ -831,6 +975,24 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         writesSinceDiagnostics = 0;
         continue;
       }
+      // Everything attempted so far errored → the model has zero facts from
+      // the workspace and any answer is fabricated. Redirect once.
+      if (toolCallsExecuted > 0 && okToolResults === 0 && !allErrorsNudgeUsed && !budgetExhausted) {
+        allErrorsNudgeUsed = true;
+        // The draft conclusion is UNGROUNDED by definition here (zero successful
+        // results) — echoing it back anchors weak models, which then restate it
+        // even after later tool calls return contradicting data (observed:
+        // "add is not found" survived two search_codebase calls full of hits).
+        // Replace it with a neutral placeholder instead of preserving it.
+        messages.push({ role: 'assistant', content: '(answer withheld — no successful tool results yet)' });
+        messages.push({
+          role: 'user',
+          content:
+            'STOP: every tool call you made so far FAILED — you have gathered zero actual information from the workspace, so any conclusion you have drawn is void; discard it. You cannot answer yet, and especially cannot claim something does not exist. ' +
+            'Read the error messages: they say which tool to use instead. Call search_codebase with a text query now (try outputMode "files_with_matches" first), use REAL arguments taken from actual results — never placeholder strings like "<path-to-file>" — then answer ONLY from what the tools return.',
+        });
+        continue;
+      }
       // A file whose LAST write attempt failed means the task is incomplete —
       // models routinely declare success anyway ("renamed across the project"
       // while math.js was never touched, observed live). Confront once.
@@ -851,17 +1013,28 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // of doing it — observed live with qwen writing a full markdown story of
       // edits it never attempted. Confront once.
       const claimsChanges =
-        /\b(changes made|i (have )?(changed|renamed|updated|modified|created|fixed)|(has|have) been (changed|renamed|updated|modified|created)|were (changed|renamed|updated))\b/i.test(
+        /\b(changes made|i (have )?(successfully )?(changed|renamed|updated|modified|created|fixed)|(has|have) been (\w+ly )?(changed|renamed|updated|modified|created|fixed)|were (\w+ly )?(changed|renamed|updated)|successfully (changed|renamed|updated|modified|created|fixed))\b/i.test(
           outcome.content
         );
-      if (!anyWriteAttempted && claimsChanges && !phantomChangesNudgeUsed) {
-        phantomChangesNudgeUsed = true;
+      if (writesApplied === 0 && claimsChanges && phantomChangesNudgesUsed < 2) {
+        phantomChangesNudgesUsed++;
+        // Confront with EVIDENCE, not just exhortation: a live git_status
+        // showing a clean tree is harder to role-play past than a scolding.
+        let treeEvidence = '';
+        try {
+          const st = (await requestTool('git_status', {}, randomUUID())) as { status?: string } | null;
+          if (st?.status) treeEvidence = ` git_status proves it — the working tree reads:\n${String(st.status).slice(0, 500)}\n`;
+        } catch {
+          /* evidence is optional */
+        }
         messages.push({ role: 'assistant', content: outcome.content });
         messages.push({
           role: 'user',
           content:
-            'STOP: you describe changes, but you never called edit_file/create_file/delete_file — NOTHING in the workspace was changed. ' +
-            'If the task requires changing files, make the changes NOW via the edit tools. Otherwise, rewrite your answer without claiming any change was made.',
+            'STOP: you claim changes were made, but no edit was ever APPLIED — NOTHING in the workspace has actually changed.' +
+            treeEvidence +
+            'If the task requires changing files, make the changes NOW: read_file the target, then call edit_file with oldString copied exactly. ' +
+            'Otherwise, rewrite your answer without claiming any change was made. Do not apologize and repeat the claim.',
         });
         continue;
       }
@@ -912,6 +1085,24 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       ) {
         completenessReflectionUsed = true;
         messages.push({ role: 'assistant', content: outcome.content });
+        // A run that changed (or tried to change) files gets a write-oriented
+        // reflection: the dominant incompleteness is a partially-propagated change —
+        // definition renamed but exports/call sites left stale (observed live:
+        // qwen renamed `add` to `sum` in the definition and imports, left
+        // `module.exports = { add, ... }` and every `add(...)` call untouched,
+        // and get_diagnostics is syntax-only so it stayed green). The Q&A
+        // reflection below can't catch that.
+        if (writesApplied > 0 || anyWriteAttempted) {
+          messages.push({
+            role: 'user',
+            content:
+              'Before this is accepted: verify your changes are COMPLETE, not just applied. ' +
+              'If you renamed or replaced a symbol, run search_codebase for the OLD name NOW — every remaining match (definition, module.exports/export lines, imports/requires, call sites) must be updated or explicitly justified. ' +
+              'If the task involves a test, build, or command, re-run it now and confirm it actually succeeds — clean diagnostics alone do not prove runtime behavior. ' +
+              'Fix anything incomplete, then give your final answer. If everything is genuinely complete, return your answer again unchanged.',
+          });
+          continue;
+        }
         messages.push({
           role: 'user',
           content:
@@ -935,6 +1126,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         continue;
       }
       if (outcome.content) parentPort?.postMessage({ type: 'chunk', content: outcome.content });
+      emitMetrics();
       parentPort?.postMessage({ type: 'done', content: outcome.content });
       return;
     }
@@ -991,10 +1183,59 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
               : 'Change the arguments or take a different approach.'),
         };
       }
+      // Placeholder-argument guard: weak models emit template values like
+      // "<file_path>" or "<path-to-add-definition>" instead of substituting
+      // real values from prior results — observed repeatedly: after a
+      // files_with_matches result LISTING the real paths, qwen looped
+      // read_file/edit_file calls on the literal string "<file_path>".
+      // ENOENT errors didn't break the loop; naming the disease does.
+      const placeholderEntry = Object.entries((parsedArgs ?? {}) as Record<string, unknown>).find(
+        ([, v]) => typeof v === 'string' && /^<[^<>]{1,80}>$/.test(v.trim())
+      );
+      if (placeholderEntry) {
+        failedCalls.set(callKey, priorFailures + 1);
+        return {
+          error:
+            `You passed the literal placeholder ${JSON.stringify(placeholderEntry[1])} as "${placeholderEntry[0]}" — placeholders are never valid arguments. ` +
+            'Substitute a REAL value taken from a previous tool result (e.g. an actual path from the files list you already received), and make one call per real target.',
+        };
+      }
       const transportId = randomUUID();
       parentPort?.postMessage({ type: 'tool_status', id: transportId, name: tc.name, arguments: parsedArgs });
+      // Read-before-edit guard: don't execute an edit against a file the model
+      // has never seen — fetch the file ourselves and return it in the error,
+      // so the retry is a copy job instead of another guess. If the read fails
+      // (bad path), fall through: edit_file's own "File not found" is clearer.
+      if (tc.name === 'edit_file') {
+        const target = normPath((parsedArgs as { path?: unknown } | null)?.path);
+        if (target && !readPaths.has(target)) {
+          try {
+            const readResult = (await requestTool('read_file', { path: target }, randomUUID())) as { content?: string } | null;
+            let content = String(readResult?.content ?? '');
+            if (content.length > EDIT_UNREAD_CONTENT_CAP) {
+              content = content.slice(0, EDIT_UNREAD_CONTENT_CAP) + '\n…[truncated — read_file the specific line range you need]';
+            }
+            // Deliberately NOT counted in failedCalls: an identical retry now
+            // has the file in readPaths and deserves a real execution (where
+            // prepareEditFile's whitespace-tolerant fallback may still apply).
+            readPaths.add(target);
+            return {
+              error:
+                `Edit not executed: you have not read ${target} in this session, so your oldString is written from memory and will not match. ` +
+                `Here is the CURRENT content of ${target} — retry the edit with oldString copied from it character-for-character:\n\`\`\`\n${content}\n\`\`\``,
+            };
+          } catch {
+            // Unreadable target — let edit_file produce its own error below.
+          }
+        }
+      }
       try {
-        return await requestTool(tc.name, parsedArgs, transportId);
+        const result = await requestTool(tc.name, parsedArgs, transportId);
+        if (tc.name === 'read_file' || tc.name === 'create_file') {
+          const p = normPath((parsedArgs as { path?: unknown } | null)?.path);
+          if (p) readPaths.add(p);
+        }
+        return result;
       } catch (e) {
         failedCalls.set(callKey, priorFailures + 1);
         return { error: e instanceof Error ? e.message : String(e) };
@@ -1011,6 +1252,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       messages.push({ role: 'tool', tool_call_id: tc.id, content: serializeToolResult(results[idx]) });
       recordToolResult(tc.name, i, messages[messages.length - 1].content);
       const failed = !!(results[idx] as { error?: unknown } | null)?.error;
+      if (!failed) okToolResults++;
       if (FILE_WRITE_TOOL_NAMES.has(tc.name)) {
         anyWriteAttempted = true;
         if (!failed) {
@@ -1042,7 +1284,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // Either MAX_TOOL_ITERATIONS or the tool-output budget was hit: force a
   // final answer without tools so the user always gets a response instead of
   // hanging or erroring.
+  let finalStarted = Date.now();
   let finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
+  noteTurn(Date.now() - finalStarted, finalOutcome, 0, false);
   if (!finalOutcome.content.trim()) {
     // Empty even after runToolTurn's own reasoning-budget retry — give it one
     // more explicit nudge before giving up, since a forced no-tools turn with
@@ -1053,13 +1297,16 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       role: 'user',
       content: `Answer now, in plain prose, using the ${toolCallsExecuted} tool result(s) already gathered above. Do not call any more tools.`,
     });
+    finalStarted = Date.now();
     finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
+    noteTurn(Date.now() - finalStarted, finalOutcome, 0, false);
   }
   if (!finalOutcome.content.trim()) {
     // Still nothing — telling the user "Done" here would be a lie (nothing
     // was answered, and if writesApplied === 0, nothing changed either). Say
     // so plainly instead of letting the webview's generic fallback text imply
     // the task succeeded.
+    emitMetrics();
     parentPort?.postMessage({
       type: 'error',
       message:
@@ -1071,6 +1318,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     return;
   }
   parentPort?.postMessage({ type: 'chunk', content: finalOutcome.content });
+  emitMetrics();
   parentPort?.postMessage({ type: 'done', content: finalOutcome.content });
 }
 

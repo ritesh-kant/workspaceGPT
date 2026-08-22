@@ -8,6 +8,12 @@
     "selftest": "node src/run.mjs --selftest",
     "eval": "node src/run.mjs",
     "units": "node src/headless/unit-tests.mjs",
-    "smoke": "node src/headless/agent-smoke.mjs"
+    "smoke": "node src/headless/agent-smoke.mjs",
+    "bench:agent": "node src/headless/agent-smoke.mjs --runs 5",
+    "bench:retrieval:index": "node src/retrieval/build-fixture-index.mjs",
+    "bench:retrieval": "node src/retrieval/retrieval-eval.mjs --rerank",
+    "bench:codebase-rank": "node src/retrieval/codebase-rank-eval.mjs",
+    "bench:index": "node src/indexing/index-bench.mjs --multiply 10",
+    "bench:full": "pnpm bench:agent && pnpm bench:retrieval && pnpm bench:codebase-rank && pnpm bench:index"
   }
 }

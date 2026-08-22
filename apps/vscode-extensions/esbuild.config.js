@@ -189,12 +189,17 @@ const workersConfig = {
   },
   keepNames: true,
   banner: {
+    // Aliased to avoid colliding with bundled dependencies that also import
+    // fileURLToPath from 'node:url' at their own top level (e.g. path-scurry,
+    // a transitive dep of glob) — esbuild's renamer doesn't see this banner
+    // text, since it's injected as a raw string after bundling/renaming, so
+    // an unaliased import here can end up declared twice in the same scope.
     js: `
 import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
+import { fileURLToPath as __esbuildFileURLToPath } from 'url';
 import { dirname } from 'path';
 const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
+const __filename = __esbuildFileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 `
   }
