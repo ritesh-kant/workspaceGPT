@@ -36,6 +36,8 @@ export interface ExplorationConfig {
   explorerMaxTokens: number;
   claimTableMaxChars: number;
   explorePhaseTimeoutMs: number;
+  /** Extra provider-specific request-body fields (e.g. OpenRouter's reasoning-effort cap). */
+  extraBody?: Record<string, unknown>;
 }
 
 export function defaultExplorationConfig(isLocalProvider: boolean): ExplorationConfig {
@@ -403,6 +405,7 @@ async function runOneExplorer(
           temperature: 0,
           max_tokens: cfg.explorerMaxTokens,
           stream: false,
+          ...((cfg.extraBody ?? {}) as any),
         });
       },
       deps.notifyRotate

@@ -14,6 +14,7 @@
     "bench:retrieval": "node src/retrieval/retrieval-eval.mjs --rerank",
     "bench:codebase-rank": "node src/retrieval/codebase-rank-eval.mjs",
     "bench:index": "node src/indexing/index-bench.mjs --multiply 10",
-    "bench:full": "pnpm bench:agent && pnpm bench:retrieval && pnpm bench:codebase-rank && pnpm bench:index"
+    "bench:full": "pnpm bench:agent && pnpm bench:chat && pnpm bench:retrieval && pnpm bench:codebase-rank && pnpm bench:index",
+    "bench:chat": "node src/chat/chat-response-bench.mjs"
   }
 }

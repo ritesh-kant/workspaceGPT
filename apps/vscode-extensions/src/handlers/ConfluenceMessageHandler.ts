@@ -120,6 +120,7 @@ export class ConfluenceMessageHandler {
   private async handleStartConfluenceOAuth(): Promise<void> {
     try {
       const result = await this.confluenceAuthService.startOAuthFlow();
+      this.analyticsService.trackEvent('confluence_connected');
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.CONFLUENCE_OAUTH_SUCCESS,
         site: {

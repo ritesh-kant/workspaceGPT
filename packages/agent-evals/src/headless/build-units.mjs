@@ -24,6 +24,7 @@ const UNITS = [
   'src/utils/reranker.ts',
   'src/utils/queryPlanner.ts',
   'src/utils/queryClassifier.ts',
+  'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
 ];
 
 // codebaseTools.ts dynamically `import('@vscode/ripgrep')`s to find the `rg`

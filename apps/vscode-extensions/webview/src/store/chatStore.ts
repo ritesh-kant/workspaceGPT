@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 import { STORAGE_KEYS } from '../constants';
 import { MESSAGE_TYPES } from '../constants';
+import type { ChatAttachment } from '../constants';
 
 /** A proposed agent action awaiting (or past) user review — file write or command. */
 export interface WriteReview {
@@ -54,6 +55,10 @@ interface Message {
   content: string;
   isUser: boolean;
   isError?: boolean;
+  /** Files/images the user attached to this message. */
+  attachments?: ChatAttachment[];
+  /** Workspace paths the user @-mentioned — re-resolved host-side on retry. */
+  mentions?: string[];
   writeReview?: WriteReview;
   /** Tool-exploration steps the agent took before producing this answer. */
   agentSteps?: (AgentStep | string)[];
@@ -69,6 +74,109 @@ interface ChatSessionPreview {
   updatedAt: number;
 }
 
+/**
+ * The turn-scoped fields every chat session carries. The visible session
+ * keeps them at the top level of the store (so components stay unchanged);
+ * sessions running in the background keep theirs in `liveSessions`.
+ */
+export interface LiveSession {
+  messages: Message[];
+  isLoading: boolean;
+  isStreaming: boolean;
+  statusText: string;
+  agentSteps: AgentStep[];
+  pendingTurnSummary: TurnSummary | null;
+}
+
+/** The subset of session state the turn reducers below operate on. */
+interface TurnSlice {
+  messages: Message[];
+  agentSteps: AgentStep[];
+  pendingTurnSummary: TurnSummary | null;
+}
+
+// ── Pure turn reducers ──────────────────────────────────────────────────────
+// One implementation of the adoption rules (steps + turn rollup attach to the
+// assistant answer they belong to), shared by the visible session's actions
+// and the background-session variants.
+
+/** A new user message starts a fresh turn; an assistant answer adopts accumulated steps. */
+const addMessageIn = (s: TurnSlice, message: Message): TurnSlice => {
+  if (message.isUser) {
+    const stamped = { ...message, timestamp: message.timestamp ?? Date.now() };
+    return { messages: [...s.messages, stamped], agentSteps: [], pendingTurnSummary: null };
+  }
+  const adopt = !message.writeReview && (s.agentSteps.length > 0 || !!s.pendingTurnSummary);
+  return {
+    messages: [
+      ...s.messages,
+      adopt
+        ? {
+            ...message,
+            ...(s.agentSteps.length > 0 ? { agentSteps: s.agentSteps } : {}),
+            ...(s.pendingTurnSummary ? { turnSummary: s.pendingTurnSummary } : {}),
+          }
+        : message,
+    ],
+    agentSteps: adopt ? [] : s.agentSteps,
+    pendingTurnSummary: adopt ? null : s.pendingTurnSummary,
+  };
+};
+
+const appendToLastIn = (s: TurnSlice, content: string): TurnSlice => {
+  const msgs = [...s.messages];
+  const last = msgs[msgs.length - 1];
+  if (msgs.length > 0 && !last.isUser && !last.writeReview) {
+    // Adopt a rollup that arrived after this message was created.
+    msgs[msgs.length - 1] = {
+      ...last,
+      content: last.content + content,
+      ...(!last.turnSummary && s.pendingTurnSummary ? { turnSummary: s.pendingTurnSummary } : {}),
+    };
+    return {
+      messages: msgs,
+      agentSteps: s.agentSteps,
+      pendingTurnSummary: !last.turnSummary && s.pendingTurnSummary ? null : s.pendingTurnSummary,
+    };
+  }
+  return addMessageIn(s, { content, isUser: false });
+};
+
+const setTurnSummaryIn = (s: TurnSlice, summary: TurnSummary): TurnSlice => {
+  const msgs = [...s.messages];
+  const last = msgs[msgs.length - 1];
+  if (last && !last.isUser && !last.writeReview && !last.isError) {
+    msgs[msgs.length - 1] = { ...last, turnSummary: summary };
+    return { ...s, messages: msgs };
+  }
+  return { ...s, pendingTurnSummary: summary };
+};
+
+/** End-of-turn safety net: returns null when there is nothing unattached to materialize. */
+const finalizeIn = (s: TurnSlice, fallbackContent: string): TurnSlice | null => {
+  if (s.agentSteps.length === 0 && !s.pendingTurnSummary) return null;
+  return {
+    messages: [
+      ...s.messages,
+      {
+        content: fallbackContent,
+        isUser: false,
+        ...(s.agentSteps.length > 0 ? { agentSteps: s.agentSteps } : {}),
+        ...(s.pendingTurnSummary ? { turnSummary: s.pendingTurnSummary } : {}),
+      },
+    ],
+    agentSteps: [],
+    pendingTurnSummary: null,
+  };
+};
+
+const closePendingReviewsIn = (messages: Message[]): Message[] =>
+  messages.map((m) =>
+    m.writeReview && !m.writeReview.decision
+      ? { ...m, writeReview: { ...m.writeReview, decision: 'rejected' as const } }
+      : m
+  );
+
 interface ChatState {
   messages: Message[];
   inputValue: string;
@@ -83,6 +191,13 @@ interface ChatState {
   agentSteps: AgentStep[];
   /** Turn rollup received before the answer message existed; adopted on attach. */
   pendingTurnSummary: TurnSummary | null;
+  /**
+   * Sessions with a run in flight (or just finished) that are NOT on screen.
+   * Keyed by sessionId. An entry is created by stashing the visible session
+   * away and consumed by activating it again; host messages for these
+   * sessions are applied here instead of to the visible chat.
+   */
+  liveSessions: Record<string, LiveSession>;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
   /** Drop one message by index — used to clear a failed turn's error bubble before retrying it. */
@@ -97,6 +212,28 @@ interface ChatState {
    * never invisible. Returns without effect when a normal answer already landed.
    */
   finalizeAgentTurn: (fallbackContent: string) => void;
+  /**
+   * Drops the in-flight turn's unattached steps/rollup. Used when a turn is
+   * abandoned (new chat, switching to a history session) so its steps can't
+   * later attach themselves to a message in a different conversation.
+   */
+  resetTurnState: () => void;
+  /** Park the visible session's live state under its id (background it). */
+  stashCurrentSession: () => void;
+  /** Promote a backgrounded session to the visible one. False if not present. */
+  activateLiveSession: (sessionId: string) => boolean;
+  /** Forget a backgrounded session (deleted, or consumed elsewhere). */
+  dropLiveSession: (sessionId: string) => void;
+  // Background-session variants of the turn actions — same reducers, applied
+  // to liveSessions[sessionId]. All no-op if the session isn't backgrounded.
+  bgAddMessage: (sessionId: string, message: Message) => void;
+  bgAppendToLast: (sessionId: string, content: string) => void;
+  bgAddAgentStep: (sessionId: string, step: AgentStep) => void;
+  bgUpdateAgentStep: (sessionId: string, id: string, patch: Partial<AgentStep>) => void;
+  bgSetTurnSummary: (sessionId: string, summary: TurnSummary) => void;
+  bgFinalizeTurn: (sessionId: string, fallbackContent: string) => void;
+  bgPatch: (sessionId: string, patch: Partial<Pick<LiveSession, 'isLoading' | 'isStreaming' | 'statusText'>>) => void;
+  bgCloseAllPendingWriteReviews: (sessionId: string) => void;
   clearMessages: () => void;
   setInputValue: (value: string) => void;
   setIsLoading: (isLoading: boolean) => void;
@@ -143,106 +280,139 @@ export const chatDefaultState = {
   statusText: '',
   agentSteps: [],
   pendingTurnSummary: null,
+  liveSessions: {},
 };
 
 export const useChatStore = create<ChatState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       ...chatDefaultState,
       setMessages: (messages) => set({ messages }),
       // A new user message starts a fresh turn (drop any stale steps); a new
       // assistant answer adopts the steps + turn rollup accumulated while it
       // was generated.
-      addMessage: (message) => set((state) => {
-        if (message.isUser) {
-          const stamped = { ...message, timestamp: message.timestamp ?? Date.now() };
-          return { messages: [...state.messages, stamped], agentSteps: [], pendingTurnSummary: null };
-        }
-        const adopt = !message.writeReview && (state.agentSteps.length > 0 || !!state.pendingTurnSummary);
-        return {
-          messages: [
-            ...state.messages,
-            adopt
-              ? {
-                  ...message,
-                  ...(state.agentSteps.length > 0 ? { agentSteps: state.agentSteps } : {}),
-                  ...(state.pendingTurnSummary ? { turnSummary: state.pendingTurnSummary } : {}),
-                }
-              : message,
-          ],
-          agentSteps: adopt ? [] : state.agentSteps,
-          pendingTurnSummary: adopt ? null : state.pendingTurnSummary,
-        };
-      }),
+      addMessage: (message) => set((state) => addMessageIn(state, message)),
       removeMessageAt: (index) => set((state) => ({
         messages: state.messages.filter((_, i) => i !== index),
       })),
-      appendToLastMessage: (content) => set((state) => {
-        const msgs = [...state.messages];
-        const last = msgs[msgs.length - 1];
-        if (msgs.length > 0 && !last.isUser && !last.writeReview) {
-          // Adopt a rollup that arrived after this message was created (the
-          // summary lands before the typewriter pump finishes the message).
-          msgs[msgs.length - 1] = {
-            ...last,
-            content: last.content + content,
-            ...(!last.turnSummary && state.pendingTurnSummary ? { turnSummary: state.pendingTurnSummary } : {}),
-          };
-          return {
-            messages: msgs,
-            pendingTurnSummary: !last.turnSummary && state.pendingTurnSummary ? null : state.pendingTurnSummary,
-          };
-        }
-        const adopt = state.agentSteps.length > 0 || !!state.pendingTurnSummary;
-        msgs.push(
-          adopt
-            ? {
-                content,
-                isUser: false,
-                ...(state.agentSteps.length > 0 ? { agentSteps: state.agentSteps } : {}),
-                ...(state.pendingTurnSummary ? { turnSummary: state.pendingTurnSummary } : {}),
-              }
-            : { content, isUser: false }
-        );
-        return {
-          messages: msgs,
-          agentSteps: adopt ? [] : state.agentSteps,
-          pendingTurnSummary: adopt ? null : state.pendingTurnSummary,
-        };
-      }),
+      appendToLastMessage: (content) => set((state) => appendToLastIn(state, content)),
       addAgentStep: (step) => set((state) => ({ agentSteps: [...state.agentSteps, step] })),
       updateAgentStep: (id, patch) => set((state) => ({
         agentSteps: state.agentSteps.map((s) => (s.id === id ? { ...s, ...patch } : s)),
       })),
       // Attach directly when the answer message already exists; otherwise park
       // it for adoption by the next assistant message.
-      setTurnSummary: (summary) => set((state) => {
-        const msgs = [...state.messages];
-        const last = msgs[msgs.length - 1];
-        if (last && !last.isUser && !last.writeReview && !last.isError) {
-          msgs[msgs.length - 1] = { ...last, turnSummary: summary };
-          return { messages: msgs };
-        }
-        return { pendingTurnSummary: summary };
-      }),
-      finalizeAgentTurn: (fallbackContent) => set((state) => {
-        if (state.agentSteps.length === 0 && !state.pendingTurnSummary) return {};
-        const msgs = [...state.messages];
+      setTurnSummary: (summary) => set((state) => setTurnSummaryIn(state, summary)),
+      finalizeAgentTurn: (fallbackContent) => set((state) => finalizeIn(state, fallbackContent) ?? {}),
+      resetTurnState: () => set({ agentSteps: [], pendingTurnSummary: null }),
+      stashCurrentSession: () => set((state) => {
+        if (!state.currentSessionId) return {};
+        // Only a session with a run in flight needs live state parked — an
+        // idle session's messages are already persisted to history.
+        if (!state.isLoading && !state.isStreaming) return {};
         return {
-          messages: [
-            ...msgs,
-            {
-              content: fallbackContent,
-              isUser: false,
-              ...(state.agentSteps.length > 0 ? { agentSteps: state.agentSteps } : {}),
-              ...(state.pendingTurnSummary ? { turnSummary: state.pendingTurnSummary } : {}),
+          liveSessions: {
+            ...state.liveSessions,
+            [state.currentSessionId]: {
+              messages: state.messages,
+              isLoading: state.isLoading,
+              isStreaming: state.isStreaming,
+              statusText: state.statusText,
+              agentSteps: state.agentSteps,
+              pendingTurnSummary: state.pendingTurnSummary,
             },
-          ],
-          agentSteps: [],
-          pendingTurnSummary: null,
+          },
         };
       }),
-      clearMessages: () => set({ messages: [] }),
+      activateLiveSession: (sessionId) => {
+        const entry = get().liveSessions[sessionId];
+        if (!entry) return false;
+        set((state) => {
+          const { [sessionId]: _consumed, ...rest } = state.liveSessions;
+          return {
+            currentSessionId: sessionId,
+            messages: entry.messages,
+            isLoading: entry.isLoading,
+            isStreaming: entry.isStreaming,
+            statusText: entry.statusText,
+            agentSteps: entry.agentSteps,
+            pendingTurnSummary: entry.pendingTurnSummary,
+            showTips: false,
+            liveSessions: rest,
+          };
+        });
+        return true;
+      },
+      dropLiveSession: (sessionId) => set((state) => {
+        if (!state.liveSessions[sessionId]) return {};
+        const { [sessionId]: _dropped, ...rest } = state.liveSessions;
+        return { liveSessions: rest };
+      }),
+      bgAddMessage: (sessionId, message) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return { liveSessions: { ...state.liveSessions, [sessionId]: { ...entry, ...addMessageIn(entry, message) } } };
+      }),
+      bgAppendToLast: (sessionId, content) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return { liveSessions: { ...state.liveSessions, [sessionId]: { ...entry, ...appendToLastIn(entry, content) } } };
+      }),
+      bgAddAgentStep: (sessionId, step) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return {
+          liveSessions: {
+            ...state.liveSessions,
+            [sessionId]: { ...entry, agentSteps: [...entry.agentSteps, step] },
+          },
+        };
+      }),
+      bgUpdateAgentStep: (sessionId, id, patch) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return {
+          liveSessions: {
+            ...state.liveSessions,
+            [sessionId]: {
+              ...entry,
+              agentSteps: entry.agentSteps.map((st) => (st.id === id ? { ...st, ...patch } : st)),
+            },
+          },
+        };
+      }),
+      bgSetTurnSummary: (sessionId, summary) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return { liveSessions: { ...state.liveSessions, [sessionId]: { ...entry, ...setTurnSummaryIn(entry, summary) } } };
+      }),
+      bgFinalizeTurn: (sessionId, fallbackContent) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        const last = entry.messages[entry.messages.length - 1];
+        // Same rule as the visible session's DONE handler: only materialize a
+        // fallback answer when the turn produced no assistant text.
+        if (last && !last.isUser && !last.writeReview) return {};
+        const finalized = finalizeIn(entry, fallbackContent);
+        if (!finalized) return {};
+        return { liveSessions: { ...state.liveSessions, [sessionId]: { ...entry, ...finalized } } };
+      }),
+      bgPatch: (sessionId, patch) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return { liveSessions: { ...state.liveSessions, [sessionId]: { ...entry, ...patch } } };
+      }),
+      bgCloseAllPendingWriteReviews: (sessionId) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return {
+          liveSessions: {
+            ...state.liveSessions,
+            [sessionId]: { ...entry, messages: closePendingReviewsIn(entry.messages) },
+          },
+        };
+      }),
+      clearMessages: () => set({ messages: [], agentSteps: [], pendingTurnSummary: null }),
       setInputValue: (inputValue) => set({ inputValue }),
       setIsLoading: (isLoading) => set({ isLoading }),
       setIsStreaming: (isStreaming) => set({ isStreaming }),
@@ -259,11 +429,7 @@ export const useChatStore = create<ChatState>()(
       // Stop/worker-death auto-rejects every parked gate host-side; mirror
       // that on any card still showing live buttons.
       closeAllPendingWriteReviews: () => set((state) => ({
-        messages: state.messages.map((m) =>
-          m.writeReview && !m.writeReview.decision
-            ? { ...m, writeReview: { ...m.writeReview, decision: 'rejected' as const } }
-            : m
-        ),
+        messages: closePendingReviewsIn(state.messages),
       })),
       resetStore: () => {
         const vscode = VSCodeAPI();
@@ -277,6 +443,20 @@ export const useChatStore = create<ChatState>()(
     {
       name: 'workspaceGPT-chat-storage',
       storage: createJSONStorage(() => vscodeStorage),
+      // Live runs can't survive the webview being torn down (the host's
+      // stream has nowhere to land) — don't resurrect their spinners.
+      partialize: (state) =>
+        Object.fromEntries(
+          Object.entries(state).filter(([key]) => key !== 'liveSessions')
+        ) as ChatState,
+      merge: (persisted, current) => ({
+        ...current,
+        ...(persisted as Partial<ChatState>),
+        liveSessions: {},
+        isLoading: false,
+        isStreaming: false,
+        statusText: '',
+      }),
     }
   )
 );

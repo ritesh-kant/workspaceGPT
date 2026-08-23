@@ -6,6 +6,18 @@ import { installMcpServer } from '../utils/mcpInstaller';
 import { isMcpInstalled } from '../utils/mcpStatusChecker';
 import { syncContextKeys } from '../utils/syncContextKeys';
 
+/**
+ * Onboarding funnel events the webview may report. Allowlisted rather than
+ * passed through verbatim: a typo'd name from the webview would otherwise
+ * create a permanent junk event in PostHog's schema (and count toward billing).
+ */
+const ONBOARDING_EVENTS = new Set([
+  'onboarding_step_viewed',
+  'onboarding_engine_skipped',
+  'onboarding_confluence_connect_clicked',
+  'onboarding_completed',
+]);
+
 export class SystemMessageHandler {
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -27,6 +39,11 @@ export class SystemMessageHandler {
       case MESSAGE_TYPES.SHOW_SETTINGS:
         this.analyticsService.trackEvent('settings_opened');
         await this.handleShowSettings();
+        return true;
+      case MESSAGE_TYPES.ONBOARDING_EVENT:
+        if (typeof data.event === 'string' && ONBOARDING_EVENTS.has(data.event)) {
+          this.analyticsService.trackEvent(data.event, data.properties);
+        }
         return true;
       case MESSAGE_TYPES.GET_WORKSPACE_PATH:
         await this.handleGetWorkspacePath();

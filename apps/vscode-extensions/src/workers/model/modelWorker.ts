@@ -23,6 +23,12 @@ interface WorkerData {
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null;
   /** When enabled, the model gets live codebase tools instead of embedding search results. */
   codebaseTools?: { enabled: boolean };
+  /** Text files the user attached — inlined into the structured prompt. */
+  textAttachments?: { name: string; content: string }[];
+  /** Image files the user attached — sent as multimodal image_url parts (vision models). */
+  imageAttachments?: { name: string; dataUrl: string }[];
+  /** Contents of the files/folders the user @-mentioned, already read host-side. */
+  mentionedFiles?: { name: string; content: string }[];
   /** Pre-built workspace file tree + README head, injected into codebase prompts. */
   repoOrientation?: string;
   /** Merged project rules files (.workspacegpt/rules.md, CLAUDE.md, …). */
@@ -41,12 +47,29 @@ const {
   currentUserName,
   currentSprint,
   codebaseTools,
+  textAttachments,
+  imageAttachments,
+  mentionedFiles,
   repoOrientation,
   workspaceRules,
 } = workerData as WorkerData;
 
 // Prefer the full key list; fall back to the single legacy key.
 const failoverKeys = apiKeys && apiKeys.length ? apiKeys : apiKey ? [apiKey] : [];
+
+/**
+ * The user turn's `content` value: a plain string normally, or OpenAI
+ * multimodal content parts when the user attached images. Only vision-capable
+ * models accept image parts — others reject the request, and that provider
+ * error surfaces in the chat as usual.
+ */
+function buildUserContent(text: string): string | OpenAI.Chat.Completions.ChatCompletionContentPart[] {
+  if (!imageAttachments?.length) return text;
+  return [
+    { type: 'text' as const, text },
+    ...imageAttachments.map((img) => ({ type: 'image_url' as const, image_url: { url: img.dataUrl } })),
+  ];
+}
 
 // ── Codebase tool definitions (OpenAI function-calling schema) ────────────
 
@@ -346,6 +369,20 @@ const isLocalProvider = (provider ?? '').toLowerCase() === 'ollama';
 // well inside its timeout at this depth.
 const MAX_TOOL_ITERATIONS = isLocalProvider ? 20 : 25;
 
+const isOpenRouter = (provider ?? '').toLowerCase() === 'openrouter';
+
+// ── Latency-adaptive degradation ──
+// Everything above (exploration decomposition, reflection/nudge extras, a
+// 25-turn cap) assumes turns that cost a few seconds. On a slow serving path
+// (free-tier OpenRouter reasoning models routinely take ~60s PER completion)
+// the same architecture multiplies into a 10-minute answer. Once observed
+// latency crosses these thresholds the run degrades: fewer iterations, no
+// optional-polish reflection turns, and a visible warning in the timeline.
+const SLOW_TURN_MS = 20_000;
+// A single first turn this slow is enough evidence on its own.
+const SLOW_FIRST_TURN_MS = 45_000;
+const SLOW_MODEL_ITERATION_CAP = 8;
+
 const KNOWN_TOOL_NAMES = new Set(
   TOOL_DEFS.map((d: any) => d.function?.name).filter(Boolean)
 );
@@ -416,7 +453,14 @@ async function generateResponse(): Promise<void> {
       chatHistory,
       currentUserName,
       currentSprint,
-      { codebaseToolsEnabled: !!codebaseTools?.enabled, repoOrientation, workspaceRules }
+      {
+        codebaseToolsEnabled: !!codebaseTools?.enabled,
+        repoOrientation,
+        workspaceRules,
+        textAttachments,
+        imageAttachmentNames: imageAttachments?.map((img) => img.name),
+        mentionedFiles,
+      }
     );
 
     if (codebaseTools?.enabled) {
@@ -534,7 +578,7 @@ async function generateWithOpenAIStream(prompt: string, model: string, baseURL: 
       messages: [
         {
           role: 'user',
-          content: prompt
+          content: buildUserContent(prompt),
         }
       ],
       temperature: 0.3,
@@ -621,6 +665,13 @@ async function runToolTurn(
       model,
       messages,
       ...(withTools ? { tools: TOOL_DEFS as any, tool_choice: 'auto' as const } : {}),
+      // Cap thinking on reasoning models: tool turns need a quick decision,
+      // not a minute of deliberation, and unconstrained reasoning is the main
+      // latency + token cost on models like Nemotron. OpenRouter normalizes
+      // this param across providers and drops it for models without reasoning;
+      // other OpenAI-compat providers may reject unknown params, so it is
+      // gated to OpenRouter only.
+      ...(isOpenRouter ? ({ reasoning: { effort: 'low' } } as any) : {}),
       temperature: 0.3,
       // Reasoning models (Gemini 2.5+, Nemotron) spend "thinking" tokens out of
       // this same budget — 4096 can be exhausted before any visible output is
@@ -692,7 +743,7 @@ const MAX_TOOL_RESULT_CHARS = isLocalProvider ? 12_000 : 20_000;
 const MAX_TOTAL_TOOL_CHARS = isLocalProvider ? 48_000 : 200_000;
 
 async function runAgentLoop(initialPrompt: string, model: string, baseURL: string, apiKeys: string[]): Promise<void> {
-  const messages: any[] = [{ role: 'user', content: initialPrompt }];
+  const messages: any[] = [{ role: 'user', content: buildUserContent(initialPrompt) }];
   // ── Efficiency metrics (consumed by packages/agent-evals, not the chat UI) ──
   const runStarted = Date.now();
   interface PerTurnMetric {
@@ -722,11 +773,35 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     apiCallsTotal += outcome.apiCalls;
     promptTokensTotal += outcome.usage.promptTokens;
     completionTokensTotal += outcome.usage.completionTokens;
+    turnMsTotal += ms;
     if (outcome.usage.missing) usageMissingTurns++;
   };
   let toolCharsUsed = 0;
   let toolCallsExecuted = 0;
   let planNudgesUsed = 0;
+  // ── Latency-adaptive degradation state (see SLOW_TURN_MS above) ──
+  let turnMsTotal = 0;
+  let slowModelMode = false;
+  let iterationCap = MAX_TOOL_ITERATIONS;
+  const enterSlowMode = (observedMs: number, atIteration: number) => {
+    if (slowModelMode) return;
+    slowModelMode = true;
+    // Leave a little room past the current iteration so a run detected late
+    // can still land an answer, but never extend beyond the original cap.
+    iterationCap = Math.min(MAX_TOOL_ITERATIONS, Math.max(atIteration + 2, SLOW_MODEL_ITERATION_CAP));
+    parentPort?.postMessage({
+      type: 'slow_model',
+      avgSec: Math.round(observedMs / 1000),
+      cap: iterationCap,
+    });
+  };
+  const maybeEnterSlowMode = (atIteration: number) => {
+    if (slowModelMode || perTurn.length === 0) return;
+    const avgMs = turnMsTotal / perTurn.length;
+    if (perTurn[0].ms > SLOW_FIRST_TURN_MS || (perTurn.length >= 2 && avgMs > SLOW_TURN_MS)) {
+      enterSlowMode(avgMs, atIteration);
+    }
+  };
   // Verification discipline (P2.4): a run that APPLIED file writes may not end
   // without a diagnostics check, and may not end silently. Models — local ones
   // especially — skip both when left to their own devices.
@@ -875,6 +950,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         completenessReflectionUsed,
         autoDiagnosticsRan,
       },
+      slowModelMode,
+      iterationCap,
       perTurn,
     });
   };
@@ -888,6 +965,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // answer, never to plan the split. See EXPLORATION-DECOMPOSITION-DESIGN.md.
   // Best-effort throughout: any failure here falls through to the loop below
   // running exactly as it does today.
+  const exploreStarted = Date.now();
   const exploration = await runExplorationPhase(
     prompt,
     model,
@@ -901,10 +979,24 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       },
       notifyRotate: notifyKeyFailover,
     },
-    defaultExplorationConfig(isLocalProvider),
+    {
+      ...defaultExplorationConfig(isLocalProvider),
+      // Same rationale as runToolTurn: explorers have a 600-token output cap,
+      // which unconstrained reasoning burns entirely on thinking.
+      ...(isOpenRouter ? { extraBody: { reasoning: { effort: 'low' } } } : {}),
+    },
     isLocalProvider
   );
+  const exploreMs = Date.now() - exploreStarted;
   explorationStats = exploration.stats;
+  // Explorers run in parallel, so phase wall-time ≈ ONE completion's latency
+  // (the scout part is local ripgrep, milliseconds). A slow — or timed-out —
+  // phase is the earliest possible evidence of a slow model: degrade before
+  // the main loop burns 25 minute-long turns. Skipped when the phase made no
+  // API calls quickly (gate declined: that says nothing about the model).
+  if (exploreMs > SLOW_TURN_MS) {
+    enterSlowMode(exploreMs, 0);
+  }
   if (exploration.stats.apiCalls > 0) {
     apiCallsTotal += exploration.stats.apiCalls;
     promptTokensTotal += exploration.stats.promptTokens;
@@ -931,7 +1023,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     toolCharsUsed += claimContent.length;
   }
 
-  for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+  for (let i = 0; i < iterationCap; i++) {
     const turnStarted = Date.now();
     const outcome = await runToolTurn(messages, model, baseURL, apiKeys, true);
     const thoughtMs = Date.now() - turnStarted;
@@ -947,6 +1039,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       salvaged = toolCalls.length > 0;
     }
     noteTurn(thoughtMs, outcome, toolCalls.length, salvaged);
+    maybeEnterSlowMode(i);
 
     if (toolCalls.length === 0) {
       // The model wants to finish — but unverified writes block that. Run
@@ -1079,6 +1172,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // still gets diagnostics/honesty checks before the run can end.
       if (
         !completenessReflectionUsed &&
+        // Optional polish, not an honesty gate — on a slow model this extra
+        // round trip costs another minute and is the first thing to drop.
+        !slowModelMode &&
         !budgetExhausted &&
         toolCallsExecuted > 0 &&
         outcome.content.trim()

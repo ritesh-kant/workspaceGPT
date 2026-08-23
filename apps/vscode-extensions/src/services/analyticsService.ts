@@ -5,6 +5,10 @@ export class AnalyticsService {
   private posthog: PostHog;
   private userId: string;
   private isEnabled: boolean = true;
+  private sessionStartedAt: number | null = null;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  // 5 minutes — frequent enough to bound "time spent" resolution without flooding events.
+  private static readonly HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const POSTHOG_API_KEY = "phc_fu4MBqAfmFqDFLaaxRhsU718AtAxzYbyqdN4vtMk4ED"
@@ -44,6 +48,35 @@ export class AnalyticsService {
     } catch (error) {
       console.error('Error tracking event:', error);
     }
+  }
+
+  /**
+   * Marks the start of a "time spent" window and begins emitting periodic
+   * heartbeats. VS Code doesn't guarantee `deactivate()` runs (e.g. on crash
+   * or forced quit), so the heartbeat's elapsed time is the durable signal —
+   * `session_ended` on a clean shutdown is a nicer, precise capstone on top.
+   */
+  public startSession(): void {
+    if (this.sessionStartedAt !== null) return;
+    this.sessionStartedAt = Date.now();
+    this.heartbeatInterval = setInterval(() => {
+      if (this.sessionStartedAt === null) return;
+      this.trackEvent('session_heartbeat', {
+        elapsedSeconds: Math.round((Date.now() - this.sessionStartedAt) / 1000),
+      });
+    }, AnalyticsService.HEARTBEAT_INTERVAL_MS);
+  }
+
+  public endSession(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    if (this.sessionStartedAt === null) return;
+    this.trackEvent('session_ended', {
+      durationSeconds: Math.round((Date.now() - this.sessionStartedAt) / 1000),
+    });
+    this.sessionStartedAt = null;
   }
 
   public async flush(): Promise<void> {

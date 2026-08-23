@@ -533,8 +533,8 @@ const reportModels = [...new Set(merged.map(modelLabel))];
 const reportScenarios = [...new Set(merged.map((r) => r.scenario))];
 
 let md = `# Agent smoke test\n\nRun: ${new Date().toISOString()} · worker: real dist bundle · tools: real service modules (headless host)\n\n`;
-md += `| model | scenario | pass rate | wall s (median, min–max) | turns (median) | tool calls (median) | prompt tok (median) | completion tok (median) | Σ budget-exhausted | Σ compactions | Σ nudges |\n`;
-md += `|---|---|---|---|---|---|---|---|---|---|---|\n`;
+md += `| model | scenario | pass rate | wall s (median, min–max) | turns (median) | LLM turn ms (median) | tool calls (median) | prompt tok (median) | completion tok (median) | Σ budget-exhausted | Σ compactions | Σ nudges |\n`;
+md += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
 for (const model of reportModels) {
   for (const scenario of reportScenarios) {
     const rs = merged.filter((r) => modelLabel(r) === model && r.scenario === scenario);
@@ -544,6 +544,9 @@ for (const model of reportModels) {
     const wallS = rs.map((r) => r.wallMs / 1000);
     const withMetrics = rs.filter((r) => r.metrics);
     const turns = withMetrics.map((r) => r.metrics.turns);
+    // median LLM-call latency across every turn of every run — separates
+    // "the model is slow" from "the loop takes too many turns"
+    const llmTurnMs = withMetrics.flatMap((r) => (r.metrics.perTurn ?? []).map((t) => t.ms));
     const toolCalls = rs.map((r) => r.toolCalls.length);
     const promptTok = withMetrics.map((r) => r.metrics.promptTokens);
     const completionTok = withMetrics.map((r) => r.metrics.completionTokens);
@@ -553,7 +556,7 @@ for (const model of reportModels) {
       const n = r.metrics.nudges ?? {};
       return a + (n.plan ?? 0) + (n.incompleteAnswer ?? 0) + (n.failedWrites ?? 0) + (n.phantomChanges ?? 0) + (n.summary ?? 0);
     }, 0);
-    md += `| ${model} | ${scenario} ${title} | ${passRate} | ${fmt(median(wallS))} (${spread(wallS.map(Math.round))}) | ${fmt(median(turns))} | ${fmt(median(toolCalls))} | ${fmt(median(promptTok))} | ${fmt(median(completionTok))} | ${budgetExhausted}/${withMetrics.length} | ${compactions} | ${nudges} |\n`;
+    md += `| ${model} | ${scenario} ${title} | ${passRate} | ${fmt(median(wallS))} (${spread(wallS.map(Math.round))}) | ${fmt(median(turns))} | ${fmt(median(llmTurnMs))} | ${fmt(median(toolCalls))} | ${fmt(median(promptTok))} | ${fmt(median(completionTok))} | ${budgetExhausted}/${withMetrics.length} | ${compactions} | ${nudges} |\n`;
   }
 }
 

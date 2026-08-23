@@ -62,7 +62,7 @@ export class WebviewHtmlTemplate {
 
   private addContentSecurityPolicy(html: string, webview: vscode.Webview): string {
     if (!html.includes('<meta http-equiv="Content-Security-Policy"')) {
-      const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} https:; connect-src ${webview.cspSource} https:;">`;
+      const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} https: data:; connect-src ${webview.cspSource} https:;">`;
       html = html.replace('</head>', `${csp}\n</head>`);
     }
     return html;

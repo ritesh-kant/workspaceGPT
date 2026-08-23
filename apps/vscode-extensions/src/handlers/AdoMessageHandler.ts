@@ -178,6 +178,7 @@ export class AdoMessageHandler {
         throw new Error('Organization name is required to fetch projects.');
       }
       const projects = await this.adoAuthService.fetchProjects(orgName.trim());
+      this.analyticsService.trackEvent('ado_connected');
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.FETCH_ADO_PROJECTS_SUCCESS,
         projects: projects.map(p => ({ id: p.id, name: p.name })),

@@ -12,6 +12,18 @@ var RETRIEVAL_THRESHOLDS = {
   BM25_WEIGHT: 0.35
 };
 var SYNC_INTERVAL_MS = 15 * 60 * 1e3;
+var UPDATE_CHECK = {
+  OPEN_VSX_API_URL: "https://open-vsx.org/api/Riteshkant/workspacegpt-extension",
+  RELEASES_URL: "https://github.com/ritesh-kant/workspaceGPT/releases/tag/workspaceGPT-v",
+  EXTENSION_ID: "Riteshkant.workspacegpt-extension",
+  // Re-check periodically for long-lived windows; a fresh check also always
+  // runs once per activation (delayed so it never competes with startup work).
+  CHECK_INTERVAL_MS: 12 * 60 * 60 * 1e3,
+  // 12 hours
+  FIRST_CHECK_DELAY_MS: 30 * 1e3,
+  // 30 seconds
+  REQUEST_TIMEOUT_MS: 5 * 1e3
+};
 
 // ../../apps/vscode-extensions/src/utils/queryPlanner.ts
 var PLAN_BY_INTENT = {

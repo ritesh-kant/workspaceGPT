@@ -85,6 +85,42 @@ Requesty | OpenRouter | NVIDIA | Custom), `WGPT_BENCH_API_KEY`
 its source, the script warns — rebuild with
 `cd apps/vscode-extensions && node esbuild.config.js` first.
 
+### Chat-response quality + latency — `bench:chat`
+
+```bash
+pnpm bench:chat   # = chat-response-bench.mjs (all 26 queries)
+node src/chat/chat-response-bench.mjs --queries q01,q14 --runs 3   # subset
+```
+
+Benchmarks the NORMAL (non-agent) chat path end-to-end — the one most users
+hit: query → real `searchProcess.js` retrieval over the fixture corpus →
+top-k injected as `searchResults` → real `modelWorker.js` with
+`codebaseTools` disabled (the `generateWithOpenAIStream` route). Per query:
+
+- **latency** — TTFT (worker online → first `chunk`), total ms, stream chars/s
+- **correctness** — `expectedFacts` regexes from `queries.json` matched
+  against the answer (facts are verbatim from the corpus pages, so a miss
+  means the model dropped or mangled retrieved content)
+- **groundedness** — every doc-like citation in the answer (`*.md`,
+  `ADO-<id>`) must be one of the injected results; hallucinated citations
+  fail the run. Answers citing nothing score `n/a`, not a pass.
+- **retrieval hit** — whether the expected doc made the injected top-k at
+  all, so retrieval misses aren't blamed on the model.
+
+Exit code 1 if any fresh record errored, missed a fact, or cited an
+uninjected doc. Uses the same `.env` model/provider config as `bench:agent`.
+Results: `results/chat-response.json` (merge key `model|provider|queryId`) +
+`results/chat-response.md`.
+
+**LLM-as-judge (`--judge`):** grades each answer 0–2 for correctness against
+the injected sources and flags claims not supported by them — catching
+wrong-but-plausible synthesis the fact regexes can't. Configure the judge
+via `WGPT_JUDGE_MODEL/_PROVIDER/_API_KEY` in `.env` (use a model stronger
+than the one being benchmarked; it defaults to the bench model with a
+self-judging warning). Judge scores are informational — they show in the
+report and Problems list but never gate the exit code, since a judge is
+nondeterministic and the fact/grounding checks stay the regression gate.
+
 ### Retrieval quality — `bench:retrieval`
 
 ```bash

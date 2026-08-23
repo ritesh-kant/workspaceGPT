@@ -496,6 +496,49 @@
   border-color: var(--vscode-focusBorder) !important;
 }
 
+.message-feedback {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.assistant-message:hover .message-feedback {
+  opacity: 1;
+}
+
+.message-feedback-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.message-feedback-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.message-feedback-button:hover:not(:disabled) {
+  opacity: 1;
+  background-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.message-feedback-button--active {
+  opacity: 1;
+  color: var(--vscode-focusBorder);
+}
+
 /* Input container styles */
 .input-container {
   display: flex;
@@ -1595,3 +1638,216 @@ button:hover:not(:disabled) {
 .agent-write-decision.rejected { color: var(--vscode-charts-red, #f85149); }
 .agent-write-kind.kind-command { background: rgba(200, 140, 255, 0.18); color: var(--vscode-charts-purple, #b180d7); }
 .agent-command-text { font-weight: 600; }
+
+/* ── Composer attachments ─────────────────────────────────────────────── */
+.input-container--dragging {
+  border-color: var(--vscode-focusBorder);
+  background-color: var(--vscode-list-dropBackground, var(--vscode-input-background));
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 0.25rem 0 0.375rem;
+  border: 1px solid var(--vscode-editor-lineHighlightBorder);
+  border-radius: 6px;
+  background-color: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  font-size: 0.75rem;
+  color: var(--vscode-foreground);
+}
+
+.attachment-chip-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.attachment-chip-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.attachment-chip-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 3px !important;
+  background: transparent !important;
+  color: var(--vscode-descriptionForeground) !important;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.attachment-chip-remove:hover {
+  background: var(--vscode-toolbar-hoverBackground) !important;
+  color: var(--vscode-foreground) !important;
+}
+
+.attachment-note {
+  font-size: 0.7rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.attach-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  width: 24px;
+  padding: 0 !important;
+  background: transparent !important;
+  color: var(--vscode-descriptionForeground) !important;
+  border: 1px solid transparent !important;
+  border-radius: 4px !important;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.attach-button:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground) !important;
+  color: var(--vscode-foreground) !important;
+}
+
+.attach-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Attachments on sent user messages ────────────────────────────────── */
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-bottom: 0.375rem;
+}
+
+.message-attachment-image {
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-editor-lineHighlightBorder);
+  object-fit: contain;
+  cursor: default;
+}
+
+.message-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 24px;
+  padding: 0 0.5rem;
+  border: 1px solid var(--vscode-editor-lineHighlightBorder);
+  border-radius: 6px;
+  background-color: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  font-size: 0.72rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.message-attachment-file svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* ── @-mention picker ─────────────────────────────────────────────────── */
+.mention-picker {
+  display: flex;
+  flex-direction: column;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-editor-lineHighlightBorder));
+  border-radius: 6px;
+  background-color: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.mention-picker-empty {
+  padding: 0.5rem 0.625rem;
+  font-size: 0.75rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.mention-picker-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  width: 100%;
+  padding: 0.25rem 0.5rem !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--vscode-foreground) !important;
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.mention-picker-item--active {
+  background: var(--vscode-list-activeSelectionBackground) !important;
+  color: var(--vscode-list-activeSelectionForeground) !important;
+}
+
+.mention-picker-icon {
+  display: flex;
+  align-self: center;
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.mention-picker-item--active .mention-picker-icon {
+  color: inherit;
+}
+
+.mention-picker-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.mention-picker-name {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-picker-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  /* Ellipsize on the LEFT: the tail of a path is what distinguishes two
+     same-named files, so it must stay visible. */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-size: 0.7rem;
+  opacity: 0.65;
+}

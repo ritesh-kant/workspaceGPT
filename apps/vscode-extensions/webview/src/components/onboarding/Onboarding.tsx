@@ -77,13 +77,38 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
       ? !!selectedModelProvider?.selectedModel
       : hasRemoteKey && hasQdrantUrl;
 
+  /**
+   * Report an onboarding funnel milestone to the host (analytics only — never
+   * carries user content). Without this the first-run drop-off is invisible:
+   * a user can skip engine setup and "Finish" with no usable model, landing in
+   * a chat they cannot send from, and nothing distinguishes them from a healthy
+   * install.
+   */
+  const trackOnboarding = (event: string, properties?: Record<string, unknown>) => {
+    vscode.postMessage({ type: MESSAGE_TYPES.ONBOARDING_EVENT, event, properties });
+  };
+
+  // One event per step actually reached, so the funnel shows where users stop.
+  useEffect(() => {
+    trackOnboarding('onboarding_step_viewed', { step, mode: chosenMode });
+  }, [step]);
+
   const connectConfluence = () => {
     setConfluenceStatus(null);
     setConfluenceConnecting(true);
+    trackOnboarding('onboarding_confluence_connect_clicked', { mode: chosenMode });
     handleConfluenceActions.startOAuth(vscode);
   };
 
-  const finish = () => {
+  const finish = (viaSkip: boolean) => {
+    // `engineReady` is the difference between a finished setup and one that
+    // looks finished but can't chat — record it alongside the completion.
+    trackOnboarding('onboarding_completed', {
+      mode: chosenMode,
+      engineReady,
+      confluenceConnected: !!config.confluence?.isAuthenticated,
+      viaSkip,
+    });
     setMode(chosenMode);
     setOnboardingCompleted(true);
     onFinish();
@@ -140,7 +165,19 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
                 Back
               </button>
               <div className='onboarding-footer-right'>
-                <button type='button' className='onboarding-skip' onClick={() => setStep(2)}>
+                <button
+                  type='button'
+                  className='onboarding-skip'
+                  onClick={() => {
+                    // The highest-signal drop-off in the whole flow: skipping
+                    // here leaves the install with no usable chat engine.
+                    trackOnboarding('onboarding_engine_skipped', {
+                      mode: chosenMode,
+                      engineReady,
+                    });
+                    setStep(2);
+                  }}
+                >
                   Skip for now
                 </button>
                 <button
@@ -189,10 +226,10 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
                 Back
               </button>
               <div className='onboarding-footer-right'>
-                <button type='button' className='onboarding-skip' onClick={finish}>
+                <button type='button' className='onboarding-skip' onClick={() => finish(true)}>
                   Skip
                 </button>
-                <button type='button' className='primary-button' onClick={finish}>
+                <button type='button' className='primary-button' onClick={() => finish(false)}>
                   Finish
                 </button>
               </div>

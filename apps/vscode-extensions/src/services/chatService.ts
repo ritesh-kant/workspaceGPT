@@ -10,9 +10,11 @@ import {
   MODEL_PROVIDERS,
   STORAGE_KEYS,
   LlmTask,
+  ChatAttachment,
 } from '../../constants';
 import { CodebaseService } from './codebase/codebaseService';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
+import { AnalyticsService } from './analyticsService';
 import { getLlmSettings } from 'src/utils/getLlmSettings';
 import { getMode } from 'src/utils/getModeSettings';
 import { withKeyFailover } from 'src/utils/apiKeyFailover';
@@ -46,6 +48,7 @@ import {
 import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { recordOriginalContent } from './agent/agentDiffProvider';
 import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
+import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
 import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/inspectTools';
 import {
   agentOutputChannel,
@@ -85,32 +88,54 @@ interface TurnFileChange {
 // Re-export for use within this file — keeps the rest of the class unchanged
 type SearchResult = EmbeddingSearchResult;
 
+/**
+ * All the state one chat session's run owns. Sessions are independent: each
+ * has its own model-facing history, its own (at most one) live worker, its
+ * own write gate and its own turn rollup — so several chats can run at once
+ * without leaking chunks, steps or approvals into each other.
+ */
+interface SessionRun {
+  sessionId: string;
+  chatHistory: ChatMessage[];
+  worker: Worker | null;
+  reject: ((reason?: any) => void) | null;
+  /** Human-approval gate for this session's agent write tools. */
+  writeGate: AgentWriteGate;
+  /** Set on stop: everything the dying run still emits is dropped host-side. */
+  cancelled: boolean;
+  turnStartMs: number;
+  /** File-change rollup for the current agent turn (path → cumulative counts). */
+  turnFilesChanged: Map<string, TurnFileChange>;
+  /** First checkpoint of the turn — the "undo this turn" target. */
+  turnFirstCheckpointSha: string | null;
+}
+
 export class ChatService {
   private embeddingService: ConfluenceEmbeddingService;
   private adoEmbeddingService: AdoEmbeddingService;
   private codebaseService: CodebaseService;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
-  private chatHistory: ChatMessage[] = [];
   private currentModel: string;
-  private currentModelWorker: Worker | null = null;
-  private currentReject: ((reason?: any) => void) | null = null;
-  /** Human-approval gate for agent write tools (P1: every write is reviewed). */
-  private agentWriteGate = new AgentWriteGate();
+  /** Per-chat-session run state, keyed by the webview's sessionId. */
+  private runs = new Map<string, SessionRun>();
   /** Shadow-git checkpoints, created lazily per workspace on the first write. */
   private checkpointService: CheckpointService | null = null;
   /** Commands the user approved "for this session" (exact string match). */
   private sessionCommandAllowlist = new Set<string>();
   /** When the in-flight turn started — reported as "Worked for Xs". */
-  private turnStartMs = 0;
   /** Files changed (applied writes only) during the in-flight turn, keyed by display path. */
-  private turnFilesChanged = new Map<string, TurnFileChange>();
   /** Sha of the FIRST checkpoint taken this turn — reverting to it undoes the whole turn. */
-  private turnFirstCheckpointSha: string | null = null;
 
   constructor(
     webviewView: vscode.WebviewView,
-    context: vscode.ExtensionContext
+    context: vscode.ExtensionContext,
+    /**
+     * Optional so existing callers keep working; passed in (rather than
+     * constructed here) to reuse the handler's single PostHog client instead of
+     * spawning a second one with its own queue and flush timer.
+     */
+    private readonly analyticsService?: AnalyticsService
   ) {
     this.webviewView = webviewView;
     this.context = context;
@@ -147,6 +172,9 @@ export class ChatService {
    * Tear down the persistent search workers this service owns. Call on reset/deactivation.
    */
   public dispose(): void {
+    // Terminate every session's live worker — nothing can receive their
+    // output once this service (and its webview) is gone.
+    this.stopMessage();
     this.embeddingService.dispose();
     this.adoEmbeddingService.dispose();
   }
@@ -247,51 +275,132 @@ export class ChatService {
     }
   }
 
-  public stopMessage(): void {
-    // Unpark any write approvals first — their worker is about to die — and
-    // tell the webview so pending cards don't keep live-looking buttons.
-    this.agentWriteGate.rejectAll('Run stopped by the user.');
-    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED });
-    if (this.currentModelWorker) {
-      this.currentModelWorker.terminate();
-      this.currentModelWorker = null;
-      if (this.currentReject) {
-        this.currentReject(new Error('Generation cancelled by user.'));
-        this.currentReject = null;
+  /** Gets (or lazily creates) the run state for one chat session. */
+  private runFor(sessionId: string): SessionRun {
+    let run = this.runs.get(sessionId);
+    if (!run) {
+      run = {
+        sessionId,
+        chatHistory: [],
+        worker: null,
+        reject: null,
+        writeGate: new AgentWriteGate(),
+        cancelled: false,
+        turnStartMs: 0,
+        turnFilesChanged: new Map(),
+        turnFirstCheckpointSha: null,
+      };
+      this.runs.set(sessionId, run);
+    }
+    return run;
+  }
+
+  /**
+   * Posts a session-stamped message to the webview, which routes it to the
+   * chat it belongs to (visible or backgrounded). Dropped once the session's
+   * run has been stopped — a dying run's stragglers must not reach the UI.
+   */
+  private post(run: SessionRun, payload: { type: string; [key: string]: unknown }): void {
+    if (run.cancelled) return;
+    this.webviewView.webview.postMessage({ ...payload, sessionId: run.sessionId });
+  }
+
+  /**
+   * Stops one session's run (or, with no sessionId, every run — the dispose
+   * path). Later output from the stopped run is swallowed by `post`.
+   */
+  public stopMessage(sessionId?: string): void {
+    const targets = sessionId
+      ? [this.runs.get(sessionId)].filter((r): r is SessionRun => !!r)
+      : [...this.runs.values()];
+    for (const run of targets) {
+      // Unpark any write approvals first — their worker is about to die — and
+      // tell the webview so pending cards don't keep live-looking buttons.
+      run.writeGate.rejectAll('Run stopped by the user.');
+      this.post(run, { type: MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED });
+      run.cancelled = true;
+      if (run.worker) {
+        run.worker.terminate();
+        run.worker = null;
+        if (run.reject) {
+          run.reject(new Error('Generation cancelled by user.'));
+          run.reject = null;
+        }
       }
     }
   }
 
   /** Sends a transient status label to the webview loading indicator. */
-  private postStatus(text: string): void {
-    this.webviewView.webview.postMessage({
+  private postStatus(run: SessionRun, text: string): void {
+    this.post(run, {
       type: MESSAGE_TYPES.RETRIEVAL_STATUS,
       text,
     });
   }
 
-  public async newChat(): Promise<void> {
-    // Clear chat history
-    this.chatHistory = [];
+  /**
+   * Seeds a session's model-facing history from its stored transcript when
+   * the user opens it from history. Skipped while the session has a live
+   * run — its in-memory history is already ahead of what's on disk.
+   */
+  public loadHistory(sessionId: string, messages: Array<{ content?: string; isUser?: boolean; isError?: boolean; writeReview?: unknown }>): void {
+    const run = this.runFor(sessionId);
+    if (run.worker) return;
+    run.chatHistory = (messages || [])
+      // Error bubbles and write-review cards are UI artifacts, not turns.
+      .filter((m) => !m.isError && !m.writeReview && !!m.content?.trim())
+      .map((m) => ({ role: m.isUser ? 'user' as const : 'assistant' as const, content: m.content as string }));
+  }
 
-    // Notify webview
+  public async newChat(): Promise<void> {
+    // Session state is per-sessionId — a new chat simply starts under a fresh
+    // id on its first send. Just tell the webview to show a fresh chat.
     this.webviewView.webview.postMessage({
       type: MESSAGE_TYPES.NEW_CHAT,
     });
   }
 
   public async sendMessage(
+    sessionId: string,
     message: string,
     modelId: string,
     apiKey: string,
     provider: string,
-    contextSelection: string = 'Auto'
+    contextSelection: string = 'Auto',
+    attachments: ChatAttachment[] = [],
+    mentions: string[] = []
   ): Promise<void> {
+    const run = this.runFor(sessionId);
+    if (run.worker) {
+      // The webview blocks sending while a session's run is live; if a send
+      // slips through anyway, refuse rather than orphan the running worker.
+      this.post(run, {
+        type: MESSAGE_TYPES.ERROR_CHAT,
+        message: 'A response is already being generated for this chat. Stop it first or wait for it to finish.',
+      });
+      return;
+    }
+    run.cancelled = false;
     try {
-      this.chatHistory.push({ role: 'user', content: message });
-      this.turnStartMs = Date.now();
-      this.turnFilesChanged.clear();
-      this.turnFirstCheckpointSha = null;
+      // An attachment-only send still needs a non-empty question for
+      // classification and the prompt template.
+      if (!message?.trim() && attachments.length > 0) {
+        message = 'Please review the attached file(s).';
+      }
+      // Model-facing history keeps a lightweight marker per attachment — the
+      // full content is only injected into the current turn's prompt (text)
+      // or sent as image parts (images); replaying megabytes of base64 into
+      // every later turn would blow the context window.
+      const historyContent = attachments.length
+        ? `${message}\n[Attached: ${attachments.map((a) => a.name).join(', ')}]`
+        : message;
+      // @-mentions stay in `message` verbatim, so the history line already
+      // records what the user pointed at — only their resolved contents are
+      // turn-scoped (see resolvedMentions below).
+      run.chatHistory.push({ role: 'user', content: historyContent });
+      run.turnStartMs = Date.now();
+      run.turnFilesChanged.clear();
+      run.turnFirstCheckpointSha = null;
 
       const mode = getMode(this.context);
 
@@ -322,6 +431,16 @@ export class ChatService {
       // Codebase tools need no auth/indexing — only an open workspace folder.
       const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
       const isCodebaseAvailable = workspaceFolders.length > 0;
+
+      // Read the @-mentioned files/folders while retrieval runs — they are
+      // local reads, so overlapping them with the search costs nothing and
+      // keeps them off the critical path. Awaited just before the model runs.
+      const mentionsPromise: Promise<ResolvedMention[]> = mentions.length
+        ? resolveMentions(mentions, getNamedRoots(workspaceFolders)).catch((error) => {
+            console.warn('Failed to resolve @-mentions (continuing without):', error);
+            return [];
+          })
+        : Promise.resolve([]);
 
       // Build the list of actually-connected sources
       const availableSources: DataSource[] = [
@@ -389,7 +508,7 @@ export class ChatService {
         const sourceLabel = prelimPlan.sources
           .map((s) => (s === 'ADO' ? 'Azure DevOps' : 'Confluence'))
           .join(' & ');
-        this.postStatus(`Searching ${sourceLabel}...`);
+        this.postStatus(run, `Searching ${sourceLabel}...`);
 
         // LLM classification is only worth the latency when:
         // - rule confidence is low AND auto mode
@@ -414,7 +533,7 @@ export class ChatService {
             )
           ),
           needsLLM
-            ? this.classifyIntentWithLLM(message, classification, modelId, failoverKeys, provider, availableSources, baseUrl)
+            ? this.classifyIntentWithLLM(run, message, classification, modelId, failoverKeys, provider, availableSources, baseUrl)
             : Promise.resolve({ intent: classification.intent, sources: undefined as DataSource[] | undefined }),
         ]);
 
@@ -444,7 +563,7 @@ export class ChatService {
             const bestScore = Math.max(...pass1Flat.map((r) => r.score));
             if (bestScore < plan.passThreshold) {
               console.log(`Pass 1 best score ${bestScore.toFixed(3)} < ${plan.passThreshold}. Running pass 2.`);
-              this.postStatus('Expanding search...');
+              this.postStatus(run, 'Expanding search...');
               const enrichedQuery = expandQuery(message, pass1Flat);
               const pass2Results = await Promise.all(
                 plan.sources.map((source) =>
@@ -460,11 +579,35 @@ export class ChatService {
           }
 
           // ── Step 5: Rerank + threshold filter ───────────────────────────
-          this.postStatus('Ranking results...');
+          this.postStatus(run, 'Ranking results...');
           finalResults = rerank(message, allResults, plan);
           console.log(`Reranked to ${finalResults.length} results (threshold=${plan.similarityThreshold}).`);
         }
       }
+
+      // What the user actually asked for, and whether retrieval could serve it.
+      // Derived signals only — no prompt text or document content is sent.
+      // `zeroResults` is the important one: a non-codebase turn that retrieved
+      // nothing answers from an empty context, which reads to the user as a bad
+      // answer they will rarely report.
+      this.analyticsService?.trackEvent('chat_turn', {
+        intent: classification.intent,
+        sources: classification.sources.join(',') || 'none',
+        contextSelection,
+        useCodebaseTools,
+        // Empty means the extension is running without any queryable source —
+        // it cannot do its core job, and nothing else surfaces that state.
+        availableSources: availableSources.join(',') || 'none',
+        hasNoSources: availableSources.length === 0,
+        mode,
+        attachmentCount: attachments.length,
+        mentionCount: mentions.length,
+        resultCount: finalResults.length,
+        zeroResults: !useCodebaseTools && finalResults.length === 0,
+        bestScore: finalResults.length
+          ? Number(Math.max(...finalResults.map((r) => r.score)).toFixed(3))
+          : null,
+      });
 
       // ── Step 6: Generate response ──────────────────────────────────────
       // Resolve the model to actually run only now that `useCodebaseTools` is
@@ -478,8 +621,11 @@ export class ChatService {
       const effApiKeys = finalLlm?.apiKeys.length ? finalLlm.apiKeys : failoverKeys;
       const effBaseUrl = finalLlm?.baseUrl ?? baseUrl;
 
-      this.postStatus('Thinking...');
+      const resolvedMentions = await mentionsPromise;
+
+      this.postStatus(run, 'Thinking...');
       const modelResponse = await this.generateModelResponse(
+        run,
         message,
         finalResults,
         effModelId,
@@ -488,17 +634,19 @@ export class ChatService {
         userDisplayName,
         currentSprint,
         useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined,
-        effBaseUrl
+        effBaseUrl,
+        attachments,
+        resolvedMentions
       );
 
-      this.chatHistory.push({ role: 'assistant', content: modelResponse });
+      run.chatHistory.push({ role: 'assistant', content: modelResponse });
     } catch (error) {
       if (error instanceof Error && error.message === 'Generation cancelled by user.') {
         console.log('Chat generation cancelled by user.');
         return;
       }
       console.error('Error in chat:', error);
-      this.webviewView.webview.postMessage({
+      this.post(run, {
         type: MESSAGE_TYPES.ERROR_CHAT,
         message: error instanceof Error ? error.message : String(error),
       });
@@ -530,6 +678,7 @@ export class ChatService {
    * generateModelResponse() when it receives a `tool_request`.
    */
   private async executeCodebaseTool(
+    run: SessionRun,
     name: string,
     args: any,
     roots: NamedRoot[]
@@ -550,11 +699,11 @@ export class ChatService {
       case 'go_to_definition':
         return goToDefinition(args, roots);
       case 'edit_file':
-        return this.gatedWrite(await prepareEditFile(args, roots), roots);
+        return this.gatedWrite(run, await prepareEditFile(args, roots), roots);
       case 'create_file':
-        return this.gatedWrite(await prepareCreateFile(args, roots), roots);
+        return this.gatedWrite(run, await prepareCreateFile(args, roots), roots);
       case 'delete_file':
-        return this.gatedWrite(await prepareDeleteFile(args, roots), roots);
+        return this.gatedWrite(run, await prepareDeleteFile(args, roots), roots);
       case 'get_diagnostics':
         return getDiagnostics(args, roots);
       case 'git_status':
@@ -566,7 +715,7 @@ export class ChatService {
       case 'git_blame':
         return gitBlame(args, roots);
       case 'run_command':
-        return this.gatedCommand(args, roots);
+        return this.gatedCommand(run, args, roots);
       case 'search_docs':
         return this.searchKnowledge('CONFLUENCE', args);
       case 'search_tickets':
@@ -580,7 +729,7 @@ export class ChatService {
    * run_command flow: denylist (hard block) → session allowlist (skip the
    * card) → approval card → checkpoint → execute → mirror output + audit.
    */
-  private async gatedCommand(args: RunCommandArgs, roots: NamedRoot[]): Promise<unknown> {
+  private async gatedCommand(run: SessionRun, args: RunCommandArgs, roots: NamedRoot[]): Promise<unknown> {
     const command = (args.command ?? '').trim();
     if (!command) throw new Error('command must be non-empty.');
     assertCommandAllowed(command);
@@ -589,8 +738,8 @@ export class ChatService {
 
     let decisionKind: 'auto' | 'approved' | 'approved-session' = 'auto';
     if (!this.sessionCommandAllowlist.has(command)) {
-      const { id, decision } = this.agentWriteGate.await({ kind: 'command', summary });
-      this.webviewView.webview.postMessage({
+      const { id, decision } = run.writeGate.await({ kind: 'command', summary });
+      this.post(run, {
         type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
         id,
         kind: 'command',
@@ -618,12 +767,12 @@ export class ChatService {
     // Commands can mutate the workspace — same snapshot rule as file writes.
     try {
       const cp = await this.checkpoints(roots).checkpoint(summary);
-      if (!this.turnFirstCheckpointSha) this.turnFirstCheckpointSha = cp.sha;
+      if (!run.turnFirstCheckpointSha) run.turnFirstCheckpointSha = cp.sha;
     } catch (e) {
       console.warn('WorkspaceGPT: checkpoint before command failed (continuing):', e);
     }
 
-    this.postStatus(`Running: ${command}`);
+    this.postStatus(run, `Running: ${command}`);
     const res = await executeCommand(command, cwd, args.timeoutSec);
     const channel = agentOutputChannel();
     channel.appendLine(`\n$ ${command}   (cwd: ${displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms)`);
@@ -693,10 +842,10 @@ export class ChatService {
    * parked on this promise), checkpoint, then apply. A rejection surfaces to
    * the model as a tool error carrying the user's feedback.
    */
-  private async gatedWrite(write: PreparedWrite, roots: NamedRoot[]): Promise<unknown> {
-    const { id, decision } = this.agentWriteGate.await(write);
+  private async gatedWrite(run: SessionRun, write: PreparedWrite, roots: NamedRoot[]): Promise<unknown> {
+    const { id, decision } = run.writeGate.await(write);
     const diff = buildReviewDiff(write.before, write.after);
-    this.webviewView.webview.postMessage({
+    this.post(run, {
       type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
       id,
       kind: write.kind,
@@ -717,7 +866,7 @@ export class ChatService {
     // Snapshot BEFORE mutating, so "revert this step" is always available.
     try {
       const cp = await this.checkpoints(roots).checkpoint(write.summary);
-      if (!this.turnFirstCheckpointSha) this.turnFirstCheckpointSha = cp.sha;
+      if (!run.turnFirstCheckpointSha) run.turnFirstCheckpointSha = cp.sha;
     } catch (e) {
       console.warn('WorkspaceGPT: checkpoint failed (continuing with the write):', e);
     }
@@ -731,8 +880,8 @@ export class ChatService {
       throw e;
     }
     await this.audit(write.kind, write.summary, 'approved', 'applied');
-    const prior = this.turnFilesChanged.get(write.displayPath);
-    this.turnFilesChanged.set(write.displayPath, {
+    const prior = run.turnFilesChanged.get(write.displayPath);
+    run.turnFilesChanged.set(write.displayPath, {
       path: write.displayPath,
       kind: write.kind,
       added: (prior?.added ?? 0) + diff.added,
@@ -758,7 +907,10 @@ export class ChatService {
 
   /** Webview AGENT_WRITE_DECISION handler — resolves the parked write gate. */
   public resolveAgentWrite(id: string, approved: boolean, feedback?: string, scope?: 'once' | 'session'): void {
-    this.agentWriteGate.resolve(id, approved, feedback, scope);
+    // Gate ids are globally unique — find the session whose gate parked it.
+    for (const run of this.runs.values()) {
+      if (run.writeGate.resolve(id, approved, feedback, scope)) return;
+    }
   }
 
   /**
@@ -963,6 +1115,7 @@ export class ChatService {
    * own model via the 'classification' task route instead.
    */
   private async classifyIntentWithLLM(
+    run: SessionRun,
     query: string,
     fallback: QueryClassification,
     modelId: string,
@@ -1028,7 +1181,7 @@ Query: "${query}"`;
             temperature: 0,
           });
         },
-        (message) => this.postStatus(message),
+        (message) => this.postStatus(run, message),
       );
 
       const raw = response.choices[0]?.message?.content?.trim() || '{}';
@@ -1052,6 +1205,7 @@ Query: "${query}"`;
   }
 
   private async generateModelResponse(
+    run: SessionRun,
     message: string,
     searchResults: SearchResult[],
     modelId: string,
@@ -1060,7 +1214,9 @@ Query: "${query}"`;
     currentUserName: string = '',
     currentSprint: { name: string; iterationPath: string; startDate: string; endDate: string } | null = null,
     codebaseRoots?: NamedRoot[],
-    baseUrl?: string
+    baseUrl?: string,
+    attachments: ChatAttachment[] = [],
+    resolvedMentions: ResolvedMention[] = []
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -1072,7 +1228,7 @@ Query: "${query}"`;
       );
 
       // Format chat history for the prompt
-      const formattedChatHistory = this.chatHistory
+      const formattedChatHistory = run.chatHistory
         .map(
           (msg) =>
             `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
@@ -1104,15 +1260,25 @@ Query: "${query}"`;
           currentUserName: currentUserName || undefined,
           currentSprint: currentSprint || undefined,
           codebaseTools: codebaseRoots ? { enabled: true } : undefined,
+          // Text attachments are inlined into the prompt template; images are
+          // sent to the model as multimodal image_url parts (vision models).
+          textAttachments: attachments
+            .filter((a) => a.kind === 'text')
+            .map((a) => ({ name: a.name, content: a.content })),
+          imageAttachments: attachments
+            .filter((a) => a.kind === 'image')
+            .map((a) => ({ name: a.name, dataUrl: a.content })),
+          // Contents of the files/folders the user @-mentioned in this message.
+          mentionedFiles: resolvedMentions,
           repoOrientation,
           workspaceRules: codebaseRoots?.length ? loadWorkspaceRules(codebaseRoots) : undefined,
         },
       });
 
-      this.currentModelWorker = modelWorker;
+      run.worker = modelWorker;
 
       return new Promise((resolve, reject) => {
-        this.currentReject = reject;
+        run.reject = reject;
         let fullContent = '';
         // Mirror the streamed chunks here so we can salvage a response if the
         // worker dies before it sends 'done' (see settle() below).
@@ -1128,8 +1294,8 @@ Query: "${query}"`;
         const settle = (error: Error | null) => {
           if (settled) return;
           settled = true;
-          this.currentModelWorker = null;
-          this.currentReject = null;
+          run.worker = null;
+          run.reject = null;
           modelWorker.terminate();
 
           if (!error || streamedContent.trim().length > 0) {
@@ -1143,14 +1309,14 @@ Query: "${query}"`;
             // Agent turns get an end-of-run rollup (duration + files changed)
             // before DONE, so the webview can attach it to the final answer.
             if (codebaseRoots?.length) {
-              this.webviewView.webview.postMessage({
+              this.post(run, {
                 type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
-                durationMs: Date.now() - this.turnStartMs,
-                filesChanged: [...this.turnFilesChanged.values()],
-                checkpointSha: this.turnFilesChanged.size > 0 ? this.turnFirstCheckpointSha ?? undefined : undefined,
+                durationMs: Date.now() - run.turnStartMs,
+                filesChanged: [...run.turnFilesChanged.values()],
+                checkpointSha: run.turnFilesChanged.size > 0 ? run.turnFirstCheckpointSha ?? undefined : undefined,
               });
             }
-            this.webviewView.webview.postMessage({
+            this.post(run, {
               type: MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
             });
             resolve(fullContent || streamedContent);
@@ -1170,12 +1336,15 @@ Query: "${query}"`;
             name?: string;
             arguments?: any;
             ms?: number;
+            /** slow_model: observed seconds per completion and the trimmed iteration cap. */
+            avgSec?: number;
+            cap?: number;
           }) => {
             switch (result.type) {
               case 'chunk':
                 streamedContent += result.content || '';
                 // Stream chunk to webview
-                this.webviewView.webview.postMessage({
+                this.post(run, {
                   type: MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK,
                   content: result.content || '',
                 });
@@ -1195,8 +1364,8 @@ Query: "${query}"`;
                 // A tool the model just decided to call — surfaced as a
                 // transient status label, and also as a persistent structured
                 // step so the exploration remains visible in the transcript.
-                this.postStatus(this.describeToolCall(result.name!, result.arguments));
-                this.webviewView.webview.postMessage({
+                this.postStatus(run, this.describeToolCall(result.name!, result.arguments));
+                this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,
                   id: result.id,
                   step: { ...this.describeToolStart(result.name!, result.arguments), status: 'running' },
@@ -1208,7 +1377,7 @@ Query: "${query}"`;
                 // Model latency between tool batches — the "Thought for 2s"
                 // rows the timeline shows between exploration groups.
                 const sec = Math.max(1, Math.round((result.ms ?? 0) / 1000));
-                this.webviewView.webview.postMessage({
+                this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,
                   step: { kind: 'thought', title: `Thought for ${sec}s` },
                 });
@@ -1219,7 +1388,7 @@ Query: "${query}"`;
                 // Prose the model wrote ALONGSIDE tool calls (progress
                 // narration) — previously swallowed into the conversation
                 // history without ever reaching the user.
-                this.webviewView.webview.postMessage({
+                this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,
                   step: { kind: 'note', title: '', detail: result.content ?? '' },
                 });
@@ -1230,12 +1399,12 @@ Query: "${query}"`;
                 // worker thread cannot reach — execute on the main thread and
                 // send the result back so the worker's tool loop can continue.
                 console.log(`[codebase-tool] → ${result.name}(${JSON.stringify(result.arguments)})`);
-                this.executeCodebaseTool(result.name!, result.arguments, codebaseRoots ?? [])
+                this.executeCodebaseTool(run, result.name!, result.arguments, codebaseRoots ?? [])
                   .then((toolResult) => {
                     const summary = JSON.stringify(toolResult);
                     console.log(`[codebase-tool] ← ${result.name}: ${summary.length} chars${summary.length <= 300 ? ` — ${summary}` : ''}`);
                     const done = this.summarizeToolResult(result.name!, toolResult);
-                    this.webviewView.webview.postMessage({
+                    this.post(run, {
                       type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
                       id: result.id,
                       status: 'done',
@@ -1247,7 +1416,7 @@ Query: "${query}"`;
                   .catch((err) => {
                     const message = err instanceof Error ? err.message : String(err);
                     console.log(`[codebase-tool] ← ${result.name} ERROR: ${message}`);
-                    this.webviewView.webview.postMessage({
+                    this.post(run, {
                       type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
                       id: result.id,
                       status: 'error',
@@ -1273,12 +1442,27 @@ Query: "${query}"`;
                 // previously only a console.warn in the extension host log.
                 // Surface it as a transient status label and a persistent
                 // transcript step so the user knows why the response is slower.
-                this.postStatus(result.message || 'Rate limited — switching API key…');
-                this.webviewView.webview.postMessage({
+                this.postStatus(run, result.message || 'Rate limited — switching API key…');
+                this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,
                   step: { kind: 'info', title: result.message || 'Rate limited — switching API key' },
                 });
                 break;
+
+              case 'slow_model': {
+                // The worker detected ~minute-long completions and trimmed the
+                // run (fewer iterations, no reflection extras). Tell the user
+                // why this turn is slow and that the model is the reason.
+                const warn =
+                  `Slow model detected (~${result.avgSec}s per step) — trimming this run to ` +
+                  `${result.cap} steps. A faster model (e.g. Gemini Flash) will answer in a fraction of the time.`;
+                this.postStatus(run, warn);
+                this.post(run, {
+                  type: MESSAGE_TYPES.AGENT_STEP,
+                  step: { kind: 'info', title: warn },
+                });
+                break;
+              }
 
               case 'metrics':
                 // Agent-loop efficiency summary (turns, tokens, budget/compaction

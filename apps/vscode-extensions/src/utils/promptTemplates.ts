@@ -6,7 +6,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; repoOrientation?: string; workspaceRules?: string }
+  options?: { codebaseToolsEnabled?: boolean; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[] }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -114,6 +114,31 @@ export function createStructuredPrompt(
       ? `${rulesBlock}${orientationBlock}**Context:** No other pre-fetched context — use your tools to look at the workspace before answering.\n`
       : '**Context:** No relevant information was found in the indexed data.\n';
 
+  // Files the user attached to THIS message. Text files are inlined verbatim;
+  // images travel separately as multimodal parts, so here they only get named
+  // so the model knows what "the attached image" refers to.
+  const attachmentSections: string[] = [];
+  for (const att of options?.textAttachments ?? []) {
+    attachmentSections.push(`File: ${att.name}\n\`\`\`\n${att.content}\n\`\`\``);
+  }
+  if (options?.imageAttachmentNames?.length) {
+    attachmentSections.push(`Attached image(s), provided alongside this message: ${options.imageAttachmentNames.join(', ')}`);
+  }
+  const attachmentsBlock = attachmentSections.length
+    ? `**User-attached files (treat as part of the question — you may use their content directly):**\n${attachmentSections.join('\n\n')}\n\n`
+    : '';
+
+  // Files/folders the user pointed at with "@" in this message. Already read
+  // from disk, so the model must not re-fetch them — but they are a starting
+  // point, not the whole answer: it may still need to explore around them.
+  const mentionsBlock = options?.mentionedFiles?.length
+    ? `**Files the user referenced with @ (already read for you — do NOT call read_file on these again unless you need a different line range):**\n` +
+      options.mentionedFiles
+        .map((m) => `${m.name}\n\`\`\`\n${m.content}\n\`\`\``)
+        .join('\n\n') +
+      `\n\nThe user explicitly pointed at these — center your answer on them.\n\n`
+    : '';
+
   return `
 ${personalityPrompt}
 ${adoContextBlock}
@@ -126,7 +151,7 @@ ${contextBlock}${sourcesMarkdown}
 ${chatHistory || 'No prior conversation.'}
 \`\`\`
 
-**User Question:**
+${mentionsBlock}${attachmentsBlock}**User Question:**
 \`\`\`
 ${prompt}
 \`\`\`

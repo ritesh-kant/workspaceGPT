@@ -7,16 +7,19 @@ import { AdoSyncScheduler } from './services/ado/adoSyncScheduler';
 import { McpUiManager } from './utils/mcpUiManager';
 import { syncContextKeys } from './utils/syncContextKeys';
 import { migrateModeSettings } from './utils/migrateModeSettings';
+import { UpdateChecker } from './utils/updateChecker';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
 let adoSyncScheduler: AdoSyncScheduler;
 let mcpUiManager: McpUiManager;
+let updateChecker: UpdateChecker;
 
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize analytics service
   analyticsService = new AnalyticsService(context);
   analyticsService.trackEvent('extension_activated');
+  analyticsService.startSession();
 
   // Initialize and start background sync scheduler
   syncScheduler = new ConfluenceSyncScheduler(context);
@@ -43,6 +46,12 @@ export async function activate(context: vscode.ExtensionContext) {
   // it, which would block activation (and inflate activation time) on first run.
   mcpUiManager = new McpUiManager(context);
   void mcpUiManager.initialize();
+
+  // Notify the user when a newer WorkspaceGPT release is available. Mainly
+  // for manual `.vsix` installs (never auto-updated) and installs with
+  // auto-update disabled — see UpdateChecker for details.
+  updateChecker = new UpdateChecker(context);
+  updateChecker.start();
 
   // Register WebViewProvider
   const webViewProvider = new WebViewProvider(context.extensionUri, context);
@@ -276,6 +285,8 @@ export async function deactivate() {
     mcpUiManager.dispose();
   }
 
+  updateChecker?.stop();
+
   // Stop background scheduler
   if (syncScheduler) {
     syncScheduler.stop();
@@ -287,6 +298,8 @@ export async function deactivate() {
 
   // Chat search workers are owned by the webview and disposed on its onDidDispose.
 
-  // Flush analytics before deactivating
+  // Close out the session (emits a precise session_ended duration) and flush
+  // before deactivating.
+  analyticsService?.endSession();
   await analyticsService?.flush();
 }

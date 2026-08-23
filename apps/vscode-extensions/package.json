@@ -2,7 +2,7 @@
   "name": "workspacegpt-extension",
   "displayName": "WorkspaceGPT",
   "description": "WorkspaceGPT is a fully local, privacy-first AI assistant for your development environment. Ask questions about your codebase or integrated Confluence documents — all without sending any data to external servers.",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "publisher": "Riteshkant",
   "icon": "resources/icon.png",
   "repository": {
@@ -144,7 +144,13 @@
     },
     "configuration": {
       "title": "WorkspaceGPT",
-      "properties": {}
+      "properties": {
+        "workspacegpt.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Periodically check Open VSX for newer WorkspaceGPT releases and show a notification when an update is available. Mainly useful for manually-installed .vsix builds, which never auto-update."
+        }
+      }
     }
   },
   "scripts": {

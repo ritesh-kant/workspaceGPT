@@ -184,3 +184,20 @@
   opacity: 1 !important;
   background-color: var(--vscode-inputValidation-errorBackground);
 }
+
+/* Pulsing dot for a session whose run is still going in the background. */
+.session-running-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--vscode-charts-green, #89d185);
+    animation: session-running-pulse 1.2s ease-in-out infinite;
+    vertical-align: baseline;
+}
+
+@keyframes session-running-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}

@@ -11,6 +11,13 @@ export const MESSAGE_TYPES = {
   ERROR_CHAT: 'error-chat',
   RESET: 'reset',
   STOP_MESSAGE: 'stop-message',
+  // Webview → host: thumbs up/down on an assistant response (satisfaction signal).
+  MESSAGE_FEEDBACK: 'message-feedback',
+  // Webview → host: an onboarding funnel milestone (step viewed / skipped /
+  // completed). Analytics-only — carries no user content, just which step and
+  // whether the engine/Confluence were actually configured. Lets us see where
+  // first-run setup is abandoned, which is invisible from chat events alone.
+  ONBOARDING_EVENT: 'onboarding-event',
   // Retrieval pipeline status (shown to user while loading)
   RETRIEVAL_STATUS: 'retrieval-status',
   // One agent exploration step (structured: kind/title/detail/path) —
@@ -26,6 +33,13 @@ export const MESSAGE_TYPES = {
   AGENT_TURN_SUMMARY: 'agent-turn-summary',
   // Webview → host: open a diff of an agent-changed file (original vs current).
   OPEN_DIFF_IN_EDITOR: 'open-diff-in-editor',
+
+  // Composer @-mentions: the webview asks for workspace files/folders matching
+  // what the user has typed after "@", and the host answers with the ranked
+  // candidates for the picker. Correlated by requestId so a slow response for
+  // an older keystroke can't overwrite the current suggestions.
+  SEARCH_MENTION_TARGETS: 'search-mention-targets',
+  SEARCH_MENTION_TARGETS_RESPONSE: 'search-mention-targets-response',
 
   // Agent write tools: host → webview review card, webview → host decision.
   // The agent loop BLOCKS on the decision (worker awaits tool_response), so
@@ -243,6 +257,46 @@ export function normalizeQdrantUrl(raw: string | undefined): string {
   return `${u.protocol}//${u.host}${u.pathname}`.replace(/\/+$/, '');
 }
 
+/**
+ * A file the user attached to a chat message. Text files travel as plain
+ * text (inlined into the prompt); images travel as a base64 data: URL and
+ * are sent to the model as multimodal image parts (vision models only).
+ */
+export interface ChatAttachment {
+  name: string;
+  mimeType: string;
+  kind: 'image' | 'text';
+  /** data: URL for images; the (possibly truncated) file text for text files. */
+  content: string;
+  /** Original file size in bytes. */
+  size: number;
+}
+
+/** One @-mention candidate offered by the composer's picker. */
+export interface MentionTarget {
+  /** Workspace-relative path (root-prefixed in multi-root workspaces) — what gets inserted after "@". */
+  path: string;
+  /** Basename, shown as the primary label in the picker. */
+  name: string;
+  kind: 'file' | 'folder';
+}
+
+export const MENTION_LIMITS = {
+  /** Candidates offered in the picker. */
+  MAX_SUGGESTIONS: 12,
+  /** Mentions resolved into context for a single message. */
+  MAX_PER_MESSAGE: 8,
+};
+
+export const ATTACHMENT_LIMITS = {
+  /** Max attachments per message. */
+  MAX_FILES: 4,
+  /** Max raw size for an image attachment (base64 inflates ~33% on top). */
+  MAX_IMAGE_BYTES: 5 * 1024 * 1024,
+  /** Text files are inlined into the prompt — truncate beyond this. */
+  MAX_TEXT_CHARS: 100_000,
+};
+
 export const SEARCH_CONSTANTS = {
   MAX_SEARCH_RESULTS: 15, // Number of nearest neighbors to retrieve
 };
@@ -279,6 +333,8 @@ export const STORAGE_KEYS = {
   VERCEL_OAUTH_TOKENS: 'vercel-oauth-tokens',
   // Classic PAT for mach (workflow_dispatch + PR), SSO-authorized by the user.
   GITHUB_MACH_PAT: 'github-mach-pat',
+  // Update-check throttling: { lastCheckedAt, lastNotifiedVersion }.
+  UPDATE_CHECK_STATE: 'update-check-state',
 };
 
 // Extension Constants
@@ -377,6 +433,12 @@ export const MODEL_PROVIDERS = [
     requireApiKey: true,
     BASE_URL: 'https://integrate.api.nvidia.com/v1',
     DEFAULT_CHAT_MODEL: 'moonshotai/kimi-k2-instruct',
+  },
+  {
+    MODEL_PROVIDER: 'AgentRouter',
+    requireApiKey: true,
+    BASE_URL: 'https://agentrouter.org/v1',
+    DEFAULT_CHAT_MODEL: 'claude-sonnet-4-5-20250929',
   },
   {
     // OpenAI-compatible provider with a user-supplied base URL (self-hosted,
@@ -811,3 +873,21 @@ export enum ModelTypeEnum {
 // Used for incremental sync
 // 20 minutes in milliseconds
 export const SYNC_INTERVAL_MS = 15 * 60 * 1000;
+
+/**
+ * Update-check: Open VSX is the canonical "latest published version" source
+ * (both `vsce publish` and `ovsx publish` run together in
+ * `vscode:publish-all`, so its metadata is never stale relative to the
+ * Marketplace) and its API is public/unauthenticated, unlike the
+ * Marketplace's gallery query endpoint.
+ */
+export const UPDATE_CHECK = {
+  OPEN_VSX_API_URL: 'https://open-vsx.org/api/Riteshkant/workspacegpt-extension',
+  RELEASES_URL: 'https://github.com/ritesh-kant/workspaceGPT/releases/tag/workspaceGPT-v',
+  EXTENSION_ID: 'Riteshkant.workspacegpt-extension',
+  // Re-check periodically for long-lived windows; a fresh check also always
+  // runs once per activation (delayed so it never competes with startup work).
+  CHECK_INTERVAL_MS: 12 * 60 * 60 * 1000, // 12 hours
+  FIRST_CHECK_DELAY_MS: 30 * 1000, // 30 seconds
+  REQUEST_TIMEOUT_MS: 5 * 1000,
+};

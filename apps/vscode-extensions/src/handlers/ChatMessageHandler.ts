@@ -7,6 +7,7 @@ import { AnalyticsService } from '../services/analyticsService';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
 import { getNamedRoots, resolveAgainstRoots } from '../services/codebase/codebaseTools';
 import { openAgentDiff } from '../services/agent/agentDiffProvider';
+import { searchMentionTargets } from '../services/codebase/mentionSearch';
 
 export class ChatMessageHandler {
   private chatService?: ChatService;
@@ -24,7 +25,7 @@ export class ChatMessageHandler {
    */
   public prewarm(): void {
     if (!this.chatService) {
-      this.chatService = new ChatService(this.webviewView, this.context);
+      this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
     }
     this.chatService.prewarm();
   }
@@ -52,12 +53,20 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.SEND_MESSAGE:
         this.analyticsService.trackEvent('message_sent', {
           messageLength: data.message?.length || 0,
+          attachmentCount: data.attachments?.length || 0,
+          mentionCount: data.mentions?.length || 0,
         });
         await this.handleSendMessage(data);
         return true;
       case MESSAGE_TYPES.STOP_MESSAGE:
         this.analyticsService.trackEvent('message_stopped');
-        await this.handleStopMessage();
+        await this.handleStopMessage(data.sessionId);
+        return true;
+      case MESSAGE_TYPES.MESSAGE_FEEDBACK:
+        this.analyticsService.trackEvent('message_feedback', {
+          rating: data.rating,
+          messageIndex: data.messageIndex,
+        });
         return true;
       case MESSAGE_TYPES.AGENT_WRITE_DECISION:
         this.analyticsService.trackEvent('agent_write_decision', { approved: !!data.approved, scope: data.scope });
@@ -72,6 +81,9 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.OPEN_DIFF_IN_EDITOR:
         await this.handleOpenDiffInEditor(data.path);
+        return true;
+      case MESSAGE_TYPES.SEARCH_MENTION_TARGETS:
+        await this.handleSearchMentionTargets(data);
         return true;
       case MESSAGE_TYPES.UPDATE_MODEL:
         this.analyticsService.trackEvent('model_updated', {
@@ -103,7 +115,7 @@ export class ChatMessageHandler {
   private async handleNewChat(): Promise<void> {
     try {
       if (!this.chatService) {
-        this.chatService = new ChatService(this.webviewView, this.context);
+        this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
       await this.chatService.newChat();
     } catch (error) {
@@ -114,10 +126,10 @@ export class ChatMessageHandler {
   private async handleSendMessage(data: any): Promise<void> {
     try {
       if (!this.chatService) {
-        this.chatService = new ChatService(this.webviewView, this.context);
+        this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
-      const { message, modelId, apiKey, provider, contextSelection } = data;
-      await this.chatService.sendMessage(message, modelId, apiKey, provider, contextSelection);
+      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions } = data;
+      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions);
     } catch (error) {
       this.analyticsService.trackEvent('message_send_error', {
         modelId: data.modelId,
@@ -126,6 +138,27 @@ export class ChatMessageHandler {
       });
       this.handleError('Error:', error);
     }
+  }
+
+  /**
+   * Composer @-mention picker: answer with the workspace files/folders matching
+   * what the user has typed so far. Always replies (even on failure or with no
+   * workspace open) so the webview can clear its in-flight state rather than
+   * leaving a spinner up.
+   */
+  private async handleSearchMentionTargets(data: any): Promise<void> {
+    let targets: Awaited<ReturnType<typeof searchMentionTargets>> = [];
+    try {
+      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      targets = await searchMentionTargets(String(data.query ?? ''), roots);
+    } catch (error) {
+      console.warn('Mention search failed:', error);
+    }
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.SEARCH_MENTION_TARGETS_RESPONSE,
+      requestId: data.requestId,
+      targets,
+    });
   }
 
   /** Open a reviewed file (workspace-relative, possibly root-prefixed) in the editor. */
@@ -180,7 +213,7 @@ export class ChatMessageHandler {
       );
       if (confirm !== 'Undo') return;
       if (!this.chatService) {
-        this.chatService = new ChatService(this.webviewView, this.context);
+        this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
       await this.chatService.revertToCheckpoint(sha);
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_REVERT_DONE, sha, ok: true });
@@ -191,10 +224,10 @@ export class ChatMessageHandler {
     }
   }
 
-  private async handleStopMessage(): Promise<void> {
+  private async handleStopMessage(sessionId?: string): Promise<void> {
     try {
       if (this.chatService) {
-        this.chatService.stopMessage();
+        this.chatService.stopMessage(sessionId);
       }
     } catch (error) {
       this.handleError('Error stopping message:', error);
@@ -275,6 +308,11 @@ export class ChatMessageHandler {
   private async handleGetChatSession(data: any): Promise<void> {
     try {
       const messages = await this.historyService.getChatSession(data.sessionId);
+      // Seed the opened session's model-facing context from its transcript.
+      if (!this.chatService) {
+        this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
+      }
+      this.chatService.loadHistory(data.sessionId, messages as any[]);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.GET_CHAT_SESSION_RESPONSE,
         sessionId: data.sessionId,

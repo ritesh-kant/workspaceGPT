@@ -10,6 +10,7 @@ import ChatMessage from './components/ChatMessage';
 import AgentWriteCard from './components/AgentWriteCard';
 import AgentTimeline from './components/AgentTimeline';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
+import MentionPicker from './components/MentionPicker';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
 import Onboarding from './components/onboarding/Onboarding';
@@ -24,7 +25,8 @@ import {
   useUiStore,
 } from './store';
 import { modelDefaultConfig } from './store/modelStore';
-import { MESSAGE_TYPES, STORAGE_KEYS } from './constants';
+import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS } from './constants';
+import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
 
 // Simple UUID generator (no external dep needed)
@@ -35,6 +37,143 @@ function generateSessionId(): string {
     return v.toString(16);
   });
 }
+
+/** File extensions we confidently treat as inline-able text when the browser reports no mime type. */
+const TEXT_FILE_EXTENSIONS = /\.(txt|md|markdown|json|jsonc|yaml|yml|xml|html|htm|css|scss|less|js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|c|h|cpp|hpp|cs|swift|php|sql|sh|bash|zsh|ps1|bat|toml|ini|cfg|conf|env|log|csv|tsv|properties|gradle|tf|proto|graphql|vue|svelte|dockerfile|makefile|lock)$/i;
+
+const isTextLike = (file: File): boolean =>
+  file.type.startsWith('text/') ||
+  ['application/json', 'application/xml', 'application/x-yaml', 'application/javascript', 'application/typescript'].includes(file.type) ||
+  TEXT_FILE_EXTENSIONS.test(file.name);
+
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+const readFileAsText = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+
+/**
+ * Converts picked/pasted/dropped files into ChatAttachments, enforcing the
+ * per-message limits. Returns the attachments plus a human-readable note for
+ * anything skipped (unsupported type / too large / over the count cap).
+ */
+async function filesToAttachments(
+  files: File[],
+  existingCount: number
+): Promise<{ attachments: ChatAttachment[]; skippedNote: string | null }> {
+  const attachments: ChatAttachment[] = [];
+  const skipped: string[] = [];
+  for (const file of files) {
+    if (existingCount + attachments.length >= ATTACHMENT_LIMITS.MAX_FILES) {
+      skipped.push(`${file.name} (max ${ATTACHMENT_LIMITS.MAX_FILES} attachments)`);
+      continue;
+    }
+    try {
+      if (file.type.startsWith('image/')) {
+        if (file.size > ATTACHMENT_LIMITS.MAX_IMAGE_BYTES) {
+          skipped.push(`${file.name} (image over ${Math.round(ATTACHMENT_LIMITS.MAX_IMAGE_BYTES / 1024 / 1024)}MB)`);
+          continue;
+        }
+        attachments.push({
+          name: file.name || 'pasted-image.png',
+          mimeType: file.type,
+          kind: 'image',
+          content: await readFileAsDataUrl(file),
+          size: file.size,
+        });
+      } else if (isTextLike(file)) {
+        let text = await readFileAsText(file);
+        if (text.length > ATTACHMENT_LIMITS.MAX_TEXT_CHARS) {
+          text = text.slice(0, ATTACHMENT_LIMITS.MAX_TEXT_CHARS) + '\n\n[... truncated ...]';
+        }
+        attachments.push({
+          name: file.name,
+          mimeType: file.type || 'text/plain',
+          kind: 'text',
+          content: text,
+          size: file.size,
+        });
+      } else {
+        skipped.push(`${file.name} (only images and text files are supported)`);
+      }
+    } catch {
+      skipped.push(`${file.name} (could not read file)`);
+    }
+  }
+  return { attachments, skippedNote: skipped.length ? `Skipped: ${skipped.join(', ')}` : null };
+}
+
+/**
+ * The "@" token the caret currently sits in, if any. A mention starts at a
+ * word boundary (so an email address or a decorator mid-word doesn't open the
+ * picker) and runs to the caret. Paths may contain "/" and "." but never
+ * whitespace, which is what ends the token.
+ */
+function findMentionToken(text: string, caret: number): { start: number; query: string } | null {
+  const match = /(?:^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
+  if (!match) return null;
+  return { start: caret - match[1].length - 1, query: match[1] };
+}
+
+/**
+ * The mention paths still present in the composed message. Tracked separately
+ * from the text because only paths the user actually picked from the picker
+ * count — typing "@foo" by hand shouldn't make the host go read a file — and
+ * because deleting the text of a mention must drop it from the message.
+ */
+function activeMentions(text: string, picked: Set<string>): string[] {
+  return [...picked].filter((mentionPath) =>
+    new RegExp(`(?:^|\\s)@${mentionPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![^\\s])`).test(text)
+  );
+}
+
+/** Maps a raw host error onto the user-facing markdown bubble. */
+function formatChatError(rawError: string): string {
+  if (rawError.includes('403') && rawError.includes('subscription')) {
+    const urlMatch = rawError.match(/https?:\/\/[^\s")]+/);
+    const upgradeUrl = urlMatch ? urlMatch[0] : null;
+    return `⚠️ **Access Denied (403):** This model requires a subscription.\n\n`
+      + (upgradeUrl ? `Upgrade here: [${upgradeUrl}](${upgradeUrl})\n\n` : '')
+      + `Please select a different model or upgrade your plan.`;
+  }
+  if (rawError.includes('401') || rawError.includes('Unauthorized')) {
+    return `🔑 **Authentication Error:** Your API key appears to be invalid or expired. Please check your API key in Settings.`;
+  }
+  if (rawError.includes('429') || rawError.includes('rate limit')) {
+    return `⏳ **Rate Limited:** Too many requests. Please wait a moment and try again.`;
+  }
+  if (rawError.includes('ECONNREFUSED') || rawError.includes('ENOTFOUND')) {
+    return `🔌 **Connection Error:** Unable to reach the model provider. Please check that the service is running and your network connection is active.`;
+  }
+  return `❌ **Error:** ${rawError}`;
+}
+
+/** Fallback answer when an agent turn ends with steps but no text. */
+const AGENT_FALLBACK_ANSWER = 'Done — see the steps above for what was explored and changed.';
+
+/** Host messages that belong to one session's in-flight turn (routable by sessionId). */
+const TURN_SCOPED_TYPES = new Set<string>([
+  MESSAGE_TYPES.RECEIVE_MESSAGE,
+  MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK,
+  MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
+  MESSAGE_TYPES.RETRIEVAL_STATUS,
+  MESSAGE_TYPES.AGENT_STEP,
+  MESSAGE_TYPES.AGENT_STEP_UPDATE,
+  MESSAGE_TYPES.AGENT_TURN_SUMMARY,
+  MESSAGE_TYPES.AGENT_WRITE_REVIEW,
+  MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED,
+  MESSAGE_TYPES.ERROR_CHAT,
+]);
 
 const STARTER_PROMPTS = [
   { icon: '', text: 'What does this Project do?' },
@@ -75,6 +214,11 @@ const App: React.FC = () => {
     updateAgentStep,
     setTurnSummary,
     finalizeAgentTurn,
+    resetTurnState,
+    liveSessions,
+    stashCurrentSession,
+    activateLiveSession,
+    dropLiveSession,
   } = useChatStore();
 
   const {
@@ -102,6 +246,14 @@ const App: React.FC = () => {
     }[]
   >([]);
 
+  // Sessions with a run still going while off-screen — history rows and
+  // recent-chat cards show a live dot for these.
+  const runningSessionIds = new Set(
+    Object.entries(liveSessions)
+      .filter(([, entry]) => entry.isLoading || entry.isStreaming)
+      .map(([id]) => id)
+  );
+
   // Sha currently being reverted to — disables the triggering message's undo
   // button until the host confirms (AGENT_REVERT_DONE).
   const [revertingSha, setRevertingSha] = useState<string | null>(null);
@@ -114,9 +266,35 @@ const App: React.FC = () => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  // When true, discard incoming response chunks that belong to a previous request.
-  // useRef so it's always current inside the stale useEffect message-handler closure.
-  const ignoringStreamRef = useRef(false);
+  // Files staged in the composer, sent with the next message.
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  // Transient note when a picked/pasted file was rejected (type/size/count).
+  const [attachmentNote, setAttachmentNote] = useState<string | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // ── @-mention picker ──
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionTargets, setMentionTargets] = useState<MentionTarget[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionSearching, setMentionSearching] = useState(false);
+  // Character offset of the "@" the picker is completing.
+  const mentionStartRef = useRef(0);
+  // Paths inserted from the picker this message — the only ones sent to the
+  // host for resolution (see activeMentions).
+  const pickedMentionsRef = useRef<Set<string>>(new Set());
+  // Latest in-flight search; older responses are ignored so a slow reply for
+  // an earlier keystroke can't replace newer suggestions.
+  const mentionRequestIdRef = useRef(0);
+  const mentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Sessions the user explicitly stopped: anything their runs still emit is
+  // discarded. useRef (not state) so it's always current inside the stale
+  // useEffect message-handler closure; sending in a session clears its entry.
+  const stoppedSessionsRef = useRef<Set<string>>(new Set());
+  // Mirror of currentSessionId for the same stale-closure reason — the message
+  // handler routes each host message to the visible chat or a background one.
+  const currentSessionIdRef = useRef<string | null>(null);
+  // Fresh handleNewChat for the host-initiated NEW_CHAT command (stale closure).
+  const handleNewChatRef = useRef<() => void>(() => {});
 
   // Typewriter streaming buffer. Network chunk size varies wildly by provider —
   // some (Ollama, Gemini) emit token-sized deltas, others (NVIDIA) ship the whole
@@ -190,6 +368,10 @@ const App: React.FC = () => {
   useEffect(() => () => resetStreamBuffer(), [resetStreamBuffer]);
 
   useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+
+  useEffect(() => {
     vscode.postMessage({
       type: MESSAGE_TYPES.GET_WORKSPACE_PATH,
     });
@@ -199,11 +381,113 @@ const App: React.FC = () => {
       type: MESSAGE_TYPES.GET_CHAT_HISTORY_LIST,
     });
 
-    const handleMessage = (event: MessageEvent) => {
-      const message = event.data;
+    // Applies a turn-scoped host message to a session that is NOT on screen.
+    // Goes through getState() so it never suffers from this closure's staleness.
+    const applyBackgroundTurnMessage = (sessionId: string, message: any) => {
+      const store = useChatStore.getState();
+      // Untracked session (e.g. the webview reloaded mid-run): nothing safe to
+      // apply the update to — dropping it beats corrupting another session.
+      if (!store.liveSessions[sessionId]) return;
+      const saveBg = () => {
+        const entry = useChatStore.getState().liveSessions[sessionId];
+        if (entry && entry.messages.length > 0) {
+          vscode.postMessage({
+            type: MESSAGE_TYPES.SAVE_CHAT_HISTORY,
+            sessionId,
+            messages: entry.messages,
+          });
+        }
+      };
       switch (message.type) {
         case MESSAGE_TYPES.RECEIVE_MESSAGE:
-          if (ignoringStreamRef.current) break;
+          store.bgAddMessage(sessionId, { content: message.content, isUser: false });
+          store.bgPatch(sessionId, { isLoading: false, isStreaming: false, statusText: '' });
+          saveBg();
+          break;
+        case MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK:
+          // No typewriter for an off-screen chat — append the text directly.
+          store.bgAppendToLast(sessionId, message.content || '');
+          store.bgPatch(sessionId, { isLoading: false, isStreaming: true, statusText: '' });
+          break;
+        case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
+          store.bgFinalizeTurn(sessionId, AGENT_FALLBACK_ANSWER);
+          store.bgPatch(sessionId, { isLoading: false, isStreaming: false, statusText: '' });
+          saveBg();
+          break;
+        case MESSAGE_TYPES.RETRIEVAL_STATUS:
+          store.bgPatch(sessionId, { statusText: message.text || '' });
+          break;
+        case MESSAGE_TYPES.AGENT_STEP:
+          if (message.step) {
+            store.bgAddAgentStep(sessionId, { ...message.step, ...(message.id ? { id: message.id } : {}) });
+          } else if (message.text) {
+            store.bgAddAgentStep(sessionId, { kind: 'info', title: message.text });
+          }
+          break;
+        case MESSAGE_TYPES.AGENT_STEP_UPDATE:
+          if (message.id) {
+            store.bgUpdateAgentStep(sessionId, message.id, {
+              status: message.status || 'done',
+              summary: message.summary,
+              meta: message.meta,
+            });
+          }
+          break;
+        case MESSAGE_TYPES.AGENT_TURN_SUMMARY:
+          store.bgSetTurnSummary(sessionId, {
+            durationMs: message.durationMs || 0,
+            filesChanged: message.filesChanged || [],
+            checkpointSha: message.checkpointSha,
+          });
+          break;
+        case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
+          store.bgAddMessage(sessionId, {
+            content: '',
+            isUser: false,
+            writeReview: {
+              id: message.id,
+              kind: message.kind,
+              path: message.path,
+              summary: message.summary,
+              diff: message.diff,
+              command: message.command,
+            },
+          });
+          store.bgPatch(sessionId, { statusText: 'Waiting for your review…' });
+          break;
+        case MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED:
+          store.bgCloseAllPendingWriteReviews(sessionId);
+          store.bgPatch(sessionId, { statusText: '' });
+          break;
+        case MESSAGE_TYPES.ERROR_CHAT:
+          store.bgAddMessage(sessionId, {
+            content: formatChatError(message.message || 'An unknown error occurred.'),
+            isUser: false,
+            isError: true,
+          });
+          store.bgPatch(sessionId, { isLoading: false, isStreaming: false, statusText: '' });
+          saveBg();
+          break;
+      }
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data;
+
+      // Route turn-scoped messages by the session they belong to. Messages
+      // from an old host build carry no sessionId — treat them as belonging
+      // to the visible chat, matching the previous behavior.
+      if (TURN_SCOPED_TYPES.has(message.type)) {
+        const sid: string | null = message.sessionId ?? currentSessionIdRef.current;
+        if (sid && stoppedSessionsRef.current.has(sid)) return;
+        if (sid && sid !== currentSessionIdRef.current) {
+          applyBackgroundTurnMessage(sid, message);
+          return;
+        }
+      }
+
+      switch (message.type) {
+        case MESSAGE_TYPES.RECEIVE_MESSAGE:
           addMessage({
             content: message.content,
             isUser: false,
@@ -213,7 +497,6 @@ const App: React.FC = () => {
           setIsStreaming(false);
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK:
-          if (ignoringStreamRef.current) break;
           // Buffer the chunk; the pump drains it to the UI at a steady rate.
           pendingTextRef.current += message.content || '';
           setStatusText('');
@@ -222,7 +505,6 @@ const App: React.FC = () => {
           startStreamPump();
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE: {
-          ignoringStreamRef.current = false;
           setStatusText('');
           setIsLoading(false);
           // Don't clear isStreaming yet — let the pump finish draining the
@@ -236,7 +518,7 @@ const App: React.FC = () => {
             const { messages: currentMsgs } = useChatStore.getState();
             const last = currentMsgs[currentMsgs.length - 1];
             if (!last || last.isUser || last.writeReview) {
-              finalizeAgentTurn('Done — see the steps above for what was explored and changed.');
+              finalizeAgentTurn(AGENT_FALLBACK_ANSWER);
             }
           }
           break;
@@ -299,31 +581,9 @@ const App: React.FC = () => {
           setStatusText('Waiting for your review…');
           break;
         case MESSAGE_TYPES.ERROR_CHAT: {
-          const rawError = message.message || 'An unknown error occurred.';
-          let userFacingError: string;
-
-          if (rawError.includes('403') && rawError.includes('subscription')) {
-            // Extract the upgrade URL if present
-            const urlMatch = rawError.match(/https?:\/\/[^\s")]+/);
-            const upgradeUrl = urlMatch ? urlMatch[0] : null;
-            userFacingError = `⚠️ **Access Denied (403):** This model requires a subscription.\n\n`
-              + (upgradeUrl
-                ? `Upgrade here: [${upgradeUrl}](${upgradeUrl})\n\n`
-                : '')
-              + `Please select a different model or upgrade your plan.`;
-          } else if (rawError.includes('401') || rawError.includes('Unauthorized')) {
-            userFacingError = `🔑 **Authentication Error:** Your API key appears to be invalid or expired. Please check your API key in Settings.`;
-          } else if (rawError.includes('429') || rawError.includes('rate limit')) {
-            userFacingError = `⏳ **Rate Limited:** Too many requests. Please wait a moment and try again.`;
-          } else if (rawError.includes('ECONNREFUSED') || rawError.includes('ENOTFOUND')) {
-            userFacingError = `🔌 **Connection Error:** Unable to reach the model provider. Please check that the service is running and your network connection is active.`;
-          } else {
-            userFacingError = `❌ **Error:** ${rawError}`;
-          }
-
           resetStreamBuffer();
           addMessage({
-            content: userFacingError,
+            content: formatChatError(message.message || 'An unknown error occurred.'),
             isUser: false,
             isError: true,
           });
@@ -336,7 +596,7 @@ const App: React.FC = () => {
           setActiveView('settings');
           break;
         case MESSAGE_TYPES.NEW_CHAT:
-          handleNewChat();
+          handleNewChatRef.current();
           break;
         case MESSAGE_TYPES.SHOW_HISTORY:
           setActiveView('history');
@@ -426,10 +686,25 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.GET_CHAT_HISTORY_LIST_RESPONSE:
           setHistoryList(message.historyList || []);
           break;
+        case MESSAGE_TYPES.SEARCH_MENTION_TARGETS_RESPONSE:
+          // Drop stale replies — only the newest keystroke's results count.
+          if (message.requestId === mentionRequestIdRef.current) {
+            setMentionTargets(message.targets ?? []);
+            setMentionIndex(0);
+            setMentionSearching(false);
+          }
+          break;
         case MESSAGE_TYPES.GET_CHAT_SESSION_RESPONSE:
           if (message.messages) {
             setMessages(message.messages);
             setCurrentSessionId(message.sessionId);
+            currentSessionIdRef.current = message.sessionId;
+            // A stored session opens idle — clear turn state left behind by
+            // whatever chat was on screen before.
+            resetTurnState();
+            setIsLoading(false);
+            setIsStreaming(false);
+            setStatusText('');
             setShowTips(false);
             setActiveView('chat');
           }
@@ -492,17 +767,38 @@ const App: React.FC = () => {
     return () => window.removeEventListener('focus', handleWindowFocus);
   }, []);
 
-  const handleNewChat = () => {
-    // Discard any in-flight chunks from the previous request.
-    // ignoringStreamRef is read synchronously in the message handler closure,
-    // so this takes effect immediately even before the worker is terminated.
-    ignoringStreamRef.current = true;
-    resetStreamBuffer();
-
-    // Best-effort: also tell the extension host to terminate the worker.
-    if (isLoading || isStreaming) {
-      vscode.postMessage({ type: MESSAGE_TYPES.STOP_MESSAGE });
+  // Moves the visible session's in-flight turn to the background so it keeps
+  // running while the user looks at another chat: drain the typewriter buffer
+  // into the transcript (background chats don't animate), then park the live
+  // state under the session's id. Host messages for it are routed there by
+  // the handler above. No-op when nothing is running.
+  const backgroundCurrentSession = () => {
+    // Synchronously flush what the pump hasn't typed out yet — the stash must
+    // capture the full transcript, not the animation's progress.
+    if (pumpRef.current !== null) {
+      clearInterval(pumpRef.current);
+      pumpRef.current = null;
     }
+    if (pendingTextRef.current.length > 0) {
+      appendToLastMessage(pendingTextRef.current);
+      pendingTextRef.current = '';
+    }
+    if (streamDoneRef.current) {
+      // Stream actually finished while the pump was still typing.
+      streamDoneRef.current = false;
+      setIsStreaming(false);
+    }
+    stashCurrentSession();
+    // Reset the visible turn state for whatever session comes next; if a run
+    // was stashed, its copy of this state lives in liveSessions now.
+    resetTurnState();
+    setIsLoading(false);
+    setIsStreaming(false);
+    setStatusText('');
+  };
+
+  const handleNewChat = () => {
+    backgroundCurrentSession();
 
     // Save current chat before starting a new one
     if (currentSessionId && messages.length > 0) {
@@ -513,20 +809,21 @@ const App: React.FC = () => {
         messages,
       });
     }
-    setIsLoading(false);
-    setIsStreaming(false);
-    setStatusText('');
     clearMessages();
     setInputValue('');
     setCurrentSessionId(null);
+    // Synchronously: the stashed session's messages must route to the
+    // background from this instant, not after the next render.
+    currentSessionIdRef.current = null;
     setShowTips(true);
     setActiveView('chat');
   };
+  // The message handler's closure is created once ([] deps) — give it a
+  // always-fresh path to handleNewChat for the host-initiated NEW_CHAT command.
+  handleNewChatRef.current = handleNewChat;
 
   const handleSendMessage = () => {
-    if (inputValue.trim() === '' || isLoading) return;
-    ignoringStreamRef.current = false; // Accept chunks for this new request
-    resetStreamBuffer(); // Discard any leftover buffer from a prior stream
+    if ((inputValue.trim() === '' && pendingAttachments.length === 0) || isLoading) return;
 
     // Local mode: a model must be selected. Remote mode has no model picker —
     // it just needs a Gemini key (the host routes the actual model by task).
@@ -545,19 +842,34 @@ const App: React.FC = () => {
       return;
     }
 
+    // Only now that the request is definitely going out: drop any leftover
+    // typewriter buffer from this session's prior stream.
+    resetStreamBuffer();
+
     // If no session ID yet, generate one now
     let sessionId = currentSessionId;
     if (!sessionId) {
       sessionId = generateSessionId();
       setCurrentSessionId(sessionId);
+      currentSessionIdRef.current = sessionId;
     }
+    // A new request in a previously stopped session accepts messages again.
+    stoppedSessionsRef.current.delete(sessionId);
+
+    const mentions = activeMentions(inputValue, pickedMentionsRef.current);
 
     addMessage({
       content: inputValue,
       isUser: true,
+      ...(pendingAttachments.length > 0 ? { attachments: pendingAttachments } : {}),
+      ...(mentions.length > 0 ? { mentions } : {}),
     });
 
     setInputValue('');
+    setPendingAttachments([]);
+    setAttachmentNote(null);
+    pickedMentionsRef.current = new Set();
+    closeMentionPicker();
     setIsLoading(true);
     setIsStreaming(false);
     setShowTips(false);
@@ -566,24 +878,157 @@ const App: React.FC = () => {
 
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId,
       message: inputValue,
       modelId: selectedModelProvider?.selectedModel,
       provider: selectedModelProvider.provider, // Use the provider string from the selectedModelProvider object
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      ...(pendingAttachments.length > 0 ? { attachments: pendingAttachments } : {}),
+      ...(mentions.length > 0 ? { mentions } : {}),
+    });
+  };
+
+  // ── Composer attachments ──────────────────────────────────────────────
+  const stageFiles = async (files: File[]) => {
+    if (!files.length) return;
+    const { attachments, skippedNote } = await filesToAttachments(files, pendingAttachments.length);
+    if (attachments.length) setPendingAttachments((prev) => [...prev, ...attachments]);
+    setAttachmentNote(skippedNote);
+  };
+
+  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    stageFiles(Array.from(e.target.files ?? []));
+    // Reset so picking the same file again re-fires onChange.
+    e.target.value = '';
+  };
+
+  const handleComposerPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (files.length) {
+      e.preventDefault();
+      stageFiles(files);
+    }
+  };
+
+  const handleComposerDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingFile(false);
+    stageFiles(Array.from(e.dataTransfer?.files ?? []));
+  };
+
+  const removeAttachment = (index: number) => {
+    setPendingAttachments((prev) => prev.filter((_, i) => i !== index));
+    setAttachmentNote(null);
+  };
+
+  // ── @-mentions ────────────────────────────────────────────────────────
+  const closeMentionPicker = () => {
+    if (mentionDebounceRef.current) clearTimeout(mentionDebounceRef.current);
+    setMentionQuery(null);
+    setMentionTargets([]);
+    setMentionIndex(0);
+    setMentionSearching(false);
+  };
+
+  /**
+   * Re-evaluates the picker against the caret position. Called after every
+   * edit and caret move, so the picker opens on "@", follows what is typed
+   * after it, and closes as soon as the caret leaves the token.
+   */
+  const syncMentionPicker = (text: string, caret: number) => {
+    const token = findMentionToken(text, caret);
+    if (!token) {
+      if (mentionQuery !== null) closeMentionPicker();
+      return;
+    }
+    mentionStartRef.current = token.start;
+    setMentionQuery(token.query);
+    setMentionSearching(true);
+    if (mentionDebounceRef.current) clearTimeout(mentionDebounceRef.current);
+    mentionDebounceRef.current = setTimeout(() => {
+      const requestId = mentionRequestIdRef.current + 1;
+      mentionRequestIdRef.current = requestId;
+      vscode.postMessage({
+        type: MESSAGE_TYPES.SEARCH_MENTION_TARGETS,
+        requestId,
+        query: token.query,
+      });
+    }, 120);
+  };
+
+  const handleComposerChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputValue(e.target.value);
+    syncMentionPicker(e.target.value, e.target.selectionStart ?? e.target.value.length);
+  };
+
+  /** Replaces the in-progress "@token" with the chosen path and resumes typing after it. */
+  const insertMention = (target: MentionTarget) => {
+    const el = inputRef.current;
+    const caret = el?.selectionStart ?? inputValue.length;
+    const start = mentionStartRef.current;
+    const rest = inputValue.slice(caret);
+    // Separate the mention from whatever follows, without doubling a space
+    // that is already there.
+    const inserted = `@${target.path}${/^\s/.test(rest) ? '' : ' '}`;
+    const next = inputValue.slice(0, start) + inserted + rest;
+    pickedMentionsRef.current.add(target.path);
+    setInputValue(next);
+    closeMentionPicker();
+    // Put the caret after the inserted mention once React has re-rendered
+    // with the new value, otherwise it snaps to the end of the textarea.
+    requestAnimationFrame(() => {
+      const pos = start + inserted.length;
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(pos, pos);
     });
   };
 
   const handleStopMessage = () => {
+    if (!currentSessionId) return;
+    // Discard anything this session's run still emits (retrieval statuses
+    // keep arriving after the worker dies) until the user sends again.
+    stoppedSessionsRef.current.add(currentSessionId);
     vscode.postMessage({
       type: MESSAGE_TYPES.STOP_MESSAGE,
+      sessionId: currentSessionId,
     });
     resetStreamBuffer();
     setIsLoading(false);
     setIsStreaming(false);
+    setStatusText('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // While the mention picker is open it owns the navigation keys — Enter
+    // must pick a file rather than send the half-typed message.
+    if (mentionQuery !== null && !e.nativeEvent.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (mentionTargets.length) {
+          const delta = e.key === 'ArrowDown' ? 1 : -1;
+          setMentionIndex((i) => (i + delta + mentionTargets.length) % mentionTargets.length);
+        }
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        const target = mentionTargets[mentionIndex];
+        if (target) {
+          e.preventDefault();
+          insertMention(target);
+          return;
+        }
+        // Nothing to pick (still searching / no matches): fall through so
+        // Enter still sends rather than dead-ending on an empty picker.
+        closeMentionPicker();
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeMentionPicker();
+        return;
+      }
+    }
+
     // Shift+Enter inserts a newline (default textarea behavior); plain Enter
     // sends. Ignore Enter while an IME composition is in progress so picking
     // a candidate doesn't submit early.
@@ -631,13 +1076,14 @@ const App: React.FC = () => {
         });
         return;
       }
-      ignoringStreamRef.current = false; // Accept chunks for this new request
       resetStreamBuffer(); // Discard any leftover buffer from a prior stream
       let sessionId = currentSessionId;
       if (!sessionId) {
         sessionId = generateSessionId();
         setCurrentSessionId(sessionId);
+        currentSessionIdRef.current = sessionId;
       }
+      stoppedSessionsRef.current.delete(sessionId);
       addMessage({ content: promptText, isUser: true });
       setInputValue('');
       setIsLoading(true);
@@ -645,6 +1091,7 @@ const App: React.FC = () => {
       setShowTips(false);
       vscode.postMessage({
         type: MESSAGE_TYPES.SEND_MESSAGE,
+        sessionId,
         message: promptText,
         modelId: selectedModelProvider?.selectedModel,
         provider: selectedModelProvider.provider,
@@ -655,6 +1102,13 @@ const App: React.FC = () => {
   };
 
   const handleSelectSession = (sessionId: string) => {
+    if (sessionId === currentSessionId) {
+      setActiveView('chat');
+      return;
+    }
+    // A running turn keeps going — park it so its stream lands off-screen.
+    backgroundCurrentSession();
+
     // Save current chat first
     if (currentSessionId && messages.length > 0) {
       vscode.postMessage({
@@ -663,7 +1117,17 @@ const App: React.FC = () => {
         messages,
       });
     }
-    // Request the session data from the extension host
+    // A backgrounded session resumes from its live state — fresher than disk,
+    // and its run (if any) continues into the visible chat from here.
+    if (activateLiveSession(sessionId)) {
+      currentSessionIdRef.current = sessionId;
+      setActiveView('chat');
+      return;
+    }
+    // Otherwise request the stored session from the extension host. Route by
+    // the target immediately so the stashed session's stream stays background
+    // while the transcript loads.
+    currentSessionIdRef.current = sessionId;
     vscode.postMessage({
       type: MESSAGE_TYPES.GET_CHAT_SESSION,
       sessionId,
@@ -671,6 +1135,10 @@ const App: React.FC = () => {
   };
 
   const handleDeleteSession = (sessionId: string) => {
+    // Kill any run this session still has going, then forget its live state.
+    stoppedSessionsRef.current.add(sessionId);
+    vscode.postMessage({ type: MESSAGE_TYPES.STOP_MESSAGE, sessionId });
+    dropLiveSession(sessionId);
     vscode.postMessage({
       type: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
       sessionId,
@@ -686,22 +1154,34 @@ const App: React.FC = () => {
     vscode.postMessage({ type: MESSAGE_TYPES.AGENT_REVERT_CHECKPOINT, sha });
   };
 
+  const handleFeedback = (messageIndex: number, rating: 'up' | 'down') => {
+    vscode.postMessage({ type: MESSAGE_TYPES.MESSAGE_FEEDBACK, rating, messageIndex });
+  };
+
   // Resend a message that errored out — drops its error bubble and re-runs
   // the same request, without re-adding the user bubble (already on screen).
-  const handleRetry = (content: string, errorIndex: number) => {
+  const handleRetry = (
+    content: string,
+    errorIndex: number,
+    attachments?: ChatAttachment[],
+    mentions?: string[]
+  ) => {
     if (isLoading) return;
     removeMessageAt(errorIndex);
-    ignoringStreamRef.current = false;
+    if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
     resetStreamBuffer();
     setIsLoading(true);
     setIsStreaming(false);
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId: currentSessionId,
       message: content,
       modelId: selectedModelProvider?.selectedModel,
       provider: selectedModelProvider.provider,
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      ...(attachments?.length ? { attachments } : {}),
+      ...(mentions?.length ? { mentions } : {}),
     });
   };
 
@@ -762,7 +1242,12 @@ const App: React.FC = () => {
                       onClick={() => handleSelectSession(session.id)}
                     >
                       <div className='recent-chat-card-content'>
-                        <span className='recent-chat-card-title'>{session.title}</span>
+                        <span className='recent-chat-card-title'>
+                          {runningSessionIds.has(session.id) && (
+                            <span className='session-running-dot' title='Still working…' />
+                          )}
+                          {session.title}
+                        </span>
                         <span className='recent-chat-card-date'>{formatDate(session.updatedAt)}</span>
                       </div>
                       <div className='recent-chat-card-arrow'>→</div>
@@ -861,6 +1346,7 @@ const App: React.FC = () => {
                   content={message.content}
                   isUser={message.isUser}
                   isError={message.isError}
+                  attachments={message.attachments}
                   agentSteps={message.agentSteps}
                   turnSummary={message.turnSummary}
                   timestamp={message.timestamp}
@@ -871,8 +1357,11 @@ const App: React.FC = () => {
                   onUndo={handleUndo}
                   onRetry={
                     message.isUser && messages[index + 1]?.isError
-                      ? () => handleRetry(message.content, index + 1)
+                      ? () => handleRetry(message.content, index + 1, message.attachments, message.mentions)
                       : undefined
+                  }
+                  onFeedback={
+                    !message.isUser ? (rating) => handleFeedback(index, rating) : undefined
                   }
                 />
               )
@@ -889,14 +1378,74 @@ const App: React.FC = () => {
             <div ref={messagesEndRef} />
           </div>
         )}
-        <div className='input-container'>
+        <div
+          className={`input-container${isDraggingFile ? ' input-container--dragging' : ''}`}
+          onDragOver={(e) => {
+            if (e.dataTransfer?.types?.includes('Files')) {
+              e.preventDefault();
+              setIsDraggingFile(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            // Only clear when leaving the container itself, not a child.
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDraggingFile(false);
+          }}
+          onDrop={handleComposerDrop}
+        >
           <div className='input-wrapper'>
+            {mentionQuery !== null && (
+              <MentionPicker
+                targets={mentionTargets}
+                activeIndex={mentionIndex}
+                query={mentionQuery}
+                isSearching={mentionSearching}
+                onSelect={insertMention}
+                onHoverIndex={setMentionIndex}
+              />
+            )}
+            {pendingAttachments.length > 0 && (
+              <div className='composer-attachments'>
+                {pendingAttachments.map((att, i) => (
+                  <div key={`${att.name}-${i}`} className='attachment-chip' title={att.name}>
+                    {att.kind === 'image' ? (
+                      <img src={att.content} alt={att.name} className='attachment-chip-thumb' />
+                    ) : (
+                      <svg className='attachment-chip-icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
+                        <path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' />
+                        <polyline points='14 2 14 8 20 8' />
+                      </svg>
+                    )}
+                    <span className='attachment-chip-name'>{att.name}</span>
+                    <button
+                      type='button'
+                      className='attachment-chip-remove'
+                      onClick={() => removeAttachment(i)}
+                      aria-label={`Remove ${att.name}`}
+                      title='Remove'
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {attachmentNote && <div className='attachment-note'>{attachmentNote}</div>}
             <textarea
               ref={inputRef}
               rows={1}
               value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
+              onChange={handleComposerChange}
               onKeyDown={handleKeyDown}
+              // Caret moves (arrows, clicks) can enter or leave an "@" token
+              // without changing the text, so the picker re-syncs on those too.
+              onKeyUp={(e) => {
+                if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+                  syncMentionPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0);
+                }
+              }}
+              onClick={(e) => syncMentionPicker(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+              onBlur={closeMentionPicker}
+              onPaste={handleComposerPaste}
               placeholder={
                 mode === 'remote'
                   ? hasRemoteChatKey
@@ -909,6 +1458,26 @@ const App: React.FC = () => {
             />
             <div className='input-controls'>
               <div className='input-selectors'>
+                <input
+                  ref={fileInputRef}
+                  type='file'
+                  multiple
+                  accept='image/*,text/*,.md,.json,.yaml,.yml,.xml,.csv,.log,.ts,.tsx,.js,.jsx,.py,.java,.go,.rs,.rb,.c,.h,.cpp,.cs,.sh,.sql,.toml,.ini,.env,.html,.css,.scss'
+                  style={{ display: 'none' }}
+                  onChange={handleFilePick}
+                />
+                <button
+                  type='button'
+                  className='attach-button action-btn'
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={pendingAttachments.length >= ATTACHMENT_LIMITS.MAX_FILES}
+                  title='Attach files or images'
+                  aria-label='Attach files or images'
+                >
+                  <svg width='15' height='15' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                    <path d='M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                  </svg>
+                </button>
                 <button
                   type='button'
                   className='mode-chip'
@@ -974,7 +1543,7 @@ const App: React.FC = () => {
               ) : (
                 <button
                   onClick={handleSendMessage}
-                  disabled={!inputValue.trim()}
+                  disabled={!inputValue.trim() && pendingAttachments.length === 0}
                   className='send-button action-btn'
                   aria-label='Send message'
                 >
@@ -993,6 +1562,7 @@ const App: React.FC = () => {
           isVisible={activeView === 'history'}
           historyList={historyList}
           currentSessionId={currentSessionId}
+          runningSessionIds={runningSessionIds}
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
           onClose={() => setActiveView('chat')}

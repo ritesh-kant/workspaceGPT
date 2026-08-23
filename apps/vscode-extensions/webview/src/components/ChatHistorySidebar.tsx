@@ -11,6 +11,8 @@ interface ChatHistorySidebarProps {
     isVisible: boolean;
     historyList: ChatSessionPreview[];
     currentSessionId: string | null;
+    /** Sessions with a run still going in the background — shown with a live dot. */
+    runningSessionIds?: Set<string>;
     onSelectSession: (sessionId: string) => void;
     onDeleteSession: (sessionId: string) => void;
     onClose: () => void;
@@ -21,6 +23,7 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     isVisible,
     historyList,
     currentSessionId,
+    runningSessionIds,
     onSelectSession,
     onDeleteSession,
     onClose,
@@ -83,7 +86,12 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 onClick={() => onSelectSession(session.id)}
                             >
                                 <div className="history-item-content">
-                                    <span className="history-item-title">{session.title}</span>
+                                    <span className="history-item-title">
+                                        {runningSessionIds?.has(session.id) && (
+                                            <span className="session-running-dot" title="Still working…" />
+                                        )}
+                                        {session.title}
+                                    </span>
                                     <span className="history-item-date">
                                         {formatDate(session.updatedAt)}
                                     </span>

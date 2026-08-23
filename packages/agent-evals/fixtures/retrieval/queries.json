@@ -1,28 +1,308 @@
 [
-  { "id": "q01", "query": "how do I rotate an API key", "expected": ["api-key-rotation.md"], "kind": "semantic" },
-  { "id": "q02", "query": "what happens when a new engineer joins", "expected": ["onboarding-new-engineers.md"], "kind": "semantic" },
-  { "id": "q03", "query": "how does the canary deploy work", "expected": ["deployment-pipeline.md"], "kind": "semantic" },
-  { "id": "q04", "query": "how long are database backups kept", "expected": ["database-backup-policy.md"], "kind": "semantic" },
-  { "id": "q05", "query": "what do I do when there is a sev1 incident", "expected": ["incident-response-runbook.md"], "kind": "semantic" },
-  { "id": "q06", "query": "when do invoices get generated", "expected": ["billing-invoice-cycle.md"], "kind": "semantic" },
-  { "id": "q07", "query": "how long should a feature flag stay in the codebase", "expected": ["feature-flag-guidelines.md"], "kind": "semantic" },
-  { "id": "q08", "query": "how does the on-call rotation work", "expected": ["oncall-rotation-schedule.md"], "kind": "semantic" },
-  { "id": "q09", "query": "how many approvals does a pull request need", "expected": ["code-review-standards.md"], "kind": "semantic" },
-  { "id": "q10", "query": "how long is customer data kept after account deletion", "expected": ["customer-data-retention.md"], "kind": "semantic" },
-  { "id": "q11", "query": "what needs to happen before submitting a mobile release", "expected": ["mobile-release-checklist.md"], "kind": "semantic" },
-  { "id": "q12", "query": "how is search relevance scored", "expected": ["search-relevance-tuning.md"], "kind": "semantic" },
-  { "id": "q13", "query": "what identity providers does SSO support", "expected": ["sso-configuration.md"], "kind": "semantic" },
-  { "id": "q14", "query": "what is the API rate limit", "expected": ["rate-limiting-policy.md"], "kind": "semantic" },
-  { "id": "q15", "query": "how do I set up my local dev environment", "expected": ["local-dev-environment-setup.md"], "kind": "semantic" },
-  { "id": "q16", "query": "what is required before signing a new vendor", "expected": ["vendor-security-review.md"], "kind": "semantic" },
-  { "id": "q17", "query": "what is the frontend bundle size budget", "expected": ["performance-budget-frontend.md"], "kind": "semantic" },
-  { "id": "q18", "query": "what is the SLA for tier 2 support", "expected": ["support-escalation-tiers.md"], "kind": "semantic" },
-  { "id": "q19", "query": "what is the current password reset flow", "expected": ["password-reset-flow-v2.md"], "kind": "semantic" },
-  { "id": "q20", "query": "how is the API versioned today", "expected": ["api-versioning-policy.md"], "kind": "semantic" },
-  { "id": "q21", "query": "tell me about 1224706", "expected": ["ADO-1224706"], "kind": "id-lookup" },
-  { "id": "q22", "query": "what is ADO-1198532 about", "expected": ["ADO-1198532"], "kind": "id-lookup" },
-  { "id": "q23", "query": "1305811", "expected": ["ADO-1305811"], "kind": "id-lookup" },
-  { "id": "q24", "query": "details on ticket 1276490", "expected": ["ADO-1276490"], "kind": "id-lookup" },
-  { "id": "q25", "query": "1319044", "expected": ["ADO-1319044"], "kind": "id-lookup" },
-  { "id": "q26", "query": "1287655", "expected": ["ADO-1287655"], "kind": "id-lookup" }
+  {
+    "id": "q01",
+    "query": "how do I rotate an API key",
+    "expected": [
+      "api-key-rotation.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "generate|new key",
+      "revoke"
+    ]
+  },
+  {
+    "id": "q02",
+    "query": "what happens when a new engineer joins",
+    "expected": [
+      "onboarding-new-engineers.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "day one",
+      "bug fix|buddy"
+    ]
+  },
+  {
+    "id": "q03",
+    "query": "how does the canary deploy work",
+    "expected": [
+      "deployment-pipeline.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "5%",
+      "15 minutes"
+    ]
+  },
+  {
+    "id": "q04",
+    "query": "how long are database backups kept",
+    "expected": [
+      "database-backup-policy.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "30[- ]day"
+    ]
+  },
+  {
+    "id": "q05",
+    "query": "what do I do when there is a sev1 incident",
+    "expected": [
+      "incident-response-runbook.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "10 minutes",
+      "status page"
+    ]
+  },
+  {
+    "id": "q06",
+    "query": "when do invoices get generated",
+    "expected": [
+      "billing-invoice-cycle.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "first of (each|the) month"
+    ]
+  },
+  {
+    "id": "q07",
+    "query": "how long should a feature flag stay in the codebase",
+    "expected": [
+      "feature-flag-guidelines.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "one release cycle"
+    ]
+  },
+  {
+    "id": "q08",
+    "query": "how does the on-call rotation work",
+    "expected": [
+      "oncall-rotation-schedule.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "weekly|Monday to Monday",
+      "24 hours"
+    ]
+  },
+  {
+    "id": "q09",
+    "query": "how many approvals does a pull request need",
+    "expected": [
+      "code-review-standards.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "one approval|1 approval",
+      "two|2.*payments|payments.*two|payments.*2"
+    ]
+  },
+  {
+    "id": "q10",
+    "query": "how long is customer data kept after account deletion",
+    "expected": [
+      "customer-data-retention.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "90 days"
+    ]
+  },
+  {
+    "id": "q11",
+    "query": "what needs to happen before submitting a mobile release",
+    "expected": [
+      "mobile-release-checklist.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "99\\.5",
+      "48 hours"
+    ]
+  },
+  {
+    "id": "q12",
+    "query": "how is search relevance scored",
+    "expected": [
+      "search-relevance-tuning.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "BM25",
+      "65"
+    ]
+  },
+  {
+    "id": "q13",
+    "query": "what identity providers does SSO support",
+    "expected": [
+      "sso-configuration.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "SAML",
+      "OIDC"
+    ]
+  },
+  {
+    "id": "q14",
+    "query": "what is the API rate limit",
+    "expected": [
+      "rate-limiting-policy.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "100 requests",
+      "429"
+    ]
+  },
+  {
+    "id": "q15",
+    "query": "how do I set up my local dev environment",
+    "expected": [
+      "local-dev-environment-setup.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "bootstrap",
+      "\\.env"
+    ]
+  },
+  {
+    "id": "q16",
+    "query": "what is required before signing a new vendor",
+    "expected": [
+      "vendor-security-review.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "questionnaire",
+      "data processing agreement|security team"
+    ]
+  },
+  {
+    "id": "q17",
+    "query": "what is the frontend bundle size budget",
+    "expected": [
+      "performance-budget-frontend.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "250\\s?KB"
+    ]
+  },
+  {
+    "id": "q18",
+    "query": "what is the SLA for tier 2 support",
+    "expected": [
+      "support-escalation-tiers.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "8[- ]hour"
+    ]
+  },
+  {
+    "id": "q19",
+    "query": "what is the current password reset flow",
+    "expected": [
+      "password-reset-flow-v2.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "15[- ]minute",
+      "3 per hour"
+    ]
+  },
+  {
+    "id": "q20",
+    "query": "how is the API versioned today",
+    "expected": [
+      "api-versioning-policy.md"
+    ],
+    "kind": "semantic",
+    "expectedFacts": [
+      "12 months",
+      "90 days"
+    ]
+  },
+  {
+    "id": "q21",
+    "query": "tell me about 1224706",
+    "expected": [
+      "ADO-1224706"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "pagination|off[- ]by[- ]one|last page",
+      "export|CSV"
+    ]
+  },
+  {
+    "id": "q22",
+    "query": "what is ADO-1198532 about",
+    "expected": [
+      "ADO-1198532"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "invoices",
+      "index|1\\.8|slow"
+    ]
+  },
+  {
+    "id": "q23",
+    "query": "1305811",
+    "expected": [
+      "ADO-1305811"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "webhook",
+      "retry|backoff"
+    ]
+  },
+  {
+    "id": "q24",
+    "query": "details on ticket 1276490",
+    "expected": [
+      "ADO-1276490"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "bulk",
+      "deactivat"
+    ]
+  },
+  {
+    "id": "q25",
+    "query": "1319044",
+    "expected": [
+      "ADO-1319044"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "timezone|UTC",
+      "scheduled reports"
+    ]
+  },
+  {
+    "id": "q26",
+    "query": "1287655",
+    "expected": [
+      "ADO-1287655"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "duplicate",
+      "reconnect|websocket"
+    ]
+  }
 ]

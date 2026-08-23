@@ -8,6 +8,7 @@ import FilesChangedBar from './FilesChangedBar';
 import InlineFileRef from './InlineFileRef';
 import { parseFileRef } from '../utils/fileRefs';
 import { AgentStep, TurnSummary } from '../store/chatStore';
+import type { ChatAttachment } from '../constants';
 
 type InlineCodeProps = React.ComponentPropsWithoutRef<'code'>;
 
@@ -46,6 +47,8 @@ interface ChatMessageProps {
   content: string;
   isUser: boolean;
   isError?: boolean;
+  /** Files/images the user attached to this message. */
+  attachments?: ChatAttachment[];
   /** Tool-exploration steps taken before this answer — rendered collapsed above it. */
   agentSteps?: (AgentStep | string)[];
   /** Duration + files-changed rollup for the agent turn that produced this answer. */
@@ -59,12 +62,15 @@ interface ChatMessageProps {
   onUndo?: (sha: string) => void;
   /** Present when the turn this message triggered errored out — resends it. */
   onRetry?: () => void;
+  /** Thumbs up/down on this assistant response — the satisfaction signal. */
+  onFeedback?: (rating: 'up' | 'down') => void;
 }
 
 const ChatMessage: React.FC<ChatMessageProps> = ({
   content,
   isUser,
   isError,
+  attachments,
   agentSteps,
   turnSummary,
   timestamp,
@@ -72,8 +78,10 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   isReverting,
   onUndo,
   onRetry,
+  onFeedback,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
 
   const copyMessage = async () => {
     try {
@@ -85,11 +93,40 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     }
   };
 
+  const rateMessage = (rating: 'up' | 'down') => {
+    if (feedback === rating) return;
+    setFeedback(rating);
+    onFeedback?.(rating);
+  };
+
   return (
     <div className={`message ${isError ? 'error-message' : isUser ? 'user-message' : 'assistant-message'}`}>
       {isUser ? (
         <>
-          <div className="message-content">{content}</div>
+          {attachments && attachments.length > 0 && (
+            <div className="message-attachments">
+              {attachments.map((att, i) =>
+                att.kind === 'image' ? (
+                  <img
+                    key={`${att.name}-${i}`}
+                    src={att.content}
+                    alt={att.name}
+                    title={att.name}
+                    className="message-attachment-image"
+                  />
+                ) : (
+                  <span key={`${att.name}-${i}`} className="message-attachment-file" title={att.name}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                    {att.name}
+                  </span>
+                )
+              )}
+            </div>
+          )}
+          {content && <div className="message-content">{content}</div>}
           <div className="user-message-meta">
             {timestamp && <span className="user-message-timestamp">{formatTimestamp(timestamp)}</span>}
             <button
@@ -159,14 +196,42 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             <FilesChangedBar summary={turnSummary} />
           )}
           {!isError && (
-            <button
-              type='button'
-              className='message-copy-button'
-              onClick={copyMessage}
-              aria-label='Copy response'
-            >
-              {copied ? '✓ Copied' : 'Copy'}
-            </button>
+            <>
+              <div className="message-feedback">
+                <button
+                  type="button"
+                  className={`message-feedback-button${feedback === 'up' ? ' message-feedback-button--active' : ''}`}
+                  onClick={() => rateMessage('up')}
+                  disabled={feedback === 'up'}
+                  title="Good response"
+                  aria-label="Good response"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className={`message-feedback-button${feedback === 'down' ? ' message-feedback-button--active' : ''}`}
+                  onClick={() => rateMessage('down')}
+                  disabled={feedback === 'down'}
+                  title="Bad response"
+                  aria-label="Bad response"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                  </svg>
+                </button>
+              </div>
+              <button
+                type='button'
+                className='message-copy-button'
+                onClick={copyMessage}
+                aria-label='Copy response'
+              >
+                {copied ? '✓ Copied' : 'Copy'}
+              </button>
+            </>
           )}
         </>
       )}
