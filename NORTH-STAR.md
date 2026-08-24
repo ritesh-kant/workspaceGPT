@@ -5,7 +5,9 @@
 >
 > Decided 2026-08-15. Details: [CODING-AGENT-ROADMAP.md](CODING-AGENT-ROADMAP.md)
 > (capabilities + strategy), [PHASES.md](PHASES.md) (sequencing),
-> [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) (privacy/billing backbone).
+> [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) (privacy/billing backbone),
+> [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md) (differentiator #1,
+> made the product's first screen).
 
 ## The one-liner
 

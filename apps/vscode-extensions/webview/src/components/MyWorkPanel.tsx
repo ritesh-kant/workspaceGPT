@@ -1,0 +1,143 @@
+import React, { useState } from 'react';
+
+export interface WorkItemSummary {
+  id: number;
+  title: string;
+  type: string;
+  state: string;
+  sprint?: string;
+  url: string;
+  changedDate?: string;
+  inCurrentSprint: boolean;
+}
+
+interface MyWorkPanelProps {
+  items: WorkItemSummary[];
+  currentSprintName?: string;
+  /** True until the first response (cached or fresh) arrives. */
+  isLoading: boolean;
+  /** Set when the last refresh failed; items may still be a usable cache. */
+  error?: string;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+  onSelect: (item: WorkItemSummary) => void;
+}
+
+/** How many tickets show before the list is collapsed behind "+N more". */
+const VISIBLE_LIMIT = 5;
+
+/**
+ * The sprint's own name out of an ADO iteration path.
+ *
+ * Paths are project-rooted and can nest (`D2C\\Release 1\\Sprint 24`), so the
+ * leaf is the sprint the item is actually in. A single-segment path is the
+ * project root — the item is in no sprint at all — and returns undefined
+ * rather than labelling the row with the project name.
+ */
+export function sprintLabel(iterationPath?: string): string | undefined {
+  const segments = String(iterationPath ?? '')
+    .split(/[\\/]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return segments.length > 1 ? segments[segments.length - 1] : undefined;
+}
+
+/**
+ * "Your work" — the tickets assigned to you, shown in the chat empty state.
+ *
+ * This is the product's opening frame and the whole positioning in one panel:
+ * every other coding agent opens on an empty box over your repo, because the
+ * repo is all it knows. Clicking a ticket seeds the composer but deliberately
+ * does NOT send — the user stays in control of the first move.
+ */
+const MyWorkPanel: React.FC<MyWorkPanelProps> = ({
+  items,
+  currentSprintName,
+  isLoading,
+  error,
+  isRefreshing,
+  onRefresh,
+  onSelect,
+}) => {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? items : items.slice(0, VISIBLE_LIMIT);
+  const hiddenCount = items.length - VISIBLE_LIMIT;
+
+  return (
+    <div className='my-work-panel'>
+      <div className='my-work-header'>
+        <h2 className='my-work-title'>Your work</h2>
+        <div className='my-work-header-right'>
+          {currentSprintName && <span className='my-work-sprint-chip'>{currentSprintName}</span>}
+          <button
+            type='button'
+            className='my-work-refresh'
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            data-tooltip='Refresh'
+            aria-label='Refresh your work items'
+          >
+            {isRefreshing ? '⏳' : '↻'}
+          </button>
+        </div>
+      </div>
+
+      {/* An error with a usable cache is a staleness note, not a failure — the
+          list below is still real work the user can act on. */}
+      {error && (
+        <div className={`my-work-note ${items.length ? 'my-work-note--warn' : 'my-work-note--error'}`}>
+          {items.length ? `Showing your last synced tickets — refresh failed: ${error}` : error}
+        </div>
+      )}
+
+      {isLoading && !items.length ? (
+        <div className='my-work-empty'>Loading your tickets…</div>
+      ) : !items.length && !error ? (
+        <div className='my-work-empty'>Nothing assigned to you right now.</div>
+      ) : (
+        <div className={`my-work-list${expanded ? ' my-work-list--expanded' : ''}`}>
+          {visible.map((item) => (
+            <button
+              key={item.id}
+              type='button'
+              className='my-work-item'
+              onClick={() => onSelect(item)}
+              title={item.title}
+            >
+              {/* Defensive: these items can come from a cache written by an
+                  older build, and one missing field must not take down the
+                  whole empty state. */}
+              <span
+                className={`my-work-state-dot state-${(item.state ?? '').toLowerCase().replace(/\s+/g, '-')}`}
+              />
+              <span className='my-work-item-body'>
+                <span className='my-work-item-title'>
+                  <span className='my-work-item-id'>#{item.id}</span> {item.title}
+                </span>
+                {/* The sprint's real name beats a vague "other sprint": with the
+                    current sprint named in the header chip, the user can see for
+                    themselves which items sit elsewhere. */}
+                <span className='my-work-item-meta'>
+                  {[item.type, item.state, sprintLabel(item.sprint)].filter(Boolean).join(' · ')}
+                </span>
+              </span>
+              <span className='my-work-item-arrow'>→</span>
+            </button>
+          ))}
+          {hiddenCount > 0 && (
+            <button
+              type='button'
+              className='my-work-more-button'
+              onClick={() => setExpanded((wasExpanded) => !wasExpanded)}
+              aria-expanded={expanded}
+            >
+              {expanded ? 'Show fewer' : `+${hiddenCount} more assigned to you`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default MyWorkPanel;

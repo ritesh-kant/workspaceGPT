@@ -7,7 +7,6 @@ export const MESSAGE_TYPES = {
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
   SHOW_SETTINGS: 'show-settings',
-  UPDATE_MODEL: 'update-model',
   ERROR_CHAT: 'error-chat',
   RESET: 'reset',
   STOP_MESSAGE: 'stop-message',
@@ -137,6 +136,9 @@ export const MESSAGE_TYPES = {
   FETCH_ADO_USER_IDENTITY: 'fetch-ado-user-identity',
   FETCH_ADO_USER_IDENTITY_SUCCESS: 'fetch-ado-user-identity-success',
   FETCH_ADO_USER_IDENTITY_ERROR: 'fetch-ado-user-identity-error',
+  /** "Your work" panel: the tickets assigned to the signed-in user. */
+  GET_MY_WORK_ITEMS: 'get-my-work-items',
+  GET_MY_WORK_ITEMS_RESPONSE: 'get-my-work-items-response',
   SAVE_ADO_USER_DISPLAY_NAME: 'save-ado-user-display-name',
 
   MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
@@ -325,6 +327,8 @@ export const STORAGE_KEYS = {
   CONFLUENCE_OAUTH_TOKENS: 'confluence-oauth-tokens',
   ADO_SYNC_PROGRESS: 'ado-sync-progress',
   ADO_OAUTH_TOKENS: 'ado-oauth-tokens',
+  /** Last successful "assigned to me" fetch, so the panel renders instantly. */
+  ADO_MY_WORK_ITEMS_CACHE: 'ado-my-work-items-cache',
   // Deployment automation — write-scoped creds (SecretStorage), never shared to Chrome
   GITHUB_OAUTH_TOKENS: 'github-oauth-tokens',
   // (Optional GitHub App mode — see GitHubAppAuthService)

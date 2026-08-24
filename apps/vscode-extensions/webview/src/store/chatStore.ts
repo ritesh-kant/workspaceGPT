@@ -202,6 +202,13 @@ interface ChatState {
   addMessage: (message: Message) => void;
   /** Drop one message by index — used to clear a failed turn's error bubble before retrying it. */
   removeMessageAt: (index: number) => void;
+  /**
+   * Drop the message at `index` and everything after it. Backs the "edit an
+   * earlier message" flow: the edited turn and every answer that followed from
+   * the old wording are discarded, so the conversation forks cleanly instead of
+   * carrying a reply to a question that is no longer on screen.
+   */
+  truncateFrom: (index: number) => void;
   appendToLastMessage: (content: string) => void;
   addAgentStep: (step: AgentStep) => void;
   updateAgentStep: (id: string, patch: Partial<AgentStep>) => void;
@@ -294,6 +301,13 @@ export const useChatStore = create<ChatState>()(
       addMessage: (message) => set((state) => addMessageIn(state, message)),
       removeMessageAt: (index) => set((state) => ({
         messages: state.messages.filter((_, i) => i !== index),
+      })),
+      truncateFrom: (index) => set((state) => ({
+        messages: state.messages.slice(0, index),
+        // The discarded tail may have owned the in-flight turn's steps/rollup;
+        // they must not attach themselves to the re-asked turn's answer.
+        agentSteps: [],
+        pendingTurnSummary: null,
       })),
       appendToLastMessage: (content) => set((state) => appendToLastIn(state, content)),
       addAgentStep: (step) => set((state) => ({ agentSteps: [...state.agentSteps, step] })),

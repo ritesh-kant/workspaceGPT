@@ -49,6 +49,7 @@ import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { recordOriginalContent } from './agent/agentDiffProvider';
 import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
 import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
+import { fetchWorkItem } from './ado/adoWorkItemService';
 import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/inspectTools';
 import {
   agentOutputChannel,
@@ -64,6 +65,23 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
 }
+
+/** One bubble of the webview transcript, as the webview serializes it. */
+interface TranscriptEntry {
+  content?: string;
+  isUser?: boolean;
+  isError?: boolean;
+  writeReview?: unknown;
+}
+
+/**
+ * Projects a webview transcript onto the model-facing history. Error bubbles
+ * and write-review cards are UI artifacts, not conversation turns.
+ */
+const toModelHistory = (messages: TranscriptEntry[] | undefined): ChatMessage[] =>
+  (messages || [])
+    .filter((m) => !m.isError && !m.writeReview && !!m.content?.trim())
+    .map((m) => ({ role: m.isUser ? ('user' as const) : ('assistant' as const), content: m.content as string }));
 
 /** One structured agent-timeline step, as the webview renders it. */
 interface AgentStepStart {
@@ -89,6 +107,16 @@ interface TurnFileChange {
 type SearchResult = EmbeddingSearchResult;
 
 /**
+ * Bare continuation/confirmation replies ("go ahead", "continue", "yes") have
+ * no topical content of their own — classifying them in isolation from the
+ * ongoing conversation is effectively a coin flip that can silently abandon
+ * an in-progress codebase investigation for a generic chat answer (observed
+ * live: mid-investigation "go ahead" got reclassified away from CODEBASE).
+ */
+const CONTINUATION_RE =
+  /^(go ahead|go on|continue|keep going|please continue|please proceed|proceed|do it|yes|yep|yeah|sure|ok|okay|sounds good)[\s.!?]*$/i;
+
+/**
  * All the state one chat session's run owns. Sessions are independent: each
  * has its own model-facing history, its own (at most one) live worker, its
  * own write gate and its own turn rollup — so several chats can run at once
@@ -108,6 +136,13 @@ interface SessionRun {
   turnFilesChanged: Map<string, TurnFileChange>;
   /** First checkpoint of the turn — the "undo this turn" target. */
   turnFirstCheckpointSha: string | null;
+  /**
+   * Whether the last completed turn routed to live codebase tools. A bare
+   * continuation reply ("go ahead", "continue") carries no topical signal of
+   * its own for the classifier, so it inherits this instead of being
+   * reclassified from scratch (see CONTINUATION_RE in sendMessage).
+   */
+  lastUseCodebaseTools: boolean;
 }
 
 export class ChatService {
@@ -289,6 +324,7 @@ export class ChatService {
         turnStartMs: 0,
         turnFilesChanged: new Map(),
         turnFirstCheckpointSha: null,
+        lastUseCodebaseTools: false,
       };
       this.runs.set(sessionId, run);
     }
@@ -343,13 +379,10 @@ export class ChatService {
    * the user opens it from history. Skipped while the session has a live
    * run — its in-memory history is already ahead of what's on disk.
    */
-  public loadHistory(sessionId: string, messages: Array<{ content?: string; isUser?: boolean; isError?: boolean; writeReview?: unknown }>): void {
+  public loadHistory(sessionId: string, messages: TranscriptEntry[]): void {
     const run = this.runFor(sessionId);
     if (run.worker) return;
-    run.chatHistory = (messages || [])
-      // Error bubbles and write-review cards are UI artifacts, not turns.
-      .filter((m) => !m.isError && !m.writeReview && !!m.content?.trim())
-      .map((m) => ({ role: m.isUser ? 'user' as const : 'assistant' as const, content: m.content as string }));
+    run.chatHistory = toModelHistory(messages);
   }
 
   public async newChat(): Promise<void> {
@@ -368,7 +401,14 @@ export class ChatService {
     provider: string,
     contextSelection: string = 'Auto',
     attachments: ChatAttachment[] = [],
-    mentions: string[] = []
+    mentions: string[] = [],
+    /**
+     * Set when the user edited an earlier message: the surviving transcript
+     * prefix, which replaces this session's model-facing history so it forks
+     * with the UI instead of still carrying the original wording and the
+     * answers that followed from it.
+     */
+    historyOverride?: TranscriptEntry[]
   ): Promise<void> {
     const run = this.runFor(sessionId);
     if (run.worker) {
@@ -381,6 +421,11 @@ export class ChatService {
       return;
     }
     run.cancelled = false;
+    // Safe to replace unconditionally here: the live-worker case already
+    // returned above, so nothing is mid-turn against the old history.
+    if (historyOverride) {
+      run.chatHistory = toModelHistory(historyOverride);
+    }
     try {
       // An attachment-only send still needs a non-empty question for
       // classification and the prompt template.
@@ -451,6 +496,20 @@ export class ChatService {
 
       // ── Step 1: Rule-based classification (synchronous, zero latency) ──
       let classification: QueryClassification = classifyQuery(message, availableSources);
+
+      // A bare continuation reply inherits the previous turn's routing instead
+      // of being reclassified from scratch — see CONTINUATION_RE.
+      if (
+        contextSelection === 'Auto' &&
+        run.chatHistory.length > 0 &&
+        CONTINUATION_RE.test(message.trim())
+      ) {
+        classification = {
+          intent: classification.intent,
+          sources: run.lastUseCodebaseTools ? ['CODEBASE'] : classification.sources,
+          confidence: 'high',
+        };
+      }
 
       // Override sources when the user has explicitly chosen a context
       if (contextSelection !== 'Auto') {
@@ -584,6 +643,8 @@ export class ChatService {
           console.log(`Reranked to ${finalResults.length} results (threshold=${plan.similarityThreshold}).`);
         }
       }
+
+      run.lastUseCodebaseTools = useCodebaseTools;
 
       // What the user actually asked for, and whether retrieval could serve it.
       // Derived signals only — no prompt text or document content is sent.
@@ -720,6 +781,8 @@ export class ChatService {
         return this.searchKnowledge('CONFLUENCE', args);
       case 'search_tickets':
         return this.searchKnowledge('ADO', args);
+      case 'get_ticket':
+        return fetchWorkItem(this.context, args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -934,6 +997,8 @@ export class ChatService {
         return { kind: 'search', title: 'Searched Confluence', detail: args?.query ?? '' };
       case 'search_tickets':
         return { kind: 'search', title: 'Searched Azure DevOps', detail: args?.query ?? '' };
+      case 'get_ticket':
+        return { kind: 'read', title: 'Read ticket', detail: String(args?.id ?? '') };
       case 'read_file': {
         const range = args?.startLine
           ? `#L${args.startLine}${args?.endLine ? `-${args.endLine}` : ''}`
@@ -1011,6 +1076,9 @@ export class ChatService {
       case 'search_docs':
       case 'search_tickets':
         return { summary: plural(result?.results?.length ?? 0, 'result') };
+      case 'get_ticket':
+        // The state is the useful at-a-glance fact ("Active", "Resolved").
+        return result?.state ? { summary: String(result.state) } : {};
       default:
         return {};
     }
@@ -1039,6 +1107,8 @@ export class ChatService {
         return `Searching Confluence for "${args?.query ?? ''}"...`;
       case 'search_tickets':
         return `Searching Azure DevOps for "${args?.query ?? ''}"...`;
+      case 'get_ticket':
+        return `Reading ticket ${args?.id ?? ''}...`;
       case 'get_diagnostics':
         return args?.path ? `Checking problems in ${args.path}...` : 'Checking workspace problems...';
       case 'git_status':

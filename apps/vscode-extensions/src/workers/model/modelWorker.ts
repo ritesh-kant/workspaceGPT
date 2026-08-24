@@ -191,14 +191,38 @@ const TOOL_DEFS = [
     function: {
       name: 'search_tickets',
       description:
-        'Semantic search over Azure DevOps work items (tickets, user stories, bugs). Use when the user references a ticket ID or asks to implement/fix something tracked there — read the ticket first to get acceptance criteria and context.',
+        'Semantic search over Azure DevOps work items by DESCRIPTION or topic (e.g. "tickets about checkout retries"). Searches the local synced index, so it may be stale and is unreliable for exact IDs — when you already have a ticket ID, use get_ticket instead.',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Ticket ID (e.g. "D2C-1234") or natural-language query.' },
+          query: { type: 'string', description: 'Natural-language description of the work item to find.' },
           topK: { type: 'number', description: 'Number of results (default 5, max 10).' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_ticket',
+      description:
+        'Read ONE Azure DevOps work item by ID, live from Azure DevOps (always current, never truncated). Use this whenever the user names a ticket — it returns the title, state, assignee, sprint, description and acceptance criteria. Read the ticket BEFORE exploring code so you implement what was actually asked for.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description:
+              'Work item ID as the user wrote it — any prefix is tolerated ("1234", "TKT-1234", "#1234").',
+          },
+          includeComments: {
+            type: 'boolean',
+            description:
+              'Also fetch the discussion thread. Costly in tokens — request it only when the description and acceptance criteria are too thin to act on.',
+          },
+        },
+        required: ['id'],
       },
     },
   },
@@ -1209,15 +1233,20 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         });
         continue;
       }
-      // Applied changes deserve at least a one-line report — an empty "done"
-      // after edits looks like a hang to the user.
-      if (!outcome.content.trim() && writesApplied > 0 && !summaryNudgeUsed) {
+      // Any turn that ran tools deserves at least a one-line report — an empty
+      // "done" after edits (or after exploration that led nowhere) looks like
+      // a hang, or worse, silently reads as success once the webview's
+      // fallback text papers over it (observed live: a search-only turn found
+      // no conclusive match, wrote nothing, and returned empty content).
+      if (!outcome.content.trim() && toolCallsExecuted > 0 && !summaryNudgeUsed) {
         summaryNudgeUsed = true;
         messages.push({ role: 'assistant', content: '(empty response)' });
         messages.push({
           role: 'user',
           content:
-            'You applied file changes but returned no answer. In 1-2 sentences, state what you changed and whether diagnostics are clean. Do not call more tools unless something is broken.',
+            writesApplied > 0
+              ? 'You applied file changes but returned no answer. In 1-2 sentences, state what you changed and whether diagnostics are clean. Do not call more tools unless something is broken.'
+              : 'You ran tools but returned no answer. In 1-2 sentences, state what you found, and if you did not find enough to complete the task, say so explicitly and name what is still missing. Do not call more tools unless something is broken.',
         });
         continue;
       }

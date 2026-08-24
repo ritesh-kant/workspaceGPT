@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -62,6 +62,13 @@ interface ChatMessageProps {
   onUndo?: (sha: string) => void;
   /** Present when the turn this message triggered errored out — resends it. */
   onRetry?: () => void;
+  /**
+   * Rewrite this user message and re-ask from here. Absent while a run is in
+   * flight (forking a live conversation would race the answer being streamed).
+   */
+  onEdit?: (newContent: string) => void;
+  /** Fired when this bubble enters/leaves edit mode so the parent can dim the rest of the chat. */
+  onEditingChange?: (editing: boolean) => void;
   /** Thumbs up/down on this assistant response — the satisfaction signal. */
   onFeedback?: (rating: 'up' | 'down') => void;
 }
@@ -78,10 +85,55 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   isReverting,
   onUndo,
   onRetry,
+  onEdit,
+  onEditingChange,
   onFeedback,
 }) => {
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  const isEditing = draft !== null;
+  const canSend = !!(draft ?? '').trim();
+
+  const autosizeEdit = () => {
+    const el = editRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+  };
+
+  useEffect(() => {
+    onEditingChange?.(isEditing);
+    return () => onEditingChange?.(false);
+  }, [isEditing, onEditingChange]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    autosizeEdit();
+    const el = editRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [isEditing]);
+
+  const commitEdit = () => {
+    const next = (draft ?? '').trim();
+    setDraft(null);
+    // An unchanged (or emptied) draft is a no-op — don't re-run the turn.
+    if (!next || next === content.trim()) return;
+    onEdit?.(next);
+  };
+
+  const onEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      commitEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setDraft(null);
+    }
+  };
 
   const copyMessage = async () => {
     try {
@@ -100,8 +152,42 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   };
 
   return (
-    <div className={`message ${isError ? 'error-message' : isUser ? 'user-message' : 'assistant-message'}`}>
+    <div className={`message ${isError ? 'error-message' : isUser ? 'user-message' : 'assistant-message'}${isEditing ? ' user-message--editing' : ''}`}>
       {isUser ? (
+        isEditing ? (
+          <div className="message-edit">
+            <textarea
+              ref={editRef}
+              className="message-edit-input"
+              value={draft ?? ''}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                requestAnimationFrame(autosizeEdit);
+              }}
+              onKeyDown={onEditKeyDown}
+              rows={1}
+              aria-label="Edit message"
+            />
+            <div className="message-edit-toolbar">
+              <button type="button" className="message-edit-cancel" onClick={() => setDraft(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="message-edit-send"
+                onClick={commitEdit}
+                disabled={!canSend}
+                title="Send"
+                aria-label="Send"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 19V5" />
+                  <path d="M5 12l7-7 7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        ) : (
         <>
           {attachments && attachments.length > 0 && (
             <div className="message-attachments">
@@ -129,6 +215,20 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
           {content && <div className="message-content">{content}</div>}
           <div className="user-message-meta">
             {timestamp && <span className="user-message-timestamp">{formatTimestamp(timestamp)}</span>}
+            {onEdit && !isEditing && (
+              <button
+                type="button"
+                className="user-message-icon-button"
+                onClick={() => setDraft(content)}
+                title="Edit and re-ask from here"
+                aria-label="Edit message"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
+                </svg>
+              </button>
+            )}
             <button
               type="button"
               className="user-message-icon-button"
@@ -178,6 +278,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             )}
           </div>
         </>
+        )
       ) : (
         <>
           {agentSteps && agentSteps.length > 0 && (

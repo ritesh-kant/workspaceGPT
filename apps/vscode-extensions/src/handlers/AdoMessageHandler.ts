@@ -4,6 +4,7 @@ import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
 import { AdoService, AdoConfig } from '../services/ado/adoService';
 import { AdoAuthService } from '../services/ado/adoAuthService';
 import { AdoEmbeddingService } from '../services/ado/adoEmbeddingService';
+import { listMyWorkItems, MyWorkItemsResult } from '../services/ado/adoWorkItemService';
 import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
@@ -62,6 +63,9 @@ export class AdoMessageHandler {
       case MESSAGE_TYPES.RESUME_INDEXING_ADO:
         this.analyticsService.trackEvent('ado_indexing_resumed');
         await this.handleResumeIndexingAdo();
+        return true;
+      case MESSAGE_TYPES.GET_MY_WORK_ITEMS:
+        await this.handleGetMyWorkItems(!!data.forceRefresh);
         return true;
       case MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY:
         await this.handleFetchAdoUserIdentity();
@@ -132,6 +136,9 @@ export class AdoMessageHandler {
 
       await this.adoService.resetSyncProgress();
       await this.adoEmbeddingService.resetEmbeddingProgress();
+      // Drop the cached "your work" list — a disconnected user must not keep
+      // seeing their tickets in the chat empty state.
+      await this.context.globalState.update(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE, undefined);
 
       const adoDirPath = path.join(
         this.context.globalStorageUri.fsPath,
@@ -188,6 +195,50 @@ export class AdoMessageHandler {
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.FETCH_ADO_PROJECTS_ERROR,
         message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * "Your work" panel data. Answers twice when a cache exists: once immediately
+   * from `globalState` so the chat empty state paints without waiting on the
+   * network, then again with fresh results. The webview replaces its list on
+   * each response, so the second post just supersedes the first.
+   *
+   * A failed refresh never clears a good cache — the user keeps seeing their
+   * tickets and gets told the refresh failed, rather than watching their work
+   * disappear because a token expired.
+   */
+  private async handleGetMyWorkItems(forceRefresh: boolean): Promise<void> {
+    const cached = this.context.globalState.get<MyWorkItemsResult>(
+      STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE
+    );
+
+    if (cached && !forceRefresh) {
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE,
+        ...cached,
+        fromCache: true,
+      });
+    }
+
+    try {
+      const fresh = await listMyWorkItems(this.context);
+      await this.context.globalState.update(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE, fresh);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE,
+        ...fresh,
+        fromCache: false,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('Could not fetch assigned ADO work items:', message);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE,
+        // Keep whatever we already had on screen; flag the staleness instead.
+        ...(cached ?? { items: [], fetchedAt: '' }),
+        fromCache: !!cached,
+        error: message,
       });
     }
   }

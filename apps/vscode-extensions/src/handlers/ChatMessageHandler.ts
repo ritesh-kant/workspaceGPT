@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { MESSAGE_TYPES, MODEL, MODEL_PROVIDERS } from '../../constants';
+import { MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { ChatService } from '../services/chatService';
 import { HistoryService } from '../services/historyService';
 import { AnalyticsService } from '../services/analyticsService';
@@ -85,13 +85,6 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.SEARCH_MENTION_TARGETS:
         await this.handleSearchMentionTargets(data);
         return true;
-      case MESSAGE_TYPES.UPDATE_MODEL:
-        this.analyticsService.trackEvent('model_updated', {
-          modelId: data.modelId,
-          modelType: data.modelType,
-        });
-        await this.handleUpdateModel(data);
-        return true;
       case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS:
         this.analyticsService.trackEvent('models_fetched');
         await this.handleFetchAvailableModels(data);
@@ -128,8 +121,8 @@ export class ChatMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
-      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions } = data;
-      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions);
+      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride } = data;
+      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride);
     } catch (error) {
       this.analyticsService.trackEvent('message_send_error', {
         modelId: data.modelId,
@@ -247,18 +240,6 @@ export class ChatMessageHandler {
       type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
       message: errorMessage,
     });
-  }
-
-  private async handleUpdateModel(data: any): Promise<void> {
-    try {
-      await this.context.globalState.update(MODEL.DEFAULT_CHAT_MODEL, data.modelId);
-    } catch (error) {
-      console.error('Error updating model:', error);
-      this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.MODEL_DOWNLOAD_ERROR,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 
   private async handleFetchAvailableModels(data: any) {

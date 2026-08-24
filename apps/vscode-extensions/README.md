@@ -13,24 +13,35 @@
 
 Visit our homepage: [workspacegpt.in](https://workspacegpt.in)
 
-**WorkspaceGPT** is your AI-powered, RAG-based coding assistant designed specifically for your local development environment. It allows you to ask workspace-related questions and get precise answers — all from the comfort of your VSCode editor.
+**WorkspaceGPT is the coding agent that knows your whole org.**
 
-## 🔐 Flexible Privacy Options
+Every other coding agent starts from your repo and a prompt. The knowledge about *why* the code should change — the ticket, the design page, the release process — lives in Confluence and Azure DevOps, and you're expected to copy-paste it in. WorkspaceGPT reads it directly, mid-task.
 
-WorkspaceGPT gives you control over your data privacy:
+It's a full agent: it searches and reads your code, edits files, runs your tests, and shows you every change for approval before it touches disk.
 
-- **100% Local Operation**: With Ollama provider, everything runs locally on your system with no data sent to third-party servers
-- **Cloud Provider Options**: For enhanced capabilities, you can choose to use cloud-based providers like OpenAI, Gemini, Groq, Requestly, or OpenRouter
-- **You Choose**: Select the privacy level that works for your needs while maintaining security
+## 🧭 What makes it different
+
+- **It knows your org, not just your repo.** Your Confluence docs and ADO tickets are first-class context the agent can pull mid-task — ask about a ticket and it can find the design doc *and* the code that implements it.
+- **Privacy is architecture, not a promise.** In **Local mode** the model, embeddings, and search index all run on your machine — nothing leaves it, no account, no telemetry. Other tools offer a privacy *policy*; this is a privacy *mode*.
+- **It participates in shipping.** Release config-sync and hotfix automation (plan → approve → apply) mean the work doesn't stop at "PR opened."
+
+## 🔐 Two modes, your choice
+
+- **Local mode** — bring your own model via [Ollama](https://ollama.com/), local embeddings, local vector store. **Nothing leaves your machine.** Best for strict environments.
+- **Remote mode** — cloud models (Gemini, OpenAI, Groq, OpenRouter, Requestly) and a hosted Qdrant index for speed and quality. You supply the keys; data goes to the providers you choose.
+
+The mode switch is the single seam — Local mode never adds a network dependency.
 
 ## 🧠 Features
 
-- 🤖 **AI-Powered Workspace Q&A**: Get context-aware answers from your local workspace using Retrieval-Augmented Generation (RAG)
-- 📄 **Confluence One-Click Integration**: Seamlessly connect to your Confluence space and chat with your documentation with just one click
-- 🔷 **Azure DevOps (ADO) Support**: Deep integration with ADO to track work items, pull requests, and synchronize relevant context directly
-- 🧭 **Smart Code Navigation**: Understand and explore your codebase more efficiently (coming soon!)
-- 💬 **Interactive Chat Interface**: Ask questions and receive intelligent, project-specific responses
-- ⚡ **Runs Locally**: No remote APIs. Zero data leakage. Total privacy.
+- 🧑‍💻 **Agentic coding**: The agent reads your code, makes multi-file edits, and runs commands to verify its own work
+- ✅ **Review before it writes**: Every file change is shown as a diff you approve or reject; one-click revert restores any checkpoint
+- 📄 **Confluence integration**: Connect your space and put your team's documentation in the agent's reach
+- 🔷 **Azure DevOps integration**: Work items and PR context synced and searchable
+- 🔎 **Codebase understanding**: ripgrep search, symbol/definition/reference lookup, and repo orientation via your editor's language server
+- 💬 **@-mentions**: Pull specific files and folders into the conversation
+- 🚀 **Release automation**: Config-sync and hotfix pipelines with a terraform-style plan → approve → apply flow
+- 🛡️ **Runs offline**: In Local mode, no remote APIs and no data leakage
 
 ## 🚀 Getting Started
 

@@ -11,6 +11,7 @@ import AgentWriteCard from './components/AgentWriteCard';
 import AgentTimeline from './components/AgentTimeline';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import MentionPicker from './components/MentionPicker';
+import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
 import Onboarding from './components/onboarding/Onboarding';
@@ -175,11 +176,17 @@ const TURN_SCOPED_TYPES = new Set<string>([
   MESSAGE_TYPES.ERROR_CHAT,
 ]);
 
+/**
+ * Starter prompts double as positioning: the first two show the thing no other
+ * coding agent does out of the box (ticket/doc context feeding a code task),
+ * the rest cover plain codebase and doc questions. Keep the org-grounded ones
+ * first — they're the reason someone picks this over Cursor/Claude Code.
+ */
 const STARTER_PROMPTS = [
-  { icon: '', text: 'What does this Project do?' },
-  { icon: '', text: 'Explain the architecture of this Project' },
   { icon: '', text: 'Show Azure DevOps tickets assigned to me' },
-  { icon: '', text: 'Tell me the status of the ticket tkt-123456' },
+  { icon: '', text: 'Read ticket TKT-1234 and find the code it affects' },
+  { icon: '', text: 'Explain the architecture of this project' },
+  { icon: '', text: 'What do our docs say about the release process?' },
 ];
 
 const App: React.FC = () => {
@@ -194,6 +201,7 @@ const App: React.FC = () => {
     historyList,
     addMessage,
     removeMessageAt,
+    truncateFrom,
     appendToLastMessage,
     clearMessages,
     setInputValue,
@@ -230,6 +238,24 @@ const App: React.FC = () => {
 
   const mode = config.mode;
   const isConfluenceConnected = config.confluence?.isAuthenticated || false;
+  // Gate on the org/project actually being present, not just `isAuthenticated`.
+  // The webview store starts from defaults and is hydrated from globalState a
+  // beat later; firing on the boolean alone can race that hydration and ask the
+  // host for work items while its settings still read as unconfigured.
+  const adoOrgName = config.ado?.orgName;
+  const adoProjectName = config.ado?.projectName;
+  const isAdoConnected = !!(config.ado?.isAuthenticated && adoOrgName && adoProjectName);
+
+  // "Your work" panel state. `myWorkLoaded` distinguishes "no response yet"
+  // from "responded with an empty list" — the panel must not say "nothing
+  // assigned to you" while the first fetch is still in flight.
+  const [myWorkItems, setMyWorkItems] = useState<WorkItemSummary[]>([]);
+  const [myWorkSprint, setMyWorkSprint] = useState<string | undefined>(undefined);
+  const [myWorkError, setMyWorkError] = useState<string | undefined>(undefined);
+  const [myWorkLoaded, setMyWorkLoaded] = useState(false);
+  const [myWorkRefreshing, setMyWorkRefreshing] = useState(false);
+  /** Bounded auto-retries, so a lost hydration race self-heals. */
+  const myWorkRetriesRef = useRef(0);
   const hasRemoteChatKey =
     !!config.embedding?.apiKeys?.some((k) => k.trim()) || !!config.embedding?.apiKey?.trim();
 
@@ -271,6 +297,7 @@ const App: React.FC = () => {
   // Transient note when a picked/pasted file was rejected (type/size/count).
   const [attachmentNote, setAttachmentNote] = useState<string | null>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // ── @-mention picker ──
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -686,6 +713,32 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.GET_CHAT_HISTORY_LIST_RESPONSE:
           setHistoryList(message.historyList || []);
           break;
+        case MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE: {
+          // Two responses arrive per request when a cache exists (cache, then
+          // fresh); each simply replaces the list. Only the fresh one ends the
+          // refreshing state.
+          const items = message.items || [];
+          setMyWorkItems(items);
+          setMyWorkSprint(message.currentSprintName);
+          setMyWorkLoaded(true);
+
+          // A failure with nothing to show may just be a lost race against the
+          // host's settings hydration — retry a couple of times before
+          // reporting it, rather than leaving a permanent "not configured" on
+          // screen for an account that IS configured.
+          if (message.error && !items.length && myWorkRetriesRef.current < 2) {
+            myWorkRetriesRef.current += 1;
+            setTimeout(
+              () => vscode.postMessage({ type: MESSAGE_TYPES.GET_MY_WORK_ITEMS, forceRefresh: true }),
+              1200
+            );
+            break;
+          }
+
+          setMyWorkError(message.error);
+          if (!message.fromCache || message.error) setMyWorkRefreshing(false);
+          break;
+        }
         case MESSAGE_TYPES.SEARCH_MENTION_TARGETS_RESPONSE:
           // Drop stale replies — only the newest keystroke's results count.
           if (message.requestId === mentionRequestIdRef.current) {
@@ -1058,6 +1111,46 @@ const App: React.FC = () => {
     autosizeInput(inputRef.current);
   }, [inputValue]);
 
+  /**
+   * Load "your work" whenever ADO is connected (and clear it when it isn't, so
+   * disconnecting doesn't leave a stale list on screen). Fires once per connect
+   * rather than on every empty state, since the host answers from cache first.
+   */
+  useEffect(() => {
+    if (!isAdoConnected) {
+      setMyWorkItems([]);
+      setMyWorkLoaded(false);
+      setMyWorkError(undefined);
+      return;
+    }
+    myWorkRetriesRef.current = 0;
+    setMyWorkRefreshing(true);
+    vscode.postMessage({ type: MESSAGE_TYPES.GET_MY_WORK_ITEMS });
+    // Re-runs if org/project arrive or change (project switch, late hydration).
+  }, [isAdoConnected, adoOrgName, adoProjectName]);
+
+  const handleRefreshMyWork = () => {
+    myWorkRetriesRef.current = 0;
+    setMyWorkRefreshing(true);
+    setMyWorkError(undefined);
+    vscode.postMessage({ type: MESSAGE_TYPES.GET_MY_WORK_ITEMS, forceRefresh: true });
+  };
+
+  /**
+   * Seed the composer from a ticket — deliberately WITHOUT sending. A ticket is
+   * a big, under-specified task; the user should see and be able to adjust the
+   * ask before the agent starts. The prompt asks for a plan first so the
+   * org-context step (read the ticket, find the design doc) is visible instead
+   * of the agent charging straight into edits on a misread.
+   */
+  const handleSelectWorkItem = (item: WorkItemSummary) => {
+    setInputValue(
+      `Work on ticket ${item.id} (${item.title}) — read the ticket, find the code it affects, ` +
+        'and propose a plan before changing anything.'
+    );
+    inputRef.current?.focus();
+  };
+
   const handleStarterPrompt = (promptText: string) => {
     setInputValue(promptText);
     // Trigger send on next tick so inputValue is set
@@ -1185,6 +1278,51 @@ const App: React.FC = () => {
     });
   };
 
+  // Rewrite an earlier user message and re-ask from that point: the edited turn
+  // and everything after it are dropped, then the new wording is sent as a
+  // fresh turn. `historyOverride` carries the surviving prefix so the host's
+  // model-facing history forks with the UI — without it the model would still
+  // be answering the original question it can no longer see.
+  const handleEditMessage = (index: number, newContent: string) => {
+    if (isLoading) return;
+    const original = messages[index];
+    if (!original?.isUser) return;
+
+    const historyOverride = messages.slice(0, index).map((m) => ({
+      content: m.content,
+      isUser: m.isUser,
+      isError: m.isError,
+      writeReview: m.writeReview,
+    }));
+    // Mentions the user deleted while editing must not still be resolved.
+    const mentions = activeMentions(newContent, new Set(original.mentions ?? []));
+
+    truncateFrom(index);
+    if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
+    resetStreamBuffer();
+    addMessage({
+      content: newContent,
+      isUser: true,
+      ...(original.attachments?.length ? { attachments: original.attachments } : {}),
+      ...(mentions.length > 0 ? { mentions } : {}),
+    });
+    setIsLoading(true);
+    setIsStreaming(false);
+
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId: currentSessionId,
+      message: newContent,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+      historyOverride,
+      ...(original.attachments?.length ? { attachments: original.attachments } : {}),
+      ...(mentions.length > 0 ? { mentions } : {}),
+    });
+  };
+
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
     const now = new Date();
@@ -1217,6 +1355,17 @@ const App: React.FC = () => {
         {showTips && messages.length === 0 ? (
           isConfluenceConnected ? (
             <div className='recent-chats-container'>
+                {isAdoConnected && (
+                  <MyWorkPanel
+                    items={myWorkItems}
+                    currentSprintName={myWorkSprint}
+                    isLoading={!myWorkLoaded}
+                    error={myWorkError}
+                    isRefreshing={myWorkRefreshing}
+                    onRefresh={handleRefreshMyWork}
+                    onSelect={handleSelectWorkItem}
+                  />
+                )}
               <div className='recent-chats-header'>
                 <div className='recent-chats-title-group'>
                   <h2>Recent Chats</h2>
@@ -1272,8 +1421,22 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className='welcome-container'>
+                {isAdoConnected && (
+                  <MyWorkPanel
+                    items={myWorkItems}
+                    currentSprintName={myWorkSprint}
+                    isLoading={!myWorkLoaded}
+                    error={myWorkError}
+                    isRefreshing={myWorkRefreshing}
+                    onRefresh={handleRefreshMyWork}
+                    onSelect={handleSelectWorkItem}
+                  />
+                )}
               <h1 className='welcome-title'>👋 Hello</h1>
-              <p className='welcome-subtitle'>How can WorkspaceGPT help?</p>
+              <p className='welcome-subtitle'>
+                The coding agent that knows your whole org — your Confluence docs
+                and Azure DevOps tickets, not just your repo.
+              </p>
               <div className='privacy-container'>
                 <div className='privacy-message'>
                   <span className='privacy-icon'>🛡️</span>
@@ -1302,10 +1465,18 @@ const App: React.FC = () => {
                     <span className='tip-arrow'>→</span>
                   </div>
                   <div className='tip-item'>
-                    <span className='tip-icon'>💡</span>
+                    <span className='tip-icon'>🧑‍💻</span>
                     <span>
-                      Ask questions naturally about your docs – get insights and
-                      explore your documentation effortlessly
+                      Ask it to change code, not just explain it — every edit is
+                      shown as a diff you approve first, and always revertable
+                    </span>
+                  </div>
+                  <div className='tip-item'>
+                    <span className='tip-icon'>🛡️</span>
+                    <span>
+                      {mode === 'remote'
+                        ? 'Switch to Local mode any time for a fully offline setup — nothing leaves your machine'
+                        : "You're fully offline: no account, no telemetry, no data leaving this machine"}
                     </span>
                   </div>
                 </div>
@@ -1328,7 +1499,7 @@ const App: React.FC = () => {
             </div>
           )
         ) : (
-          <div className='messages-container' ref={messagesContainerRef} onScroll={handleMessagesScroll}>
+          <div className={`messages-container${editingIndex !== null ? ' messages-container--editing' : ''}`} ref={messagesContainerRef} onScroll={handleMessagesScroll}>
             {messages.map((message, index) =>
               message.writeReview ? (
                 <AgentWriteCard
@@ -1360,6 +1531,19 @@ const App: React.FC = () => {
                       ? () => handleRetry(message.content, index + 1, message.attachments, message.mentions)
                       : undefined
                   }
+                  onEdit={
+                    // Editing forks the conversation — only offered on user
+                    // messages, and never while a run is in flight.
+                    message.isUser && !isLoading && !isStreaming
+                      ? (newContent) => handleEditMessage(index, newContent)
+                      : undefined
+                  }
+                  onEditingChange={
+                    message.isUser
+                      ? (editing) =>
+                          setEditingIndex((prev) => (editing ? index : prev === index ? null : prev))
+                      : undefined
+                  }
                   onFeedback={
                     !message.isUser ? (rating) => handleFeedback(index, rating) : undefined
                   }
@@ -1379,7 +1563,7 @@ const App: React.FC = () => {
           </div>
         )}
         <div
-          className={`input-container${isDraggingFile ? ' input-container--dragging' : ''}`}
+          className={`input-container${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}
           onDragOver={(e) => {
             if (e.dataTransfer?.types?.includes('Files')) {
               e.preventDefault();
