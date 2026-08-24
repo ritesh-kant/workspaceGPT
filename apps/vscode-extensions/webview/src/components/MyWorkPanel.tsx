@@ -23,8 +23,12 @@ interface MyWorkPanelProps {
   onSelect: (item: WorkItemSummary) => void;
 }
 
-/** How many tickets show before the list is collapsed behind "+N more". */
-const VISIBLE_LIMIT = 5;
+/**
+ * How many tickets show before the list is collapsed behind "+N more". Three
+ * keeps the greeting, this panel, and recent chats all visible without
+ * scrolling in a typical sidebar; the expander is one click away.
+ */
+const VISIBLE_LIMIT = 3;
 
 /**
  * The sprint's own name out of an ADO iteration path.

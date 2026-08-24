@@ -12,6 +12,8 @@ import AgentTimeline from './components/AgentTimeline';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import MentionPicker from './components/MentionPicker';
 import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
+import HomeGreeting from './components/HomeGreeting';
+import QuickTipsSection from './components/QuickTipsSection';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
 import Onboarding from './components/onboarding/Onboarding';
@@ -1355,6 +1357,7 @@ const App: React.FC = () => {
         {showTips && messages.length === 0 ? (
           isConfluenceConnected ? (
             <div className='recent-chats-container'>
+                <HomeGreeting />
                 {isAdoConnected && (
                   <MyWorkPanel
                     items={myWorkItems}
@@ -1421,66 +1424,19 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className='welcome-container'>
-                {isAdoConnected && (
-                  <MyWorkPanel
-                    items={myWorkItems}
-                    currentSprintName={myWorkSprint}
-                    isLoading={!myWorkLoaded}
-                    error={myWorkError}
-                    isRefreshing={myWorkRefreshing}
-                    onRefresh={handleRefreshMyWork}
-                    onSelect={handleSelectWorkItem}
-                  />
-                )}
-              <h1 className='welcome-title'>👋 Hello</h1>
-              <p className='welcome-subtitle'>
-                The coding agent that knows your whole org — your Confluence docs
-                and Azure DevOps tickets, not just your repo.
-              </p>
-              <div className='privacy-container'>
-                <div className='privacy-message'>
-                  <span className='privacy-icon'>🛡️</span>
-                  <span>
-                    {mode === 'remote'
-                      ? "You're in Remote mode: chat models run in the cloud, and your search index lives in your own Qdrant cluster."
-                      : "You're in Local mode: everything — chat model, embeddings, and your search index — runs on this machine."}
-                  </span>
-                </div>
-              </div>
-              <div className='tips-container'>
-                <h2 className='tips-title'>✨ Quick Tips</h2>
-                <div className='tips-list'>
-                  <div
-                    className='tip-item tip-item--interactive'
-                    onClick={() => setActiveView('settings')}
-                    role='button'
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter') setActiveView('settings'); }}
-                  >
-                    <span className='tip-icon'>🔗</span>
-                    <span>
-                      Connect Confluence in Settings to access your team's
-                      knowledge base instantly
-                    </span>
-                    <span className='tip-arrow'>→</span>
-                  </div>
-                  <div className='tip-item'>
-                    <span className='tip-icon'>🧑‍💻</span>
-                    <span>
-                      Ask it to change code, not just explain it — every edit is
-                      shown as a diff you approve first, and always revertable
-                    </span>
-                  </div>
-                  <div className='tip-item'>
-                    <span className='tip-icon'>🛡️</span>
-                    <span>
-                      {mode === 'remote'
-                        ? 'Switch to Local mode any time for a fully offline setup — nothing leaves your machine'
-                        : "You're fully offline: no account, no telemetry, no data leaving this machine"}
-                    </span>
-                  </div>
-                </div>
-              </div>
+              <HomeGreeting />
+              {isAdoConnected && (
+                <MyWorkPanel
+                  items={myWorkItems}
+                  currentSprintName={myWorkSprint}
+                  isLoading={!myWorkLoaded}
+                  error={myWorkError}
+                  isRefreshing={myWorkRefreshing}
+                  onRefresh={handleRefreshMyWork}
+                  onSelect={handleSelectWorkItem}
+                />
+              )}
+              <QuickTipsSection mode={mode} onOpenSettings={() => setActiveView('settings')} />
               <div className='prompt-suggestions'>
                 <h2 className='prompt-suggestions-title'>💬 Try asking</h2>
                 <div className='prompt-suggestions-list'>
