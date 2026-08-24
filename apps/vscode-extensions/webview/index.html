@@ -5,9 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WorkspaceGPT Chat</title>
     <style>
-      body {
+      html, body, #root {
         padding: 0;
         margin: 0;
+        width: 100%;
+        height: 100%;
+      }
+      /* VS Code has no per-view min width, so the sash can be dragged narrower
+         than the layout supports. #root gets its min-width floor at runtime
+         from SIDEBAR_MIN_WIDTH_PX (see webview/src/vscode.ts), so the layout
+         holds its shape and clips at the sash instead of reflowing into a
+         broken state. Keeping it in JS means the threshold lives in one place. */
+      html, body {
+        overflow-x: hidden;
       }
     </style>
   </head>

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { EXTENSION, MESSAGE_TYPES, STORAGE_KEYS, normalizeQdrantUrl } from '../../constants';
+import { collapseWorkspaceGptSidebar } from '../utils/collapseSidebar';
 import { clearWorkspaceGPTData } from 'src/utils/clearData';
 import { AnalyticsService } from '../services/analyticsService';
 import { installMcpServer } from '../utils/mcpInstaller';
@@ -63,6 +64,9 @@ export class SystemMessageHandler {
         return true;
       case MESSAGE_TYPES.TEST_QDRANT_CONNECTION:
         await this.handleTestQdrantConnection(data);
+        return true;
+      case MESSAGE_TYPES.COLLAPSE_SIDEBAR:
+        await collapseWorkspaceGptSidebar(data?.dock);
         return true;
     }
     return false;

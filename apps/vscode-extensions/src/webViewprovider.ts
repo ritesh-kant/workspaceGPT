@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { WebviewHtmlTemplate } from './templates/WebviewHtmlTemplate';
 import { MESSAGE_TYPES, MODEL, ModelTypeEnum, STORAGE_KEYS } from '../constants';
+import { collapseWorkspaceGptSidebar } from './utils/collapseSidebar';
 
 export class WebViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -106,6 +107,10 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
 
   private setupMessageHandler(webviewView: vscode.WebviewView): void {
     webviewView.webview.onDidReceiveMessage(async (data) => {
+      if (data?.type === MESSAGE_TYPES.COLLAPSE_SIDEBAR) {
+        await collapseWorkspaceGptSidebar(data.dock);
+        return;
+      }
       await this.messageHandler?.handleMessage(data);
     });
   }

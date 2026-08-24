@@ -7,6 +7,9 @@ export const MESSAGE_TYPES = {
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
   SHOW_SETTINGS: 'show-settings',
+  // Webview → host: the sidebar was dragged below SIDEBAR_MIN_WIDTH_PX; hide
+  // the bar that currently hosts this view instead of rendering a broken layout.
+  COLLAPSE_SIDEBAR: 'collapse-sidebar',
   ERROR_CHAT: 'error-chat',
   RESET: 'reset',
   STOP_MESSAGE: 'stop-message',
@@ -355,6 +358,13 @@ export const EXTENSION = {
   CONTEXT_DEPLOYMENT_ENABLED: 'workspacegpt.deploymentEnabled',
   CONTEXT_REMOTE_MODE: 'workspacegpt.remoteMode',
 };
+
+/**
+ * Composer + tips cards stop fitting below this width. VS Code/Cursor does
+ * not let an extension set a real view min-width, so the webview asks the
+ * host to hide the sidebar when the user drags past this threshold.
+ */
+export const SIDEBAR_MIN_WIDTH_PX = 220;
 
 /**
  * Workspace mode — the single switch that decides where embeddings, the vector
