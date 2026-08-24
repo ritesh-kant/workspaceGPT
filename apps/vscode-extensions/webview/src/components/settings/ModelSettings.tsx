@@ -3,6 +3,7 @@ import { useEffect, useCallback } from 'react';
 import { useModelActions, useSelectedModelProvider } from '../../store';
 import { MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { changeProviderHandler, fetchAvailableModels } from './utils';
+import SearchableDropdown from './SearchableDropdown';
 
 const ModelSettings: React.FC = () => {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
@@ -227,25 +228,18 @@ const ModelSettings: React.FC = () => {
         {showSelectModelValidator() && (
           <div className='form-group'>
             <label htmlFor='model-select'>Select Model</label>
-            <select
-              id='model-select'
-              className='select-larger'
-              value={selectedModelProvider?.selectedModel}
-              onChange={(e) =>
-                handleModelChange(
-                  e.target.value,
-                  selectedModelProvider.provider
-                )
+            <SearchableDropdown
+              value={selectedModelProvider?.selectedModel ?? ''}
+              options={(selectedModelProvider?.availableModels ?? []).map((model) => ({
+                value: model.id,
+                label: model.id,
+              }))}
+              onChange={(modelId) =>
+                handleModelChange(modelId, selectedModelProvider.provider)
               }
-            >
-              {selectedModelProvider?.availableModels &&
-                // Render options from available models
-                selectedModelProvider.availableModels.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.id}
-                  </option>
-                ))}
-            </select>
+              searchPlaceholder='Search models...'
+              placeholder='-- Select a model --'
+            />
           </div>
         )}
       </div>
