@@ -74,16 +74,25 @@ function detectSources(
     return { sources: [], confidence: 'high' };
   }
 
-  // Numeric/ticket ID lookups are always ADO
+  const lower = query.toLowerCase();
+
+  // Numeric/ticket ID lookups default to ADO — but if the query also asks to
+  // investigate/implement code (e.g. "find the code it affects, propose a
+  // plan"), route to the live tool-calling agent loop instead. That loop's
+  // toolset already includes get_ticket, so it fetches the ticket itself
+  // before exploring code — a plain ADO-only RAG turn has no tools at all
+  // and can only describe a plan, never execute one.
   if (intent === 'lookup' && /\b\d{5,}\b|\b[A-Z]{2,10}-\d+\b/.test(query)) {
+    const hasCodebaseKeyword = CODEBASE_KEYWORDS.some((kw) => lower.includes(kw));
+    if (hasCodebaseKeyword && availableSources.includes('CODEBASE')) {
+      return { sources: ['CODEBASE'], confidence: 'high' };
+    }
     const adoAvailable = availableSources.includes('ADO');
     return {
       sources: adoAvailable ? ['ADO'] : availableSources.filter((s) => s !== 'CODEBASE'),
       confidence: adoAvailable ? 'high' : 'low',
     };
   }
-
-  const lower = query.toLowerCase();
 
   // Codebase is mutually exclusive with Confluence/ADO for a given turn — if
   // the query looks code-related and codebase tools are available, route
