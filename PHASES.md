@@ -1,10 +1,12 @@
 # WorkspaceGPT — Master Phase Plan
 
-> Status: **Canonical sequencing** · Owner: Ritesh · Last updated: 2026-08-17
+> Status: **Canonical sequencing** · Owner: Ritesh · Last updated: 2026-08-25
 >
 > One place that orders ALL planned work. Merges the build orders from
-> [CODING-AGENT-ROADMAP.md](CODING-AGENT-ROADMAP.md) (items A1–G5) and
-> [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) (steps a–h).
+> [CODING-AGENT-ROADMAP.md](CODING-AGENT-ROADMAP.md) (items A1–G5),
+> [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) (steps a–h), and
+> [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md) (steps 1–5,
+> feeding P3.1/3.2/3.5).
 >
 > **Status (2026-08-15):** P0 ✅ (0.1 matrix still finishing on qwen; shadow-git
 > decided). **P1 ✅ code-complete** — write tools + diff-review cards +
@@ -21,10 +23,23 @@
 > EDH write-flow confirmed live (cards → approve → apply → revert pending).
 > Local-model ceiling characterized: qwen-14B ~60% single-edit, compounds on
 > multi-file — D3 boundary, skills (2.9) + remote tier are the mitigations.
-> Remaining: EDH checklist tail (reject-feedback, revert UI, allowlist),
-> P2.5 context mgmt, P2.8 git write tools, P2.9 skills, P3.2–3.6, E3;
+> **P3.1 extended (2026-08-24)** — [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md)
+> steps 1–3 landed: `get_ticket` (live exact-ID ADO read — fills the gap
+> `search_tickets`'s semantic RAG search can't cover), `listMyWorkItems` +
+> cache, and the "Your work" `MyWorkPanel` in the chat empty state (replacing
+> the old hero greeting, now `HomeGreeting` + collapsible `QuickTipsSection`).
+> Unit-tested (47 assertions across the three pieces), host type-checks and
+> builds; **pending live verification** against a real ADO ticket (rides the
+> same EDH pass as the P1.9 tail below). Step 4 (ticket `@`-mention kind) and
+> step 5 (prompt tuning + 5-ticket eval) not started.
+>
+> Remaining: EDH checklist tail (reject-feedback, revert UI, allowlist) +
+> Ticket Entry Point live verification, P2.5 context mgmt, P2.8 git write
+> tools, P2.9 skills, P3.2 (incl. ticket `@`-mentions), P3.3–3.6, E3;
 > B1–B3/P4 blocked on AWS + Stripe accounts (unblock: create the accounts;
-> B1 code can start against mocks meanwhile).
+> B1 code can start against mocks meanwhile). Also shipped this week, outside
+> this roadmap's phase gates: **Track X** (general product UX — message
+> editing, sidebar auto-collapse, collapsible Settings).
 > Those docs own the *what/why*; this doc owns the *when*. Each phase is a
 > shippable cut-line: if work stops after any phase, the product is still
 > better and releasable.
@@ -108,11 +123,12 @@ Differentiation on top of a working agent. This phase is the marketing.
 
 | # | Item | Scope |
 |---|---|---|
-| 3.1 | C1 org tools in agent | `search_docs` / `search_tickets` / `read_page` / `get_ticket` from existing RAG |
-| 3.2 | B5 @-mentions | files, symbols, Confluence pages, ADO tickets in one mention model |
+| 3.1 | C1 org tools in agent | `search_docs` / `search_tickets` (semantic, RAG) — **done** |
+| 3.1b | **Ticket entry point** (added 2026-08-24, [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md) steps 1–3) | `get_ticket` exact-ID ADO tool + `listMyWorkItems`/cache + "Your work" panel in the chat empty state. Code-complete, unit-tested; **pending live verification** |
+| 3.2 | B5 @-mentions | files, symbols, Confluence pages, ADO tickets in one mention model — ticket kind is ticket-entry-point step 4, not started |
 | 3.3 | B1 codebase RAG revival | dormant jina-code path: incremental, hash-skipped, gitignore-aware; semantic `search_code` tool |
 | 3.4 | B2 repo map | `buildRepoOrientation` + LSP symbols, import-graph ranked, in the cached prompt prefix |
-| 3.5 | C2 ticket→PR flow | "implement D2C-1234" end-to-end; record the 3-minute demo (G4) |
+| 3.5 | C2 ticket→PR flow | "implement D2C-1234" end-to-end; record the 3-minute demo (G4) — 3.1b supplies the precise ticket read this needed; remaining is step 5 (prompt tuning + eval on 5 real tickets) |
 | 3.6 | **Workspace + third-party skills** (added 2026-08-17, [SKILLS-DESIGN.md](SKILLS-DESIGN.md) steps 3–4) | `.workspacegpt/skills/*.md` + authoring guide; `.claude/skills/*/SKILL.md` compat + `triggers.json` overlay. Team-encoded procedures = enterprise stickiness |
 
 **Exit:** the demo video exists and is reproducible on a fresh repo; G5 (X
@@ -194,6 +210,20 @@ Post-launch, priority-ordered by user feedback; each item independent.
 | 5.5 | C4 deploy-loop agent tools (`release-core` behind approval gates) |
 | 5.6 | D3 local-mode agent tuning + honest capability labels — leans on skills (2.9/3.6): recipe-driven small-model workflows |
 | 5.7 | Skills phase 2: descriptions listing + `load_skill` tool ([SKILLS-DESIGN.md](SKILLS-DESIGN.md) step 5) |
+
+---
+
+## Track X — General product UX (ungated, ongoing)
+
+Not part of the Cursor/Claude Code competitive wedge — no phase depends on
+these and none block on them. Logged here so this doc stays the single record
+of shipped work, not just the agent-pivot track.
+
+| # | Item | Shipped |
+|---|---|---|
+| X.1 | Chat message editing + backend history rewrite | 2026-08-24 |
+| X.2 | Sidebar auto-collapse when dragged below minimum width | 2026-08-24 |
+| X.3 | Collapsible Settings sections (`SectionShell`) with persistent state + status summaries | 2026-08-25 |
 
 ---
 

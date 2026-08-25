@@ -455,6 +455,12 @@ export const MODEL_PROVIDERS = [
     DEFAULT_CHAT_MODEL: 'claude-sonnet-4-5-20250929',
   },
   {
+    MODEL_PROVIDER: 'GMICloud',
+    requireApiKey: true,
+    BASE_URL: 'https://api.gmi-serving.com/v1',
+    DEFAULT_CHAT_MODEL: 'meta-llama/Llama-3.3-70B-Instruct',
+  },
+  {
     // OpenAI-compatible provider with a user-supplied base URL (self-hosted,
     // proxy, or any endpoint not listed above). BASE_URL is intentionally
     // empty here — the real value lives per-config in ModelConfig.baseUrl
