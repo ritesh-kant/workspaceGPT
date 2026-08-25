@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { STORAGE_KEYS } from '../../../constants';
+import { ATTACHMENT_LIMITS, STORAGE_KEYS } from '../../../constants';
 import { AdoAuthService } from './adoAuthService';
 
 /**
@@ -39,6 +39,14 @@ export interface TicketDetail {
   parentId?: number;
   /** Only populated when `includeComments` was requested. */
   comments?: TicketComment[];
+  /** Screenshots/diagrams embedded in the description, base64-encoded for vision models. */
+  images?: TicketImage[];
+}
+
+export interface TicketImage {
+  name: string;
+  mimeType: string;
+  dataUrl: string;
 }
 
 interface AdoRequestContext {
@@ -133,6 +141,52 @@ async function adoGet(ctx: AdoRequestContext, url: string, what: string): Promis
   return response.json();
 }
 
+const MAX_TICKET_IMAGES = 5;
+
+/**
+ * `<img src="...">` URLs from a ticket's raw HTML description, run *before*
+ * `htmlToText` strips tags (which would otherwise discard them). Only ADO's
+ * own attachment hosts are kept — a description could contain an `<img>`
+ * pointing anywhere, and blindly fetching it would leak the org's auth header
+ * to a third-party host.
+ */
+function extractImageUrls(html: string, ctx: AdoRequestContext): string[] {
+  const urls = new Set<string>();
+  const re = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(html))) {
+    try {
+      const u = new URL(match[1], `https://dev.azure.com/${ctx.orgName}/`);
+      if (u.hostname === 'dev.azure.com' || u.hostname.endsWith('.visualstudio.com')) {
+        urls.add(u.toString());
+      }
+    } catch {
+      // unparseable src — skip it
+    }
+  }
+  return [...urls].slice(0, MAX_TICKET_IMAGES);
+}
+
+/** Download + base64-encode each image. A single bad image never fails the ticket read. */
+async function fetchTicketImages(ctx: AdoRequestContext, urls: string[]): Promise<TicketImage[]> {
+  const images: TicketImage[] = [];
+  for (const url of urls) {
+    try {
+      const resp = await fetch(url, { headers: { Authorization: ctx.authHeader } });
+      if (!resp.ok) continue;
+      const buf = await resp.arrayBuffer();
+      if (buf.byteLength > ATTACHMENT_LIMITS.MAX_IMAGE_BYTES) continue;
+      const mimeType = resp.headers.get('content-type') || 'image/png';
+      const dataUrl = `data:${mimeType};base64,${Buffer.from(buf).toString('base64')}`;
+      const name = decodeURIComponent(url.split('/').pop() || `image-${images.length}.png`);
+      images.push({ name, mimeType, dataUrl });
+    } catch {
+      // network/decoding failure — skip this image only
+    }
+  }
+  return images;
+}
+
 /** Comments are supplementary — never fail the whole read because they 404'd. */
 async function fetchComments(ctx: AdoRequestContext, id: number): Promise<TicketComment[]> {
   try {
@@ -185,6 +239,10 @@ export async function fetchWorkItem(
     .map((t: string) => t.trim())
     .filter(Boolean);
 
+  const rawDescription = f['System.Description'];
+  const imageUrls = rawDescription ? extractImageUrls(rawDescription, ctx) : [];
+  const images = imageUrls.length ? await fetchTicketImages(ctx, imageUrls) : [];
+
   return {
     id: item.id ?? id,
     title: f['System.Title'] ?? '(untitled)',
@@ -200,11 +258,12 @@ export async function fetchWorkItem(
     url:
       item._links?.html?.href ||
       `https://dev.azure.com/${encodeURIComponent(ctx.orgName)}/${encodeURIComponent(ctx.projectName)}/_workitems/edit/${id}`,
-    description: f['System.Description'] ? htmlToText(f['System.Description']) : undefined,
+    description: rawDescription ? htmlToText(rawDescription) : undefined,
     acceptanceCriteria: f['Microsoft.VSTS.Common.AcceptanceCriteria']
       ? htmlToText(f['Microsoft.VSTS.Common.AcceptanceCriteria'])
       : undefined,
     parentId: Number.isFinite(parentId) ? parentId : undefined,
+    images: images.length ? images : undefined,
     ...(args?.includeComments ? { comments: await fetchComments(ctx, id) } : {}),
   };
 }

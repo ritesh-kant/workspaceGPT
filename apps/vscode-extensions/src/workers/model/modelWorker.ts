@@ -63,12 +63,15 @@ const failoverKeys = apiKeys && apiKeys.length ? apiKeys : apiKey ? [apiKey] : [
  * models accept image parts — others reject the request, and that provider
  * error surfaces in the chat as usual.
  */
+function imagesToContentParts(
+  images: { dataUrl: string }[]
+): OpenAI.Chat.Completions.ChatCompletionContentPartImage[] {
+  return images.map((img) => ({ type: 'image_url' as const, image_url: { url: img.dataUrl } }));
+}
+
 function buildUserContent(text: string): string | OpenAI.Chat.Completions.ChatCompletionContentPart[] {
   if (!imageAttachments?.length) return text;
-  return [
-    { type: 'text' as const, text },
-    ...imageAttachments.map((img) => ({ type: 'image_url' as const, image_url: { url: img.dataUrl } })),
-  ];
+  return [{ type: 'text' as const, text }, ...imagesToContentParts(imageAttachments)];
 }
 
 // ── Codebase tool definitions (OpenAI function-calling schema) ────────────
@@ -895,6 +898,18 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // so its token cost is visible against the baseline it's meant to beat.
   let explorationStats: import('./explorationPhase').ExplorationStats | null = null;
 
+  // `get_ticket` results can carry base64 image data (see below) — that must
+  // never land in the text tool message, both because `role: 'tool'` content
+  // is a plain string (no image parts allowed there) and because dumping raw
+  // base64 into it would burn context budget on useless text tokens.
+  const stripImagesForToolText = (name: string, result: unknown): unknown => {
+    if (name !== 'get_ticket' || !result || typeof result !== 'object') return result;
+    const r = result as { images?: { name: string }[] };
+    if (!Array.isArray(r.images) || !r.images.length) return result;
+    const { images, ...rest } = r as Record<string, unknown>;
+    return { ...rest, imageCount: (images as { name: string }[]).length, imageNames: (images as { name: string }[]).map((im) => im.name) };
+  };
+
   const serializeToolResult = (result: unknown): string => {
     let s = JSON.stringify(result);
     if (s.length > MAX_TOOL_RESULT_CHARS) {
@@ -1374,8 +1389,29 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
 
     toolCalls.forEach((tc, idx) => {
-      messages.push({ role: 'tool', tool_call_id: tc.id, content: serializeToolResult(results[idx]) });
+      const rawResult = results[idx];
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: serializeToolResult(stripImagesForToolText(tc.name, rawResult)),
+      });
       recordToolResult(tc.name, i, messages[messages.length - 1].content);
+
+      // `role: 'tool'` can't carry image content parts, so a ticket's images
+      // ride in as a follow-up user turn — the same content-part shape as a
+      // manually pasted image — right before the loop asks the model again.
+      const ticketImages = (rawResult as { images?: { dataUrl: string }[] } | null)?.images;
+      if (tc.name === 'get_ticket' && ticketImages?.length) {
+        const ticketId = (rawResult as { id?: unknown } | null)?.id ?? '';
+        messages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: `Image(s) attached to ticket #${ticketId}:` },
+            ...imagesToContentParts(ticketImages),
+          ],
+        });
+      }
+
       const failed = !!(results[idx] as { error?: unknown } | null)?.error;
       if (!failed) okToolResults++;
       if (FILE_WRITE_TOOL_NAMES.has(tc.name)) {
