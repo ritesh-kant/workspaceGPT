@@ -28,12 +28,22 @@ export function VSCodeAPI() {
  * the view stays open at a width where the content is already clipped. Setting
  * it from the constant keeps SIDEBAR_MIN_WIDTH_PX the single source of truth
  * rather than duplicating the value in static CSS.
+ *
+ * The floor also goes out as a custom property, because `position: fixed`
+ * overlays (the settings panel, chat history) are sized by the viewport rather
+ * than by #root — they never inherit its min-width and would keep squeezing
+ * past the floor without it. Static CSS reads the variable instead of
+ * hardcoding the number.
  */
 function applySidebarMinWidth(): void {
   const root = document.getElementById("root");
   if (root) {
     root.style.minWidth = `${SIDEBAR_MIN_WIDTH_PX}px`;
   }
+  document.documentElement.style.setProperty(
+    "--wgpt-sidebar-min-width",
+    `${SIDEBAR_MIN_WIDTH_PX}px`
+  );
 }
 
 function viewportWidth(): number {

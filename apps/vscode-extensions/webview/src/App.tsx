@@ -17,6 +17,7 @@ import QuickTipsSection from './components/QuickTipsSection';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
 import Onboarding from './components/onboarding/Onboarding';
+import SearchableDropdown from './components/settings/SearchableDropdown';
 import { VSCodeAPI } from './vscode';
 import {
   setModelState,
@@ -1114,6 +1115,28 @@ const App: React.FC = () => {
   }, [inputValue]);
 
   /**
+   * Re-autosize when the composer's own width changes.
+   *
+   * Value-change alone is not enough: dragging the sidebar narrower rewraps the
+   * existing text onto more lines while the inline height stays at the old
+   * measurement, and the overflow rule then chops the tail off mid-line with no
+   * scrollbar to reach it. Only width is watched — reacting to height would
+   * feed autosize's own height writes straight back in as a loop.
+   */
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let lastWidth = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === lastWidth) return;
+      lastWidth = el.clientWidth;
+      autosizeInput(el);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  /**
    * Load "your work" whenever ADO is connected (and clear it when it isn't, so
    * disconnecting doesn't leave a stale list on screen). Fires once per connect
    * rather than on every empty state, since the host answers from cache first.
@@ -1628,44 +1651,46 @@ const App: React.FC = () => {
                   {mode === 'remote' ? 'Remote' : 'Local'}
                 </button>
                 <div className='context-selector-bottom'>
-                  <select
+                  <SearchableDropdown
                     value={contextSelection}
-                    onChange={(e) => setContextSelection(e.target.value)}
-                  >
-                    <option value='Auto'>Context: Auto ✨</option>
-                    <option value='Confluence'>Confluence</option>
-                    <option value='Azure DevOps'>Azure DevOps</option>
-                    <option value='Codebase'>Codebase</option>
-                  </select>
+                    onChange={setContextSelection}
+                    searchable={false}
+                    options={[
+                      { value: 'Auto', label: 'Context: Auto ✨' },
+                      { value: 'Confluence', label: 'Confluence' },
+                      { value: 'Azure DevOps', label: 'Azure DevOps' },
+                      { value: 'Codebase', label: 'Codebase' },
+                    ]}
+                  />
                 </div>
                 {mode === 'local' && (
                   <div className='model-selector-bottom'>
-                    <select
-                      value={selectedModelProvider?.provider}
-                      onChange={(e) => {
-                        if (e.target.value === 'selectModel') {
+                    <SearchableDropdown
+                      value={selectedModelProvider?.provider ?? ''}
+                      searchable={false}
+                      onChange={(value) => {
+                        if (value === 'selectModel') {
                           setActiveView('settings');
                           return;
                         }
                         const providerConfig = activeModels.find(
-                          (model) => model.provider === e.target.value
+                          (model) => model.provider === value
                         );
                         handleModelChange(
                           providerConfig?.model!,
                           providerConfig?.provider!
                         );
                       }}
-                    >
-                      {activeModels?.map((model) => (
-                        <option key={model.provider} value={model.provider}>
-                          {model.provider} ({model.model})
-                        </option>
-                      ))}
-                      {!activeModels?.length && (
-                        <option value='none'>Select Model</option>
-                      )}
-                      <option value='selectModel'>Edit...</option>
-                    </select>
+                      options={[
+                        ...(activeModels?.length
+                          ? activeModels.map((model) => ({
+                              value: model.provider,
+                              label: `${model.provider} (${model.model})`,
+                            }))
+                          : [{ value: 'none', label: 'Select Model' }]),
+                        { value: 'selectModel', label: 'Edit...' },
+                      ]}
+                    />
                   </div>
                 )}
               </div>

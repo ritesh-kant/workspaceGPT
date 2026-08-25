@@ -8,19 +8,25 @@ import { ModelConfig } from '../../types';
 
 const vscode = VSCodeAPI();
 
-export const clearStatusMessageAfterDelay = (
-  section: 'confluence' | 'codebase' | 'ado' | 'deployment',
-  field: 'statusMessage' | 'messageType',
-  value?: string | 'unknown',
-  delay: number = 2000
-) => {
-  setTimeout(() => {
-    const batchUpdateConfig = useSettingsStore.getState().batchUpdateConfig;
-    batchUpdateConfig(section, {
-      [field]: value,
-    });
-  }, delay);
-};
+export { clearStatusMessageAfterDelay } from '../../store/statusMessage';
+
+/**
+ * Compact "how long ago" for collapsed section summaries, where an absolute
+ * timestamp is both too long and more precision than the question needs. The
+ * expanded section still shows the full local timestamp.
+ */
+export function formatRelativeTime(iso?: string): string {
+  if (!iso) return 'never synced';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'never synced';
+
+  const minutes = Math.round((Date.now() - then) / 60000);
+  if (minutes < 1) return 'synced just now';
+  if (minutes < 60) return `synced ${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `synced ${hours}h ago`;
+  return `synced ${Math.round(hours / 24)}d ago`;
+}
 
 export const handleConfluenceActions = {
   startOAuth: (vscode: ReturnType<typeof VSCodeAPI>) => {
@@ -46,79 +52,17 @@ export const handleConfluenceActions = {
       type: MESSAGE_TYPES.FETCH_CONFLUENCE_SPACES,
     });
   },
-
-  checkConnection: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.CHECK_CONFLUENCE_CONNECTION,
-      section: 'confluence',
-      config,
-    });
-  },
-
-  startSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any, forceFull?: boolean) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.START_CONFLUENCE_SYNC,
-      section: 'confluence',
-      config,
-      forceFull,
-    });
-  },
-
-  resumeSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RESUME_CONFLUENCE_SYNC,
-      section: 'confluence',
-      config,
-    });
-  },
-
-  stopSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.STOP_CONFLUENCE_SYNC,
-      section: 'confluence',
-      config,
-    });
-  },
 };
+
+// Check/start/resume/stop for both Confluence and ADO now live in
+// SyncControls' useSyncActions — they were byte-for-byte identical apart from
+// the message type, and the two copies had already drifted.
 
 export const handleAdoActions = {
 
   disconnect: (vscode: ReturnType<typeof VSCodeAPI>) => {
     vscode.postMessage({
       type: MESSAGE_TYPES.DISCONNECT_ADO,
-    });
-  },
-
-  checkConnection: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.CHECK_ADO_CONNECTION,
-      section: 'ado',
-      config,
-    });
-  },
-
-  startSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any, forceFull?: boolean) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.START_ADO_SYNC,
-      section: 'ado',
-      config,
-      forceFull,
-    });
-  },
-
-  resumeSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RESUME_ADO_SYNC,
-      section: 'ado',
-      config,
-    });
-  },
-
-  stopSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.STOP_ADO_SYNC,
-      section: 'ado',
-      config,
     });
   },
 };

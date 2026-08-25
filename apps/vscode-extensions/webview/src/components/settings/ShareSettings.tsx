@@ -1,6 +1,7 @@
 import React from 'react';
 import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES } from '../../constants';
+import SectionShell from './SectionShell';
 
 /**
  * Share to Chrome — generate a share code that carries the current credentials
@@ -13,10 +14,11 @@ const ShareSettings: React.FC = () => {
   const createShare = () => vscode.postMessage({ type: MESSAGE_TYPES.SHARE_TO_CHROME });
 
   return (
-    <div className='settings-section'>
-      <div className='section-header'>
-        <h3>Share to Chrome</h3>
-      </div>
+    <SectionShell
+      storageKey='share'
+      title='Share to Chrome'
+      summary='Send your setup to the Chrome extension'
+    >
       <div className='settings-form'>
         <div className='form-group'>
           <small className='form-text'>
@@ -45,7 +47,7 @@ const ShareSettings: React.FC = () => {
           </small>
         </div>
       </div>
-    </div>
+    </SectionShell>
   );
 };
 

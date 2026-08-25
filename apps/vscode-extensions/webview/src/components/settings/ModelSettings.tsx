@@ -4,6 +4,7 @@ import { useModelActions, useSelectedModelProvider } from '../../store';
 import { MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { changeProviderHandler, fetchAvailableModels } from './utils';
 import SearchableDropdown from './SearchableDropdown';
+import SectionShell from './SectionShell';
 
 const ModelSettings: React.FC = () => {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
@@ -82,6 +83,17 @@ const ModelSettings: React.FC = () => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
+      // A model list only ever belongs to the provider it was fetched for.
+      // Without this guard, switching providers mid-flight lands the old
+      // provider's models on the new one — and the auto-select below then
+      // picks a model that provider doesn't serve.
+      const isForAnotherProvider =
+        (message.type === MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_RESPONSE ||
+          message.type === MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_ERROR) &&
+        message.provider !== undefined &&
+        message.provider !== selectedModelProvider.provider;
+      if (isForAnotherProvider) return;
+
       switch (message.type) {
         case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_RESPONSE:
           const fetchedModels = message.models;
@@ -119,12 +131,12 @@ const ModelSettings: React.FC = () => {
           updateModelProvider(
             selectedModelProvider.provider,
             'availableModels',
-            message.models // Assuming message.models is an empty array on error
+            message.models ?? []
           );
           // Ensure selectedModelProvider state is also updated
           updateSelectedModelProvider({
             ...selectedModelProvider,
-            availableModels: message.models, // Or [] if message.models could be undefined
+            availableModels: message.models ?? [],
           });
           setApiKeyError(message.message);
           break;
@@ -135,11 +147,19 @@ const ModelSettings: React.FC = () => {
     return () => window.removeEventListener('message', handleMessage);
   }, [selectedModelProvider]);
 
+  const summary = apiKeyError
+    ? '⚠️ Check API key'
+    : configuredKeyCount === 0
+      ? 'No API key set'
+      : `${selectedModelProvider.provider}${selectedModelProvider.selectedModel ? ` · ${selectedModelProvider.selectedModel}` : ' · no model selected'}`;
+
   return (
-    <div className='settings-section'>
-      <div className='section-header'>
-        <h3>Model Settings</h3>
-      </div>
+    <SectionShell
+      storageKey='model'
+      title='Model'
+      summary={summary}
+      needsAttention={configuredKeyCount === 0 || !!apiKeyError}
+    >
       <div className='settings-form'>
         <div className='form-group'>
           <label htmlFor='provider-select'>Select Provider</label>
@@ -243,7 +263,7 @@ const ModelSettings: React.FC = () => {
           </div>
         )}
       </div>
-    </div>
+    </SectionShell>
   );
 
   function showSelectModelValidator() {

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useSettingsStore } from '../../store';
 import { WorkspaceMode } from '../../constants';
+import SectionShell from './SectionShell';
 
 const MODE_COPY: Record<WorkspaceMode, { title: string; description: string }> = {
   local: {
@@ -42,11 +43,19 @@ const ModeSelector: React.FC = () => {
     setPendingMode(null);
   };
 
+  // A workspace with nothing connected yet is still being set up, and mode is
+  // the first decision — show it expanded. Once a source is connected, the
+  // switch is rarely touched and collapses to its one-word summary.
+  const isFreshInstall =
+    !config.confluence?.isAuthenticated && !config.ado?.isAuthenticated;
+
   return (
-    <div className='settings-section'>
-      <div className='section-header'>
-        <h3>Mode</h3>
-      </div>
+    <SectionShell
+      storageKey='mode'
+      title='Mode'
+      summary={MODE_COPY[mode].title}
+      defaultOpen={isFreshInstall}
+    >
       <div className='settings-form'>
         <div className='mode-card-row'>
           {(Object.keys(MODE_COPY) as WorkspaceMode[]).map((m) => (
@@ -86,7 +95,7 @@ const ModeSelector: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+    </SectionShell>
   );
 };
 

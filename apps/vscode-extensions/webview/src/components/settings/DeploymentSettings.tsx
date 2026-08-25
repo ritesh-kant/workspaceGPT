@@ -4,6 +4,7 @@ import { VSCodeAPI } from '../../vscode';
 import { clearStatusMessageAfterDelay } from './utils';
 import { DeploymentConfig } from '../../types';
 import SearchableDropdown from './SearchableDropdown';
+import SectionShell from './SectionShell';
 import {
   MESSAGE_TYPES,
   EMPTY_MACH_REPO,
@@ -307,7 +308,7 @@ const DeploymentSettings: React.FC = () => {
             messageType: 'success',
             statusMessage: 'GitHub App connected',
           });
-          clearStatusMessageAfterDelay('deployment', 'statusMessage');
+          clearStatusMessageAfterDelay('deployment');
           break;
         case MESSAGE_TYPES.GITHUB_INSTALL_ERROR:
           batchUpdateConfig('deployment', {
@@ -332,7 +333,7 @@ const DeploymentSettings: React.FC = () => {
             messageType: 'success',
             statusMessage: 'Vercel connected',
           });
-          clearStatusMessageAfterDelay('deployment', 'statusMessage');
+          clearStatusMessageAfterDelay('deployment');
           break;
         case MESSAGE_TYPES.VERCEL_OAUTH_ERROR:
           batchUpdateConfig('deployment', {
@@ -738,16 +739,23 @@ const DeploymentSettings: React.FC = () => {
 
   const ADD_PROVIDERS: ActionProvider[] = ['vercel-config', 'github-workflow-dispatch', 'repo-file-patch'];
 
+  const summary = !dep.isDeploymentEnabled
+    ? 'Off'
+    : `${pipeline?.name || 'Pipeline'}${dep.vercelConnected || machStatus.connected ? ' · connected' : ' · not connected'}`;
+
   return (
-    <div className="settings-section dep-settings">
-      <div className="section-header">
-        <h3>Deployment pipeline</h3>
+    <SectionShell
+      storageKey='deployment'
+      title='Deployment pipeline'
+      className='dep-settings'
+      summary={summary}
+      headerControl={
         <label className="toggle-switch">
           <input type="checkbox" checked={!!dep.isDeploymentEnabled} onChange={handleToggleChange} />
           <span className="slider round"></span>
         </label>
-      </div>
-
+      }
+    >
       {dep.isDeploymentEnabled && (
         <div className="settings-form">
           <div className="dep-preset-row">
@@ -1225,7 +1233,7 @@ const DeploymentSettings: React.FC = () => {
           </button>
         </div>
       )}
-    </div>
+    </SectionShell>
   );
 };
 

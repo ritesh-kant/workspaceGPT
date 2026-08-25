@@ -41,10 +41,7 @@ const CodebaseSettings: React.FC = () => {
             canResume: false,
             isSyncCompleted: true,
           });
-          clearStatusMessageAfterDelay(
-            'codebase',
-            'statusMessage',
-          );
+          clearStatusMessageAfterDelay('codebase');
           break;
 
         case MESSAGE_TYPES.SYNC_CODEBASE_ERROR:
@@ -61,10 +58,7 @@ const CodebaseSettings: React.FC = () => {
             messageType: message.status ? 'success' : 'error',
             statusMessage: message.message || '',
           });
-          clearStatusMessageAfterDelay(
-            'codebase',
-            'statusMessage',
-          );
+          clearStatusMessageAfterDelay('codebase');
           break;
 
         // Codebase Indexing
@@ -90,10 +84,7 @@ const CodebaseSettings: React.FC = () => {
             canResume: false,
             isIndexingCompleted: true,
           });
-          clearStatusMessageAfterDelay(
-            'codebase',
-            'statusMessage',
-          );
+          clearStatusMessageAfterDelay('codebase');
           break;
 
         case MESSAGE_TYPES.INDEXING_CODEBASE_ERROR:

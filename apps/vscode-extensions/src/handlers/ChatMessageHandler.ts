@@ -251,6 +251,9 @@ export class ChatMessageHandler {
       const models = await fetchAvailableModels(baseURL, data.apiKey);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_RESPONSE,
+        // Echoed so the webview can drop a late response for a provider the
+        // user has already switched away from.
+        provider: data.provider,
         models: models,
       });
     } catch (error) {
@@ -261,6 +264,8 @@ export class ChatMessageHandler {
       });
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_ERROR,
+        provider: data.provider,
+        models: [],
         message: error instanceof Error ? error.message : String(error),
       });
     }

@@ -8,6 +8,12 @@
   z-index: 999;
   display: flex;
   animation: fadeInOverlay 0.2s ease-out;
+  /* Same layout floor as the chat view and the settings panel: fixed
+     positioning sizes this from the viewport, not from #root, so the floor has
+     to be restated here. Set from SIDEBAR_MIN_WIDTH_PX in vscode.ts.
+     border-box keeps the floor a total width if padding is ever added. */
+  box-sizing: border-box;
+  min-width: var(--wgpt-sidebar-min-width);
 }
 
 @keyframes fadeInOverlay {

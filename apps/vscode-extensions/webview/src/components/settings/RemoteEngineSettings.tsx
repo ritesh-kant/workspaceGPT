@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../store';
 import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES, normalizeQdrantUrl } from '../../constants';
+import SectionShell from './SectionShell';
 
 interface QdrantTestResult {
   ok: boolean;
@@ -80,11 +81,21 @@ const RemoteEngineSettings: React.FC = () => {
     });
   };
 
+  const hasQdrant = !!vectorStore.qdrantUrl;
+  const summary =
+    configuredKeyCount === 0
+      ? 'No Gemini key set'
+      : !hasQdrant
+        ? `${configuredKeyCount} Gemini key${configuredKeyCount > 1 ? 's' : ''} · Qdrant not set`
+        : `✅ ${configuredKeyCount} Gemini key${configuredKeyCount > 1 ? 's' : ''} · Qdrant configured`;
+
   return (
-    <div className='settings-section'>
-      <div className='section-header'>
-        <h3>Remote Engine</h3>
-      </div>
+    <SectionShell
+      storageKey='remote-engine'
+      title='Remote Engine'
+      summary={summary}
+      needsAttention={configuredKeyCount === 0 || !hasQdrant}
+    >
       <div className='settings-form'>
         <div className='form-group'>
           <details className='dep-details' open={configuredKeyCount === 0}>
@@ -165,7 +176,7 @@ const RemoteEngineSettings: React.FC = () => {
           configure here.
         </small>
       </div>
-    </div>
+    </SectionShell>
   );
 };
 

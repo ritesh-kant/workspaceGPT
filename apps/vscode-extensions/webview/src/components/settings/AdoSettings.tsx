@@ -2,185 +2,24 @@ import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../store';
 import { VSCodeAPI } from '../../vscode';
 import {
-  clearStatusMessageAfterDelay,
+  formatRelativeTime,
   handleAdoActions,
   handleInputChange,
 } from './utils';
 import { AdoConfig } from '../../types';
-import { MESSAGE_TYPES, SYNC_INTERVAL_MS } from '../../constants';
+import { MESSAGE_TYPES } from '../../constants';
+import SearchableDropdown from './SearchableDropdown';
+import SectionShell from './SectionShell';
+import SyncControls, { SyncStatusMessage } from './SyncControls';
 
 const AdoSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
   const vscode = VSCodeAPI();
   const adoConfig = config.ado || ({} as AdoConfig);
 
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const message = event.data;
-
-      switch (message.type) {
-        case MESSAGE_TYPES.ADO_PAT_SUCCESS:
-          batchUpdateConfig('ado', {
-            isAuthenticated: true,
-            isConnecting: false,
-            messageType: 'success',
-            statusMessage: 'Saved Personal Access Token',
-          });
-          clearStatusMessageAfterDelay('ado', 'statusMessage');
-          break;
-
-        case MESSAGE_TYPES.ADO_PAT_ERROR:
-          batchUpdateConfig('ado', {
-            isConnecting: false,
-            messageType: 'error',
-            statusMessage: message.message || 'PAT Save failed',
-          });
-          clearStatusMessageAfterDelay('ado', 'statusMessage');
-          break;
-
-        case MESSAGE_TYPES.FETCH_ADO_PROJECTS_SUCCESS:
-          batchUpdateConfig('ado', {
-            isConnecting: false,
-            messageType: 'success',
-            statusMessage: 'Projects loaded successfully',
-            availableProjects: message.projects || [],
-          });
-          clearStatusMessageAfterDelay('ado', 'statusMessage');
-          break;
-
-        case MESSAGE_TYPES.FETCH_ADO_PROJECTS_ERROR:
-          batchUpdateConfig('ado', {
-            isConnecting: false,
-            messageType: 'error',
-            statusMessage: message.message || 'Failed to load projects',
-            availableProjects: [],
-          });
-          clearStatusMessageAfterDelay('ado', 'statusMessage');
-          break;
-
-        case MESSAGE_TYPES.DISCONNECT_ADO:
-          batchUpdateConfig('ado', {
-            isAuthenticated: false,
-            orgName: '',
-            projectName: '',
-            userDisplayName: '',
-            currentSprint: null,
-            isSyncing: false,
-            isIndexing: false,
-            canResume: false,
-            canResumeIndexing: false,
-            isSyncCompleted: false,
-            isIndexingCompleted: false,
-            adoSyncProgress: 0,
-            adoIndexProgress: 0,
-            lastSyncTime: '',
-            messageType: 'success',
-            statusMessage: 'Disconnected from Azure DevOps',
-          });
-          clearStatusMessageAfterDelay('ado', 'statusMessage');
-          break;
-
-        // Connection check
-        case MESSAGE_TYPES.ADO_CONNECTION_STATUS:
-          batchUpdateConfig('ado', {
-            messageType: message.status ? 'success' : 'error',
-            statusMessage: message.message || '',
-          });
-          clearStatusMessageAfterDelay('ado', 'statusMessage');
-          break;
-
-        case MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY_SUCCESS:
-          batchUpdateConfig('ado', {
-            userDisplayName: message.userDisplayName || '',
-            currentSprint: message.currentSprint || null,
-          });
-          break;
-
-        case MESSAGE_TYPES.FETCH_ADO_USER_IDENTITY_ERROR:
-          console.warn('ADO user identity fetch error:', message.message);
-          break;
-
-        // Sync
-        case MESSAGE_TYPES.SYNC_ADO_IN_PROGRESS:
-          batchUpdateConfig('ado', {
-            adoSyncProgress: message.progress,
-            messageType: 'success',
-            isSyncing: message.progress < 100,
-            canResume: true,
-          });
-          break;
-
-        case MESSAGE_TYPES.SYNC_ADO_COMPLETE:
-          batchUpdateConfig('ado', {
-            messageType: 'success',
-            statusMessage: 'Sync completed successfully',
-            adoSyncProgress: 100,
-            isSyncing: false,
-            canResume: false,
-            isSyncCompleted: true,
-            lastSyncTime: message.lastSyncTime || new Date().toISOString(),
-          });
-          clearStatusMessageAfterDelay('ado', 'statusMessage');
-          break;
-
-        case MESSAGE_TYPES.SYNC_ADO_ERROR:
-          batchUpdateConfig('ado', {
-            isSyncing: false,
-            messageType: 'error',
-            statusMessage: 'Sync error: Please verify your connection and try again.',
-            canResume: true,
-          });
-          break;
-
-        case MESSAGE_TYPES.SYNC_ADO_STOP:
-          batchUpdateConfig('ado', {
-            isSyncing: false,
-            messageType: 'error',
-            statusMessage: 'Sync stopped',
-            canResume: true,
-          });
-          break;
-
-        // Indexing
-        case MESSAGE_TYPES.INDEXING_ADO_IN_PROGRESS:
-          batchUpdateConfig('ado', {
-            adoIndexProgress: message.progress,
-            messageType: 'success',
-            isIndexing: true,
-            canResumeIndexing: true,
-            isSyncing: false,
-            canResume: false,
-          });
-          break;
-
-        case MESSAGE_TYPES.INDEXING_ADO_COMPLETE:
-          batchUpdateConfig('ado', {
-            adoIndexProgress: 100,
-            messageType: 'success',
-            isIndexing: false,
-            statusMessage: 'Indexing completed successfully',
-            canResumeIndexing: false,
-            isSyncing: false,
-            canResume: false,
-            isIndexingCompleted: true,
-          });
-          clearStatusMessageAfterDelay('ado', 'statusMessage');
-          break;
-
-        case MESSAGE_TYPES.INDEXING_ADO_ERROR:
-          batchUpdateConfig('ado', {
-            isSyncing: false,
-            isIndexing: false,
-            messageType: 'error',
-            statusMessage: `Indexing error: ${message.message}`,
-            canResumeIndexing: true,
-          });
-          break;
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  // Host messages for this section are handled app-wide in
+  // store/settingsMessages.ts — this panel unmounts on every trip back to
+  // chat, and sync/PAT completions are sent exactly once.
 
   const [patInput, setPatInput] = useState('');
   const [showOrgName, setShowOrgName] = useState(false);
@@ -225,46 +64,6 @@ const AdoSettings: React.FC = () => {
     handleAdoActions.disconnect(vscode);
   };
 
-  const checkConnection = () => {
-    batchUpdateConfig('ado', {
-      messageType: 'success',
-      statusMessage: 'Checking connection...',
-    });
-    handleAdoActions.checkConnection(vscode, config);
-  };
-
-  const startSync = (forceFull: boolean = false) => {
-    batchUpdateConfig('ado', {
-      isSyncing: true,
-      adoSyncProgress: 0,
-      statusMessage: forceFull ? 'Starting full sync process...' : 'Starting sync process...',
-      messageType: 'success',
-    });
-    handleAdoActions.startSync(vscode, config, forceFull);
-    clearStatusMessageAfterDelay('ado', 'statusMessage');
-  };
-
-  const resumeSync = () => {
-    batchUpdateConfig('ado', {
-      isSyncing: true,
-      statusMessage: 'Resuming sync process...',
-      messageType: 'success',
-    });
-    handleAdoActions.resumeSync(vscode, config);
-    clearStatusMessageAfterDelay('ado', 'statusMessage');
-  };
-
-  const stopSync = () => {
-    batchUpdateConfig('ado', {
-      isSyncing: false,
-      isIndexing: false,
-      statusMessage: 'Stopping process...',
-      messageType: 'error',
-    });
-    handleAdoActions.stopSync(vscode, config);
-    clearStatusMessageAfterDelay('ado', 'statusMessage');
-  };
-
   const isAuthenticated = adoConfig?.isAuthenticated;
   const hasProjectSelected = !!adoConfig?.orgName && !!adoConfig?.projectName;
 
@@ -272,32 +71,52 @@ const AdoSettings: React.FC = () => {
     updateConfig('ado', 'isAdoEnabled', e.target.checked);
   };
 
+  const isEnabled = !!adoConfig?.isAdoEnabled;
+  const isBusy = !!adoConfig?.isSyncing || !!adoConfig?.isIndexing;
+  const hasError = adoConfig?.messageType === 'error' && !!adoConfig?.statusMessage;
+
+  const summary = !isEnabled
+    ? 'Off'
+    : !isAuthenticated
+      ? 'Not connected'
+      : !hasProjectSelected
+        ? 'Connected · no project selected'
+        : isBusy
+          ? adoConfig.isSyncing
+            ? `Syncing… ${adoConfig.adoSyncProgress || 0}%`
+            : `Indexing… ${adoConfig.adoIndexProgress || 0}%`
+          : `✅ ${adoConfig.projectName} · ${formatRelativeTime(adoConfig.lastSyncTime)}`;
+
   return (
-    <div className="settings-section">
-      <div className="section-header">
-        <h3>Azure DevOps Integration</h3>
+    <SectionShell
+      storageKey='ado'
+      title='Azure DevOps'
+      summary={summary}
+      needsAttention={isEnabled && (!isAuthenticated || !hasProjectSelected || hasError)}
+      headerControl={
         <label className='toggle-switch'>
           <input
             type='checkbox'
-            checked={!!adoConfig?.isAdoEnabled}
+            checked={isEnabled}
             onChange={handleToggleChange}
           />
           <span className='slider round'></span>
         </label>
-      </div>
+      }
+    >
       {adoConfig?.isAdoEnabled && (
       <div className="settings-form">
 
         {/* Not Authenticated State */}
         {!isAuthenticated && (
           <div className="pat-connect">
-            <p style={{ color: '#a0a0a0', margin: '0 0 4px 0', fontSize: '0.9em' }}>
+            <p className='description-text'>
               Enter your Azure DevOps Personal Access Token (PAT).
             </p>
-            <div style={{ margin: '0 0 10px 0', fontSize: '0.82em', color: '#888', lineHeight: '1.6' }}>
-              <span style={{ display: 'block', marginBottom: '2px' }}>Required PAT scopes:</span>
-              <span style={{ display: 'block' }}>✅ <strong>Work Items</strong> — Read &nbsp;<span style={{ color: '#666' }}>(tickets, queries, sprint detection)</span></span>
-              <span style={{ display: 'block' }}>✅ <strong>Project and Team</strong> — Read &nbsp;<span style={{ color: '#666' }}>(project listing)</span></span>
+            <div className='pat-scopes'>
+              <span>Required PAT scopes:</span>
+              <span>✅ <strong>Work Items</strong> — Read <em>(tickets, queries, sprint detection)</em></span>
+              <span>✅ <strong>Project and Team</strong> — Read <em>(project listing)</em></span>
             </div>
             <div className="form-group">
               <input
@@ -305,20 +124,13 @@ const AdoSettings: React.FC = () => {
                 value={patInput}
                 onChange={(e) => setPatInput(e.target.value)}
                 placeholder="Paste your PAT here..."
-                style={{ width: '100%', padding: '8px', marginBottom: '8px', boxSizing: 'border-box' }}
+                className='pat-input'
               />
             </div>
             <button
+              className='primary-button-full'
               onClick={submitPat}
               disabled={!patInput.trim() || adoConfig?.isConnecting}
-              style={{
-                width: '100%',
-                padding: '10px 16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-              }}
             >
               {adoConfig?.isConnecting ? (
                 <>⏳ Connecting...</>
@@ -378,16 +190,19 @@ const AdoSettings: React.FC = () => {
             <div className="form-group">
               <label>Project Name</label>
               {adoConfig.availableProjects && adoConfig.availableProjects.length > 0 ? (
-                <select
+                /* Same control Confluence uses for spaces — org project lists
+                   run long enough that a native select is hard to navigate. */
+                <SearchableDropdown
                   value={adoConfig.projectName || ''}
-                  onChange={(e) => handleInputChange('ado', 'projectName', e.target.value)}
-                  className="settings-select"
-                >
-                  <option value="">Select a project...</option>
-                  {adoConfig.availableProjects.map((p) => (
-                    <option key={p.id} value={p.name}>{p.name}</option>
-                  ))}
-                </select>
+                  options={adoConfig.availableProjects.map((p) => ({
+                    value: p.name,
+                    label: p.name,
+                  }))}
+                  onChange={(name) => handleInputChange('ado', 'projectName', name)}
+                  placeholder='-- Select a project --'
+                  searchPlaceholder='Search projects...'
+                  emptyLabel='No projects found...'
+                />
               ) : (
                 <input
                   type="text"
@@ -415,69 +230,15 @@ const AdoSettings: React.FC = () => {
               </select>
             </div>
 
-            {hasProjectSelected && (
-              <>
-                <div className="button-group">
-                  <button onClick={checkConnection}>Check Connection</button>
-                  {(adoConfig.isSyncing || adoConfig.isIndexing) ? (
-                    <button onClick={stopSync} className="stop-sync-button">
-                      {adoConfig.isIndexing ? 'Stop Indexing' : 'Stop Sync'}
-                    </button>
-                  ) : adoConfig.canResume ? (
-                    <button onClick={resumeSync} className="resume-sync-button">
-                      Resume Sync
-                    </button>
-                  ) : (
-                    <>
-                      <button onClick={() => startSync(false)}>
-                        {adoConfig.lastSyncTime ? 'Sync Recent Changes' : 'Start Sync'}
-                      </button>
-                      {adoConfig.lastSyncTime && (
-                        <button
-                          onClick={() => startSync(true)}
-                          className="secondary-button"
-                        >
-                          Force Full Re-Sync
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                <div className="sync-status-container" style={{ marginTop: '12px' }}>
-                  {(adoConfig.isSyncing || adoConfig.isIndexing) ? (
-                    <div className="active-sync-indicator" style={{ color: '#4ecca3', fontSize: '0.95em', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span className="spinner">
-                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                        </svg>
-                      </span>
-                      {adoConfig.isSyncing
-                        ? `Syncing... (${adoConfig.adoSyncProgress || 0}%)`
-                        : `Indexing... (${adoConfig.adoIndexProgress || 0}%)`}
-                    </div>
-                  ) : adoConfig.lastSyncTime ? (
-                    <div className="last-sync-time">
-                      Last Sync: {new Date(adoConfig.lastSyncTime).toLocaleString()}
-                      <span className="next-sync-time">
-                        (Next auto-sync at ~{new Date(new Date(adoConfig.lastSyncTime).getTime() + SYNC_INTERVAL_MS).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-              </>
-            )}
+            {/* Action Buttons + sync status — shared with Confluence */}
+            {hasProjectSelected && <SyncControls section='ado' />}
           </>
         )}
 
-        {adoConfig?.statusMessage && (
-          <div className={`status-message ${adoConfig.messageType === 'success' ? 'success' : 'error'}`}>
-            {adoConfig.statusMessage}
-          </div>
-        )}
+        <SyncStatusMessage section='ado' />
       </div>
       )}
-    </div>
+    </SectionShell>
   );
 };
 

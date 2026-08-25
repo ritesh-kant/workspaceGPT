@@ -58,7 +58,7 @@ const QuickTipsSection: React.FC<QuickTipsSectionProps> = ({ mode, onOpenSetting
         aria-expanded={expanded}
       >
         <span className={`tips-section-chevron${expanded ? ' tips-section-chevron--open' : ''}`}>
-          ▸
+          ▶
         </span>
         <span className='tips-section-label'>✨ Quick Tips</span>
         {/* The privacy posture is the one tip worth a glance even when

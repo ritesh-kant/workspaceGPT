@@ -23,6 +23,15 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  /* Same layout floor the chat view gets from #root. Fixed positioning takes
+     its width from the viewport, so without this the form rows keep squeezing
+     below the width the sidebar is allowed to reach. Set from
+     SIDEBAR_MIN_WIDTH_PX in vscode.ts — no literal fallback on purpose, so
+     the number is never duplicated here. border-box makes the floor mean the
+     same thing as the constant: a total width, padding included, rather than
+     a content width that overshoots it by this rule's 1rem padding. */
+  box-sizing: border-box;
+  min-width: var(--wgpt-sidebar-min-width);
 }
 
 .settings-header {
@@ -293,6 +302,15 @@
   box-sizing: border-box;
 }
 
+/* With no search box to focus, the menu focuses itself so arrow keys work
+   immediately — which makes the browser draw its focus ring around the whole
+   popup when it was opened from the keyboard. The highlighted row already
+   shows where the keyboard is, so the outer ring is just noise. */
+.searchable-dropdown-menu:focus,
+.searchable-dropdown-menu:focus-visible {
+  outline: none;
+}
+
 .searchable-dropdown-input {
   width: calc(100% - 16px) !important;
   margin: 8px !important;
@@ -442,6 +460,12 @@
   justify-content: center;
   z-index: 200;
   padding: 1rem;
+  /* Floors with the panel it sits over — otherwise the dialog keeps narrowing
+     past the width the sidebar itself is allowed to reach, and its two actions
+     wrap. border-box so the floor counts this rule's padding, matching what
+     SIDEBAR_MIN_WIDTH_PX measures. */
+  box-sizing: border-box;
+  min-width: var(--wgpt-sidebar-min-width);
 }
 
 .mode-confirm-dialog {
@@ -610,6 +634,140 @@
   gap: 6px;
 }
 
+/* A collapsed section keeps its border only when open — closed, the card reads
+   as a single status row rather than an empty titled box. */
+.section-header--collapsible {
+  gap: 0.5rem;
+  margin-bottom: 0;
+  padding-bottom: 0.5rem;
+}
+
+.settings-section:has(> .section-header--collapsible:last-child) .section-header--collapsible {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--vscode-editor-foreground);
+  text-align: left;
+}
+
+/* No hover band here: the toggle is only part of the header row (the enable
+   switch sits beside it), so a background would highlight half a row. Brighten
+   the text instead. */
+.section-toggle:hover h3,
+.section-toggle:hover .section-chevron {
+  color: var(--vscode-textLink-foreground);
+}
+
+.section-toggle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.section-toggle h3 {
+  margin: 0;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.section-chevron {
+  font-size: 0.6rem;
+  color: var(--vscode-descriptionForeground);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.section-chevron--open {
+  transform: rotate(90deg);
+}
+
+/* The whole point of collapsing: the state is readable without expanding. */
+.section-summary {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.danger-button {
+  background-color: transparent;
+  color: var(--wgpt-error, var(--vscode-errorForeground));
+  border: 1px solid var(--wgpt-error, var(--vscode-errorForeground));
+}
+
+.danger-button:hover {
+  background-color: var(--wgpt-error, var(--vscode-errorForeground));
+  color: var(--vscode-editor-background);
+}
+
+/* ADO PAT setup — was inline styles with hardcoded greys that ignored the
+   editor theme. */
+.pat-scopes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 10px 0;
+  font-size: 0.82em;
+  line-height: 1.6;
+  color: var(--vscode-descriptionForeground);
+}
+
+.pat-scopes em {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+.pat-input {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+
+.mcp-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mcp-status-text {
+  font-size: 0.8rem;
+}
+
+.mcp-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+  background-color: var(--vscode-descriptionForeground);
+}
+
+.mcp-status-dot--on {
+  background-color: var(--vscode-testing-iconPassed);
+}
+
+.mcp-status-dot--off {
+  background-color: var(--vscode-testing-iconFailed);
+}
+
 .beta-badge {
   display: inline-flex;
   align-items: center;
@@ -637,6 +795,13 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  /* A real <button> now, for keyboard and screen-reader access. */
+  width: 100%;
+  background: none;
+  border: none;
+  font-family: inherit;
+  color: var(--vscode-editor-foreground);
+  text-align: left;
   /* Matches the combined inset of a nested card's own title/toggle
      (beta-section-body's 0.75rem + settings-section's 1rem) so the
      "Beta Features" title and arrow line up with the cards below it. */
@@ -651,20 +816,32 @@
   background: rgba(224, 164, 88, 0.06);
 }
 
+/* The ring hugs the title, not the full-width row. This header spans the whole
+   top of a rounded card, so any box-shaped outline around the button itself
+   reads as a stray border — and its bottom edge fakes a divider above the
+   expanded body. Same treatment as .section-toggle's ring. */
+.beta-section-header:focus-visible {
+  outline: none;
+}
+
+.beta-section-header:focus-visible h3 {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
 .beta-section-body {
   padding: 0 0.75rem 0.75rem;
 }
 
-.beta-section-body .settings-section {
-  border-top: 1px solid var(--vscode-panel-border);
-  padding-top: 0.75rem;
+/* Stack these with margin only. They are self-contained cards — own
+   background, 1rem padding, 1rem radius — so a border-top separator drew a
+   line inside the card, and zeroing padding-top on the first one pushed its
+   title and toggle flush into the rounded top edge, cropping them. The
+   adjacent-sibling selector gives the gap between cards without needing a
+   :first-child override to undo. */
+.beta-section-body .settings-section + .settings-section {
   margin-top: 0.75rem;
-}
-
-.beta-section-body .settings-section:first-child {
-  border-top: none;
-  padding-top: 0;
-  margin-top: 0;
 }
 
 .header-controls {

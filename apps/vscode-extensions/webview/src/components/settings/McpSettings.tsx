@@ -1,13 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES } from '../../constants';
+import SectionShell from './SectionShell';
+
+/** How long to wait for the host's setup result before offering a retry. */
+const SETUP_TIMEOUT_MS = 30000;
 
 const McpSettings: React.FC = () => {
   const vscode = VSCodeAPI();
   const [isInstalled, setIsInstalled] = useState<boolean | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
-  const [messageType] = useState<'success' | 'error'>('success');
+  const [messageType, setMessageType] = useState<'success' | 'error'>('success');
+  const setupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSetupTimer = () => {
+    if (setupTimer.current) {
+      clearTimeout(setupTimer.current);
+      setupTimer.current = null;
+    }
+  };
 
   useEffect(() => {
     // Ask extension for current MCP status on mount
@@ -17,26 +29,46 @@ const McpSettings: React.FC = () => {
       const message = event.data;
 
       if (message.type === MESSAGE_TYPES.MCP_STATUS) {
+        clearSetupTimer();
         setIsInstalled(message.isInstalled);
         setIsInstalling(false);
+        if (message.message) {
+          setMessageType(message.isInstalled ? 'success' : 'error');
+          setStatusMessage(message.message);
+        }
       }
     };
 
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      clearSetupTimer();
+    };
   }, []);
 
   function handleConnect() {
     setIsInstalling(true);
     setStatusMessage('');
     vscode.postMessage({ type: MESSAGE_TYPES.SETUP_MCP });
+    // Without this the button sits on "Connecting…" forever if the host never
+    // answers, with no way to tell a slow setup from a failed one.
+    clearSetupTimer();
+    setupTimer.current = setTimeout(() => {
+      setIsInstalling(false);
+      setMessageType('error');
+      setStatusMessage('Setup timed out — check the WorkspaceGPT output log and try again.');
+    }, SETUP_TIMEOUT_MS);
   }
 
+  const summary =
+    isInstalled === null
+      ? 'Checking…'
+      : isInstalled
+        ? '✅ Connected'
+        : 'Not connected';
+
   return (
-    <div className='settings-section'>
-      <div className='section-header'>
-        <h3>MCP Server</h3>
-      </div>
+    <SectionShell storageKey='mcp' title='MCP Server' summary={summary}>
       <div className='settings-form'>
         <div className='form-group'>
           <small className='form-text'>
@@ -47,23 +79,13 @@ const McpSettings: React.FC = () => {
         </div>
 
         <div className='form-group'>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div className='mcp-status-row'>
             <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                backgroundColor:
-                  isInstalled === null
-                    ? 'var(--vscode-descriptionForeground)'
-                    : isInstalled
-                      ? 'var(--vscode-testing-iconPassed)'
-                      : 'var(--vscode-testing-iconFailed)',
-                flexShrink: 0,
-                display: 'inline-block',
-              }}
+              className={`mcp-status-dot${
+                isInstalled === null ? '' : isInstalled ? ' mcp-status-dot--on' : ' mcp-status-dot--off'
+              }`}
             />
-            <span style={{ fontSize: '0.8rem' }}>
+            <span className='mcp-status-text'>
               {isInstalled === null
                 ? 'Checking status…'
                 : isInstalled
@@ -82,13 +104,13 @@ const McpSettings: React.FC = () => {
                 : 'Connect MCP Server'}
           </button>
           {statusMessage && (
-            <div className={`status-message ${messageType}`} style={{ marginTop: '8px' }}>
+            <div className={`status-message ${messageType} mt-8`}>
               {statusMessage}
             </div>
           )}
         </div>
       </div>
-    </div>
+    </SectionShell>
   );
 };
 
