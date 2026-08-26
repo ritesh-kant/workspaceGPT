@@ -122,6 +122,18 @@ function startSidebarCollapseWatch(api: { postMessage: (message: any) => void })
     });
   };
 
+  // The 100ms poll alone is not reliable for catching "went hidden": VS Code
+  // throttles timers in a backgrounded webview, so a quick close-then-reopen
+  // can skip every tick while hidden and leave `wasHidden` false. The first
+  // layout frame after reveal can then read as a shrink below the threshold,
+  // closing the sidebar that just opened. visibilitychange fires immediately
+  // and is not subject to that throttling, so use it as the source of truth.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      wasHidden = true;
+    }
+  });
+
   window.addEventListener("resize", tick);
   window.visualViewport?.addEventListener("resize", tick);
   window.setInterval(tick, 100);
