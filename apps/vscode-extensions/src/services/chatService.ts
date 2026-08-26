@@ -60,6 +60,7 @@ import {
   RunCommandArgs,
 } from './agent/commandTools';
 import { loadWorkspaceRules } from './agent/rulesFiles';
+import { searchWeb } from './webSearchTool';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -783,6 +784,8 @@ export class ChatService {
         return this.searchKnowledge('ADO', args);
       case 'get_ticket':
         return fetchWorkItem(this.context, args);
+      case 'search_web':
+        return searchWeb(this.context, args, (message) => this.postStatus(run, message));
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -999,6 +1002,8 @@ export class ChatService {
         return { kind: 'search', title: 'Searched Azure DevOps', detail: args?.query ?? '' };
       case 'get_ticket':
         return { kind: 'read', title: 'Read ticket', detail: String(args?.id ?? '') };
+      case 'search_web':
+        return { kind: 'search', title: 'Searched the web', detail: args?.query ?? '' };
       case 'read_file': {
         const range = args?.startLine
           ? `#L${args.startLine}${args?.endLine ? `-${args.endLine}` : ''}`
@@ -1075,6 +1080,7 @@ export class ChatService {
         return result?.applied ? { summary: `+${result.added ?? 0} −${result.removed ?? 0}` } : {};
       case 'search_docs':
       case 'search_tickets':
+      case 'search_web':
         return { summary: plural(result?.results?.length ?? 0, 'result') };
       case 'get_ticket':
         // The state is the useful at-a-glance fact ("Active", "Resolved").
@@ -1109,6 +1115,8 @@ export class ChatService {
         return `Searching Azure DevOps for "${args?.query ?? ''}"...`;
       case 'get_ticket':
         return `Reading ticket ${args?.id ?? ''}...`;
+      case 'search_web':
+        return `Searching the web for "${args?.query ?? ''}"...`;
       case 'get_diagnostics':
         return args?.path ? `Checking problems in ${args.path}...` : 'Checking workspace problems...';
       case 'git_status':

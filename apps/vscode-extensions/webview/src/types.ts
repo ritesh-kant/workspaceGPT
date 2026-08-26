@@ -190,6 +190,13 @@ export interface VectorStoreConfig {
   qdrantApiKey?: string;
 }
 
+export interface WebSearchConfig {
+  /** Primary key, kept in sync with apiKeys[0] for backward compat. */
+  apiKey?: string;
+  /** All configured Tavily keys, tried in order with failover on rate-limit (429). */
+  apiKeys?: string[];
+}
+
 export interface AvailableModel {
   id: string;
 }

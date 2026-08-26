@@ -232,6 +232,22 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'search_web',
+      description:
+        "Live web search for anything the codebase and org docs can't answer — an unfamiliar library/API/product, current documentation, or something that changed since training. Use it when a name or concept is unrecognized rather than guessing. Returns a synthesized answer (when available) plus source snippets with URLs — cite the URLs when you use them.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'The web search query.' },
+          maxResults: { type: 'number', description: 'Number of results (default 5, max 10).' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_command',
       description:
         'Run a shell command in the workspace (build, test, lint, package scripts). Returns exit code and combined output. The user approves each command before it runs (previously session-approved commands run immediately); destructive commands are blocked outright. Use this to VERIFY your edits — run the relevant test/build after changing code.',

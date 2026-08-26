@@ -21,6 +21,7 @@ export interface SettingsConfig {
   deployment: DeploymentConfig;
   embedding: EmbeddingProviderConfig;
   vectorStore: VectorStoreConfig;
+  webSearch: WebSearchConfig;
 }
 
 export const settingsDefaultConfig: SettingsConfig = {
@@ -118,6 +119,9 @@ export const settingsDefaultConfig: SettingsConfig = {
     qdrantUrl: '',
     qdrantApiKey: '',
   },
+  webSearch: {
+    apiKey: '',
+  },
 };
 
 /** The object-valued sections of SettingsConfig — excludes the config-level
@@ -146,7 +150,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
-import { CodebaseConfig, ConfluenceConfig, AdoConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig } from '../types';
+import { CodebaseConfig, ConfluenceConfig, AdoConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig, WebSearchConfig } from '../types';
 
 const vscodeStorage = {
   getItem: () => {

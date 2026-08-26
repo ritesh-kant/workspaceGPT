@@ -10,6 +10,7 @@ import RemoteEngineSettings from './settings/RemoteEngineSettings';
 import ShareSettings from './settings/ShareSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
+import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
 // import CodebaseSettings from './settings/CodebaseSettings';
 import McpSettings from './settings/McpSettings';
@@ -87,6 +88,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         <ConfluenceSettings />
 
         <AdoSettings />
+
+        <WebSearchSettings />
 
         <div className='beta-section'>
           <button
