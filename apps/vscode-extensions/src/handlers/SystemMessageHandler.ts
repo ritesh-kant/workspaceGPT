@@ -8,7 +8,9 @@ import { isMcpInstalled } from '../utils/mcpStatusChecker';
 import { syncContextKeys } from '../utils/syncContextKeys';
 
 /**
- * Onboarding funnel events the webview may report. Allowlisted rather than
+ * Analytics-only events the webview may report over ONBOARDING_EVENT (mostly
+ * onboarding-funnel milestones, but also other UI-side events with no
+ * extension-host equivalent, e.g. a blocked send). Allowlisted rather than
  * passed through verbatim: a typo'd name from the webview would otherwise
  * create a permanent junk event in PostHog's schema (and count toward billing).
  */
@@ -17,6 +19,9 @@ const ONBOARDING_EVENTS = new Set([
   'onboarding_engine_skipped',
   'onboarding_confluence_connect_clicked',
   'onboarding_completed',
+  // Send was clicked but blocked client-side (no model / no key) — without
+  // this, that dead-end is invisible in PostHog and looks like abandonment.
+  'message_blocked_no_model',
 ]);
 
 export class SystemMessageHandler {

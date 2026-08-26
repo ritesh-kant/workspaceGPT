@@ -884,6 +884,11 @@ const App: React.FC = () => {
     // Local mode: a model must be selected. Remote mode has no model picker —
     // it just needs a Gemini key (the host routes the actual model by task).
     if (mode === 'local' && !selectedModelProvider?.selectedModel) {
+      vscode.postMessage({
+        type: MESSAGE_TYPES.ONBOARDING_EVENT,
+        event: 'message_blocked_no_model',
+        properties: { mode, reason: 'no_model_selected' },
+      });
       addMessage({
         content: 'Please select the model from settings to use the model',
         isUser: false,
@@ -891,6 +896,11 @@ const App: React.FC = () => {
       return;
     }
     if (mode === 'remote' && !hasRemoteChatKey) {
+      vscode.postMessage({
+        type: MESSAGE_TYPES.ONBOARDING_EVENT,
+        event: 'message_blocked_no_model',
+        properties: { mode, reason: 'no_remote_key' },
+      });
       addMessage({
         content: 'Add your Gemini API key in Settings to start chatting.',
         isUser: false,
