@@ -545,7 +545,23 @@ async function generateResponse(): Promise<void> {
     } else {
       await generateWithOpenAIStream(structuredPrompt, modelId, resolvedBaseUrl, failoverKeys);
     }
-  } catch (error) {
+  } catch (error: any) {
+    // The UI only ever shows `error.message` (e.g. "400 Backend request
+    // failed with status 400"), which is the OpenAI SDK's terse summary —
+    // it drops the provider's actual JSON error body, request context, and
+    // which key/model/provider combo was in play. Log the full picture to
+    // the extension host console (visible in the "Extension Host" output
+    // channel) so a failure like this is debuggable without reproducing it
+    // against a raw HTTP client.
+    console.error('[workspaceGPT] LLM request failed:', {
+      provider,
+      model: modelId,
+      baseUrl: baseUrl,
+      status: error?.status ?? error?.statusCode ?? error?.response?.status,
+      providerError: error?.error ?? error?.response?.data,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     parentPort?.postMessage({
       type: 'error',
       message: error instanceof Error ? error.message : String(error),

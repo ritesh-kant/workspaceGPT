@@ -1363,15 +1363,37 @@ Query: "${query}"`;
         let streamedContent = '';
         let settled = false;
 
+        // Safety net for a worker that stops making progress entirely (hung
+        // tool call, dead LLM connection with no socket error, etc.) without
+        // ever emitting 'message'/'error'/'exit'. Rearmed on every message the
+        // worker sends (see armStallTimer calls below) — this only fires on
+        // total silence, not on a merely slow turn.
+        const STALL_TIMEOUT_MS = 5 * 60 * 1000;
+        let stallTimer: ReturnType<typeof setTimeout> | null = null;
+        const armStallTimer = () => {
+          if (stallTimer) clearTimeout(stallTimer);
+          stallTimer = setTimeout(() => {
+            settle(new Error('Model worker stopped responding — no activity for 5 minutes.'));
+          }, STALL_TIMEOUT_MS);
+        };
+        armStallTimer();
+
         // Single exit point. A "Premature close" (or any late teardown error)
         // is emitted asynchronously on the LLM response socket AFTER all chunks
         // have already been streamed to the UI, and it surfaces as the worker's
         // 'error' event — outside the worker's try/catch. When that happens but
         // we already have content, the response is complete: finish cleanly
         // instead of showing the user a failure over an answer that rendered.
+        //
+        // Also the ONLY place that clears run.worker/run.reject — reached via
+        // 'done'/'error' messages, the stall timer above, or the 'exit'
+        // listener below, so a worker that dies silently (crash, killed
+        // thread, clean-but-empty exit) can never leave the session stuck
+        // thinking a generation is still in flight.
         const settle = (error: Error | null) => {
           if (settled) return;
           settled = true;
+          if (stallTimer) clearTimeout(stallTimer);
           run.worker = null;
           run.reject = null;
           modelWorker.terminate();
@@ -1418,6 +1440,7 @@ Query: "${query}"`;
             avgSec?: number;
             cap?: number;
           }) => {
+            armStallTimer();
             switch (result.type) {
               case 'chunk':
                 streamedContent += result.content || '';
@@ -1566,6 +1589,14 @@ Query: "${query}"`;
 
         modelWorker.on('error', (error) => {
           settle(error instanceof Error ? error : new Error(String(error)));
+        });
+
+        // Belt-and-suspenders for 'error' not firing (e.g. the thread was
+        // killed, or exited cleanly without ever sending 'done'/'error') — a
+        // no-op once settle() already ran via a message, the error handler,
+        // or the stall timer above.
+        modelWorker.on('exit', (code) => {
+          settle(code === 0 ? null : new Error(`Model worker exited unexpectedly (code ${code}).`));
         });
       });
     } catch (error) {

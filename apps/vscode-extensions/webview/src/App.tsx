@@ -1319,7 +1319,10 @@ const App: React.FC = () => {
   // model-facing history forks with the UI — without it the model would still
   // be answering the original question it can no longer see.
   const handleEditMessage = (index: number, newContent: string) => {
-    if (isLoading) return;
+    // Mirrors the render gate that shows this control in the first place
+    // (`!isLoading && !isStreaming`) — belt-and-suspenders in case a stale
+    // render lets the action fire while a turn is still technically live.
+    if (isLoading || isStreaming) return;
     const original = messages[index];
     if (!original?.isUser) return;
 
