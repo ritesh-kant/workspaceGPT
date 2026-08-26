@@ -18,6 +18,7 @@ import { AnalyticsService } from './analyticsService';
 import { getLlmSettings } from 'src/utils/getLlmSettings';
 import { getMode } from 'src/utils/getModeSettings';
 import { withKeyFailover } from 'src/utils/apiKeyFailover';
+import { normalizeModelId } from 'src/utils/normalizeModelId';
 import { classifyQuery } from 'src/utils/queryClassifier';
 import { buildPlan, expandQuery } from 'src/utils/queryPlanner';
 import { rerank } from 'src/utils/reranker';
@@ -1253,7 +1254,7 @@ Query: "${query}"`;
         (apiKey) => {
           const client = new OpenAI({ apiKey, baseURL: resolvedBaseUrl });
           return client.chat.completions.create({
-            model: effModelId,
+            model: normalizeModelId(effModelId),
             messages: [{ role: 'user', content: prompt }],
             max_tokens: 60,
             temperature: 0,

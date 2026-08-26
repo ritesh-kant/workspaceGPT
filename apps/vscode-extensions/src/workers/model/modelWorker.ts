@@ -7,6 +7,7 @@ import { EmbeddingSearchResult } from 'src/types/types';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
 import { extractBalancedJsonObjects } from './jsonExtract';
 import { runExplorationPhase, defaultExplorationConfig } from './explorationPhase';
+import { normalizeModelId } from '../../utils/normalizeModelId';
 
 interface WorkerData {
   prompt: string;
@@ -80,6 +81,25 @@ function isInvalidImageError(err: any): boolean {
   if (status !== 400) return false;
   const msg = String(err?.message ?? '').toLowerCase();
   return /image/.test(msg) && /(invalid|not support|unsupported|vision)/.test(msg);
+}
+
+/**
+ * Whether a failed request is worth retrying with the images removed.
+ *
+ * Matching the error TEXT is not enough: Gemini rejects image content it can't
+ * use with a completely empty 400 body, so the SDK reports only "400 status
+ * code (no body)" — nothing for isInvalidImageError's regex to match, and the
+ * strip-and-retry below never fired. A bodyless 400 is evidence of nothing in
+ * particular, so if the conversation carries images at all, dropping them is
+ * the cheapest thing to rule out (it also shrinks a request that may simply be
+ * too large — a ticket's four inline screenshots are megabytes of base64).
+ * The caller only retries when images were actually present, and a second
+ * failure rethrows the original error.
+ */
+function shouldRetryWithoutImages(err: any): boolean {
+  if (isInvalidImageError(err)) return true;
+  const status = err?.status ?? err?.statusCode ?? err?.response?.status;
+  return status === 400 && /status code \(no body\)/i.test(String(err?.message ?? ''));
 }
 
 function isImageContentPart(part: any): boolean {
@@ -315,7 +335,13 @@ const TOOL_DEFS = [
     function: {
       name: 'git_status',
       description: 'Current git branch and working-tree status (changed/untracked files). Read-only.',
-      parameters: { type: 'object', properties: {} },
+      // No `parameters` key at all — the canonical shape for a no-argument
+      // function, accepted by OpenAI and the OpenAI-compatible routers alike.
+      // An object schema with an empty `properties` map is the shakier form:
+      // providers that convert declarations to their own function schema
+      // (Gemini) have no `properties` to map. Never confirmed to have caused a
+      // failure here — kept because the declared-no-args form is the portable
+      // one, and one bad declaration would fail every tool-using turn.
     },
   },
   {
@@ -523,6 +549,10 @@ async function generateResponse(): Promise<void> {
     if (!resolvedBaseUrl || !modelId || !failoverKeys.length) {
       throw new Error(`Provider ${provider} or modelId not found`);
     }
+    // Normalized once here: every downstream completion (the streaming path,
+    // the agent loop's tool turns, and the exploration phase's explorers) is
+    // handed this value.
+    const resolvedModelId = normalizeModelId(modelId);
 
     const structuredPrompt = createStructuredPrompt(
       searchResults,
@@ -541,9 +571,9 @@ async function generateResponse(): Promise<void> {
     );
 
     if (codebaseTools?.enabled) {
-      await runAgentLoop(structuredPrompt, modelId, resolvedBaseUrl, failoverKeys);
+      await runAgentLoop(structuredPrompt, resolvedModelId, resolvedBaseUrl, failoverKeys);
     } else {
-      await generateWithOpenAIStream(structuredPrompt, modelId, resolvedBaseUrl, failoverKeys);
+      await generateWithOpenAIStream(structuredPrompt, resolvedModelId, resolvedBaseUrl, failoverKeys);
     }
   } catch (error: any) {
     // The UI only ever shows `error.message` (e.g. "400 Backend request
@@ -686,11 +716,11 @@ async function generateWithOpenAIStream(prompt: string, model: string, baseURL: 
     stream = await withKeyFailover(apiKeys, call, notifyKeyFailover);
   } catch (err) {
     const [stripped, changed] = stripImageParts(userContent);
-    if (isInvalidImageError(err) && changed) {
+    if (shouldRetryWithoutImages(err) && changed) {
       userContent = stripped as typeof userContent;
       parentPort?.postMessage({
         type: 'image_unsupported',
-        message: `${model} doesn't support image input — continuing without the attached image(s).`,
+        message: `${model} couldn't process the attached image(s) — continuing without them.`,
       });
       stream = await withKeyFailover(apiKeys, call, notifyKeyFailover);
     } else {
@@ -761,6 +791,68 @@ function addUsage(a: TurnUsage, b: TurnUsage): TurnUsage {
  * empty-body 400. A non-streaming response returns each tool_call fully
  * formed (real id included), sidestepping that entire class of bug.
  */
+/**
+ * Checks the structural invariants every OpenAI-compatible provider enforces on
+ * a tool-calling conversation. Providers report violations uselessly — Gemini
+ * with an empty-body 404, others with a generic 400 — so when a request fails
+ * we run this to name the actual defect instead of guessing at it.
+ */
+function findEnvelopeViolations(messages: any[]): string[] {
+  const violations: string[] = [];
+  const pendingIds = new Map<string, string>(); // tool_call_id -> function name, awaiting its result
+
+  messages.forEach((m, i) => {
+    if (m.role === 'assistant' && m.tool_calls?.length) {
+      // A previous assistant turn's calls must all have been answered by now.
+      for (const [id, name] of pendingIds) {
+        violations.push(`[${i}] new assistant tool_calls while ${name} (id ${id}) was never answered`);
+      }
+      pendingIds.clear();
+      for (const tc of m.tool_calls) {
+        const name = tc.function?.name;
+        if (!name || !KNOWN_TOOL_NAMES.has(name)) {
+          violations.push(`[${i}] assistant calls undeclared function "${name}" (not in TOOL_DEFS)`);
+        }
+        if (!tc.id) violations.push(`[${i}] assistant tool_call for "${name}" has no id`);
+        else pendingIds.set(tc.id, name ?? '?');
+      }
+      return;
+    }
+
+    if (m.role === 'tool') {
+      if (!m.tool_call_id) violations.push(`[${i}] tool message has no tool_call_id`);
+      else if (!pendingIds.has(m.tool_call_id)) {
+        violations.push(`[${i}] tool result references unknown/already-answered id ${m.tool_call_id}`);
+      } else pendingIds.delete(m.tool_call_id);
+      return;
+    }
+
+    // Any other role appearing while calls are unanswered breaks the required
+    // contiguous assistant-tool_calls → tool-results block.
+    for (const [id, name] of pendingIds) {
+      violations.push(`[${i}] role "${m.role}" interleaved before ${name} (id ${id}) was answered`);
+    }
+    if (pendingIds.size) pendingIds.clear();
+  });
+
+  for (const [id, name] of pendingIds) {
+    violations.push(`[end] ${name} (id ${id}) requested but never answered`);
+  }
+  return violations;
+}
+
+/** Compact role/tool_call outline of the conversation, for failure diagnostics. */
+function describeEnvelope(messages: any[]): string[] {
+  return messages.map((m, i) => {
+    if (m.role === 'assistant' && m.tool_calls?.length) {
+      return `${i} assistant tool_calls=[${m.tool_calls.map((tc: any) => `${tc.function?.name}#${tc.id}`).join(', ')}]`;
+    }
+    if (m.role === 'tool') return `${i} tool -> #${m.tool_call_id}`;
+    const kind = Array.isArray(m.content) ? `parts(${m.content.map((p: any) => p.type).join('+')})` : 'text';
+    return `${i} ${m.role} ${kind}`;
+  });
+}
+
 async function runToolTurn(
   messages: any[],
   model: string,
@@ -802,13 +894,22 @@ async function runToolTurn(
     // images from the conversation in place — so later turns don't resend
     // them either — and retry once as text-only rather than failing the
     // whole run over an attachment the model can't use.
-    if (isInvalidImageError(err) && stripImageContentFromMessages(messages)) {
+    if (shouldRetryWithoutImages(err) && stripImageContentFromMessages(messages)) {
+      console.error('[workspaceGPT] request rejected with images attached — retrying without them.');
       parentPort?.postMessage({
         type: 'image_unsupported',
-        message: `${model} doesn't support image input — continuing without the attached image(s).`,
+        message: `${model} couldn't process the attached image(s) — continuing without them.`,
       });
       response = await withKeyFailover(apiKeys, call, notifyKeyFailover);
     } else {
+      // A malformed conversation is the most common cause of an opaque 4xx
+      // here; report the specific structural defect rather than leaving only
+      // the provider's unhelpful status line.
+      const violations = findEnvelopeViolations(messages);
+      if (violations.length) {
+        console.error('[workspaceGPT] malformed tool-call conversation:', violations);
+      }
+      console.error('[workspaceGPT] message envelope at failure:', describeEnvelope(messages));
       throw err;
     }
   }
@@ -1147,20 +1248,20 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     completionTokensTotal += exploration.stats.completionTokens;
   }
   if (exploration.claimTableMarkdown) {
-    const exploreCallId = 'auto_explore_codebase';
-    messages.push({
-      role: 'assistant',
-      content: null,
-      tool_calls: [
-        { id: exploreCallId, type: 'function', function: { name: 'explore_codebase', arguments: JSON.stringify({ question: prompt }) } },
-      ],
-    });
+    // Carried as a plain user turn, NOT as a synthetic assistant tool_call +
+    // tool result pair. `explore_codebase` is not a declared tool (it isn't in
+    // TOOL_DEFS — the phase runs as plain code, the model never calls it), and
+    // referencing an undeclared function in the history is invalid under the
+    // OpenAI tool schema: a provider validating names against the declarations
+    // it was sent has nothing to match. A user turn carries the same text with
+    // no schema claim attached, so no validator can object.
     const claimContent =
+      'Preliminary scan of the workspace (done for you before this turn):\n\n' +
       exploration.claimTableMarkdown +
       '\n\n(These are cited leads from a preliminary scan, not verified truth. Open any cited range ' +
       'with read_file before relying on it for an edit. Unexplored files above are just names — ' +
       'investigate them with tools if the question requires it.)';
-    messages.push({ role: 'tool', tool_call_id: exploreCallId, content: claimContent });
+    messages.push({ role: 'user', content: claimContent });
     // Deliberately NOT passed through recordToolResult: this table is the map
     // for the whole run and must survive microcompaction, which only rewrites
     // entries present in toolResultLog. It still counts against the budget.
@@ -1493,6 +1594,14 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       results.push(...(await Promise.all(toolCalls.map(executeOne))));
     }
 
+    // `role: 'tool'` messages must immediately and contiguously follow the
+    // assistant `tool_calls` turn that requested them — several OpenAI-compat
+    // backends (observed: GMI/MiniMax) reject the request with "tool call
+    // result does not follow tool call" if anything else is interleaved
+    // between them. A ticket's images can't ride in a tool message (plain
+    // string content only), so their follow-up user turn is queued here and
+    // only pushed once every tool result for this round is in place.
+    const pendingImageTurns: { role: 'user'; content: unknown }[] = [];
     toolCalls.forEach((tc, idx) => {
       const rawResult = results[idx];
       messages.push({
@@ -1502,13 +1611,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       });
       recordToolResult(tc.name, i, messages[messages.length - 1].content);
 
-      // `role: 'tool'` can't carry image content parts, so a ticket's images
-      // ride in as a follow-up user turn — the same content-part shape as a
-      // manually pasted image — right before the loop asks the model again.
       const ticketImages = (rawResult as { images?: { dataUrl: string }[] } | null)?.images;
       if (tc.name === 'get_ticket' && ticketImages?.length) {
         const ticketId = (rawResult as { id?: unknown } | null)?.id ?? '';
-        messages.push({
+        pendingImageTurns.push({
           role: 'user',
           content: [
             { type: 'text', text: `Image(s) attached to ticket #${ticketId}:` },
@@ -1534,6 +1640,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       }
       if (tc.name === 'get_diagnostics') writesSinceDiagnostics = 0;
     });
+    messages.push(...pendingImageTurns);
     toolCallsExecuted += toolCalls.length;
     if (budgetExhausted) {
       // Before treating exhaustion as terminal, try compacting older results —

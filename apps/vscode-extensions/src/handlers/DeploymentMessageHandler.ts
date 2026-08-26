@@ -19,6 +19,7 @@ import { AiReleaseSource, type AiMode } from '../services/deployment/aiReleaseSo
 import { FileReleaseSource } from '../services/deployment/fileReleaseSource';
 import { getLlmSettings } from '../utils/getLlmSettings';
 import { withKeyFailover, isRateLimitError } from '../utils/apiKeyFailover';
+import { normalizeModelId } from '../utils/normalizeModelId';
 import { MachAuthService } from '../services/deployment/machAuthService';
 import { MachSyncTarget, setComponentVersion, type MachSyncOptions } from '../services/deployment/machSyncTarget';
 import { MachEnvTarget, NoSyncPrError } from '../services/deployment/machEnvTarget';
@@ -461,7 +462,7 @@ export class DeploymentMessageHandler {
       return await withKeyFailover(keys, async (apiKey) => {
         const client = new OpenAI({ apiKey: apiKey || 'local', baseURL: s.baseUrl, maxRetries: 4 });
         const res = await client.chat.completions.create({
-          model: s.model!,
+          model: normalizeModelId(s.model!),
           messages: [{ role: 'user', content: prompt }],
           temperature: 0,
           // Generous ceiling: config-sync responses can be long JSON arrays, and
