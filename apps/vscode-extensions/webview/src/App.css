@@ -970,7 +970,9 @@ button:disabled {
 }
 
 .agent-step-title {
-  flex-shrink: 0;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .agent-step-file {

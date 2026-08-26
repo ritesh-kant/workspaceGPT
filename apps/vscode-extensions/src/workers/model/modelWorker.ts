@@ -74,6 +74,40 @@ function buildUserContent(text: string): string | OpenAI.Chat.Completions.ChatCo
   return [{ type: 'text' as const, text }, ...imagesToContentParts(imageAttachments)];
 }
 
+/** True when the provider rejected the request specifically over image/vision content, not a generic 400. */
+function isInvalidImageError(err: any): boolean {
+  const status = err?.status ?? err?.statusCode ?? err?.response?.status;
+  if (status !== 400) return false;
+  const msg = String(err?.message ?? '').toLowerCase();
+  return /image/.test(msg) && /(invalid|not support|unsupported|vision)/.test(msg);
+}
+
+function isImageContentPart(part: any): boolean {
+  return !!part && typeof part === 'object' && part.type === 'image_url';
+}
+
+/** Drops image_url parts from a chat content value, collapsing back to a plain string when only one text part remains. Returns [content, changed]. */
+function stripImageParts(content: unknown): [unknown, boolean] {
+  if (!Array.isArray(content)) return [content, false];
+  const filtered = content.filter((part) => !isImageContentPart(part));
+  if (filtered.length === content.length) return [content, false];
+  if (filtered.length === 1 && filtered[0]?.type === 'text') return [filtered[0].text, true];
+  return [filtered, true];
+}
+
+/** Mutates `messages` in place, stripping image content the provider just rejected — so later turns in the same run don't resend it either. Returns true if anything was removed. */
+function stripImageContentFromMessages(messages: any[]): boolean {
+  let changed = false;
+  for (const m of messages) {
+    const [next, didChange] = stripImageParts(m.content);
+    if (didChange) {
+      m.content = next;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 // ── Codebase tool definitions (OpenAI function-calling schema) ────────────
 
 const TOOL_DEFS = [
@@ -612,23 +646,41 @@ function notifyKeyFailover(message: string): void {
 }
 
 async function generateWithOpenAIStream(prompt: string, model: string, baseURL: string, apiKeys: string[]): Promise<void> {
-  // Create the stream with key failover. A 429 surfaces at creation (before any
-  // chunk), so rotating to the next key here is safe — no partial output yet.
-  const stream = await withKeyFailover(apiKeys, (apiKey) => {
+  let userContent = buildUserContent(prompt);
+  const call = (apiKey: string) => {
     const openai = new OpenAI({ apiKey, baseURL });
     return openai.chat.completions.create({
       model: model,
       messages: [
         {
           role: 'user',
-          content: buildUserContent(prompt),
+          content: userContent,
         }
       ],
       temperature: 0.3,
       max_tokens: 4096,
       stream: true,
     });
-  }, notifyKeyFailover);
+  };
+
+  // Create the stream with key failover. A 429 surfaces at creation (before any
+  // chunk), so rotating to the next key here is safe — no partial output yet.
+  let stream;
+  try {
+    stream = await withKeyFailover(apiKeys, call, notifyKeyFailover);
+  } catch (err) {
+    const [stripped, changed] = stripImageParts(userContent);
+    if (isInvalidImageError(err) && changed) {
+      userContent = stripped as typeof userContent;
+      parentPort?.postMessage({
+        type: 'image_unsupported',
+        message: `${model} doesn't support image input — continuing without the attached image(s).`,
+      });
+      stream = await withKeyFailover(apiKeys, call, notifyKeyFailover);
+    } else {
+      throw err;
+    }
+  }
 
   const outcome = await consumeStream(stream);
   parentPort?.postMessage({ type: 'done', content: outcome.content });
@@ -702,7 +754,7 @@ async function runToolTurn(
   maxTokens: number = 8192,
   allowLengthRetry: boolean = true
 ): Promise<ToolTurnOutcome> {
-  const response = await withKeyFailover(apiKeys, (apiKey) => {
+  const call = (apiKey: string) => {
     const openai = new OpenAI({ apiKey, baseURL });
     return openai.chat.completions.create({
       model,
@@ -722,7 +774,28 @@ async function runToolTurn(
       max_tokens: maxTokens,
       stream: false,
     });
-  }, notifyKeyFailover);
+  };
+
+  let response;
+  try {
+    response = await withKeyFailover(apiKeys, call, notifyKeyFailover);
+  } catch (err) {
+    // A ticket's images (or a pasted screenshot) ride along as image_url
+    // content parts (see imagesToContentParts); a model without vision
+    // support rejects them with a 400 instead of ignoring them. Strip the
+    // images from the conversation in place — so later turns don't resend
+    // them either — and retry once as text-only rather than failing the
+    // whole run over an attachment the model can't use.
+    if (isInvalidImageError(err) && stripImageContentFromMessages(messages)) {
+      parentPort?.postMessage({
+        type: 'image_unsupported',
+        message: `${model} doesn't support image input — continuing without the attached image(s).`,
+      });
+      response = await withKeyFailover(apiKeys, call, notifyKeyFailover);
+    } else {
+      throw err;
+    }
+  }
 
   // Some providers (OpenRouter free-tier models especially, under load or
   // rate limiting) return HTTP 200 with an error payload instead of a real

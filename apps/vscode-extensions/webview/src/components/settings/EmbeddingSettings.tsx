@@ -26,6 +26,21 @@ const EmbeddingSettings: React.FC = () => {
     setApiKeys(next.length ? next : ['']);
   };
 
+  // Pasting a comma-separated list of keys expands into one row per key,
+  // in place of whichever row received the paste.
+  const handleKeyPaste = (i: number, e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text');
+    const parts = pasted
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    if (parts.length <= 1) return;
+    e.preventDefault();
+    const next = [...apiKeys];
+    next.splice(i, 1, ...parts);
+    setApiKeys(next);
+  };
+
   return (
     <div className='settings-section'>
       <div className='section-header'>
@@ -65,6 +80,7 @@ const EmbeddingSettings: React.FC = () => {
                       type='password'
                       value={key}
                       onChange={(e) => updateApiKeyAt(i, e.target.value)}
+                      onPaste={(e) => handleKeyPaste(i, e)}
                       placeholder={
                         i === 0 ? 'Enter your Google Gemini API key' : `Fallback key #${i + 1}`
                       }
@@ -88,7 +104,8 @@ const EmbeddingSettings: React.FC = () => {
                 <small className='form-text'>
                   Used to embed documents and queries with gemini-embedding-001. Extra keys
                   are tried in order if one is rate-limited (HTTP 429) — useful for spreading
-                  free-tier quota across multiple keys.
+                  free-tier quota across multiple keys. Paste a comma-separated list into
+                  any field to add them all at once.
                 </small>
               </div>
             </details>

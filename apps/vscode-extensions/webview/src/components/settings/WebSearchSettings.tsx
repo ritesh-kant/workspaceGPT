@@ -27,6 +27,21 @@ const WebSearchSettings: React.FC = () => {
     setApiKeys(next.length ? next : ['']);
   };
 
+  // Pasting a comma-separated list of keys expands into one row per key,
+  // in place of whichever row received the paste.
+  const handleKeyPaste = (i: number, e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text');
+    const parts = pasted
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    if (parts.length <= 1) return;
+    e.preventDefault();
+    const next = [...apiKeys];
+    next.splice(i, 1, ...parts);
+    setApiKeys(next);
+  };
+
   const summary = configuredKeyCount > 0 ? `✅ ${configuredKeyCount} key${configuredKeyCount > 1 ? 's' : ''}` : 'Not configured';
 
   return (
@@ -53,6 +68,7 @@ const WebSearchSettings: React.FC = () => {
                     type='password'
                     value={key}
                     onChange={(e) => updateApiKeyAt(i, e.target.value)}
+                    onPaste={(e) => handleKeyPaste(i, e)}
                     placeholder={i === 0 ? 'tvly-...' : `Fallback key #${i + 1}`}
                   />
                   {apiKeys.length > 1 && (
@@ -79,7 +95,9 @@ const WebSearchSettings: React.FC = () => {
                 — 1,000 searches/month per key, no card required. Extra keys
                 are tried in order if one is rate-limited (HTTP 429) — spread
                 free-tier quota across several keys the same way Model and
-                Embedding settings do. Without any key, the agent's{' '}
+                Embedding settings do. Paste a comma-separated list into any
+                field to add them all at once. Without any key, the agent's
+                {' '}
                 <code>search_web</code> tool reports itself unavailable
                 instead of failing the whole task.
               </small>

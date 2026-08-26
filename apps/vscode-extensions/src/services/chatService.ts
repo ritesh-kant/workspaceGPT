@@ -1527,6 +1527,17 @@ Query: "${query}"`;
                 });
                 break;
 
+              case 'image_unsupported':
+                // The model rejected an attached/ticket image with a 400 — the
+                // worker already stripped it and retried as text-only. Tell the
+                // user why the image is missing instead of leaving it silent.
+                this.postStatus(run, result.message || "Model doesn't support image input — continuing without the image.");
+                this.post(run, {
+                  type: MESSAGE_TYPES.AGENT_STEP,
+                  step: { kind: 'info', title: result.message || "Model doesn't support image input — continuing without the image." },
+                });
+                break;
+
               case 'slow_model': {
                 // The worker detected ~minute-long completions and trimmed the
                 // run (fewer iterations, no reflection extras). Tell the user
