@@ -1326,6 +1326,8 @@ const App: React.FC = () => {
     const original = messages[index];
     if (!original?.isUser) return;
 
+    setEditingIndex(null);
+
     const historyOverride = messages.slice(0, index).map((m) => ({
       content: m.content,
       isUser: m.isUser,
@@ -1492,8 +1494,11 @@ const App: React.FC = () => {
           )
         ) : (
           <div className={`messages-container${editingIndex !== null ? ' messages-container--editing' : ''}`} ref={messagesContainerRef} onScroll={handleMessagesScroll}>
-            {messages.map((message, index) =>
-              message.writeReview ? (
+            {messages.map((message, index) => {
+              if (editingIndex !== null && index > editingIndex) {
+                return null;
+              }
+              return message.writeReview ? (
                 <AgentWriteCard
                   key={message.writeReview.id}
                   review={message.writeReview}
@@ -1540,8 +1545,8 @@ const App: React.FC = () => {
                     !message.isUser ? (rating) => handleFeedback(index, rating) : undefined
                   }
                 />
-              )
-            )}
+              );
+            })}
             {isLoading && (
               <div className='loading-indicator'>
                 {agentSteps.length > 0 && <AgentTimeline steps={agentSteps} live />}
@@ -1735,7 +1740,12 @@ const App: React.FC = () => {
           </div>
         </div>
         <SettingsButton isVisible={activeView === 'settings'} onBack={() => setActiveView('chat')} />
-        <Releases isVisible={activeView === 'releases'} onBack={() => setActiveView('chat')} />
+        <Releases
+          isVisible={activeView === 'releases'}
+          onBack={() => setActiveView('chat')}
+          mode={mode}
+          onOpenSettings={() => setActiveView('settings')}
+        />
         <ChatHistorySidebar
           isVisible={activeView === 'history'}
           historyList={historyList}

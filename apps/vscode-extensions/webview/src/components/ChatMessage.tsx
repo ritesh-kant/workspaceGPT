@@ -121,8 +121,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   const commitEdit = () => {
     const next = (draft ?? '').trim();
     setDraft(null);
-    // An unchanged (or emptied) draft is a no-op — don't re-run the turn.
-    if (!next || next === content.trim()) return;
+    // An empty draft is a no-op — don't re-run the turn.
+    if (!next) return;
     onEdit?.(next);
   };
 

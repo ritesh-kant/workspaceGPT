@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './Settings.css';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
 import SearchableDropdown from './settings/SearchableDropdown';
+import { useModelActions, useModelProviders, useSelectedModelProvider } from '../store/modelStore';
 
 interface ResolvedRelease {
   configured: boolean;
@@ -82,6 +83,9 @@ interface PlanState {
 interface ReleasesProps {
   isVisible: boolean;
   onBack: () => void;
+  /** Whether the chat model picker applies (local mode routes AI-assist through it; remote mode ignores it). */
+  mode?: 'local' | 'remote';
+  onOpenSettings?: () => void;
 }
 
 /**
@@ -651,8 +655,21 @@ const PipelineCard: React.FC<{
  * and the apply flow exist (later milestones), it renders empty states rather
  * than fabricated data.
  */
-const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
+const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack, mode = 'local', onOpenSettings }) => {
   const vscode = VSCodeAPI();
+  const modelProviders = useModelProviders();
+  const selectedModelProvider = useSelectedModelProvider();
+  const { handleModelChange } = useModelActions();
+  // Same "configured chat models" list the composer's model picker uses — release
+  // resolution and config-sync AI-assist both call through the one globally
+  // selected chat model, so switching it here changes the same setting.
+  const activeModels = useMemo(
+    () =>
+      modelProviders
+        .filter((p) => p?.availableModels?.length && p.selectedModel)
+        .map((p) => ({ provider: p.provider, model: p.selectedModel! })),
+    [modelProviders],
+  );
   const [release, setRelease] = useState<ResolvedRelease | null>(null);
   const [runs, setRuns] = useState<ReleaseRun[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1135,6 +1152,38 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
         <div className="section-header">
           <h3>Today's release</h3>
         </div>
+        {mode === 'local' && (
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '2px 0 10px' }}
+            title="Model used for AI-assisted release resolution and config sync"
+          >
+            <span style={{ fontSize: '0.78em', color: '#888', flexShrink: 0 }}>Model:</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <SearchableDropdown
+                value={selectedModelProvider?.provider ?? ''}
+                searchable={false}
+                onChange={(value) => {
+                  if (value === 'selectModel') {
+                    onOpenSettings?.();
+                    return;
+                  }
+                  const providerConfig = activeModels.find((m) => m.provider === value);
+                  if (!providerConfig) return;
+                  handleModelChange(providerConfig.model, providerConfig.provider);
+                  // Re-resolve with the newly selected model.
+                  setLoading(true);
+                  vscode.postMessage({ type: MESSAGE_TYPES.RESOLVE_RELEASE });
+                }}
+                options={[
+                  ...(activeModels.length
+                    ? activeModels.map((m) => ({ value: m.provider, label: `${m.provider} (${m.model})` }))
+                    : [{ value: 'none', label: 'Select Model' }]),
+                  { value: 'selectModel', label: 'Edit...' },
+                ]}
+              />
+            </div>
+          </div>
+        )}
         <div className="settings-form">
           {loading ? (
             <p style={{ color: '#a0a0a0' }}>Resolving…</p>
@@ -1181,10 +1230,19 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack }) => {
                   ? `Release scheduled${release?.date ? ` for today (${release.date})` : ''}, but no version listed.`
                   : `No release resolved${release?.date ? ` for today (${release.date})` : ''}.`}
               </p>
-              <p style={{ margin: 0, fontSize: '0.85em', color: '#888' }}>
-                {release?.reason ||
-                  'Configure the Release Roster page under Settings → Deployment Automation.'}
-              </p>
+              {release?.reason ? (
+                <div
+                  className="status-message error"
+                  style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: '0.85em' }}
+                >
+                  <span aria-hidden="true">⚠</span>
+                  <span>{release.reason}</span>
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: '0.85em', color: '#888' }}>
+                  Configure the Release Roster page under Settings → Deployment Automation.
+                </p>
+              )}
               {release?.needsVersion && release?.pilot && (
                 <p style={{ margin: '4px 0 0', fontSize: '0.85em', color: '#888' }}>Pilot: {release.pilot}</p>
               )}

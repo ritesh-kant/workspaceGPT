@@ -497,12 +497,62 @@ const MUTATING_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 
 const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file']);
 
 /**
+ * GMI Cloud's MiniMax-M3 endpoint doesn't convert the model's tool-call
+ * markup into a structured `tool_calls` response — it leaks the raw
+ * `<invoke name="...">` XML into content, interleaved with a mangled
+ * special-token marker ("]<]minimax[>[") that should have been stripped
+ * server-side. Observed shape:
+ *   ]<]minimax[>[<tool_call> ]<]minimax[>[<invoke name="read_file">]<]minimax[>[<path>foo.ts]<]minimax[>[</path>]<]minimax[>[</invoke> ]<]minimax[>[</tool_call>
+ * Stripping the marker recovers plain <invoke>/<parameter> (or bare child-tag)
+ * XML, which this parses into the same BufferedToolCall shape as the rest of
+ * extractTextToolCalls's salvage paths.
+ */
+const MINIMAX_TOKEN_MARKER_RE = /\]<\]minimax\[>\[?/g;
+
+function parseInvokeParams(body: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  const namedParamRe = /<parameter\s+name="([^"]+)">([\s\S]*?)<\/parameter>/g;
+  let found = false;
+  let p: RegExpExecArray | null;
+  while ((p = namedParamRe.exec(body))) {
+    found = true;
+    params[p[1]] = p[2].trim();
+  }
+  if (found) return params;
+  // Fall back to bare child tags, e.g. <path>foo.ts</path>.
+  const genericTagRe = /<([a-zA-Z_][\w-]*)>([\s\S]*?)<\/\1>/g;
+  while ((p = genericTagRe.exec(body))) {
+    params[p[1]] = p[2].trim();
+  }
+  return params;
+}
+
+function extractMinimaxInvokeToolCalls(content: string): BufferedToolCall[] {
+  if (!content.includes('<invoke')) return [];
+  const cleaned = content.replace(MINIMAX_TOKEN_MARKER_RE, '');
+  const calls: BufferedToolCall[] = [];
+  const invokeRe = /<invoke\s+name="([^"]+)">([\s\S]*?)<\/invoke>/g;
+  let m: RegExpExecArray | null;
+  while ((m = invokeRe.exec(cleaned))) {
+    const name = m[1];
+    if (!KNOWN_TOOL_NAMES.has(name)) continue;
+    calls.push({
+      id: `textcall_${Date.now()}_${calls.length}`,
+      name,
+      args: JSON.stringify(parseInvokeParams(m[2])),
+    });
+  }
+  return calls;
+}
+
+/**
  * Salvages tool calls that a model emitted as plain text instead of the
  * structured tool_calls field. Smaller local models (qwen2.5-coder via
  * Ollama especially) frequently "narrate" a call as a JSON blob — bare,
  * inside a ```json fence, or wrapped in Qwen's <tool_call> tags — in which
  * case the loop would otherwise treat the turn as a final answer and stop
- * mid-exploration.
+ * mid-exploration. Also covers GMI Cloud/MiniMax-M3's malformed <invoke> XML
+ * (see extractMinimaxInvokeToolCalls).
  */
 function extractTextToolCalls(content: string): BufferedToolCall[] {
   if (!content) return [];
@@ -538,7 +588,30 @@ function extractTextToolCalls(content: string): BufferedToolCall[] {
       // Not valid JSON — leave it as prose.
     }
   }
-  return calls;
+  if (calls.length) return calls;
+  return extractMinimaxInvokeToolCalls(content);
+}
+
+/**
+ * Removes leaked model-formatted tool-call syntax from text meant to be shown
+ * to the user as plain prose — the MiniMax marker debris plus any intact
+ * <tool_call>/<invoke> wrapper tags. Used on turns where a call can't be
+ * executed anyway (tools disabled for this turn) so cleanup, not execution,
+ * is the only option.
+ */
+function stripLeakedToolCallSyntax(content: string): string {
+  return content
+    .replace(MINIMAX_TOKEN_MARKER_RE, '')
+    .replace(/<invoke\s+name="[^"]*">[\s\S]*?<\/invoke>/g, '')
+    .replace(/<\/?tool_call>/g, '')
+    .trim();
+}
+
+/** True when `content` is (partly) model-formatted tool-call syntax rather than a plain-prose answer. */
+function hasLeakedToolCallSyntax(content: string): boolean {
+  if (!content) return false;
+  if (extractTextToolCalls(content).length > 0) return true;
+  return content.includes(']<]minimax[>') || content.includes('<invoke ');
 }
 
 async function generateResponse(): Promise<void> {
@@ -1458,8 +1531,13 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // "done" after edits (or after exploration that led nowhere) looks like
       // a hang, or worse, silently reads as success once the webview's
       // fallback text papers over it (observed live: a search-only turn found
-      // no conclusive match, wrote nothing, and returned empty content).
-      if (!outcome.content.trim() && toolCallsExecuted > 0 && !summaryNudgeUsed) {
+      // no conclusive match, wrote nothing, and returned empty content). A
+      // model that only emitted leaked tool-call syntax (unrecognized <invoke>
+      // name, or GMI Cloud/MiniMax-M3's marker debris around one the salvage
+      // pass above already consumed) counts as empty too — there's no prose
+      // left once that's stripped, so showing it raw would just dump garbage.
+      const cleanedContent = stripLeakedToolCallSyntax(outcome.content);
+      if (!cleanedContent && toolCallsExecuted > 0 && !summaryNudgeUsed) {
         summaryNudgeUsed = true;
         messages.push({ role: 'assistant', content: '(empty response)' });
         messages.push({
@@ -1471,9 +1549,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         });
         continue;
       }
-      if (outcome.content) parentPort?.postMessage({ type: 'chunk', content: outcome.content });
+      if (cleanedContent) parentPort?.postMessage({ type: 'chunk', content: cleanedContent });
       emitMetrics();
-      parentPort?.postMessage({ type: 'done', content: outcome.content });
+      parentPort?.postMessage({ type: 'done', content: cleanedContent });
       return;
     }
 
@@ -1481,8 +1559,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // step timeline expects ("Thought for 2s"), then any prose it wrote
     // alongside its tool calls (previously swallowed into `messages` only).
     parentPort?.postMessage({ type: 'thought', ms: thoughtMs });
-    if (!salvaged && outcome.content.trim()) {
-      parentPort?.postMessage({ type: 'agent_note', content: outcome.content.trim() });
+    if (!salvaged) {
+      const noteContent = stripLeakedToolCallSyntax(outcome.content);
+      if (noteContent) parentPort?.postMessage({ type: 'agent_note', content: noteContent });
     }
 
     messages.push({
@@ -1660,7 +1739,12 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   let finalStarted = Date.now();
   let finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
   noteTurn(Date.now() - finalStarted, finalOutcome, 0, false);
-  if (!finalOutcome.content.trim()) {
+  // Tools are off for this turn — it exists purely to force a prose answer —
+  // so tool-call-shaped content can never be executed here even when it does
+  // parse. Treat it the same as an empty response: GMI Cloud/MiniMax-M3 in
+  // particular tends to keep emitting its <invoke> markup out of habit even
+  // with no tool schema in the request.
+  if (!finalOutcome.content.trim() || hasLeakedToolCallSyntax(finalOutcome.content)) {
     // Empty even after runToolTurn's own reasoning-budget retry — give it one
     // more explicit nudge before giving up, since a forced no-tools turn with
     // a long tool-result history is exactly the shape that starves smaller
@@ -1674,7 +1758,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
     noteTurn(Date.now() - finalStarted, finalOutcome, 0, false);
   }
-  if (!finalOutcome.content.trim()) {
+  const finalText = stripLeakedToolCallSyntax(finalOutcome.content);
+  if (!finalText) {
     // Still nothing — telling the user "Done" here would be a lie (nothing
     // was answered, and if writesApplied === 0, nothing changed either). Say
     // so plainly instead of letting the webview's generic fallback text imply
@@ -1690,9 +1775,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     });
     return;
   }
-  parentPort?.postMessage({ type: 'chunk', content: finalOutcome.content });
+  parentPort?.postMessage({ type: 'chunk', content: finalText });
   emitMetrics();
-  parentPort?.postMessage({ type: 'done', content: finalOutcome.content });
+  parentPort?.postMessage({ type: 'done', content: finalText });
 }
 
 // Start processing
