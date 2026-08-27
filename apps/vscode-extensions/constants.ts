@@ -461,6 +461,12 @@ export const MODEL_PROVIDERS = [
     DEFAULT_CHAT_MODEL: 'meta-llama/Llama-3.3-70B-Instruct',
   },
   {
+    MODEL_PROVIDER: 'ZenMux',
+    requireApiKey: true,
+    BASE_URL: 'https://zenmux.ai/api/v1',
+    DEFAULT_CHAT_MODEL: 'openai/gpt-5',
+  },
+  {
     // OpenAI-compatible provider with a user-supplied base URL (self-hosted,
     // proxy, or any endpoint not listed above). BASE_URL is intentionally
     // empty here — the real value lives per-config in ModelConfig.baseUrl

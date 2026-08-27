@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { copyToClipboard } from '../utils/clipboard';
 
 type CodeBlockProps = React.ComponentPropsWithoutRef<'pre'>;
 
@@ -32,26 +33,11 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ children, ...rest }) => {
 
   const handleCopy = async () => {
     const text = extractText(children);
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Clipboard API can be blocked in some webview contexts — fall back to
-      // a hidden textarea + the legacy copy command.
-      const el = document.createElement('textarea');
-      el.value = text;
-      el.style.position = 'fixed';
-      el.style.opacity = '0';
-      document.body.appendChild(el);
-      el.select();
-      try {
-        document.execCommand('copy');
-      } catch {
-        // best effort — nothing more we can do here
-      }
-      document.body.removeChild(el);
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
   };
 
   return (

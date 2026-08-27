@@ -9,6 +9,7 @@ import InlineFileRef from './InlineFileRef';
 import { parseFileRef } from '../utils/fileRefs';
 import { AgentStep, TurnSummary } from '../store/chatStore';
 import type { ChatAttachment } from '../constants';
+import { copyToClipboard } from '../utils/clipboard';
 
 type InlineCodeProps = React.ComponentPropsWithoutRef<'code'>;
 
@@ -136,12 +137,10 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   };
 
   const copyMessage = async () => {
-    try {
-      await navigator.clipboard.writeText(content);
+    const ok = await copyToClipboard(content);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API can be blocked in some webview contexts — silently skip.
     }
   };
 
@@ -297,42 +296,50 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             <FilesChangedBar summary={turnSummary} />
           )}
           {!isError && (
-            <>
-              <div className="message-feedback">
-                <button
-                  type="button"
-                  className={`message-feedback-button${feedback === 'up' ? ' message-feedback-button--active' : ''}`}
-                  onClick={() => rateMessage('up')}
-                  disabled={feedback === 'up'}
-                  title="Good response"
-                  aria-label="Good response"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className={`message-feedback-button${feedback === 'down' ? ' message-feedback-button--active' : ''}`}
-                  onClick={() => rateMessage('down')}
-                  disabled={feedback === 'down'}
-                  title="Bad response"
-                  aria-label="Bad response"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
-                  </svg>
-                </button>
-              </div>
+            <div className="message-feedback">
               <button
-                type='button'
-                className='message-copy-button'
+                type="button"
+                className={`message-feedback-button${copied ? ' message-feedback-button--copied' : ''}`}
                 onClick={copyMessage}
-                aria-label='Copy response'
+                title={copied ? 'Copied' : 'Copy response'}
+                aria-label="Copy response"
               >
-                {copied ? '✓ Copied' : 'Copy'}
+                {copied ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                )}
               </button>
-            </>
+              <button
+                type="button"
+                className={`message-feedback-button${feedback === 'up' ? ' message-feedback-button--active' : ''}`}
+                onClick={() => rateMessage('up')}
+                disabled={feedback === 'up'}
+                title="Good response"
+                aria-label="Good response"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className={`message-feedback-button${feedback === 'down' ? ' message-feedback-button--active' : ''}`}
+                onClick={() => rateMessage('down')}
+                disabled={feedback === 'down'}
+                title="Bad response"
+                aria-label="Bad response"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+                </svg>
+              </button>
+            </div>
           )}
         </>
       )}
