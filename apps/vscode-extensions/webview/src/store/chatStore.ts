@@ -25,7 +25,12 @@ export interface WriteReview {
 export interface AgentStep {
   /** Correlates start → completion updates; absent for one-shot steps (thought/note/info). */
   id?: string;
-  /** search | read | check | edit | command | thought | note | info. */
+  /**
+   * search | read | check | edit | command | thought | note | info | notice.
+   * 'notice' is the one kind rendered outside the collapsible timeline — it
+   * carries something the user has to see (e.g. an explicit context selection
+   * that could not be honored), not a trace of what the agent did.
+   */
   kind: string;
   /** Verb-first label, e.g. "Searched", "Analyzed", "Edited". */
   title: string;

@@ -5,6 +5,12 @@ export interface DropdownOption {
   label: string;
   /** Optional second line shown under the label (e.g. a key or type). */
   subtitle?: string;
+  /**
+   * Offer the row but refuse the pick — for a choice that exists in principle
+   * but can't be used right now. Pair it with a `subtitle` saying why, or the
+   * row reads as broken.
+   */
+  disabled?: boolean;
 }
 
 interface SearchableDropdownProps {
@@ -78,10 +84,12 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   const navOptions: DropdownOption[] = clearable
     ? [{ value: '', label: clearLabel }, ...filtered]
     : filtered;
+  // Opening onto a disabled row would make the first Enter do nothing.
+  const firstEnabledIndex = Math.max(0, navOptions.findIndex((o) => !o.disabled));
 
   useEffect(() => {
-    setHighlightedIndex(0);
-  }, [searchQuery, isOpen]);
+    setHighlightedIndex(firstEnabledIndex);
+  }, [searchQuery, isOpen, firstEnabledIndex]);
 
   // No search box to auto-focus (≤6 options) — focus the menu itself so arrow
   // keys work immediately after opening via keyboard.
@@ -95,6 +103,20 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
     onChange(v);
     setIsOpen(false);
     setSearchQuery('');
+  };
+
+  /** Picking a disabled row is a no-op — the menu stays open so the reason in its subtitle can be read. */
+  const chooseOption = (o: DropdownOption) => {
+    if (o.disabled) return;
+    choose(o.value);
+  };
+
+  /** Next selectable index in `direction`, or `from` when every remaining row is disabled. */
+  const nextEnabled = (from: number, direction: 1 | -1) => {
+    for (let i = from + direction; i >= 0 && i < navOptions.length; i += direction) {
+      if (!navOptions[i].disabled) return i;
+    }
+    return from;
   };
 
   const openMenu = () => {
@@ -117,14 +139,14 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   const handleMenuKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setHighlightedIndex((i) => Math.min(i + 1, navOptions.length - 1));
+      setHighlightedIndex((i) => nextEnabled(i, 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setHighlightedIndex((i) => Math.max(i - 1, 0));
+      setHighlightedIndex((i) => nextEnabled(i, -1));
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const opt = navOptions[highlightedIndex];
-      if (opt) choose(opt.value);
+      if (opt) chooseOption(opt);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       setIsOpen(false);
@@ -185,12 +207,13 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
               return (
                 <li
                   key={o.value}
-                  onClick={() => choose(o.value)}
+                  onClick={() => chooseOption(o)}
                   className={`searchable-dropdown-item${o.value === value ? ' selected' : ''}${
                     highlightedIndex === navIndex ? ' highlighted' : ''
-                  }`}
+                  }${o.disabled ? ' disabled' : ''}`}
                   role="option"
                   aria-selected={o.value === value}
+                  aria-disabled={o.disabled}
                 >
                   <div className="item-title">{o.label}</div>
                   {o.subtitle && <div className="item-subtitle">{o.subtitle}</div>}

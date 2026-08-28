@@ -141,15 +141,38 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
 const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }) => {
   const normalized = steps.map(normalizeAgentStep);
   if (normalized.length === 0) return null;
+  // Notices ("your Confluence pick couldn't be honored") are the one step kind
+  // the user must not have to go looking for, so they render above the
+  // timeline instead of inside it — a lone 'info' step would sit behind two
+  // collapsed disclosures ("Worked for 1 step" → "Explored 1 step") and be
+  // invisible in exactly the case it matters most, a doc turn with no other
+  // steps at all.
+  const notices = normalized.filter((s) => s.kind === 'notice');
+  const timelineSteps = normalized.filter((s) => s.kind !== 'notice');
   // "Thought for Ns" rows mark model latency between tool batches — useful to
   // watch scroll by live, but once a turn is done they just fragment a single
   // exploration run into several tiny "Explored 1 search" groups (the
   // duration is already summarized in the "Worked for Xs" header). Drop them
   // from the collapsed view so consecutive read/search/check steps merge into
   // one group, matching Antigravity's single "Explored N files..." block.
-  const displaySteps = live ? normalized : normalized.filter((s) => s.kind !== 'thought');
+  const displaySteps = live ? timelineSteps : timelineSteps.filter((s) => s.kind !== 'thought');
   const items = groupSteps(displaySteps);
-  const anyRunning = live && normalized.some((s) => s.status === 'running');
+  const anyRunning = live && timelineSteps.some((s) => s.status === 'running');
+
+  const noticeRows = notices.map((s, i) => (
+    <div key={`n${i}`} className='agent-notice'>
+      <span className='agent-notice-icon' aria-hidden='true'>!</span>
+      <span className='agent-notice-text'>{s.detail ? `${s.title} ${s.detail}` : s.title}</span>
+    </div>
+  ));
+
+  // Notice-only turn (a doc/ticket answer that ran no tools at all): there is
+  // no timeline to wrap, so don't render an empty "Worked for 0 steps" shell.
+  // Deliberately keyed on timelineSteps, not displaySteps — a turn that only
+  // produced 'thought' rows still has a duration worth showing in the header.
+  if (timelineSteps.length === 0) {
+    return <>{noticeRows}</>;
+  }
 
   const body = (
     <div className='agent-timeline-body'>
@@ -173,16 +196,24 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
   );
 
   if (live) {
-    return <div className={`agent-timeline agent-timeline--live${anyRunning ? ' is-running' : ''}`}>{body}</div>;
+    return (
+      <>
+        {noticeRows}
+        <div className={`agent-timeline agent-timeline--live${anyRunning ? ' is-running' : ''}`}>{body}</div>
+      </>
+    );
   }
 
   return (
-    <details className='agent-timeline'>
-      <summary>
-        Worked for {durationMs ? formatDuration(durationMs) : `${normalized.length} step${normalized.length === 1 ? '' : 's'}`}
-      </summary>
-      {body}
-    </details>
+    <>
+      {noticeRows}
+      <details className='agent-timeline'>
+        <summary>
+          Worked for {durationMs ? formatDuration(durationMs) : `${timelineSteps.length} step${timelineSteps.length === 1 ? '' : 's'}`}
+        </summary>
+        {body}
+      </details>
+    </>
   );
 };
 

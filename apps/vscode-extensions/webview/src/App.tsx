@@ -1,13 +1,14 @@
 import React, {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useCallback,
 } from 'react';
 import './App.css';
 import ChatMessage from './components/ChatMessage';
-import AgentWriteCard from './components/AgentWriteCard';
+import AgentWriteCard, { REVIEW_KIND_LABEL } from './components/AgentWriteCard';
 import AgentTimeline from './components/AgentTimeline';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import MentionPicker from './components/MentionPicker';
@@ -18,6 +19,7 @@ import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
 import Onboarding from './components/onboarding/Onboarding';
 import SearchableDropdown from './components/settings/SearchableDropdown';
+import type { DropdownOption } from './components/settings/SearchableDropdown';
 import { VSCodeAPI } from './vscode';
 import {
   setModelState,
@@ -249,6 +251,62 @@ const App: React.FC = () => {
   const adoProjectName = config.ado?.projectName;
   const isAdoConnected = !!(config.ado?.isAuthenticated && adoOrgName && adoProjectName);
 
+  // Whether each source can actually serve a query — the same three conditions
+  // chatService.sendMessage builds `availableSources` from. Kept separate from
+  // the `is*Connected` flags above, which gate setup UI and My Work and
+  // deliberately ignore indexing state. Used to annotate the context picker so
+  // a source that can't answer isn't offered as if it could.
+  const canQueryConfluence = !!(
+    config.confluence?.isAuthenticated && config.confluence?.isIndexingCompleted
+  );
+  const canQueryAdo = !!(config.ado?.isAuthenticated && config.ado?.isIndexingCompleted);
+  // Populated by the WORKSPACE_PATH reply; null until it arrives, so the picker
+  // doesn't flash "no folder open" during the first render.
+  const [hasWorkspaceFolder, setHasWorkspaceFolder] = useState<boolean | null>(null);
+
+  /**
+   * Context picker rows, with unavailable sources shown but not selectable and
+   * labelled with what to do about it. Picking one used to be a dead choice:
+   * the host skips an override it can't satisfy and quietly routes somewhere
+   * else, so "Azure DevOps" on a disconnected setup silently answered from the
+   * codebase. The host still says so per-turn when a stored selection goes
+   * stale; this stops new ones being made.
+   */
+  const contextOptions: DropdownOption[] = [
+    { value: 'Auto', label: 'Context: Auto ✨' },
+    {
+      value: 'Confluence',
+      label: 'Confluence',
+      ...(canQueryConfluence
+        ? {}
+        : {
+            disabled: true,
+            subtitle: config.confluence?.isAuthenticated
+              ? 'Indexing unfinished — finish the sync in Settings'
+              : 'Not connected — connect it in Settings',
+          }),
+    },
+    {
+      value: 'Azure DevOps',
+      label: 'Azure DevOps',
+      ...(canQueryAdo
+        ? {}
+        : {
+            disabled: true,
+            subtitle: config.ado?.isAuthenticated
+              ? 'Indexing unfinished — finish the sync in Settings'
+              : 'Not connected — connect it in Settings',
+          }),
+    },
+    {
+      value: 'Codebase',
+      label: 'Codebase',
+      ...(hasWorkspaceFolder === false
+        ? { disabled: true, subtitle: 'No folder open in this window' }
+        : {}),
+    },
+  ];
+
   // "Your work" panel state. `myWorkLoaded` distinguishes "no response yet"
   // from "responded with an empty list" — the panel must not say "nothing
   // assigned to you" while the first fetch is still in flight.
@@ -288,12 +346,29 @@ const App: React.FC = () => {
   const [revertingSha, setRevertingSha] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // Only auto-scroll while the user is already reading the tail of the chat.
-  // Once they scroll up (e.g. to review a diff card), the view must stay put —
-  // a smooth-scroll on every message mutation makes the approve buttons
-  // impossible to reach during a live agent run.
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const nearBottomRef = useRef(true);
+  // ── Stick-to-bottom ──────────────────────────────────────────────────────
+  // Auto-scroll only while the user is reading the tail of the chat; once they
+  // scroll up (e.g. to review a diff card) the view must stay put. Position
+  // alone can't decide that: streamed text and new timeline steps grow the
+  // scroll height constantly, so "far from the bottom" happens with no user
+  // input at all. `pinnedRef` is therefore a latch — it only unpins on an
+  // actual upward scroll, and re-pins whenever the view is back at the bottom.
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  // State copy of the same node, so the observer effect below re-runs when the
+  // container mounts/unmounts (chat ⇄ home ⇄ history) without re-running on
+  // every streamed chunk.
+  const [messagesEl, setMessagesEl] = useState<HTMLDivElement | null>(null);
+  // Stable identity: an inline arrow ref would detach/reattach every render.
+  const setMessagesRef = useCallback((el: HTMLDivElement | null) => {
+    messagesContainerRef.current = el;
+    setMessagesEl(el);
+  }, []);
+  const pinnedRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  // True when a write review is pending but its Approve/Reject row is out of
+  // view — the pinned action bar above the composer takes over then.
+  const [reviewActionsOffscreen, setReviewActionsOffscreen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Files staged in the composer, sent with the next message.
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
@@ -625,6 +700,14 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.SHOW_SETTINGS:
           setActiveView('settings');
           break;
+        case MESSAGE_TYPES.WORKSPACE_PATH:
+          // Answer to the GET_WORKSPACE_PATH sent on mount. Empty path means no
+          // folder is open, which is exactly what makes codebase tools
+          // unavailable host-side — `config.codebase.repoPath` can't stand in
+          // for this, since the host persists it and it survives into windows
+          // that have no folder open at all.
+          setHasWorkspaceFolder(!!message.path);
+          break;
         case MESSAGE_TYPES.NEW_CHAT:
           handleNewChatRef.current();
           break;
@@ -793,18 +876,167 @@ const App: React.FC = () => {
     setActiveModels(activeModels);
   }, [modelProviders]);
 
-  useEffect(() => {
-    // Scroll to bottom when messages change — but never yank the viewport
-    // away from a user who scrolled up to read/approve something.
-    if (nearBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  // The write review the current turn is blocked on, if any. Only counted while
+  // a turn is actually in flight: an undecided card rehydrated from history is
+  // a dead gate (the host's promise is long gone) and must not hijack the
+  // viewport or offer buttons that do nothing.
+  const pendingReview = useMemo(() => {
+    if (!isLoading && !isStreaming) return null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const review = messages[i].writeReview;
+      if (review && !review.decision) return review;
     }
-  }, [messages]);
+    return null;
+  }, [messages, isLoading, isStreaming]);
+  const pendingReviewIdRef = useRef<string | null>(null);
+  pendingReviewIdRef.current = pendingReview?.id ?? null;
+
+  /** Distance from the bottom (px) still counted as "reading the tail". */
+  const NEAR_BOTTOM_PX = 48;
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    // Instant by default: a smooth animation restarted on every streamed chunk
+    // never catches up, and its intermediate positions look like the user
+    // scrolling away.
+    el.scrollTo({ top: el.scrollHeight, behavior });
+    lastScrollTopRef.current = el.scrollHeight - el.clientHeight;
+  }, []);
+
+  const pinToBottom = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      pinnedRef.current = true;
+      setShowJumpToBottom(false);
+      scrollToBottom(behavior);
+    },
+    [scrollToBottom]
+  );
+
+  /** Is the pending review's Approve/Reject row currently reachable on screen? */
+  const syncReviewActionsVisibility = useCallback(() => {
+    const el = messagesContainerRef.current;
+    const id = pendingReviewIdRef.current;
+    if (!el || !id) {
+      setReviewActionsOffscreen(false);
+      return;
+    }
+    // Re-queried every time rather than cached: the row is a different DOM node
+    // once the card switches into "Reject…" mode.
+    const actions = el.querySelector<HTMLElement>(`[data-review-actions="${id}"]`);
+    if (!actions) {
+      // Card exists in state but isn't rendered (collapsed history fork) —
+      // treat as unreachable so the pinned bar still offers the decision.
+      setReviewActionsOffscreen(true);
+      return;
+    }
+    const rowRect = actions.getBoundingClientRect();
+    const viewRect = el.getBoundingClientRect();
+    setReviewActionsOffscreen(rowRect.bottom > viewRect.bottom + 4 || rowRect.top < viewRect.top - 4);
+  }, []);
 
   const handleMessagesScroll = () => {
     const el = messagesContainerRef.current;
     if (!el) return;
-    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const scrolledUp = el.scrollTop < lastScrollTopRef.current - 2;
+    lastScrollTopRef.current = el.scrollTop;
+    // Being at the bottom wins over direction: collapsing a card shrinks the
+    // content and drags scrollTop down with it, which isn't the user leaving.
+    pinnedRef.current =
+      distance <= NEAR_BOTTOM_PX ? true : scrolledUp ? false : pinnedRef.current;
+    setShowJumpToBottom(!pinnedRef.current);
+    syncReviewActionsVisibility();
+  };
+
+  // Scroll events can lag a frame behind the wheel, which during a fast stream
+  // is long enough for the auto-scroll to yank the view back. Treat the wheel
+  // itself as the intent signal.
+  const handleMessagesWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    const el = messagesContainerRef.current;
+    if (!el || e.deltaY >= 0 || el.scrollTop <= 0) return;
+    pinnedRef.current = false;
+    setShowJumpToBottom(true);
+  };
+
+  useEffect(() => {
+    if (!messagesEl) return;
+    // Anything that changes the content height has to re-glue the view:
+    // streamed text, a new timeline step, syntax highlighting settling, an
+    // image finishing load. A [messages] effect sees none of those.
+    const onContentChange = () => {
+      if (pinnedRef.current) scrollToBottom('auto');
+      syncReviewActionsVisibility();
+    };
+    // Coalesced to one measurement per frame: the typewriter pump commits many
+    // times a second and each pass forces layout.
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        onContentChange();
+      });
+    };
+    const mutation = new MutationObserver(schedule);
+    mutation.observe(messagesEl, { childList: true, subtree: true, characterData: true });
+    // Container shrink (composer grew, panel resized) counts too.
+    const resize = new ResizeObserver(schedule);
+    resize.observe(messagesEl);
+    onContentChange();
+    return () => {
+      mutation.disconnect();
+      resize.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [messagesEl, scrollToBottom, syncReviewActionsVisibility]);
+
+  // Opening another chat starts at its newest message.
+  useEffect(() => {
+    pinToBottom('auto');
+  }, [currentSessionId, pinToBottom]);
+
+  const scrollToReview = useCallback((id: string) => {
+    const el = messagesContainerRef.current;
+    const card = el?.querySelector<HTMLElement>(`[data-review-id="${id}"]`);
+    // Jumping up unpins via the scroll handler, so the run can't drag the
+    // viewport off the diff the user is reading.
+    card?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, []);
+
+  // A newly opened review is what the turn is waiting on — bring it into view
+  // once, the way Cursor jumps to a pending diff, instead of leaving it
+  // stranded above whatever the live timeline is printing.
+  const jumpedReviewIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pendingReview) {
+      jumpedReviewIdRef.current = null;
+      return;
+    }
+    if (jumpedReviewIdRef.current === pendingReview.id) return;
+    jumpedReviewIdRef.current = pendingReview.id;
+    const id = pendingReview.id;
+    requestAnimationFrame(() => scrollToReview(id));
+  }, [pendingReview, scrollToReview]);
+
+  /** Shared tail of both decision paths (card buttons and pinned bar). */
+  const handleReviewDecided = (id: string, decision: 'approved' | 'rejected') => {
+    setWriteReviewDecision(id, decision);
+    // The run resumes host-side; stop claiming we're waiting.
+    setStatusText('');
+    // Deciding means following the run again.
+    pinToBottom('auto');
+  };
+
+  /** Approve/reject from the pinned bar; the card posts its own decision. */
+  const decideReview = (id: string, approved: boolean) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.AGENT_WRITE_DECISION,
+      id,
+      approved,
+      scope: 'once',
+    });
+    handleReviewDecided(id, approved ? 'approved' : 'rejected');
   };
 
   useEffect(() => {
@@ -936,6 +1168,8 @@ const App: React.FC = () => {
     setAttachmentNote(null);
     pickedMentionsRef.current = new Set();
     closeMentionPicker();
+    // Sending always follows the new turn, wherever the user was scrolled.
+    pinToBottom('auto');
     setIsLoading(true);
     setIsStreaming(false);
     setShowTips(false);
@@ -1174,14 +1408,23 @@ const App: React.FC = () => {
   /**
    * Seed the composer from a ticket — deliberately WITHOUT sending. A ticket is
    * a big, under-specified task; the user should see and be able to adjust the
-   * ask before the agent starts. The prompt asks for a plan first so the
-   * org-context step (read the ticket, find the design doc) is visible instead
-   * of the agent charging straight into edits on a misread.
+   * ask before the agent starts.
+   *
+   * The prompt asks for the org-context step (read the ticket, read the design
+   * doc behind it) explicitly, but does NOT forbid changes. An earlier version
+   * ended with "propose a plan before changing anything", which cost a whole
+   * turn and then stranded the work: the agent re-derived the same
+   * investigation and re-proposed it on every follow-up. Approval is already
+   * enforced per write — each edit is shown as a diff to accept or reject —
+   * so a turn-level plan gate duplicates that protection at much worse
+   * granularity. Ambiguity is still called out below, which is the case a plan
+   * was actually wanted for.
    */
   const handleSelectWorkItem = (item: WorkItemSummary) => {
     setInputValue(
-      `Work on ticket ${item.id} (${item.title}) — read the ticket, find the code it affects, ` +
-        'and propose a plan before changing anything.'
+      `Work on ticket ${item.id} (${item.title}) — read the ticket and any design doc behind it, ` +
+        'find the code it affects, then implement the fix. Show me the diffs as you go. ' +
+        "If the ticket is too ambiguous to implement, say what's unclear instead of guessing."
     );
     inputRef.current?.focus();
   };
@@ -1493,7 +1736,7 @@ const App: React.FC = () => {
             </div>
           )
         ) : (
-          <div className={`messages-container${editingIndex !== null ? ' messages-container--editing' : ''}`} ref={messagesContainerRef} onScroll={handleMessagesScroll}>
+          <div className={`messages-container${editingIndex !== null ? ' messages-container--editing' : ''}`} ref={setMessagesRef} onScroll={handleMessagesScroll} onWheel={handleMessagesWheel}>
             {messages.map((message, index) => {
               if (editingIndex !== null && index > editingIndex) {
                 return null;
@@ -1502,11 +1745,7 @@ const App: React.FC = () => {
                 <AgentWriteCard
                   key={message.writeReview.id}
                   review={message.writeReview}
-                  onDecided={(id, decision) => {
-                    setWriteReviewDecision(id, decision);
-                    // The run resumes host-side; stop claiming we're waiting.
-                    setStatusText('');
-                  }}
+                  onDecided={handleReviewDecided}
                 />
               ) : (
                 <ChatMessage
@@ -1557,6 +1796,75 @@ const App: React.FC = () => {
               </div>
             )}
             <div ref={messagesEndRef} />
+          </div>
+        )}
+        {(showJumpToBottom || (pendingReview && reviewActionsOffscreen)) && (
+          <div className='composer-affordances'>
+            {pendingReview && reviewActionsOffscreen && (
+              // The tool loop is blocked on this decision, so the buttons have
+              // to be reachable without hunting for the card upstream.
+              <div className='review-pin-bar'>
+                <span className={`agent-write-kind kind-${pendingReview.kind}`}>
+                  {REVIEW_KIND_LABEL[pendingReview.kind]}
+                </span>
+                <button
+                  type='button'
+                  className='review-pin-path'
+                  title={
+                    pendingReview.kind === 'command'
+                      ? `${pendingReview.command ?? pendingReview.summary} — show it`
+                      : `${pendingReview.path} — show the diff`
+                  }
+                  onClick={() => scrollToReview(pendingReview.id)}
+                >
+                  {pendingReview.kind === 'command'
+                    ? pendingReview.command ?? pendingReview.summary
+                    : pendingReview.path.split('/').pop() || pendingReview.path}
+                </button>
+                <span className='agent-write-stats'>
+                  {pendingReview.diff.added > 0 && (
+                    <span className='stat-added'>+{pendingReview.diff.added}</span>
+                  )}
+                  {pendingReview.diff.removed > 0 && (
+                    <span className='stat-removed'>−{pendingReview.diff.removed}</span>
+                  )}
+                </span>
+                <button
+                  type='button'
+                  className='review-pin-view'
+                  onClick={() => scrollToReview(pendingReview.id)}
+                >
+                  {pendingReview.kind === 'command' ? 'View' : 'View diff'}
+                </button>
+                <button
+                  type='button'
+                  className='agent-write-approve'
+                  onClick={() => decideReview(pendingReview.id, true)}
+                >
+                  ✓ Approve
+                </button>
+                <button
+                  type='button'
+                  className='agent-write-reject-open'
+                  onClick={() => decideReview(pendingReview.id, false)}
+                >
+                  ✕ Reject
+                </button>
+              </div>
+            )}
+            {showJumpToBottom && (
+              <button
+                type='button'
+                className='jump-to-bottom'
+                title='Scroll to the latest message'
+                onClick={() => pinToBottom('smooth')}
+              >
+                <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                  <path d='M12 5V19M12 19L6 13M12 19L18 13' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                </svg>
+                Jump to latest
+              </button>
+            )}
           </div>
         )}
         <div
@@ -1673,12 +1981,7 @@ const App: React.FC = () => {
                     value={contextSelection}
                     onChange={setContextSelection}
                     searchable={false}
-                    options={[
-                      { value: 'Auto', label: 'Context: Auto ✨' },
-                      { value: 'Confluence', label: 'Confluence' },
-                      { value: 'Azure DevOps', label: 'Azure DevOps' },
-                      { value: 'Codebase', label: 'Codebase' },
-                    ]}
+                    options={contextOptions}
                   />
                 </div>
                 {mode === 'local' && (

@@ -23,6 +23,9 @@ const KIND_LABEL: Record<WriteReview['kind'], string> = {
   command: 'Command',
 };
 
+/** Shared with the pinned review bar in App.tsx. */
+export const REVIEW_KIND_LABEL = KIND_LABEL;
+
 /** Collapsed by default once a review is already decided — only the still-pending
  *  card (or one just opened) needs its diff visible right away. */
 const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) => {
@@ -54,7 +57,7 @@ const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) =>
   };
 
   return (
-    <div className={`agent-write-card kind-${review.kind}`}>
+    <div className={`agent-write-card kind-${review.kind}`} data-review-id={review.id}>
       <div className='agent-write-header'>
         <button
           type='button'
@@ -110,7 +113,7 @@ const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) =>
           {review.decision === 'approved' ? '✓ Applied' : '✕ Rejected'}
         </div>
       ) : rejecting ? (
-        <div className='agent-write-actions'>
+        <div className='agent-write-actions' data-review-actions={review.id}>
           <input
             type='text'
             className='agent-write-feedback'
@@ -128,7 +131,7 @@ const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) =>
           </button>
         </div>
       ) : (
-        <div className='agent-write-actions'>
+        <div className='agent-write-actions' data-review-actions={review.id}>
           <button type='button' className='agent-write-approve' onClick={() => decide(true)}>
             ✓ Approve
           </button>

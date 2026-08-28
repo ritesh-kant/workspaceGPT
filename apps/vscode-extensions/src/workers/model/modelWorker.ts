@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { randomUUID } from 'crypto';
-import { createStructuredPrompt } from '../../utils/promptTemplates';
+import { createStructuredPrompt, createContinuationPrompt } from '../../utils/promptTemplates';
 import { MODEL_PROVIDERS } from '../../../constants';
 import OpenAI from 'openai';
 import { EmbeddingSearchResult } from 'src/types/types';
@@ -34,6 +34,19 @@ interface WorkerData {
   repoOrientation?: string;
   /** Merged project rules files (.workspacegpt/rules.md, CLAUDE.md, …). */
   workspaceRules?: string;
+  /**
+   * This turn carries out a plan the user just approved, so it is expected to
+   * WRITE. Switches the prompt out of plan mode and arms the gate that catches
+   * an answer which re-proposes instead of executing.
+   */
+  executeMandate?: boolean;
+  /**
+   * Model-facing messages (tool calls and their results included) of a previous
+   * agent turn in this session that was interrupted before it produced an
+   * answer. When present, the loop continues that conversation instead of
+   * rebuilding one from scratch — see runAgentLoop's seedFromTranscript.
+   */
+  resumeTranscript?: unknown[];
 }
 
 const {
@@ -53,6 +66,8 @@ const {
   mentionedFiles,
   repoOrientation,
   workspaceRules,
+  executeMandate,
+  resumeTranscript,
 } = workerData as WorkerData;
 
 // Prefer the full key list; fall back to the single legacy key.
@@ -640,6 +655,7 @@ async function generateResponse(): Promise<void> {
         textAttachments,
         imageAttachmentNames: imageAttachments?.map((img) => img.name),
         mentionedFiles,
+        executeMandate,
       }
     );
 
@@ -1048,8 +1064,197 @@ async function runToolTurn(
 const MAX_TOOL_RESULT_CHARS = isLocalProvider ? 12_000 : 20_000;
 const MAX_TOTAL_TOOL_CHARS = isLocalProvider ? 48_000 : 200_000;
 
+/** One message of a resumed transcript, as the host streamed it up from the previous run. */
+type ResumeMessage = Record<string, any>;
+
+/**
+ * Everything a resumed transcript tells us about the run that produced it.
+ *
+ * The counters matter as much as the messages: the loop's honesty gates are
+ * counter-driven (`writesApplied === 0` + an answer that mentions changes →
+ * "you claim changes were made but nothing was applied"), so a resumed run
+ * starting them at zero would fire those gates against work the previous
+ * segment genuinely did — and, worse, tell the model its real edits were
+ * imaginary.
+ */
+interface ResumeState {
+  messages: ResumeMessage[];
+  /** Files whose current content the model has already seen — arms the read-before-edit guard correctly. */
+  readPaths: Set<string>;
+  writesApplied: number;
+  writesSinceDiagnostics: number;
+  anyWriteAttempted: boolean;
+  lastWriteOutcome: Map<string, boolean>;
+  okToolResults: number;
+  toolCallsExecuted: number;
+  /** Sum of the resumed tool results' serialized lengths — seeds the output budget. */
+  toolChars: number;
+  /**
+   * Index/name/size of every resumed tool message, so microcompaction can
+   * rewrite them, plus the 0-based index of the resumed round it came from
+   * (the loop stamps them as `roundIndex - rounds`, so they sit behind round 0).
+   */
+  toolResults: { msgIndex: number; name: string; chars: number; roundIndex: number }[];
+  /** How many tool rounds the resumed transcript contains. */
+  rounds: number;
+}
+
+/** Filler for a declared tool call whose result never arrived — invalid to omit, but not a real result. */
+const INTERRUPTED_TOOL_RESULT = '[interrupted — this tool never ran, its result is unknown]';
+
+/** True when a tool message's serialized content represents a failed call. */
+function toolResultFailed(content: unknown): boolean {
+  if (typeof content !== 'string') return false;
+  try {
+    return !!(JSON.parse(content) as { error?: unknown } | null)?.error;
+  } catch {
+    // Truncated (i.e. large, i.e. successful) or non-JSON — not an error object.
+    return false;
+  }
+}
+
+/**
+ * Rebuilds a resumable conversation from the messages a previous run streamed
+ * up, and derives the loop state that went with them.
+ *
+ * Repairs the transcript on the way through, because a run that died mid-round
+ * can leave an assistant `tool_calls` turn whose results never arrived — and
+ * several OpenAI-compat backends reject the whole request when a declared tool
+ * call has no matching `role: 'tool'` reply (or when a stray reply matches no
+ * call). Missing replies become explicit "never ran" markers rather than being
+ * dropped along with their call.
+ *
+ * Returns null when there is nothing usable to resume from.
+ */
+function seedFromTranscript(raw: unknown): ResumeState | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const entries = raw.filter((m): m is ResumeMessage => !!m && typeof m === 'object' && 'role' in m);
+  if (!entries.length) return null;
+
+  const messages: ResumeMessage[] = [];
+  const state: ResumeState = {
+    messages,
+    readPaths: new Set<string>(),
+    writesApplied: 0,
+    writesSinceDiagnostics: 0,
+    anyWriteAttempted: false,
+    lastWriteOutcome: new Map<string, boolean>(),
+    okToolResults: 0,
+    toolCallsExecuted: 0,
+    toolChars: 0,
+    toolResults: [],
+    rounds: 0,
+  };
+
+  for (let i = 0; i < entries.length; i++) {
+    const msg = entries[i];
+    const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : null;
+    if (msg.role !== 'assistant' || !calls?.length) {
+      messages.push(msg);
+      continue;
+    }
+
+    // Collect the contiguous run of tool replies that belongs to this turn, so
+    // they can be re-emitted in tool_calls order with the gaps filled in.
+    const replies = new Map<string, ResumeMessage>();
+    let j = i + 1;
+    for (; j < entries.length && entries[j].role === 'tool'; j++) {
+      replies.set(String(entries[j].tool_call_id ?? ''), entries[j]);
+    }
+    i = j - 1;
+
+    messages.push(msg);
+    const roundIndex = state.rounds++;
+    for (const call of calls) {
+      const id = String(call?.id ?? '');
+      const name = String(call?.function?.name ?? '');
+      const reply =
+        replies.get(id) ??
+        ({
+          role: 'tool',
+          tool_call_id: id,
+          content: INTERRUPTED_TOOL_RESULT,
+        } as ResumeMessage);
+      const missing = !replies.has(id) || reply.content === INTERRUPTED_TOOL_RESULT;
+      messages.push(reply);
+
+      const chars = typeof reply.content === 'string' ? reply.content.length : 0;
+      state.toolChars += chars;
+      state.toolResults.push({ msgIndex: messages.length - 1, name, chars, roundIndex });
+      if (missing) continue;
+
+      state.toolCallsExecuted++;
+      const failed = toolResultFailed(reply.content);
+      if (!failed) state.okToolResults++;
+
+      let args: { path?: unknown } = {};
+      try {
+        args = call?.function?.arguments ? JSON.parse(String(call.function.arguments)) : {};
+      } catch {
+        /* unparseable args — nothing to derive from them */
+      }
+      const path = typeof args.path === 'string' ? args.path.replace(/^\.?\//, '') : '';
+
+      if (!failed && (name === 'read_file' || name === 'create_file') && path) state.readPaths.add(path);
+      if (FILE_WRITE_TOOL_NAMES.has(name)) {
+        state.anyWriteAttempted = true;
+        if (path) state.lastWriteOutcome.set(path, !failed);
+        if (!failed) {
+          state.writesApplied++;
+          state.writesSinceDiagnostics++;
+        }
+      }
+      if (name === 'get_diagnostics' && !failed) state.writesSinceDiagnostics = 0;
+    }
+  }
+
+  // A trailing assistant turn with neither content nor tool calls is debris
+  // from a round that never got anywhere; the new user turn reads better
+  // straight after the last real exchange.
+  while (messages.length) {
+    const last = messages[messages.length - 1];
+    if (last.role === 'assistant' && !last.tool_calls?.length && !String(last.content ?? '').trim()) {
+      messages.pop();
+      continue;
+    }
+    break;
+  }
+
+  return messages.length ? state : null;
+}
+
 async function runAgentLoop(initialPrompt: string, model: string, baseURL: string, apiKeys: string[]): Promise<void> {
-  const messages: any[] = [{ role: 'user', content: buildUserContent(initialPrompt) }];
+  // A turn that follows an interrupted run continues that run's conversation:
+  // the tool calls and results above are the work already done, and rebuilding
+  // from scratch would re-derive all of it (and, with a bare "continue" as the
+  // prompt, re-scout the workspace for the word "continue"). The lean
+  // continuation turn is appended to it instead of a fresh structured prompt —
+  // the rules, orientation and rules files are already in its first turn.
+  const resume = seedFromTranscript(resumeTranscript);
+  const messages: any[] = resume
+    ? [
+        ...resume.messages,
+        {
+          role: 'user',
+          content: buildUserContent(
+            createContinuationPrompt(prompt, {
+              textAttachments,
+              imageAttachmentNames: imageAttachments?.map((img) => img.name),
+              mentionedFiles,
+              executeMandate,
+              toolResultsAbove: resume.toolCallsExecuted,
+            })
+          ),
+        },
+      ]
+    : [{ role: 'user', content: buildUserContent(initialPrompt) }];
+  if (resume) {
+    parentPort?.postMessage({
+      type: 'resumed',
+      steps: resume.toolCallsExecuted,
+      writesApplied: resume.writesApplied,
+    });
+  }
   // ── Efficiency metrics (consumed by packages/agent-evals, not the chat UI) ──
   const runStarted = Date.now();
   interface PerTurnMetric {
@@ -1165,6 +1370,21 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   let incompleteAnswerNudgesUsed = 0;
   const INCOMPLETE_ANSWER_RE =
     /\b(needs? to be (examined|checked|read|inspected|verified|investigated|explored)|need(s)? to (examine|check|read|inspect|verify|investigate|explore)|would need to (look|check|read|examine|verify)|further (investigation|examination|analysis|exploration) (is|would be|may be|might be) (needed|required)|next step (is|would be) to|(I|let me|let'?s|let us) (will |shall |now )?(now )?(check|examine|read|look at|inspect|verify|investigate|search|find|locate|update|fix|rename|edit|modify|apply|retry|re-?run)\b|remains? to be (seen|checked|examined|verified)|have (not|n't) (yet )?(checked|examined|read|verified))/i;
+  // Ending by asking the user for permission is the same failure as ending by
+  // announcing remaining work: the task is not done and the user has to type
+  // "yes" to get anything. Observed live as three consecutive turns of "Shall I
+  // go ahead and make the changes?" on one ADO bug. Kept separate from
+  // INCOMPLETE_ANSWER_RE so the nudge can name the real problem, but it shares
+  // that gate's budget — two failure modes, one bounded set of retries.
+  const PERMISSION_SEEKING_RE =
+    /\b(shall i|should i (go ahead|proceed|start|make|apply|implement)|do you want me to|would you like me to|want me to (go ahead|proceed|start|make|apply|implement|fix)|say the word|if you'?d like,? i (can|will)|i can (go ahead and )?(make|apply|implement|start)|ready to (implement|apply|proceed)|awaiting your (approval|confirmation|go)|please confirm|confirm before i|(shall|should) (i|we) (go|proceed)|let me know if you want me to)\b/i;
+  // Structural markers of an answer that PRESENTS a change instead of making
+  // it: a diff fence, a "files to change" list, before/after snippets. Narrow
+  // on purpose — an ordinary read-only explanation containing code must not
+  // match, or every "how does X work" answer would trip the gate below.
+  const CHANGE_PLAN_RE =
+    /```diff|^\s*#{1,4}\s*(proposed |suggested )?(plan|the fix|files? to (change|modify|touch|edit))\b|^\s*\*\*(proposed |suggested )?(plan|the fix|files? to (change|modify|touch|edit))|\/\/\s*(before|after)\b|^\s*(before|after)\s*(\(|:)|\bhere'?s (the|my) (proposed )?plan\b/im;
+  let planInsteadOfExecuteNudgeUsed = false;
 
   // Once the cumulative tool-output budget is gone, every further tool call
   // gets back nothing but the "[budget exhausted]" marker — the model can't
@@ -1242,6 +1462,72 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
   };
 
+  // Adopt the interrupted run's state so this segment behaves like a
+  // continuation of it rather than a fresh run that happens to have a long
+  // history: the budget already spent stays spent, the honesty gates see the
+  // writes that really landed, and the resumed tool results are registered with
+  // microcompaction so they are the first candidates to collapse when this
+  // segment's own results push against the budget.
+  if (resume) {
+    toolCharsUsed = resume.toolChars;
+    toolCallsExecuted = resume.toolCallsExecuted;
+    okToolResults = resume.okToolResults;
+    writesApplied = resume.writesApplied;
+    writesSinceDiagnostics = resume.writesSinceDiagnostics;
+    anyWriteAttempted = resume.anyWriteAttempted;
+    for (const [path, ok] of resume.lastWriteOutcome) lastWriteOutcome.set(path, ok);
+    for (const path of resume.readPaths) readPaths.add(path);
+    // Resumed rounds are numbered backwards from this segment's round 0, so the
+    // keep-recent window keeps meaning what it says across the seam: the last
+    // resumed round stays intact for now, everything older is compactable, and
+    // as this segment advances the resumed rounds age out in their original
+    // order instead of all at once.
+    for (const r of resume.toolResults) {
+      toolResultLog.push({
+        msgIndex: r.msgIndex,
+        name: r.name,
+        round: r.roundIndex - resume.rounds,
+        chars: r.chars,
+        compacted: false,
+      });
+    }
+    // A transcript long enough to have died of a provider error is often already
+    // over the pressure threshold on its own: collapse the old end of it now
+    // rather than letting this segment's first tool call be what blows the
+    // budget. No-ops below the threshold.
+    compactOldToolResults(0);
+  }
+
+  // ── Resumable transcript (streamed up to the host) ──
+  // `messages` is the only record of what this run has done, and it dies with
+  // the worker — which is exactly what happens on a provider error, a crash, a
+  // stall, or a user stop. Mirroring it to the host at every round boundary is
+  // what makes the next turn able to resume instead of re-exploring. Sent
+  // before each completion, so whatever the model was about to be asked is
+  // already safe on the other side if that request is the thing that fails.
+  //
+  // Append-only, deliberately: microcompaction rewrites earlier messages in
+  // place and those rewrites are NOT mirrored, so the host keeps the full-size
+  // results. That is the right way round — a resumed run re-derives its own
+  // pressure from real sizes and re-compacts, instead of inheriting a collapsed
+  // history it can never get back.
+  let transcriptSentUpTo = 0;
+  let transcriptBaseSent = false;
+  const syncTranscript = (): void => {
+    if (transcriptBaseSent && messages.length === transcriptSentUpTo) return;
+    const from = transcriptSentUpTo;
+    transcriptSentUpTo = messages.length;
+    if (!transcriptBaseSent) {
+      // First sync carries the whole array: on a resumed run this is the
+      // REPAIRED transcript (gaps filled, debris dropped), which must replace
+      // the host's copy rather than be appended to it.
+      transcriptBaseSent = true;
+      parentPort?.postMessage({ type: 'agent_transcript', reset: messages.slice() });
+      return;
+    }
+    parentPort?.postMessage({ type: 'agent_transcript', append: messages.slice(from) });
+  };
+
   const emitMetrics = () => {
     parentPort?.postMessage({
       type: 'metrics',
@@ -1259,6 +1545,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       budgetExhausted,
       compactions: toolResultLog.filter((e) => e.compacted).length,
       exploration: explorationStats,
+      /** Tool results inherited from an interrupted run this turn resumed (0 = fresh run). */
+      resumedToolResults: resume?.toolCallsExecuted ?? 0,
       nudges: {
         plan: planNudgesUsed,
         incompleteAnswer: incompleteAnswerNudgesUsed,
@@ -1283,66 +1571,75 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // answer, never to plan the split. See EXPLORATION-DECOMPOSITION-DESIGN.md.
   // Best-effort throughout: any failure here falls through to the loop below
   // running exactly as it does today.
+  //
+  // Skipped entirely on a resumed run: the previous segment's exploration is
+  // already in `messages`, and the scout would be run against a continuation
+  // reply ("continue", "fix it") that carries no topic of its own.
   const exploreStarted = Date.now();
-  const exploration = await runExplorationPhase(
-    prompt,
-    model,
-    baseURL,
-    apiKeys,
-    {
-      requestTool,
-      onProgress: (label) => {
-        const id = randomUUID();
-        parentPort?.postMessage({ type: 'tool_status', id, name: 'explore_codebase', arguments: { label } });
-      },
-      notifyRotate: notifyKeyFailover,
-    },
-    {
-      ...defaultExplorationConfig(isLocalProvider),
-      // Same rationale as runToolTurn: explorers have a 600-token output cap,
-      // which unconstrained reasoning burns entirely on thinking.
-      ...(isOpenRouter ? { extraBody: { reasoning: { effort: 'low' } } } : {}),
-    },
-    isLocalProvider
-  );
-  const exploreMs = Date.now() - exploreStarted;
-  explorationStats = exploration.stats;
-  // Explorers run in parallel, so phase wall-time ≈ ONE completion's latency
-  // (the scout part is local ripgrep, milliseconds). A slow — or timed-out —
-  // phase is the earliest possible evidence of a slow model: degrade before
-  // the main loop burns 25 minute-long turns. Skipped when the phase made no
-  // API calls quickly (gate declined: that says nothing about the model).
-  if (exploreMs > SLOW_TURN_MS) {
-    enterSlowMode(exploreMs, 0);
-  }
-  if (exploration.stats.apiCalls > 0) {
-    apiCallsTotal += exploration.stats.apiCalls;
-    promptTokensTotal += exploration.stats.promptTokens;
-    completionTokensTotal += exploration.stats.completionTokens;
-  }
-  if (exploration.claimTableMarkdown) {
-    // Carried as a plain user turn, NOT as a synthetic assistant tool_call +
-    // tool result pair. `explore_codebase` is not a declared tool (it isn't in
-    // TOOL_DEFS — the phase runs as plain code, the model never calls it), and
-    // referencing an undeclared function in the history is invalid under the
-    // OpenAI tool schema: a provider validating names against the declarations
-    // it was sent has nothing to match. A user turn carries the same text with
-    // no schema claim attached, so no validator can object.
-    const claimContent =
-      'Preliminary scan of the workspace (done for you before this turn):\n\n' +
-      exploration.claimTableMarkdown +
-      '\n\n(These are cited leads from a preliminary scan, not verified truth. Open any cited range ' +
-      'with read_file before relying on it for an edit. Unexplored files above are just names — ' +
-      'investigate them with tools if the question requires it.)';
-    messages.push({ role: 'user', content: claimContent });
-    // Deliberately NOT passed through recordToolResult: this table is the map
-    // for the whole run and must survive microcompaction, which only rewrites
-    // entries present in toolResultLog. It still counts against the budget.
-    toolCharsUsed += claimContent.length;
+  const exploration = resume
+    ? null
+    : await runExplorationPhase(
+        prompt,
+        model,
+        baseURL,
+        apiKeys,
+        {
+          requestTool,
+          onProgress: (label) => {
+            const id = randomUUID();
+            parentPort?.postMessage({ type: 'tool_status', id, name: 'explore_codebase', arguments: { label } });
+          },
+          notifyRotate: notifyKeyFailover,
+        },
+        {
+          ...defaultExplorationConfig(isLocalProvider),
+          // Same rationale as runToolTurn: explorers have a 600-token output cap,
+          // which unconstrained reasoning burns entirely on thinking.
+          ...(isOpenRouter ? { extraBody: { reasoning: { effort: 'low' } } } : {}),
+        },
+        isLocalProvider
+      );
+  if (exploration) {
+    const exploreMs = Date.now() - exploreStarted;
+    explorationStats = exploration.stats;
+    // Explorers run in parallel, so phase wall-time ≈ ONE completion's latency
+    // (the scout part is local ripgrep, milliseconds). A slow — or timed-out —
+    // phase is the earliest possible evidence of a slow model: degrade before
+    // the main loop burns 25 minute-long turns. Skipped when the phase made no
+    // API calls quickly (gate declined: that says nothing about the model).
+    if (exploreMs > SLOW_TURN_MS) {
+      enterSlowMode(exploreMs, 0);
+    }
+    if (exploration.stats.apiCalls > 0) {
+      apiCallsTotal += exploration.stats.apiCalls;
+      promptTokensTotal += exploration.stats.promptTokens;
+      completionTokensTotal += exploration.stats.completionTokens;
+    }
+    if (exploration.claimTableMarkdown) {
+      // Carried as a plain user turn, NOT as a synthetic assistant tool_call +
+      // tool result pair. `explore_codebase` is not a declared tool (it isn't in
+      // TOOL_DEFS — the phase runs as plain code, the model never calls it), and
+      // referencing an undeclared function in the history is invalid under the
+      // OpenAI tool schema: a provider validating names against the declarations
+      // it was sent has nothing to match. A user turn carries the same text with
+      // no schema claim attached, so no validator can object.
+      const claimContent =
+        'Preliminary scan of the workspace (done for you before this turn):\n\n' +
+        exploration.claimTableMarkdown +
+        '\n\n(These are cited leads from a preliminary scan, not verified truth. Open any cited range ' +
+        'with read_file before relying on it for an edit. Unexplored files above are just names — ' +
+        'investigate them with tools if the question requires it.)';
+      messages.push({ role: 'user', content: claimContent });
+      // Deliberately NOT passed through recordToolResult: this table is the map
+      // for the whole run and must survive microcompaction, which only rewrites
+      // entries present in toolResultLog. It still counts against the budget.
+      toolCharsUsed += claimContent.length;
+    }
   }
 
   for (let i = 0; i < iterationCap; i++) {
     const turnStarted = Date.now();
+    syncTranscript();
     const outcome = await runToolTurn(messages, model, baseURL, apiKeys, true);
     const thoughtMs = Date.now() - turnStarted;
 
@@ -1449,6 +1746,38 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         });
         continue;
       }
+      // The mirror image of the phantom-changes gate above: instead of claiming
+      // changes it never made, the model PROPOSES changes it was already told to
+      // make. Without this the conversation can loop indefinitely: plan → "fix
+      // it" → plan again.
+      //
+      // Requires the answer itself to be deferring action — a change plan, or a
+      // permission ask on a turn the user already approved. `executeMandate`
+      // alone is deliberately NOT enough: an approved plan can be purely
+      // investigative ("shall I read the Price element next?"), and a turn that
+      // carried that out and answered properly must not be told to start editing.
+      if (
+        !budgetExhausted &&
+        !planInsteadOfExecuteNudgeUsed &&
+        writesApplied === 0 &&
+        !anyWriteAttempted &&
+        (CHANGE_PLAN_RE.test(outcome.content) ||
+          (executeMandate && PERMISSION_SEEKING_RE.test(outcome.content)))
+      ) {
+        planInsteadOfExecuteNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content || '(empty response)' });
+        messages.push({
+          role: 'user',
+          content:
+            (executeMandate
+              ? 'STOP: the user already approved this plan — that is what their last message meant. You have proposed it again instead of doing it. '
+              : 'STOP: you have described the changes you would make, but you never attempted a single one. ') +
+            'Make the edits NOW: read_file each target, then call edit_file with oldString copied character-for-character from that output. ' +
+            'You do NOT need permission — every write is shown to the user as a diff they approve or reject before it touches disk, so asking first changes nothing except stalling the task. ' +
+            'If you genuinely cannot proceed, name the one specific blocker instead of restating the plan.',
+        });
+        continue;
+      }
       // A "final answer" that names tools is almost always a narrated plan,
       // not an answer ("I will use find_files to locate..."). Same for an
       // empty response before any tool has run. Push back and let it retry.
@@ -1466,21 +1795,32 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       }
       // An answer that announces remaining work ("cloudwatch.tf needs to be
       // examined to see the schedule") is a partial answer, not a final one —
-      // the model is asking the user to type "continue". Send it back to
-      // finish the job itself. Skipped once the tool budget is gone: at that
-      // point continuing is impossible and a partial answer is the best we have.
+      // the model is asking the user to type "continue". One that ends by asking
+      // permission ("shall I go ahead?") strands the task the same way. Send
+      // either back to finish the job itself. Skipped once the tool budget is
+      // gone: at that point continuing is impossible and a partial answer is the
+      // best we have.
+      const announcesWork = INCOMPLETE_ANSWER_RE.test(outcome.content);
+      // Only armed when the turn was actually supposed to act — otherwise a
+      // polite "let me know if you want me to dig further" on a complete
+      // read-only answer would burn a round trip.
+      const seeksPermission =
+        PERMISSION_SEEKING_RE.test(outcome.content) &&
+        (executeMandate || anyWriteAttempted || CHANGE_PLAN_RE.test(outcome.content));
       if (
         !budgetExhausted &&
-        INCOMPLETE_ANSWER_RE.test(outcome.content) &&
+        (announcesWork || seeksPermission) &&
         incompleteAnswerNudgesUsed < MAX_PLAN_NUDGES
       ) {
         incompleteAnswerNudgesUsed++;
         messages.push({ role: 'assistant', content: outcome.content });
         messages.push({
           role: 'user',
-          content:
-            'Your answer says something still needs to be examined or checked — do NOT stop to announce remaining work, and do NOT wait for the user to say "continue". ' +
-            'Do the remaining examination NOW with your tools, then give ONE complete final answer that includes what you find.',
+          content: seeksPermission
+            ? 'Your answer ends by asking for permission or confirmation. Do not — you already have it, and every file write is shown to the user as a diff they approve or reject before it is applied, so there is nothing left to ask about. ' +
+              'Carry out the remaining work NOW with your tools, then give ONE complete final answer reporting what you did.'
+            : 'Your answer says something still needs to be examined or checked — do NOT stop to announce remaining work, and do NOT wait for the user to say "continue". ' +
+              'Do the remaining examination NOW with your tools, then give ONE complete final answer that includes what you find.',
         });
         continue;
       }
@@ -1737,6 +2077,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // final answer without tools so the user always gets a response instead of
   // hanging or erroring.
   let finalStarted = Date.now();
+  syncTranscript();
   let finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
   noteTurn(Date.now() - finalStarted, finalOutcome, 0, false);
   // Tools are off for this turn — it exists purely to force a prose answer —
@@ -1755,6 +2096,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       content: `Answer now, in plain prose, using the ${toolCallsExecuted} tool result(s) already gathered above. Do not call any more tools.`,
     });
     finalStarted = Date.now();
+    syncTranscript();
     finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
     noteTurn(Date.now() - finalStarted, finalOutcome, 0, false);
   }
@@ -1764,6 +2106,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // was answered, and if writesApplied === 0, nothing changed either). Say
     // so plainly instead of letting the webview's generic fallback text imply
     // the task succeeded.
+    syncTranscript();
     emitMetrics();
     parentPort?.postMessage({
       type: 'error',

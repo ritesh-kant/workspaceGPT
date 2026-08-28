@@ -362,6 +362,23 @@
   opacity: 0.7;
 }
 
+/* A choice that exists but can't be used yet (e.g. an unconnected source in the
+   chat context picker). Still listed, and its subtitle says why — hiding it
+   would leave the user wondering where the option went. */
+.searchable-dropdown-item.disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.searchable-dropdown-item.disabled:hover {
+  background: none;
+}
+
+.searchable-dropdown-item.disabled .item-subtitle {
+  opacity: 1;
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
 .searchable-dropdown-empty {
   padding: 12px;
   color: var(--vscode-descriptionForeground);

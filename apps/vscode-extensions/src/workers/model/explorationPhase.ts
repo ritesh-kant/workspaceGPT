@@ -94,6 +94,14 @@ const STOPWORDS = new Set([
   'it', 'its', 'if', 'then', 'than', 'so', 'just', 'also', 'like',
   'i', 'you', 'we', 'they', 'he', 'she', 'me', 'my', 'your', 'our',
   'code', 'codebase', 'file', 'files', 'function', 'please', 'want', 'need',
+  // Continuation/approval vocabulary. A reply like "continue" or "go ahead"
+  // has no topic of its own, but every one of these words appears in ordinary
+  // source ("continue;", "proceed()") — so scouting on them matches a large
+  // slice of the workspace and passes the spread gate below on pure noise.
+  // Observed: a bare "continue" after a failed run scouted the whole monorepo
+  // and spent six explorer completions on files chosen for containing that word.
+  'continue', 'proceed', 'ahead', 'okay', 'yeah', 'sure', 'yes', 'keep',
+  'going', 'done', 'thanks', 'again', 'that', 'this', 'them', 'those', 'good',
 ]);
 
 /** Extracts search terms from a user question — deterministic, no model call. */
@@ -476,6 +484,11 @@ export async function runExplorationPhase(
   isLocalProvider: boolean
 ): Promise<ExplorationResult> {
   try {
+    // Nothing informative to scout on — a reply that is all stopwords ("go
+    // ahead", "do that too") gives the scout no term to search, and the phase
+    // can only produce noise from it. Bail before the inventory call below.
+    if (extractSearchTerms(userPrompt).length === 0) return EMPTY_RESULT;
+
     // Pre-gate on workspace size, one tool call. hitCounts.size is bounded by
     // the number of files in the workspace, so a workspace smaller than
     // gateMinFiles can NEVER pass shouldExplore below — yet the scout would

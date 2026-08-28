@@ -85,6 +85,31 @@ const toModelHistory = (messages: TranscriptEntry[] | undefined): ChatMessage[] 
     .filter((m) => !m.isError && !m.writeReview && !!m.content?.trim())
     .map((m) => ({ role: m.isUser ? ('user' as const) : ('assistant' as const), content: m.content as string }));
 
+/**
+ * Ticket screenshots ride in the model transcript as image_url parts. Those are
+ * megabytes of base64 — cheap to keep in the live worker, ruinous to clone onto
+ * the host and back through workerData on resume. Drop the bits, keep a note so
+ * the next segment can re-fetch via get_ticket if it still needs them.
+ */
+const stripTranscriptImages = (messages: unknown[]): unknown[] =>
+  messages.map((raw) => {
+    if (!raw || typeof raw !== 'object') return raw;
+    const m = raw as { content?: unknown };
+    if (!Array.isArray(m.content)) return raw;
+    const filtered = m.content.filter((p: { type?: string }) => p?.type !== 'image_url');
+    if (filtered.length === m.content.length) return raw;
+    return {
+      ...m,
+      content: [
+        ...filtered,
+        {
+          type: 'text',
+          text: '[image(s) from the interrupted run were not re-attached — call get_ticket again if you still need them]',
+        },
+      ],
+    };
+  });
+
 /** One structured agent-timeline step, as the webview renders it. */
 interface AgentStepStart {
   /** Groupable kind: search | read | check | edit | command | thought | note | info. */
@@ -119,6 +144,65 @@ const CONTINUATION_RE =
   /^(go ahead|go on|continue|keep going|please continue|please proceed|proceed|do it|yes|yep|yeah|sure|ok|okay|sounds good)[\s.!?]*$/i;
 
 /**
+ * Replies that approve a proposal and ask for it to be carried out. Broader
+ * than CONTINUATION_RE on purpose — that one only decides *routing* for a bare
+ * "go ahead", while this decides whether the turn is an EXECUTION turn. The
+ * replies that actually show up here ("fix it", "implement 1-3", "apply it")
+ * match none of CONTINUATION_RE's alternatives.
+ */
+const APPROVAL_RE =
+  /^(?:please\s+)?(?:yes[\s,.!]*)?(?:go ahead|go on|go for it|continue|keep going|proceed|do it|do that|ship it|lgtm|fix(?:\s+(?:it|that|this))?|implement(?:\s+(?:it|that|this|them|all|\d[\d\s,and–—-]*))?|apply(?:\s+(?:it|them|that|the\s+\w+))?|make the (?:change|changes|edit|edits|fix|fixes)|start|begin)[\s.!]*$/i;
+
+/**
+ * Replies that ask the agent to pick up a run that was cut short — the words
+ * people actually reach for after a provider error, a crash or a stop ("try
+ * again", "resume", "finish the test file"). Wider than CONTINUATION_RE (bare
+ * confirmations) and APPROVAL_RE (approving a proposal) because it decides only
+ * one thing: whether the stranded tool transcript of the interrupted run is
+ * worth carrying into this turn. A false positive costs a longer prompt; a
+ * false negative throws away every step the previous attempt took.
+ */
+const RESUME_RE =
+  /^(?:please\s+|now\s+|ok(?:ay)?[\s,]+)?(?:continue|carry on|resume|retry|try again|keep going|pick up|finish|complete)\b[^.!?]{0,60}[\s.!?]*$/i;
+
+/**
+ * Markers that the previous assistant turn PROPOSED work rather than doing it.
+ * A ticket opened from My Work is seeded with a prompt that asks for a plan
+ * first (handleSelectWorkItem in the webview), and models volunteer plans
+ * unprompted besides — so the approval that follows has to be recognised as
+ * "carry out that plan", or the next turn just re-derives and re-proposes it.
+ */
+const PROPOSED_PLAN_RE =
+  /(proposed plan|proposal|plan \(no code|files? to (change|modify|touch|edit)|shall i|should i (go|proceed|start|make|apply)|do you want me to|would you like me to|want me to|before (i|we) (touch|change|edit|modify)|(have|i have) not (yet )?(applied|made|touched)|no (code )?changes (yet|so far)|not yet applied any)/i;
+
+/** How each source is named to the user — matches the context dropdown's labels. */
+const SOURCE_LABELS: Record<DataSource, string> = {
+  CONFLUENCE: 'Confluence',
+  ADO: 'Azure DevOps',
+  CODEBASE: 'Codebase',
+};
+
+/**
+ * Why an explicitly picked source is missing from `availableSources`, phrased
+ * for the chat notice. Re-reads the same signals sendMessage gated on so it can
+ * tell "never connected" apart from "connected but not indexed yet" — the two
+ * need different fixes, and the notice is the only place the user is told which.
+ */
+function describeUnavailableSource(source: DataSource, settings: any): string {
+  if (source === 'CODEBASE') {
+    return 'no folder is open in this window';
+  }
+  const config = settings?.state?.config?.[source === 'ADO' ? 'ado' : 'confluence'];
+  if (!config?.isAuthenticated) {
+    return 'it is not connected yet, so connect it in Settings';
+  }
+  if (!config?.isIndexingCompleted) {
+    return 'its index is not finished, so finish the sync in Settings';
+  }
+  return 'it is unavailable right now';
+}
+
+/**
  * All the state one chat session's run owns. Sessions are independent: each
  * has its own model-facing history, its own (at most one) live worker, its
  * own write gate and its own turn rollup — so several chats can run at once
@@ -145,6 +229,20 @@ interface SessionRun {
    * reclassified from scratch (see CONTINUATION_RE in sendMessage).
    */
   lastUseCodebaseTools: boolean;
+  /**
+   * Model-facing transcript (tool calls and their results included) of an agent
+   * turn that was interrupted before it delivered an answer — a provider error,
+   * a crashed/stalled worker, or the user pressing stop. Streamed up from the
+   * worker at every round boundary, because that array lives inside the worker
+   * thread and dies with it.
+   *
+   * A continuation reply ("continue", "fix it", "go ahead") resumes from this
+   * instead of starting a fresh run, which would otherwise re-explore the whole
+   * repo and redo work already on disk. Cleared as soon as a turn delivers an
+   * answer, or when the user's next message shows they moved on — the raw tool
+   * results are far too expensive to carry through a whole session.
+   */
+  agentTranscript: unknown[] | null;
 }
 
 export class ChatService {
@@ -327,6 +425,7 @@ export class ChatService {
         turnFilesChanged: new Map(),
         turnFirstCheckpointSha: null,
         lastUseCodebaseTools: false,
+        agentTranscript: null,
       };
       this.runs.set(sessionId, run);
     }
@@ -385,6 +484,10 @@ export class ChatService {
     const run = this.runFor(sessionId);
     if (run.worker) return;
     run.chatHistory = toModelHistory(messages);
+    // The stored transcript is the rendered conversation, not the model-facing
+    // tool trace — there is nothing here to resume an interrupted agent run
+    // from, so make sure a stale one from an earlier session isn't reused.
+    run.agentTranscript = null;
   }
 
   public async newChat(): Promise<void> {
@@ -513,7 +616,54 @@ export class ChatService {
         };
       }
 
-      // Override sources when the user has explicitly chosen a context
+      // Approval of a plan the previous turn proposed makes THIS turn an
+      // execution turn. Deliberately not gated on contextSelection: unlike the
+      // routing inheritance above, "carry out what you just proposed" is true
+      // regardless of which context the user picked. Without this the next turn
+      // re-derives the same investigation and proposes it again — observed live
+      // as three consecutive "here's the plan, shall I proceed?" turns on one
+      // ADO bug, because the seeded ticket prompt says "before changing
+      // anything" and nothing ever revokes that.
+      const priorAssistant =
+        [...run.chatHistory].reverse().find((m) => m.role === 'assistant')?.content ?? '';
+      const trimmedMessage = message.trim();
+      const executeMandate =
+        trimmedMessage.length <= 80 &&
+        (APPROVAL_RE.test(trimmedMessage) || CONTINUATION_RE.test(trimmedMessage)) &&
+        PROPOSED_PLAN_RE.test(priorAssistant);
+      if (executeMandate) {
+        console.log('User approved a proposed plan — this turn executes it.');
+      }
+
+      // An interrupted agent turn is only resumed by a reply that asks to carry
+      // on ("continue", "try again", "fix it") — exactly when a fresh run would
+      // re-derive everything the last attempt already did. Any other message
+      // means the user moved on, so the stranded transcript is dropped rather
+      // than re-billed (its raw tool results are tens of thousands of tokens)
+      // and prefixed onto an unrelated question.
+      const isContinuationReply =
+        RESUME_RE.test(trimmedMessage) || APPROVAL_RE.test(trimmedMessage) || CONTINUATION_RE.test(trimmedMessage);
+      if (!isContinuationReply) {
+        run.agentTranscript = null;
+      } else if (run.agentTranscript?.length) {
+        console.log(
+          `Resuming the interrupted agent run for this session (${run.agentTranscript.length} model messages carried over).`
+        );
+      }
+
+      // Override sources when the user has explicitly chosen a context.
+      //
+      // `unhonoredSelection` records an explicit pick that could NOT be applied:
+      // the label maps to a real source, but that source isn't in
+      // `availableSources` (Confluence/ADO not connected or still unindexed, or
+      // Codebase with no folder open). Neither branch below fires in that case,
+      // so `classification` keeps its rule-based sources and routing quietly
+      // continues as if the user had left it on Auto — picking "Azure DevOps"
+      // while ADO is disconnected lands on codebase tools via the zero-source
+      // fallback further down, and picking "Codebase" with no folder open lands
+      // on Confluence/ADO RAG. Both used to be completely silent; the notice
+      // posted after routing settles is what makes them visible.
+      let unhonoredSelection: { label: string; reason: string } | null = null;
       if (contextSelection !== 'Auto') {
         const explicitSource: DataSource | null =
           contextSelection === 'Confluence' ? 'CONFLUENCE' :
@@ -523,6 +673,11 @@ export class ChatService {
           classification = { ...classification, sources: [explicitSource], confidence: 'high' };
         } else if (!explicitSource) {
           classification = { ...classification, sources: availableSources, confidence: 'high' };
+        } else {
+          unhonoredSelection = {
+            label: SOURCE_LABELS[explicitSource],
+            reason: describeUnavailableSource(explicitSource, settings),
+          };
         }
       }
 
@@ -548,6 +703,45 @@ export class ChatService {
         console.log('No doc/ticket source classified — defaulting to codebase tools.');
         useCodebaseTools = true;
         classification = { ...classification, sources: ['CODEBASE'] };
+      }
+
+      // An execution turn needs write tools, so it has to run the agent loop.
+      // A Confluence/ADO RAG turn has no tools at all — approving a plan there
+      // could only ever produce a re-description of it.
+      if (executeMandate && !useCodebaseTools && isCodebaseAvailable) {
+        console.log('Execution turn — forcing codebase tools so the approved plan can be applied.');
+        useCodebaseTools = true;
+        classification = { ...classification, sources: ['CODEBASE'] };
+      }
+
+      // The user's explicit context pick could not be honored. Routing has
+      // settled by now, so the notice can name what ran instead — and it can't
+      // change again: the only remaining re-route (the LLM one in Step 3) is
+      // gated on `contextSelection === 'Auto'`, which is false on this path.
+      // Sent as a 'notice' step rather than a status label because every status
+      // label posted here is overwritten within milliseconds by "Searching …"
+      // or "Thinking…"; a step is pinned to the answer, so it also survives a
+      // reload and shows up when the chat is reopened from history.
+      if (unhonoredSelection) {
+        // Mirror what Step 3 will actually do rather than just reading
+        // `classification.sources`: a chitchat turn plans topKPerPass=0, so it
+        // searches nothing even with sources set, and claiming it used
+        // Confluence would be a second wrong statement on top of the first.
+        const usedInstead = useCodebaseTools
+          ? 'the codebase'
+          : classification.intent !== 'chitchat' && classification.sources.length
+            ? classification.sources.map((s) => SOURCE_LABELS[s]).join(' & ')
+            : null;
+        const notice =
+          `${unhonoredSelection.label} context isn't available — ${unhonoredSelection.reason}. ` +
+          (usedInstead
+            ? `Used ${usedInstead} for this answer instead.`
+            : 'Answered without any retrieved context.');
+        console.warn(`Explicit context "${contextSelection}" could not be honored: ${unhonoredSelection.reason}`);
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          step: { kind: 'notice', title: notice, status: 'error' },
+        });
       }
 
       // ── Step 2: Build preliminary plan from rule-based result ──────────
@@ -657,7 +851,15 @@ export class ChatService {
         intent: classification.intent,
         sources: classification.sources.join(',') || 'none',
         contextSelection,
+        // The user picked a specific context and it wasn't available, so the
+        // turn ran against something else. Silent before this was surfaced —
+        // and still worth counting, since the fix is a setup step they have
+        // to take, not something the notice itself resolves.
+        contextSelectionUnhonored: !!unhonoredSelection,
         useCodebaseTools,
+        // Whether this turn was the user approving a plan the previous turn
+        // proposed — the plan→execute handoff's hit rate in the wild.
+        executeMandate,
         // Empty means the extension is running without any queryable source —
         // it cannot do its core job, and nothing else surfaces that state.
         availableSources: availableSources.join(',') || 'none',
@@ -699,7 +901,8 @@ export class ChatService {
         useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined,
         effBaseUrl,
         attachments,
-        resolvedMentions
+        resolvedMentions,
+        executeMandate
       );
 
       run.chatHistory.push({ role: 'assistant', content: modelResponse });
@@ -1295,7 +1498,9 @@ Query: "${query}"`;
     codebaseRoots?: NamedRoot[],
     baseUrl?: string,
     attachments: ChatAttachment[] = [],
-    resolvedMentions: ResolvedMention[] = []
+    resolvedMentions: ResolvedMention[] = [],
+    /** This turn carries out a plan the user just approved — see APPROVAL_RE. */
+    executeMandate = false
   ): Promise<string> {
     try {
       // Create a new worker for model inference
@@ -1326,6 +1531,14 @@ Query: "${query}"`;
         }
       }
 
+      // Resume the previous, interrupted agent turn when one is stranded and
+      // the user asked to carry on (sendMessage clears it otherwise). Only
+      // meaningful for a tool turn — the transcript IS a tool conversation.
+      // Deliberately not cleared here: if this worker dies before its first
+      // sync, the host copy is still the only record of the work.
+      const resumeTranscript =
+        codebaseRoots?.length && run.agentTranscript?.length ? run.agentTranscript : undefined;
+
       const modelWorker = new Worker(workerPath, {
         workerData: {
           prompt: message,
@@ -1351,6 +1564,8 @@ Query: "${query}"`;
           mentionedFiles: resolvedMentions,
           repoOrientation,
           workspaceRules: codebaseRoots?.length ? loadWorkspaceRules(codebaseRoots) : undefined,
+          executeMandate,
+          resumeTranscript,
         },
       });
 
@@ -1420,6 +1635,14 @@ Query: "${query}"`;
             this.post(run, {
               type: MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
             });
+            // A turn that actually delivered an answer is finished — nothing
+            // left to resume, and keeping its raw tool results would re-bill
+            // them on every later turn in this session. Anything else (provider
+            // error, crash, stall, user stop, or a clean exit that produced no
+            // text) leaves the transcript in place for a "continue".
+            if ((fullContent || streamedContent).trim()) {
+              run.agentTranscript = null;
+            }
             resolve(fullContent || streamedContent);
           } else {
             reject(error);
@@ -1440,6 +1663,12 @@ Query: "${query}"`;
             /** slow_model: observed seconds per completion and the trimmed iteration cap. */
             avgSec?: number;
             cap?: number;
+            /** agent_transcript: the worker's model-facing messages — full replacement, or an append. */
+            reset?: unknown[];
+            append?: unknown[];
+            /** resumed: how much of an interrupted run this turn picked up. */
+            steps?: number;
+            writesApplied?: number;
           }) => {
             armStallTimer();
             switch (result.type) {
@@ -1584,6 +1813,39 @@ Query: "${query}"`;
                 // properly by packages/agent-evals.
                 console.log('[agent-metrics]', JSON.stringify(result));
                 break;
+
+              case 'agent_transcript':
+                // The worker's model-facing conversation for this turn, mirrored
+                // here round by round so an interrupted run leaves something to
+                // resume from — see SessionRun.agentTranscript. Kept even when
+                // the run is cancelled: a stopped run is one the user is most
+                // likely to continue.
+                if (Array.isArray(result.reset)) {
+                  run.agentTranscript = stripTranscriptImages(result.reset);
+                } else if (Array.isArray(result.append) && result.append.length) {
+                  const next = stripTranscriptImages(result.append);
+                  if (run.agentTranscript) run.agentTranscript.push(...next);
+                  else run.agentTranscript = next;
+                }
+                break;
+
+              case 'resumed': {
+                // This turn continued an interrupted run instead of starting
+                // over. Worth a transcript row: it explains why the timeline is
+                // short and why files it never opened this turn are being
+                // discussed as already changed.
+                const carried = result.steps ?? 0;
+                const note =
+                  `Resuming the interrupted run — ${carried} earlier step(s) still in context` +
+                  (result.writesApplied ? `, ${result.writesApplied} file change(s) already applied` : '') +
+                  '.';
+                this.postStatus(run, note);
+                this.post(run, {
+                  type: MESSAGE_TYPES.AGENT_STEP,
+                  step: { kind: 'info', title: note },
+                });
+                break;
+              }
             }
           }
         );
