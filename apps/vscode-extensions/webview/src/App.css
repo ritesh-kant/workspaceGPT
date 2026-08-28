@@ -998,14 +998,21 @@ button:disabled {
   white-space: nowrap;
 }
 
-/* "Thought for 2s" separator rows */
-.agent-step-row--thought {
+/* "Thought for 2s" separator rows — and the collapsed disclosure that wraps
+   the model's reasoning so the prose isn't inline in the timeline. */
+.agent-step-row--thought,
+.agent-step-group--thought > summary {
   opacity: 0.6;
   font-style: italic;
   padding: 1px 0;
 }
 
-/* Prose the model narrated between tool batches */
+.agent-step-group--thought > summary:hover {
+  opacity: 0.9;
+}
+
+/* Prose the model narrated between tool batches — only visible once the
+   thought disclosure is expanded. */
 .agent-step-row--note {
   opacity: 0.85;
   padding: 2px 0;

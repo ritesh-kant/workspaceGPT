@@ -4,37 +4,49 @@ import { MESSAGE_TYPES } from '../constants';
 import { AgentStep, normalizeAgentStep } from '../store/chatStore';
 
 /**
- * Antigravity-style step timeline for an agent turn.
+ * Compact agent timeline, matching how Cursor / Claude Code present a turn:
+ * exploration is one collapsed "Explored N …" disclosure, model reasoning is
+ * a collapsed "Thought for Xs" disclosure (the prose is inside, not inline),
+ * and command stdout stays behind "Show output". Mutations (edits, commands)
+ * stay as one-line rows so the user can still see what changed.
  *
- * Two modes:
- *  - live (during a run): steps render expanded, the newest running step pulses.
- *  - done (attached to an answer): everything collapses under a
- *    "Worked for Xs" header the user can expand.
- *
- * Consecutive read-only steps (search/read/check) are grouped under an
- * "Explored N files, M searches" disclosure; edits, commands, thoughts, and
- * notes stay standalone rows — mirroring how Antigravity/Cursor summarize
- * exploration but keep mutations prominent.
+ * Live and done use the same collapsed defaults — expanding mid-run is how
+ * the noise in the transcript used to happen. The loading indicator already
+ * names the in-flight tool.
  */
 
 interface AgentTimelineProps {
   steps: (AgentStep | string)[];
   /** Milliseconds the turn took — renders the "Worked for Xs" header (done mode). */
   durationMs?: number;
-  /** Live mode: render expanded with a pulse on running steps. */
+  /** Live mode: pulse the currently running step (once the user expands its group). */
   live?: boolean;
 }
 
 type TimelineItem =
   | { type: 'group'; steps: AgentStep[] }
+  | { type: 'thought'; steps: AgentStep[]; title: string }
   | { type: 'step'; step: AgentStep };
 
 const GROUPABLE = new Set(['search', 'read', 'check', 'info']);
+const THOUGHTISH = new Set(['thought', 'note']);
 
 function groupSteps(steps: AgentStep[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   for (const step of steps) {
-    if (GROUPABLE.has(step.kind)) {
+    if (THOUGHTISH.has(step.kind)) {
+      const last = items[items.length - 1];
+      if (last && last.type === 'thought') {
+        last.steps.push(step);
+        if (step.kind === 'thought' && step.title) last.title = step.title;
+      } else {
+        items.push({
+          type: 'thought',
+          steps: [step],
+          title: step.kind === 'thought' && step.title ? step.title : 'Thought',
+        });
+      }
+    } else if (GROUPABLE.has(step.kind)) {
       const last = items[items.length - 1];
       if (last && last.type === 'group') {
         last.steps.push(step);
@@ -64,6 +76,10 @@ function groupLabel(steps: AgentStep[]): string {
   return parts.length ? `Explored ${parts.join(', ')}` : `Explored ${steps.length} step${steps.length === 1 ? '' : 's'}`;
 }
 
+function noteText(step: AgentStep): string {
+  return (step.detail || step.title || '').trim();
+}
+
 export function formatDuration(ms: number): string {
   const totalSec = Math.max(1, Math.round(ms / 1000));
   if (totalSec < 60) return `${totalSec}s`;
@@ -88,7 +104,7 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
     return <div className='agent-step-row agent-step-row--thought'>{step.title}</div>;
   }
   if (step.kind === 'note') {
-    return <div className='agent-step-row agent-step-row--note'>{step.detail || step.title}</div>;
+    return <div className='agent-step-row agent-step-row--note'>{noteText(step)}</div>;
   }
 
   const openFile = () => {
@@ -138,6 +154,28 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
   );
 };
 
+/** Collapsed-by-default reasoning block. Empty thought rows (just a duration) stay a one-liner. */
+const ThoughtGroup: React.FC<{ title: string; steps: AgentStep[] }> = ({ title, steps }) => {
+  const notes = steps.filter((s) => s.kind === 'note' && noteText(s));
+  if (notes.length === 0) {
+    return <div className='agent-step-row agent-step-row--thought'>{title}</div>;
+  }
+  return (
+    <details className='agent-step-group agent-step-group--thought'>
+      <summary>
+        <span className='agent-step-group-label'>{title}</span>
+      </summary>
+      <div className='agent-step-group-items'>
+        {notes.map((s, i) => (
+          <div key={s.id ?? `n${i}`} className='agent-step-row agent-step-row--note'>
+            {noteText(s)}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+};
+
 const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }) => {
   const normalized = steps.map(normalizeAgentStep);
   if (normalized.length === 0) return null;
@@ -149,14 +187,7 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
   // steps at all.
   const notices = normalized.filter((s) => s.kind === 'notice');
   const timelineSteps = normalized.filter((s) => s.kind !== 'notice');
-  // "Thought for Ns" rows mark model latency between tool batches — useful to
-  // watch scroll by live, but once a turn is done they just fragment a single
-  // exploration run into several tiny "Explored 1 search" groups (the
-  // duration is already summarized in the "Worked for Xs" header). Drop them
-  // from the collapsed view so consecutive read/search/check steps merge into
-  // one group, matching Antigravity's single "Explored N files..." block.
-  const displaySteps = live ? timelineSteps : timelineSteps.filter((s) => s.kind !== 'thought');
-  const items = groupSteps(displaySteps);
+  const items = groupSteps(timelineSteps);
   const anyRunning = live && timelineSteps.some((s) => s.status === 'running');
 
   const noticeRows = notices.map((s, i) => (
@@ -168,8 +199,6 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
 
   // Notice-only turn (a doc/ticket answer that ran no tools at all): there is
   // no timeline to wrap, so don't render an empty "Worked for 0 steps" shell.
-  // Deliberately keyed on timelineSteps, not displaySteps — a turn that only
-  // produced 'thought' rows still has a duration worth showing in the header.
   if (timelineSteps.length === 0) {
     return <>{noticeRows}</>;
   }
@@ -178,7 +207,7 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
     <div className='agent-timeline-body'>
       {items.map((item, i) =>
         item.type === 'group' ? (
-          <details key={i} className='agent-step-group' open={live || undefined}>
+          <details key={i} className='agent-step-group'>
             <summary>
               <span className='agent-step-group-label'>{groupLabel(item.steps)}</span>
             </summary>
@@ -188,6 +217,8 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
               ))}
             </div>
           </details>
+        ) : item.type === 'thought' ? (
+          <ThoughtGroup key={i} title={item.title} steps={item.steps} />
         ) : (
           <StepRow key={item.step.id ?? `s${i}`} step={item.step} live={live} />
         )
