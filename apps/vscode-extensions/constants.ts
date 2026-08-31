@@ -185,6 +185,16 @@ export const MESSAGE_TYPES = {
   TEST_DEPLOYMENT_CONNECTIONS: 'test-deployment-connections',
   TEST_DEPLOYMENT_CONNECTIONS_RESULT: 'test-deployment-connections-result',
 
+  // Remote-mode account (apps/workspacegpt-api Worker) — GitHub sign-in
+  // gating use of remote mode. See RemoteSignInService.
+  CHECK_REMOTE_SESSION: 'check-remote-session',
+  REMOTE_SESSION_STATUS: 'remote-session-status',
+  START_REMOTE_SIGN_IN: 'start-remote-sign-in',
+  REMOTE_SIGN_IN_SUCCESS: 'remote-sign-in-success',
+  REMOTE_SIGN_IN_ERROR: 'remote-sign-in-error',
+  SIGN_OUT_REMOTE: 'sign-out-remote',
+  REMOTE_SIGN_OUT_SUCCESS: 'remote-sign-out-success',
+
   // mach backend — classic PAT (set/clear/check), validated against both repos
   CHECK_MACH_TOKEN: 'check-mach-token',
   SET_MACH_TOKEN: 'set-mach-token',
@@ -342,6 +352,11 @@ export const STORAGE_KEYS = {
   GITHUB_MACH_PAT: 'github-mach-pat',
   // Update-check throttling: { lastCheckedAt, lastNotifiedVersion }.
   UPDATE_CHECK_STATE: 'update-check-state',
+  // Remote-mode SaaS account session token (SecretStorage) — see REMOTE_AUTH.
+  REMOTE_SESSION_TOKEN: 'remote-session-token',
+  // Timestamp (globalState, not secret) of the last server-confirmed valid
+  // session — backs the offline-grace check in sessionGate.ts.
+  REMOTE_LAST_VALIDATED_AT: 'remote-last-validated-at',
 };
 
 // Extension Constants
@@ -354,6 +369,8 @@ export const EXTENSION = {
   COMMAND_CLEAR_DATA: 'workspacegpt.clearData',
   COMMAND_SHARE_TO_CHROME: 'workspacegpt.shareToChrome',
   COMMAND_RELEASES: 'workspacegpt.releases',
+  COMMAND_SIGN_IN_REMOTE: 'workspacegpt.signInRemote',
+  COMMAND_SIGN_OUT_REMOTE: 'workspacegpt.signOutRemote',
   VIEW_CONTAINER: 'workspacegpt-sidebar',
   CONTEXT_DEPLOYMENT_ENABLED: 'workspacegpt.deploymentEnabled',
   CONTEXT_REMOTE_MODE: 'workspacegpt.remoteMode',
@@ -572,6 +589,25 @@ export const GITHUB_APP = {
     'https://workspace-gpt-confluence-auth-proxy.vercel.app/api/github/installation-token',
   API_BASE: 'https://api.github.com',
   CALLBACK_PORT: 32325,
+  CALLBACK_PATH: '/callback',
+};
+
+/**
+ * Remote-mode SaaS account sign-in (apps/workspacegpt-api Worker — see
+ * CLOUDFLARE-REMOTE-MODE-DESIGN.md). Distinct from GITHUB_OAUTH above: that
+ * one is deployment automation's write-scoped (`repo,workflow`) consent flow
+ * hitting GitHub directly; this one is a plain `read:user` sign-in/account-age
+ * check where the Worker mediates the entire GitHub round-trip — the
+ * extension only ever talks to `API_BASE` and never sees a GitHub token.
+ * Both reuse the same GitHub OAuth App (GITHUB_OAUTH.CLIENT_ID) registered
+ * with two callback URLs; nothing here needs GitHub's client id/secret.
+ *
+ * API_BASE points at local `wrangler dev` until the Worker is deployed —
+ * swap for the real `*.workers.dev` URL at that point.
+ */
+export const REMOTE_AUTH = {
+  API_BASE: 'http://127.0.0.1:8787',
+  CALLBACK_PORT: 32329,
   CALLBACK_PATH: '/callback',
 };
 

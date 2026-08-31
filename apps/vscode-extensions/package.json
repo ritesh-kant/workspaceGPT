@@ -72,6 +72,14 @@
           "light": "resources/rocket-dark.svg",
           "dark": "resources/rocket-light.svg"
         }
+      },
+      {
+        "command": "workspacegpt.signInRemote",
+        "title": "WorkspaceGPT: Sign In (Remote Mode)"
+      },
+      {
+        "command": "workspacegpt.signOutRemote",
+        "title": "WorkspaceGPT: Sign Out (Remote Mode)"
       }
     ],
     "mcpServerDefinitionProviders": [

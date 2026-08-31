@@ -7,8 +7,11 @@ import { ChatMessageHandler } from './ChatMessageHandler';
 import { CodebaseMessageHandler } from './CodebaseMessageHandler';
 import { SystemMessageHandler } from './SystemMessageHandler';
 import { DeploymentMessageHandler } from './DeploymentMessageHandler';
+import { RemoteAuthMessageHandler } from './RemoteAuthMessageHandler';
 import { HistoryService } from '../services/historyService';
 import { getEmbeddingSettings, EmbeddingSettings } from '../utils/getEmbeddingSettings';
+import { getMode } from '../utils/getModeSettings';
+import { RemoteSignInService } from '../services/remote/remoteSignInService';
 
 /** Display label for an embedding provider, used in the re-index prompt. */
 function providerLabel(provider: 'local' | 'gemini'): string {
@@ -38,6 +41,7 @@ export class WebviewMessageHandler {
   private codebaseHandler: CodebaseMessageHandler;
   private systemHandler: SystemMessageHandler;
   private deploymentHandler: DeploymentMessageHandler;
+  private remoteAuthHandler: RemoteAuthMessageHandler;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -53,6 +57,7 @@ export class WebviewMessageHandler {
     this.codebaseHandler = new CodebaseMessageHandler(webviewView, context, this.analyticsService);
     this.systemHandler = new SystemMessageHandler(webviewView, context, this.analyticsService);
     this.deploymentHandler = new DeploymentMessageHandler(webviewView, context, this.analyticsService);
+    this.remoteAuthHandler = new RemoteAuthMessageHandler(webviewView, context, this.analyticsService);
 
     // Warm the search workers now (webview is opening) so the first chat query is fast.
     this.chatHandler.prewarm();
@@ -70,6 +75,24 @@ export class WebviewMessageHandler {
       return;
     }
 
+    // GitHub sign-in gate (CLOUDFLARE-REMOTE-MODE-DESIGN.md §5.2) — remote
+    // mode only; local mode stays account-free. The Settings panel's "Sign
+    // Up with WorkspaceGPT" button (RemoteAccountSettings.tsx) is the normal
+    // path in; this is the enforcement point for a remote-mode user who
+    // hasn't signed in yet and tries to chat anyway. Local-only check (no
+    // network per message) — live validity is checked when that button's
+    // status loads and by /v1/* once remote mode's data plane exists.
+    if (data.type === MESSAGE_TYPES.SEND_MESSAGE && getMode(this.context) === 'remote') {
+      const signedIn = await new RemoteSignInService(this.context).isSignedIn();
+      if (!signedIn) {
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.ERROR_CHAT,
+          message: 'Sign in with WorkspaceGPT under Settings → Account to use remote mode.',
+        });
+        return;
+      }
+    }
+
     // A settings update may switch the embedding provider. Capture the active
     // (usable) provider *before* the new settings are persisted so we can detect
     // the switch afterwards and offer a clean re-index.
@@ -81,6 +104,7 @@ export class WebviewMessageHandler {
       : null;
 
     // Delegate message to appropriate handler
+    if (await this.remoteAuthHandler.handleMessage(data)) return;
     if (await this.confluenceHandler.handleMessage(data)) return;
     if (await this.adoHandler.handleMessage(data)) return;
     if (await this.chatHandler.handleMessage(data)) return;

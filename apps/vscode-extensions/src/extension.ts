@@ -8,6 +8,7 @@ import { McpUiManager } from './utils/mcpUiManager';
 import { syncContextKeys } from './utils/syncContextKeys';
 import { migrateModeSettings } from './utils/migrateModeSettings';
 import { UpdateChecker } from './utils/updateChecker';
+import { RemoteSignInService } from './services/remote/remoteSignInService';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
@@ -277,6 +278,46 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(shareDisposable);
+
+  // Remote-mode sign-in/sign-out commands — a Command Palette alternative to
+  // the "Sign Up with WorkspaceGPT" button in Settings → Account
+  // (RemoteAccountSettings.tsx / RemoteAuthMessageHandler.ts).
+  let signInRemoteDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_SIGN_IN_REMOTE,
+    async () => {
+      analyticsService.trackEvent('command_sign_in_remote_triggered');
+      const service = new RemoteSignInService(context);
+      try {
+        await service.signIn();
+        const profile = await service.verifySession();
+        vscode.window.showInformationMessage(
+          profile
+            ? `WorkspaceGPT: signed in as ${profile.github_login}.`
+            : 'WorkspaceGPT: signed in (session stored, but /v1/me did not confirm it).'
+        );
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          `WorkspaceGPT: sign-in failed — ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  );
+  context.subscriptions.push(signInRemoteDisposable);
+
+  let signOutRemoteDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_SIGN_OUT_REMOTE,
+    async () => {
+      analyticsService.trackEvent('command_sign_out_remote_triggered');
+      const service = new RemoteSignInService(context);
+      if (!(await service.isSignedIn())) {
+        vscode.window.showInformationMessage('WorkspaceGPT: not signed in.');
+        return;
+      }
+      await service.signOut();
+      vscode.window.showInformationMessage('WorkspaceGPT: signed out.');
+    }
+  );
+  context.subscriptions.push(signOutRemoteDisposable);
 }
 
 export async function deactivate() {

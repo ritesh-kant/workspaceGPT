@@ -364,8 +364,10 @@ const App: React.FC = () => {
   const [myWorkRefreshing, setMyWorkRefreshing] = useState(false);
   /** Bounded auto-retries, so a lost hydration race self-heals. */
   const myWorkRetriesRef = useRef(0);
-  const hasRemoteChatKey =
-    !!config.embedding?.apiKeys?.some((k) => k.trim()) || !!config.embedding?.apiKey?.trim();
+  // Remote mode is gated on GitHub sign-in (RemoteAuthMessageHandler /
+  // RemoteAccountSettings.tsx), not a client-side API key — inference and
+  // embeddings for remote mode run on the WorkspaceGPT server.
+  const [remoteSignedIn, setRemoteSignedIn] = useState(false);
 
   const modelProviders = useModelProviders();
 
@@ -531,6 +533,12 @@ const App: React.FC = () => {
     // Request history list on mount
     vscode.postMessage({
       type: MESSAGE_TYPES.GET_CHAT_HISTORY_LIST,
+    });
+
+    // So the composer already knows whether remote mode can be used, without
+    // waiting for the user to open Settings first.
+    vscode.postMessage({
+      type: MESSAGE_TYPES.CHECK_REMOTE_SESSION,
     });
 
     // Applies a turn-scoped host message to a session that is NOT on screen.
@@ -754,6 +762,15 @@ const App: React.FC = () => {
           // for this, since the host persists it and it survives into windows
           // that have no folder open at all.
           setHasWorkspaceFolder(!!message.path);
+          break;
+        case MESSAGE_TYPES.REMOTE_SESSION_STATUS:
+        case MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS:
+          setRemoteSignedIn(
+            message.type === MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS ? true : !!message.signedIn
+          );
+          break;
+        case MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS:
+          setRemoteSignedIn(false);
           break;
         case MESSAGE_TYPES.NEW_CHAT:
           handleNewChatRef.current();
@@ -1174,14 +1191,14 @@ const App: React.FC = () => {
       });
       return;
     }
-    if (mode === 'remote' && !hasRemoteChatKey) {
+    if (mode === 'remote' && !remoteSignedIn) {
       vscode.postMessage({
         type: MESSAGE_TYPES.ONBOARDING_EVENT,
         event: 'message_blocked_no_model',
-        properties: { mode, reason: 'no_remote_key' },
+        properties: { mode, reason: 'not_signed_in' },
       });
       addMessage({
-        content: 'Add your Gemini API key in Settings to start chatting.',
+        content: 'Sign up with WorkspaceGPT in Settings to start chatting.',
         isUser: false,
       });
       return;
@@ -1493,9 +1510,9 @@ const App: React.FC = () => {
       });
       return;
     }
-    if (mode === 'remote' && !hasRemoteChatKey) {
+    if (mode === 'remote' && !remoteSignedIn) {
       addMessage({
-        content: 'Add your Gemini API key in Settings to start chatting.',
+        content: 'Sign up with WorkspaceGPT in Settings to start chatting.',
         isUser: false,
       });
       return;
@@ -1542,9 +1559,9 @@ const App: React.FC = () => {
         });
         return;
       }
-      if (mode === 'remote' && !hasRemoteChatKey) {
+      if (mode === 'remote' && !remoteSignedIn) {
         addMessage({
-          content: 'Add your Gemini API key in Settings to start chatting.',
+          content: 'Sign up with WorkspaceGPT in Settings to start chatting.',
           isUser: false,
         });
         return;
@@ -2044,9 +2061,9 @@ const App: React.FC = () => {
               onPaste={handleComposerPaste}
               placeholder={
                 mode === 'remote'
-                  ? hasRemoteChatKey
+                  ? remoteSignedIn
                     ? 'Ask WorkspaceGPT...'
-                    : 'Add your Gemini key in Settings to start chatting...'
+                    : 'Sign up with WorkspaceGPT in Settings to start chatting...'
                   : selectedModelProvider?.selectedModel
                     ? 'Ask WorkspaceGPT...'
                     : 'Please configure a model in Settings to start chatting...'

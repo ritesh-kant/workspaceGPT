@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-// ModelSettings/RemoteEngineSettings (rendered as onboarding steps below) rely
-// on Settings.css for their form/button/status classes — imported explicitly
-// here so onboarding doesn't depend on Settings.tsx happening to load first.
+// ModelSettings (rendered as an onboarding step below) relies on Settings.css
+// for its form/button/status classes — imported explicitly here so
+// onboarding doesn't depend on Settings.tsx happening to load first.
 import '../Settings.css';
 import './Onboarding.css';
 import { useSettingsStore, useSelectedModelProvider } from '../../store';
@@ -9,7 +9,7 @@ import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES, WorkspaceMode } from '../../constants';
 import { handleConfluenceActions } from '../settings/utils';
 import ModelSettings from '../settings/ModelSettings';
-import RemoteEngineSettings from '../settings/RemoteEngineSettings';
+import RemoteAccountSettings from '../settings/RemoteAccountSettings';
 
 interface OnboardingProps {
   /** Called once the user finishes (or skips through) the flow. */
@@ -47,6 +47,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
   const [chosenMode, setChosenMode] = useState<WorkspaceMode>('local');
   const [confluenceConnecting, setConfluenceConnecting] = useState(false);
   const [confluenceStatus, setConfluenceStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [remoteSignedIn, setRemoteSignedIn] = useState(false);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -63,19 +64,24 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
       } else if (message.type === MESSAGE_TYPES.CONFLUENCE_OAUTH_ERROR) {
         setConfluenceConnecting(false);
         setConfluenceStatus({ ok: false, text: message.message || 'Authentication failed' });
+      } else if (
+        message.type === MESSAGE_TYPES.REMOTE_SESSION_STATUS ||
+        message.type === MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS
+      ) {
+        setRemoteSignedIn(!!message.signedIn || message.type === MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS);
+      } else if (message.type === MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS) {
+        setRemoteSignedIn(false);
       }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  const hasRemoteKey =
-    !!config.embedding?.apiKeys?.some((k) => k.trim()) || !!config.embedding?.apiKey?.trim();
-  const hasQdrantUrl = !!config.vectorStore?.qdrantUrl?.trim();
-  const engineReady =
-    chosenMode === 'local'
-      ? !!selectedModelProvider?.selectedModel
-      : hasRemoteKey && hasQdrantUrl;
+  // Remote mode has nothing to configure client-side anymore — inference and
+  // embeddings run on the WorkspaceGPT server, so signing in (RemoteAccountSettings,
+  // rendered below) is the only remote-mode requirement. Signing in is
+  // mandatory to use remote mode, so there is no skip path here.
+  const engineReady = chosenMode === 'local' ? !!selectedModelProvider?.selectedModel : remoteSignedIn;
 
   /**
    * Report an onboarding funnel milestone to the host (analytics only — never
@@ -155,31 +161,33 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
             <p className='onboarding-subtitle'>
               {chosenMode === 'local'
                 ? 'Pick a chat model. Ollama needs to be running locally; any cloud provider works too.'
-                : 'Add a Gemini key and your Qdrant cluster details.'}
+                : 'Sign up with WorkspaceGPT to enable remote mode.'}
             </p>
             <div className='onboarding-step-body'>
-              {chosenMode === 'local' ? <ModelSettings /> : <RemoteEngineSettings />}
+              {chosenMode === 'local' ? <ModelSettings /> : <RemoteAccountSettings />}
             </div>
             <div className='onboarding-footer'>
               <button type='button' className='secondary-button' onClick={() => setStep(0)}>
                 Back
               </button>
               <div className='onboarding-footer-right'>
-                <button
-                  type='button'
-                  className='onboarding-skip'
-                  onClick={() => {
-                    // The highest-signal drop-off in the whole flow: skipping
-                    // here leaves the install with no usable chat engine.
-                    trackOnboarding('onboarding_engine_skipped', {
-                      mode: chosenMode,
-                      engineReady,
-                    });
-                    setStep(2);
-                  }}
-                >
-                  Skip for now
-                </button>
+                {chosenMode === 'local' && (
+                  <button
+                    type='button'
+                    className='onboarding-skip'
+                    onClick={() => {
+                      // The highest-signal drop-off in the whole flow: skipping
+                      // here leaves the install with no usable chat engine.
+                      trackOnboarding('onboarding_engine_skipped', {
+                        mode: chosenMode,
+                        engineReady,
+                      });
+                      setStep(2);
+                    }}
+                  >
+                    Skip for now
+                  </button>
+                )}
                 <button
                   type='button'
                   className='primary-button'

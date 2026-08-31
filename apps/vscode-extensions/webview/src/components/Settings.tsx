@@ -6,7 +6,7 @@ import { MESSAGE_TYPES } from '../constants';
 import { clearStatusMessageAfterDelay } from './settings/utils';
 import ModeSelector from './settings/ModeSelector';
 import ModelSettings from './settings/ModelSettings';
-import RemoteEngineSettings from './settings/RemoteEngineSettings';
+import RemoteAccountSettings from './settings/RemoteAccountSettings';
 import ShareSettings from './settings/ShareSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
@@ -79,7 +79,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       <div className='settings-stack'>
         <ModeSelector />
 
-        {isRemote ? <RemoteEngineSettings /> : <ModelSettings />}
+        {isRemote && <RemoteAccountSettings />}
+
+        {!isRemote && <ModelSettings />}
 
         {isRemote && <ShareSettings />}
 

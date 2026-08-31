@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "workspacegpt-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "vars": {
+    // Public GitHub OAuth App client id — reuses the same App deployment
+    // automation's GitHubOAuthService uses (see GITHUB_OAUTH in
+    // apps/vscode-extensions/constants.ts). Only the client SECRET is
+    // sensitive; it is set separately via `wrangler secret put GITHUB_CLIENT_SECRET`
+    // (or apps/workspacegpt-api/.dev.vars, gitignored, for local `wrangler dev`).
+    "GITHUB_CLIENT_ID": "Ov23liuwYl36ZVETh3Nk"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "SESSIONS",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "workspacegpt-db",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ]
+}
