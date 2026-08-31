@@ -36,6 +36,11 @@ export interface ExplorationConfig {
   explorerMaxTokens: number;
   claimTableMaxChars: number;
   explorePhaseTimeoutMs: number;
+  /**
+   * A scout term matching more files than this is treated as pure noise and
+   * contributes nothing to file ranking (see termWeight).
+   */
+  noiseTermMaxFiles: number;
   /** Extra provider-specific request-body fields (e.g. OpenRouter's reasoning-effort cap). */
   extraBody?: Record<string, unknown>;
 }
@@ -48,6 +53,7 @@ export function defaultExplorationConfig(isLocalProvider: boolean): ExplorationC
     explorerMaxTokens: 600,
     claimTableMaxChars: 4_000,
     explorePhaseTimeoutMs: 60_000,
+    noiseTermMaxFiles: 200,
   };
 }
 
@@ -102,30 +108,65 @@ const STOPWORDS = new Set([
   // and spent six explorer completions on files chosen for containing that word.
   'continue', 'proceed', 'ahead', 'okay', 'yeah', 'sure', 'yes', 'keep',
   'going', 'done', 'thanks', 'again', 'that', 'this', 'them', 'those', 'good',
+  // Task-scaffolding vocabulary. Seeded ticket prompts ("Work on ticket 1234
+  // (…) — read the ticket, find the code it affects, propose a plan…") are
+  // mostly made of these words, and each one that survives extraction takes a
+  // slot from the ticket's actual subject nouns. Observed live: "Work",
+  // "ticket", "read" and "find" were scouted while "variant" — the word the
+  // ticket was ABOUT — fell off the end of the term cap.
+  'work', 'working', 'ticket', 'tickets', 'read', 'find', 'affects', 'affect',
+  'propose', 'proposed', 'plan', 'plans', 'changing', 'change', 'changes',
+  'anything', 'implement', 'implementing', 'show', 'shows', 'diffs', 'diff',
+  'guessing', 'unclear', 'ambiguous', 'instead', 'behind', 'design',
 ]);
 
-/** Extracts search terms from a user question — deterministic, no model call. */
-function extractSearchTerms(prompt: string): string[] {
-  const terms = new Set<string>();
-  const add = (t: string) => {
+/**
+ * Terms scouted per question. Raised from 12: the cut below is by term shape
+ * and length rather than prompt order, and each extra term costs only a local
+ * ripgrep call.
+ */
+const MAX_SCOUT_TERMS = 16;
+
+/**
+ * Extracts search terms from a user question — deterministic, no model call.
+ *
+ * Order decides survival: the final slice keeps the FRONT of the list, so
+ * identifier-shaped tokens (camelCase, snake_case, dotted, quoted — the
+ * rarest, highest-signal shapes) come first, then plain words longest-first.
+ * The old prompt-order slice filled the cap with the sentence's scaffolding
+ * ("Work on ticket …") and cut the discriminating nouns in a trailing
+ * parenthetical — observed live: "variant"/"variants" dropped from a ticket
+ * titled "default selected product variant" while "Work" was scouted.
+ *
+ * Exported for the headless eval harness (packages/agent-evals).
+ */
+export function extractSearchTerms(prompt: string): string[] {
+  const identifiers = new Set<string>();
+  const words = new Set<string>();
+  const add = (set: Set<string>, t: string) => {
     const s = t.trim();
-    if (s.length >= 3) terms.add(s);
+    // Pure numbers are fetch keys (ticket IDs, ports), not code search terms —
+    // text-searching "1324128" matches lockfiles and hashes, never the fix.
+    if (s.length >= 3 && !/^\d+$/.test(s)) set.add(s);
   };
 
   // camelCase / PascalCase identifiers (e.g. "LeadsView", "fetchData")
-  for (const m of prompt.matchAll(/\b[A-Za-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*\b/g)) add(m[0]);
+  for (const m of prompt.matchAll(/\b[A-Za-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*\b/g)) add(identifiers, m[0]);
   // snake_case identifiers
-  for (const m of prompt.matchAll(/\b[a-z][a-z0-9]*_[a-z0-9_]+\b/gi)) add(m[0]);
+  for (const m of prompt.matchAll(/\b[a-z][a-z0-9]*_[a-z0-9_]+\b/gi)) add(identifiers, m[0]);
   // dotted tokens / filenames (api.ts, foo.bar)
-  for (const m of prompt.matchAll(/\b[\w-]+\.[\w.-]{1,10}\b/g)) add(m[0]);
+  for (const m of prompt.matchAll(/\b[\w-]+\.[\w.-]{1,10}\b/g)) add(identifiers, m[0]);
   // quoted phrases
-  for (const m of prompt.matchAll(/"([^"]{2,40})"|'([^']{2,40})'/g)) add((m[1] ?? m[2] ?? ''));
+  for (const m of prompt.matchAll(/"([^"]{2,40})"|'([^']{2,40})'/g)) add(identifiers, m[1] ?? m[2] ?? '');
   // remaining informative words
   for (const w of prompt.split(/[^A-Za-z0-9_]+/)) {
-    if (w.length >= 4 && !STOPWORDS.has(w.toLowerCase())) add(w);
+    if (w.length >= 4 && !STOPWORDS.has(w.toLowerCase())) add(words, w);
   }
 
-  return [...terms].slice(0, 12);
+  // Longer plain words are rarer, and rare is exactly what a text scout wants;
+  // a word already captured as an identifier doesn't need a second slot.
+  const plainWords = [...words].filter((w) => !identifiers.has(w)).sort((a, b) => b.length - a.length);
+  return [...identifiers, ...plainWords].slice(0, MAX_SCOUT_TERMS);
 }
 
 /** A term that looks like an identifier is worth a symbol lookup too, not just text search. */
@@ -133,16 +174,42 @@ function looksLikeIdentifier(term: string): boolean {
   return /[A-Z_]/.test(term) || term.includes('.');
 }
 
-/** Deterministic, zero-model-token survey of which files are relevant to the question. */
-async function scout(prompt: string, deps: ExplorationDeps): Promise<Map<string, number>> {
+/**
+ * How much one file-hit from a term is worth, given how many files that term
+ * matched in total. Every term used to score a flat 1 per file, so files dense
+ * in generic vocabulary mechanically outranked the actually-relevant component
+ * — observed live on a PLP pricing bug: GraphQL schema files beat
+ * ProductTile.tsx because they matched six generic terms ("price", "product",
+ * "default", …) while the one discriminating term was never scouted. A term
+ * matching 3 files is a laser; one matching 120 is background hum; one above
+ * `noiseCeiling` says nothing at all.
+ *
+ * Exported for the headless eval harness (packages/agent-evals).
+ */
+export function termWeight(fileCount: number, noiseCeiling = 200): number {
+  if (fileCount <= 0 || fileCount > noiseCeiling) return 0;
+  if (fileCount <= 3) return 3;
+  if (fileCount <= 15) return 2;
+  if (fileCount <= 60) return 1;
+  return 0.25;
+}
+
+/**
+ * Deterministic, zero-model-token survey of which files are relevant to the
+ * question. Two passes: collect every term's matches FIRST, then score — a
+ * term's weight depends on its total spread (termWeight above), which isn't
+ * known until its search returns.
+ *
+ * Exported for the headless eval harness (packages/agent-evals).
+ */
+export async function scout(
+  prompt: string,
+  deps: ExplorationDeps,
+  noiseCeiling = 200
+): Promise<Map<string, number>> {
   const terms = extractSearchTerms(prompt);
-  const hitCounts = new Map<string, number>();
-  const termHadHit = new Map<string, boolean>(terms.map((t) => [t, false]));
-  const bump = (term: string, file: string, weight: number) => {
-    if (!file) return;
-    hitCounts.set(file, (hitCounts.get(file) ?? 0) + weight);
-    termHadHit.set(term, true);
-  };
+  const textHits = new Map<string, string[]>();
+  const symbolHits = new Map<string, string[]>();
 
   await Promise.all(
     terms.map(async (term) => {
@@ -151,7 +218,7 @@ async function scout(prompt: string, deps: ExplorationDeps): Promise<Map<string,
           query: term,
           outputMode: 'files_with_matches',
         })) as { files?: string[] } | null;
-        for (const f of r?.files ?? []) bump(term, f, 1);
+        textHits.set(term, (r?.files ?? []).filter(Boolean));
       } catch {
         // Scouting is best-effort — a failed lookup just yields fewer hits, never an error.
       }
@@ -160,7 +227,7 @@ async function scout(prompt: string, deps: ExplorationDeps): Promise<Map<string,
           const r = (await deps.requestTool('find_symbol', { query: term })) as
             | { symbols?: { file: string }[] }
             | null;
-          for (const s of r?.symbols ?? []) bump(term, s.file, 2); // a symbol hit is a stronger signal than a text match
+          symbolHits.set(term, (r?.symbols ?? []).map((sym) => sym.file).filter(Boolean));
         } catch {
           // best-effort
         }
@@ -171,20 +238,46 @@ async function scout(prompt: string, deps: ExplorationDeps): Promise<Map<string,
   // A term with zero hits so far gets one filename-pattern fallback — a doc
   // can describe a feature in prose that never appears verbatim in the file
   // that implements it. Capped: this is a fallback, not the main search.
-  const misses = terms.filter((t) => !termHadHit.get(t)).slice(0, 5);
+  const nameHits = new Map<string, string[]>();
+  const misses = terms
+    .filter((t) => !(textHits.get(t)?.length || symbolHits.get(t)?.length))
+    .slice(0, 5);
   await Promise.all(
     misses.map(async (term) => {
       try {
         const r = (await deps.requestTool('find_files', { pattern: `**/*${term}*` })) as
           | { files?: string[] }
           | null;
-        for (const f of r?.files ?? []) bump(term, f, 1);
+        nameHits.set(term, (r?.files ?? []).filter(Boolean));
       } catch {
         // best-effort
       }
     })
   );
 
+  const hitCounts = new Map<string, number>();
+  const bump = (file: string, weight: number) => {
+    if (!file || weight <= 0) return;
+    hitCounts.set(file, (hitCounts.get(file) ?? 0) + weight);
+  };
+  for (const files of textHits.values()) {
+    const weight = termWeight(files.length, noiseCeiling);
+    for (const f of files) bump(f, weight);
+  }
+  for (const files of symbolHits.values()) {
+    if (!files.length || files.length > noiseCeiling) continue;
+    // A symbol-index hit is a stronger signal than a text match, but a query
+    // matching hundreds of symbols is as generic as any noisy text term.
+    const weight = 2 * Math.max(termWeight(files.length, noiseCeiling), 0.5);
+    for (const f of files) bump(f, weight);
+  }
+  for (const files of nameHits.values()) {
+    if (!files.length || files.length > noiseCeiling) continue;
+    // A filename containing the term is meaningful even when the term is
+    // common prose; these lists are small by construction.
+    const weight = Math.max(termWeight(files.length, noiseCeiling), 0.5);
+    for (const f of files) bump(f, weight);
+  }
   return hitCounts;
 }
 
@@ -227,6 +320,13 @@ function buildClusters(
     }
   }
   if (other.files.length) clusters.push(other);
+
+  // Pack order matters: buildPack fills a fixed character budget front-first,
+  // so a cluster's highest-scoring files must come first or one big low-signal
+  // file crowds out the file the question is actually about.
+  for (const c of clusters) {
+    c.files.sort((a, b) => (hitCounts.get(b) ?? 0) - (hitCounts.get(a) ?? 0));
+  }
 
   clusters.sort((a, b) => b.hits - a.hits);
   return {
@@ -481,13 +581,22 @@ export async function runExplorationPhase(
   apiKeys: string[],
   deps: ExplorationDeps,
   cfg: ExplorationConfig,
-  isLocalProvider: boolean
+  isLocalProvider: boolean,
+  /**
+   * Extra grounding text scouted ALONGSIDE the prompt and shown to explorers —
+   * typically the ticket behind the task (title, description, acceptance
+   * criteria). A seeded ticket prompt carries only an ID and a title; the body
+   * is where the discriminating vocabulary lives ("strike-through", "unit
+   * label"), so scouting the prompt alone maps the wrong territory.
+   */
+  groundingText?: string
 ): Promise<ExplorationResult> {
   try {
+    const scoutSource = groundingText ? `${userPrompt}\n${groundingText}` : userPrompt;
     // Nothing informative to scout on — a reply that is all stopwords ("go
     // ahead", "do that too") gives the scout no term to search, and the phase
     // can only produce noise from it. Bail before the inventory call below.
-    if (extractSearchTerms(userPrompt).length === 0) return EMPTY_RESULT;
+    if (extractSearchTerms(scoutSource).length === 0) return EMPTY_RESULT;
 
     // Pre-gate on workspace size, one tool call. hitCounts.size is bounded by
     // the number of files in the workspace, so a workspace smaller than
@@ -506,12 +615,17 @@ export async function runExplorationPhase(
       // through to the scout, which tolerates per-term failures itself.
     }
 
-    const hitCounts = await scout(userPrompt, deps);
+    const hitCounts = await scout(scoutSource, deps, cfg.noiseTermMaxFiles);
     const { clusters, overflowFiles } = buildClusters(hitCounts, cfg.maxExplorers);
     if (!shouldExplore(hitCounts, clusters, cfg)) return EMPTY_RESULT;
 
+    // Explorers answer the user's question, but the ticket's symptom text is
+    // often the better statement of it — include a bounded slice.
+    const explorerQuestion = groundingText
+      ? `${userPrompt}\n\nTicket behind this task (from the issue tracker):\n${groundingText.slice(0, 1500)}`
+      : userPrompt;
     const runAll = async (): Promise<ExplorerRunResult[]> => {
-      const runOne = (c: Cluster) => runOneExplorer(c, userPrompt, model, baseURL, apiKeys, cfg, deps);
+      const runOne = (c: Cluster) => runOneExplorer(c, explorerQuestion, model, baseURL, apiKeys, cfg, deps);
       if (isLocalProvider) {
         // Sequential: local providers serialize inference anyway, and identical
         // system-preamble prefixes across explorers make sequential calls the

@@ -242,6 +242,53 @@ const App: React.FC = () => {
   const { activeView, setActiveView, settingsHydrated, setSettingsHydrated } = useUiStore();
 
   const mode = config.mode;
+  // Chat mode dial, cycled by the composer chip. Persisted per webview.
+  // - agent (default): autonomous=true — edits apply without review cards
+  //   (checkpointed + audited), permission-seeking is a failure, stalls
+  //   auto-resume. Same dial the My Work ▶ button uses.
+  // - plan: planMode=true — the turn's deliverable IS a plan (no writes);
+  //   replying "go ahead" executes it via the existing approval handoff.
+  // - ask: neither flag — every edit shows a review card (the old default).
+  type ChatMode = 'agent' | 'plan' | 'ask';
+  const CHAT_MODE_ORDER: ChatMode[] = ['agent', 'plan', 'ask'];
+  const [chatMode, setChatMode] = useState<ChatMode>(() => {
+    try {
+      const saved = localStorage.getItem('wgpt.chatMode');
+      return saved === 'plan' || saved === 'ask' ? saved : 'agent';
+    } catch {
+      return 'agent';
+    }
+  });
+  const setChatModePersisted = (next: ChatMode) => {
+    setChatMode(next);
+    try {
+      localStorage.setItem('wgpt.chatMode', next);
+    } catch {
+      /* private-mode storage failures are fine — the choice still holds for this session */
+    }
+  };
+  // Every send path must carry the dial — a path that forgets it silently
+  // downgrades the run to Ask mode (observed live: an Agent-mode ticket run
+  // came back with slow-mode degradation and a command approval card, both of
+  // which autonomous runs skip, because the send site omitted the flag).
+  const modeFlags = () => ({
+    ...(chatMode === 'agent' ? { autonomous: true } : {}),
+    ...(chatMode === 'plan' ? { planMode: true } : {}),
+  });
+  const CHAT_MODE_META: Record<ChatMode, { label: string; title: string }> = {
+    agent: {
+      label: 'Agent',
+      title: 'Agent mode — edits apply autonomously without review cards (checkpointed & audited). Click for Plan mode.',
+    },
+    plan: {
+      label: 'Plan',
+      title: 'Plan mode — the agent investigates and proposes exact edits without changing anything; reply "go ahead" to execute. Click for Ask mode.',
+    },
+    ask: {
+      label: 'Ask',
+      title: 'Ask mode — every edit shows a review card for your approval. Click for Agent mode.',
+    },
+  };
   const isConfluenceConnected = config.confluence?.isAuthenticated || false;
   // Gate on the org/project actually being present, not just `isAuthenticated`.
   // The webview store starts from defaults and is hydrated from globalState a
@@ -1184,6 +1231,7 @@ const App: React.FC = () => {
       provider: selectedModelProvider.provider, // Use the provider string from the selectedModelProvider object
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      ...modeFlags(),
       ...(pendingAttachments.length > 0 ? { attachments: pendingAttachments } : {}),
       ...(mentions.length > 0 ? { mentions } : {}),
     });
@@ -1424,9 +1472,63 @@ const App: React.FC = () => {
     setInputValue(
       `Work on ticket ${item.id} (${item.title}) — read the ticket and any design doc behind it, ` +
         'find the code it affects, then implement the fix. Show me the diffs as you go. ' +
-        "If the ticket is too ambiguous to implement, say what's unclear instead of guessing."
+        'If, after reading the ticket, the docs, and the code, a decision the ticket should have made ' +
+        "is genuinely missing, say exactly what's unclear instead of guessing."
     );
     inputRef.current?.focus();
+  };
+
+  /**
+   * Click-to-run: the ▶ on a work item starts an autonomous run immediately —
+   * no composer stop, no per-change approvals (the host auto-applies writes,
+   * checkpointed and reviewable afterwards). The prompt therefore asks for the
+   * full loop including verification, and — since nobody is present to answer —
+   * makes "stop and report the blocker" the expected ambiguity outcome.
+   */
+  const handleAutoRunWorkItem = (item: WorkItemSummary) => {
+    if (mode === 'local' && !selectedModelProvider?.selectedModel) {
+      addMessage({
+        content: 'Please select the model from settings to use the model',
+        isUser: false,
+      });
+      return;
+    }
+    if (mode === 'remote' && !hasRemoteChatKey) {
+      addMessage({
+        content: 'Add your Gemini API key in Settings to start chatting.',
+        isUser: false,
+      });
+      return;
+    }
+    const promptText =
+      `Work on ticket ${item.id} (${item.title}) autonomously — read the ticket and any design doc behind it, ` +
+      'find the code it affects, implement the fix, verify with diagnostics and the relevant tests, ' +
+      'and report the result against each acceptance criterion. ' +
+      'If, after reading the ticket, the docs, and the code, a decision the ticket should have made ' +
+      "is genuinely missing, stop and report exactly what's unclear instead of guessing.";
+    resetStreamBuffer();
+    let sessionId = currentSessionId;
+    if (!sessionId) {
+      sessionId = generateSessionId();
+      setCurrentSessionId(sessionId);
+      currentSessionIdRef.current = sessionId;
+    }
+    stoppedSessionsRef.current.delete(sessionId);
+    addMessage({ content: promptText, isUser: true });
+    setInputValue('');
+    setIsLoading(true);
+    setIsStreaming(false);
+    setShowTips(false);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId,
+      message: promptText,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+      autonomous: true,
+    });
   };
 
   const handleStarterPrompt = (promptText: string) => {
@@ -1468,6 +1570,7 @@ const App: React.FC = () => {
         provider: selectedModelProvider.provider,
         apiKey: selectedModelProvider?.apiKey,
         contextSelection: contextSelection,
+        ...modeFlags(),
       });
     }, 0);
   };
@@ -1551,6 +1654,7 @@ const App: React.FC = () => {
       provider: selectedModelProvider.provider,
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      ...modeFlags(),
       ...(attachments?.length ? { attachments } : {}),
       ...(mentions?.length ? { mentions } : {}),
     });
@@ -1601,6 +1705,7 @@ const App: React.FC = () => {
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
       historyOverride,
+      ...modeFlags(),
       ...(original.attachments?.length ? { attachments: original.attachments } : {}),
       ...(mentions.length > 0 ? { mentions } : {}),
     });
@@ -1648,6 +1753,7 @@ const App: React.FC = () => {
                     isRefreshing={myWorkRefreshing}
                     onRefresh={handleRefreshMyWork}
                     onSelect={handleSelectWorkItem}
+                    onAutoRun={handleAutoRunWorkItem}
                   />
                 )}
               <div className='recent-chats-header'>
@@ -1715,6 +1821,7 @@ const App: React.FC = () => {
                   isRefreshing={myWorkRefreshing}
                   onRefresh={handleRefreshMyWork}
                   onSelect={handleSelectWorkItem}
+                  onAutoRun={handleAutoRunWorkItem}
                 />
               )}
               <QuickTipsSection mode={mode} onOpenSettings={() => setActiveView('settings')} />
@@ -1976,6 +2083,20 @@ const App: React.FC = () => {
                   <span className={`mode-chip-dot mode-chip-dot--${mode}`} />
                   {mode === 'remote' ? 'Remote' : 'Local'}
                 </button>
+                <div
+                  className={`chat-mode-selector chat-mode-selector--${chatMode}`}
+                  title={CHAT_MODE_META[chatMode].title}
+                >
+                  <SearchableDropdown
+                    value={chatMode}
+                    searchable={false}
+                    onChange={(value) => setChatModePersisted(value as ChatMode)}
+                    options={CHAT_MODE_ORDER.map((m) => ({
+                      value: m,
+                      label: CHAT_MODE_META[m].label,
+                    }))}
+                  />
+                </div>
                 <div className='context-selector-bottom'>
                   <SearchableDropdown
                     value={contextSelection}

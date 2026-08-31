@@ -39,13 +39,87 @@ function buildMentionsBlock(options?: TurnExtras): string {
   );
 }
 
+/**
+ * The ticket a turn is grounded on — fetched live from Azure DevOps by the
+ * host BEFORE the model runs, whenever the user's message names a work item
+ * (see detectTicketId). A trimmed view of adoWorkItemService's TicketDetail:
+ * images travel separately as multimodal parts, and raw HTML is already
+ * converted to text.
+ */
+export interface TicketPromptContext {
+  id: number;
+  title: string;
+  type: string;
+  state: string;
+  url: string;
+  assignedTo?: string;
+  sprint?: string;
+  description?: string;
+  acceptanceCriteria?: string;
+  parentId?: number;
+  comments?: { author: string; date?: string; text: string }[];
+}
+
+const TICKET_DESCRIPTION_MAX_CHARS = 4_000;
+const TICKET_AC_MAX_CHARS = 2_000;
+const TICKET_COMMENTS_SHOWN = 3;
+const TICKET_COMMENT_MAX_CHARS = 300;
+
+const clip = (text: string, max: number): string =>
+  text.length > max ? text.slice(0, max) + '… (truncated)' : text;
+
+/**
+ * The pre-fetched ticket as a prompt section. This is the run's definition of
+ * done: the model is told to key its final answer to the acceptance criteria,
+ * which is what makes an autonomous run's report auditable (met / not met /
+ * could not verify, per criterion).
+ */
+function buildTicketBlock(t?: TicketPromptContext): string {
+  if (!t) return '';
+  const lines: string[] = [
+    `## Ticket #${t.id}: ${t.title}`,
+    `(Fetched live from Azure DevOps just before this turn — this IS the current ticket; do not call get_ticket for #${t.id} again.)`,
+    `- ${t.type} · State: ${t.state}${t.assignedTo ? ` · Assigned to: ${t.assignedTo}` : ''}${t.sprint ? ` · Sprint: ${t.sprint}` : ''}`,
+    `- URL: ${t.url}${t.parentId ? ` · Parent: #${t.parentId}` : ''}`,
+  ];
+  if (t.description) {
+    lines.push(`\n**Description:**\n${clip(t.description, TICKET_DESCRIPTION_MAX_CHARS)}`);
+  }
+  if (t.acceptanceCriteria) {
+    lines.push(`\n**Acceptance criteria:**\n${clip(t.acceptanceCriteria, TICKET_AC_MAX_CHARS)}`);
+  }
+  const comments = (t.comments ?? []).slice(0, TICKET_COMMENTS_SHOWN);
+  if (comments.length) {
+    lines.push(
+      `\n**Recent comments:**\n` +
+        comments
+          .map((c) => `- ${c.author}${c.date ? ` (${c.date.slice(0, 10)})` : ''}: ${clip(c.text, TICKET_COMMENT_MAX_CHARS)}`)
+          .join('\n')
+    );
+  }
+  lines.push(
+    `\nTreat the acceptance criteria (or, absent explicit ones, the description's expected behavior) as the definition of done. ` +
+      `End your final answer with an **"Acceptance criteria"** section listing each criterion with a verdict — met, not met, or could not verify — and one line of evidence (file:line, diagnostic, or test output). ` +
+      `Those three are the ONLY verdicts: "met after the fix is applied" is not a verdict, it is an unapplied fix — apply it first, then verify against the changed code. ` +
+      `Never invent a criterion that is not in the ticket. ` +
+      `"Too ambiguous to implement" means a required product or behavior DECISION is missing from the ticket even after you have read the ticket, searched the design docs, and read the code — it never means your investigation is unfinished. ` +
+      `A minor IMPLEMENTATION choice (which existing signal to reuse, whether a flag is per-variant or tile-level, naming) is never that missing decision: when you can name a reasonable default, take it, implement it, and record it under an **"Assumptions"** line in your final answer. ` +
+      `Assumptions record defaults you already ACTED ON — an assumption describing a fix you did not implement is the same failure as asking permission. ` +
+      `When the task is to implement, the run has exactly THREE valid endings: (1) you applied the fix with your edit tools and report per-criterion verdicts; (2) the code already satisfies the acceptance criteria — end with a **"## No change needed"** section citing file:line evidence; (3) a required product or behavior decision is genuinely missing — end with a **"## Blocked"** section quoting the exact gap in the ticket. ` +
+      `An investigation report, hypothesis, or proposed fix without edits is NOT a valid ending. ` +
+      `A valid "## Blocked" quotes the ticket wording that conflicts, or names the decision wording that is absent. Questions answerable by reading more code — which file owns a behavior, what data a connector or mapper actually supplies, how a value flows on first render — are INVESTIGATION, never blockers: trace them with your tools before declaring anything blocked. Listing multiple "plausible causes" means the investigation is unfinished — read the code until one is proven. Where a fix should land is an implementation choice, not a blocker: default to the file where the root cause lives, even when it is shared code consumed by several apps. ` +
+      `Finish the investigation with your tools first; ending your answer by asking the user which file to read or which step to take next is a failure, not caution — and so is presenting a finished diff in prose while asking to confirm before applying it (every write is already shown to the user as a diff they approve or reject).`
+  );
+  return lines.join('\n') + '\n';
+}
+
 export function createStructuredPrompt(
   searchResults: EmbeddingSearchResult[],
   prompt: string,
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; autonomous?: boolean; planMode?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -131,7 +205,7 @@ export function createStructuredPrompt(
         'Answer the WHOLE question, not just the first fact you find. "How is X triggered/invoked/deployed/configured" questions usually have several answers at once — event subscriptions, schedules/cron, queue consumers, HTTP endpoints, manual/CLI invocations. Read the app\'s full configuration (serverless.yml, terraform/*.tf, package.json scripts) and enumerate EVERY mechanism defined there before answering. ' +
         'Answer from BOTH documentation and implementation when both exist — docs describe intent, code is the ground truth for what actually exists. ' +
         'IMPORTANT: chat history may contain earlier claims about what was or was not found in the codebase — do NOT rely on them as facts. The workspace may have changed and earlier searches may have been weaker. Re-verify with fresh tool calls any claim you are about to repeat or act on. This applies to FACTUAL claims, not to decisions the user has already agreed to: an approved plan stays approved. Re-read the specific files you are about to edit (you need their exact current text for `oldString` anyway) rather than re-running the whole investigation that produced the plan. ' +
-        'You can also CHANGE the workspace when the user asks for it: `edit_file` replaces exact text in a file — read_file the file first, then copy oldString character-for-character from that output, keeping its line breaks and indentation (never collapse a multi-line function onto one line, never retype code from memory); the match must be exact and unique unless replaceAll. `create_file` makes new files, `delete_file` removes them. Every write is shown to the user as a diff for approval before it is applied; a rejection returns their feedback — adjust and try again rather than repeating the same edit. Prefer several small, focused edits over one sweeping rewrite. When renaming or replacing something, update EVERY reference — the definition, export/module.exports lines, imports/requires, and every call site — then prove completeness by running `search_codebase` on the OLD name and updating any match that remains. After edits are applied, call `get_diagnostics` to verify you introduced no compile/type errors, and fix any you did. Never edit files the user did not ask you to change. ' +
+        'You can also CHANGE the workspace when the user asks for it: `edit_file` replaces exact text in a file — read_file the file first, then copy oldString character-for-character from that output, keeping its line breaks and indentation (never collapse a multi-line function onto one line, never retype code from memory); the match must be exact and unique unless replaceAll. `create_file` makes new files, `delete_file` removes them. Every write is shown to the user as a diff for approval before it is applied; a rejection returns their feedback — adjust and try again rather than repeating the same edit. Prefer several small, focused edits over one sweeping rewrite. When renaming or replacing something, update EVERY reference — the definition, export/module.exports lines, imports/requires, and every call site — then prove completeness by running `search_codebase` on the OLD name and updating any match that remains. After edits are applied, call `get_diagnostics` to verify you introduced no compile/type errors, and fix any you did. Never edit files the user did not ask you to change. These write tools are ALWAYS in your tools array alongside the read tools on codebase turns — never claim edit_file/create_file is "unavailable" or "not exposed"; if a write call fails, report its literal error instead. ' +
         'For repo context: `git_status`/`git_diff` show uncommitted work, `git_log` shows recent history, `git_blame` explains who last touched a line range — all read-only. ' +
         '`run_command` executes shell commands (tests, builds, linters) with user approval — after non-trivial edits, run the relevant test or build and FIX failures before declaring the task done. Keep commands non-interactive (no watch modes, no prompts). ' +
         'Org knowledge — this is what you have that a repo-only assistant does not; use it. `get_ticket` reads ONE Azure DevOps work item by ID, live and complete: whenever the user names a ticket ("1234", "TKT-1234", "#1234"), call it FIRST, before touching code. `search_tickets` finds work items by description instead, over a local synced index that may be stale — use it only when you have no ID. `search_docs` searches Confluence design docs/architecture/runbooks. '
@@ -156,6 +230,35 @@ The user's reply approves the plan in your previous message. It is an instructio
 `
       : '';
 
+  // Plan mode inverts the execute pressure: this turn's DELIVERABLE is the
+  // plan, so the anti-plan gates in the worker are disarmed (see planMode in
+  // modelWorker) and the model is told writing is out of scope. The user's
+  // approval reply then becomes the executeMandate turn above.
+  const planModeBlock =
+    codebaseToolsEnabled && options?.planMode
+      ? `## PLAN MODE — INVESTIGATE AND PROPOSE, DO NOT MODIFY
+This turn produces a reviewable plan, not changes. Investigate with your read tools until you can name the root cause at file:line precision — a plan built on unread files is a guess, not a plan.
+Then reply with: the root cause (with evidence), the exact edits you would make (file, location, before → after), how you would verify them, and any assumption you would act on.
+Do NOT call edit_file/create_file/delete_file this turn. The user will approve the plan and the next turn carries it out.
+`
+      : '';
+
+  // An autonomous run has no one at the keyboard: writes apply without a
+  // review card (checkpointed and auditable afterwards), so any turn spent
+  // asking permission is a turn wasted — and a run that stalls on a question
+  // simply dies. The block replaces the human-in-the-loop framing, not the
+  // grounding rules: hallucinated edits are WORSE unattended.
+  const autonomousBlock =
+    codebaseToolsEnabled && options?.autonomous
+      ? `## AUTONOMOUS RUN — NO ONE IS WATCHING
+This run was started with a single click and nobody will answer questions mid-task.
+- NEVER ask for permission, confirmation, or feedback. File writes apply automatically (each one is checkpointed and shown to the user afterwards as a reviewable diff).
+- Work the task to completion: implement, then VERIFY — run get_diagnostics after edits, and run the nearest relevant test or build with run_command (only test/build/lint commands are permitted in this mode).
+- Finish with a complete report of what you changed and how you verified it.
+- If the task is genuinely ambiguous, or requires an action you cannot take safely, STOP and report exactly what decision is needed — a clear "blocked on X" report is a successful outcome; guessing is not.
+`
+      : '';
+
   const orientationBlock =
     codebaseToolsEnabled && options?.repoOrientation
       ? `**Workspace orientation (pre-fetched — use it to decide where to look first):**\n\`\`\`\n${options.repoOrientation}\n\`\`\`\n`
@@ -177,10 +280,12 @@ The user's reply approves the plan in your previous message. It is an instructio
   const attachmentsBlock = buildAttachmentsBlock(options);
   const mentionsBlock = buildMentionsBlock(options);
 
+  const ticketBlock = codebaseToolsEnabled ? buildTicketBlock(options?.ticketContext) : '';
+
   return `
 ${personalityPrompt}
 ${adoContextBlock}
-${contextInstruction}
+${planModeBlock}${autonomousBlock}${ticketBlock}${contextInstruction}
 
 ${contextBlock}${sourcesMarkdown}
 

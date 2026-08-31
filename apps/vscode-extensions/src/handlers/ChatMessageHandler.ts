@@ -121,8 +121,8 @@ export class ChatMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
-      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride } = data;
-      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride);
+      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, autonomous, planMode } = data;
+      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, !!autonomous, !!planMode);
     } catch (error) {
       this.analyticsService.trackEvent('message_send_error', {
         modelId: data.modelId,

@@ -50,7 +50,11 @@ import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { recordOriginalContent } from './agent/agentDiffProvider';
 import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
 import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
-import { fetchWorkItem } from './ado/adoWorkItemService';
+import { fetchWorkItem, TicketDetail } from './ado/adoWorkItemService';
+import { detectTicketId } from 'src/utils/ticketDetection';
+import { TicketPromptContext } from 'src/utils/promptTemplates';
+import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE } from 'src/workers/model/answerGates';
+import { randomUUID } from 'crypto';
 import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/inspectTools';
 import {
   agentOutputChannel,
@@ -175,6 +179,48 @@ const RESUME_RE =
 const PROPOSED_PLAN_RE =
   /(proposed plan|proposal|plan \(no code|files? to (change|modify|touch|edit)|shall i|should i (go|proceed|start|make|apply)|do you want me to|would you like me to|want me to|before (i|we) (touch|change|edit|modify)|(have|i have) not (yet )?(applied|made|touched)|no (code )?changes (yet|so far)|not yet applied any)/i;
 
+/** TicketDetail → the trimmed, prompt-safe shape embedded in the worker prompt.
+ * Images are stripped (they travel as multimodal parts, not prompt text) and
+ * comments are capped — a long thread would crowd out the description. */
+function toTicketPromptContext(t: TicketDetail): TicketPromptContext {
+  const { images: _images, comments, ...rest } = t;
+  return { ...rest, comments: comments?.slice(0, 5) };
+}
+
+/** Binaries an autonomous run may invoke when followed by a verification verb. */
+const AUTONOMOUS_BINARIES = new Set(['pnpm', 'npm', 'yarn', 'bun', 'turbo', 'npx', 'go', 'cargo', 'make', 'python', 'python3']);
+/** Verification tools safe to run bare — they execute no project-defined code hooks by default. */
+const AUTONOMOUS_STANDALONE = new Set(['tsc', 'jest', 'vitest', 'eslint', 'prettier', 'pytest']);
+/**
+ * Read-only inspection commands. They mutate nothing and expose no more than
+ * read_file already does, so making an autonomous run stop for them buys no
+ * safety — it just kills the run (observed live: an agent-mode ticket run
+ * stalled on `wc -l <file>`). Redirection/chaining is still refused below, so
+ * these cannot be turned into writes.
+ */
+const AUTONOMOUS_READONLY = new Set(['wc', 'ls', 'cat', 'head', 'tail', 'file', 'stat', 'basename', 'dirname']);
+const AUTONOMOUS_VERBS = new Set([
+  'test', 'tests', 'lint', 'typecheck', 'type-check', 'check', 'vet', 'build', 'compile',
+  ...AUTONOMOUS_STANDALONE,
+]);
+
+/**
+ * Verification commands an autonomous run may execute without a human — test,
+ * lint, type-check, build. Everything else (installs, publishes, deploys, git
+ * mutations, arbitrary scripts) stays human-gated even where
+ * assertCommandAllowed's denylist would pass it. Chaining and redirection are
+ * refused outright: a composite command can smuggle anything.
+ */
+function isAutonomousSafeCommand(command: string): boolean {
+  if (/[;&|><`$\n\r]/.test(command)) return false;
+  const tokens = command.trim().split(/\s+/);
+  const binary = tokens[0];
+  if (AUTONOMOUS_READONLY.has(binary)) return true;
+  if (AUTONOMOUS_STANDALONE.has(binary)) return true;
+  if (!AUTONOMOUS_BINARIES.has(binary)) return false;
+  return tokens.slice(1).some((t) => AUTONOMOUS_VERBS.has(t));
+}
+
 /** How each source is named to the user — matches the context dropdown's labels. */
 const SOURCE_LABELS: Record<DataSource, string> = {
   CONFLUENCE: 'Confluence',
@@ -230,6 +276,13 @@ interface SessionRun {
    */
   lastUseCodebaseTools: boolean;
   /**
+   * Click-to-run mode for the CURRENT turn: file writes and allowlisted
+   * test/build commands apply without a review card (still checkpointed and
+   * audited as decision 'auto'). Set per sendMessage call — never sticky, so a
+   * manual follow-up message in the same session gets the gates back.
+   */
+  autonomous: boolean;
+  /**
    * Model-facing transcript (tool calls and their results included) of an agent
    * turn that was interrupted before it delivered an answer — a provider error,
    * a crashed/stalled worker, or the user pressing stop. Streamed up from the
@@ -243,6 +296,14 @@ interface SessionRun {
    * results are far too expensive to carry through a whole session.
    */
   agentTranscript: unknown[] | null;
+  /**
+   * Whether the last delivered answer was stall-shaped with zero writes, as
+   * judged by the worker (which knows writesApplied) when it sent 'done'.
+   * Drives the autonomous auto-resume in sendMessage: a stall on a fresh
+   * worker gets a fresh tool budget, which is the cure when the previous run
+   * exhausted its budget and skipped the honesty gates.
+   */
+  lastAnswerStallShaped: boolean;
 }
 
 export class ChatService {
@@ -425,7 +486,9 @@ export class ChatService {
         turnFilesChanged: new Map(),
         turnFirstCheckpointSha: null,
         lastUseCodebaseTools: false,
+        autonomous: false,
         agentTranscript: null,
+        lastAnswerStallShaped: false,
       };
       this.runs.set(sessionId, run);
     }
@@ -513,7 +576,20 @@ export class ChatService {
      * with the UI instead of still carrying the original wording and the
      * answers that followed from it.
      */
-    historyOverride?: TranscriptEntry[]
+    historyOverride?: TranscriptEntry[],
+    /**
+     * Click-to-run: the user started this turn from a ticket's Run button and
+     * is not reviewing each step. Gates writes open (see gatedWrite) and
+     * allowlisted test/build commands (see gatedCommand); everything else is
+     * unchanged — same loop, same checkpoints, same audit log.
+     */
+    autonomous = false,
+    /**
+     * Plan mode: this turn's deliverable is a reviewable plan — the worker
+     * prompt forbids writes and the anti-plan gates are disarmed. The user's
+     * approving reply then runs as the executeMandate turn.
+     */
+    planMode = false
   ): Promise<void> {
     const run = this.runFor(sessionId);
     if (run.worker) {
@@ -553,6 +629,23 @@ export class ChatService {
       run.turnFirstCheckpointSha = null;
 
       const mode = getMode(this.context);
+
+      // ── Autonomy dial ──
+      // Autonomous runs auto-apply writes, which a 14B-class local model can't
+      // be trusted with: require a cloud provider, and degrade to the normal
+      // review-gated flow (with a visible notice) rather than refusing the run.
+      if (autonomous && mode !== 'remote' && (provider ?? '').toLowerCase() === 'ollama') {
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          step: {
+            kind: 'notice',
+            title: 'Autonomous runs need a cloud model — continuing with the usual per-change approvals instead.',
+            status: 'error',
+          },
+        });
+        autonomous = false;
+      }
+      run.autonomous = autonomous;
 
       // All configured keys for the selected provider, tried in failover order
       // on 429. Local mode: the webview's selected model + its stored keys.
@@ -842,6 +935,38 @@ export class ChatService {
 
       run.lastUseCodebaseTools = useCodebaseTools;
 
+      // ── Ticket grounding (FETCH stage) ──
+      // When the message names a work item and this is a codebase turn, fetch
+      // the ticket NOW — code-initiated, before the model runs — so (a) the
+      // exploration scout searches the ticket's own vocabulary instead of the
+      // prompt's scaffolding, and (b) the prompt carries the acceptance
+      // criteria as the definition of done. Failure degrades silently: the
+      // model can still call get_ticket itself mid-loop.
+      let ticketContext: TicketDetail | null = null;
+      const adoAuthenticated = !!settings?.state?.config?.ado?.isAuthenticated;
+      const ticketId = useCodebaseTools && adoAuthenticated ? detectTicketId(message) : null;
+      if (ticketId) {
+        const stepId = randomUUID();
+        this.postStatus(run, `Reading ticket ${ticketId}...`);
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          id: stepId,
+          step: { kind: 'read', title: 'Read ticket', detail: `#${ticketId}`, status: 'running' },
+        });
+        try {
+          ticketContext = await fetchWorkItem(this.context, { id: ticketId, includeComments: true });
+          this.post(run, {
+            type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+            id: stepId,
+            status: 'done',
+            summary: ticketContext.state,
+          });
+        } catch (e) {
+          console.warn(`Ticket ${ticketId} pre-fetch failed (continuing without):`, e);
+          this.post(run, { type: MESSAGE_TYPES.AGENT_STEP_UPDATE, id: stepId, status: 'error', summary: 'failed' });
+        }
+      }
+
       // What the user actually asked for, and whether retrieval could serve it.
       // Derived signals only — no prompt text or document content is sent.
       // `zeroResults` is the important one: a non-codebase turn that retrieved
@@ -860,6 +985,10 @@ export class ChatService {
         // Whether this turn was the user approving a plan the previous turn
         // proposed — the plan→execute handoff's hit rate in the wild.
         executeMandate,
+        // Click-to-run: no human reviews individual steps this turn.
+        autonomous,
+        // The turn was grounded on a pre-fetched work item (FETCH stage ran).
+        ticketGrounded: !!ticketContext,
         // Empty means the extension is running without any queryable source —
         // it cannot do its core job, and nothing else surfaces that state.
         availableSources: availableSources.join(',') || 'none',
@@ -889,7 +1018,7 @@ export class ChatService {
       const resolvedMentions = await mentionsPromise;
 
       this.postStatus(run, 'Thinking...');
-      const modelResponse = await this.generateModelResponse(
+      let modelResponse = await this.generateModelResponse(
         run,
         message,
         finalResults,
@@ -902,8 +1031,50 @@ export class ChatService {
         effBaseUrl,
         attachments,
         resolvedMentions,
-        executeMandate
+        executeMandate,
+        ticketContext,
+        autonomous,
+        planMode
       );
+
+      // Autonomous stall auto-resume (one-shot): a click-to-run ticket turn
+      // that ended stall-shaped with zero writes usually means the worker's
+      // tool budget ran out mid-task — the honesty gates are skipped by
+      // design at that point, and no human is present to type "continue".
+      // The stall answer kept run.agentTranscript (see settle()), so a second
+      // generateModelResponse resumes with every read carried over AND a
+      // fresh worker, i.e. a fresh tool budget — exactly what exhaustion
+      // needs. One attempt only: if the resumed run still stalls, deliver
+      // what we have rather than looping.
+      if (
+        run.autonomous &&
+        ticketContext &&
+        run.lastAnswerStallShaped &&
+        run.agentTranscript?.length &&
+        !run.cancelled
+      ) {
+        run.chatHistory.push({ role: 'assistant', content: modelResponse });
+        this.postStatus(run, 'Run ended without finishing — resuming with a fresh tool budget...');
+        modelResponse = await this.generateModelResponse(
+          run,
+          'Continue the ticket run from where the previous turn stopped — the investigation so far is carried over above. ' +
+            'Finish it now: apply the fix with your edit tools, or end with a "## Blocked" / "## No change needed" section. Do not re-investigate what is already read.',
+          finalResults,
+          effModelId,
+          effProvider,
+          effApiKeys,
+          userDisplayName,
+          currentSprint,
+          useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined,
+          effBaseUrl,
+          attachments,
+          resolvedMentions,
+          executeMandate,
+          ticketContext,
+          autonomous,
+          planMode
+        );
+      }
 
       run.chatHistory.push({ role: 'assistant', content: modelResponse });
     } catch (error) {
@@ -1007,7 +1178,18 @@ export class ChatService {
     const summary = `Run: ${command}`;
 
     let decisionKind: 'auto' | 'approved' | 'approved-session' = 'auto';
-    if (!this.sessionCommandAllowlist.has(command)) {
+    if (run.autonomous) {
+      // No one is present to review a command card — so only verification
+      // commands run at all, and they run without a card. Anything else is
+      // refused with guidance the model can act on (report it, don't retry).
+      if (!isAutonomousSafeCommand(command)) {
+        await this.audit('command', command, 'rejected', 'skipped');
+        throw new Error(
+          `Autonomous runs may only execute verification commands (test / lint / type-check / build via pnpm, npm, yarn, npx, tsc, jest, vitest, pytest, go, cargo, make) — "${command}" is outside that allowlist. ` +
+            'Do not retry it. Note it in your final report as a command for the user to run.'
+        );
+      }
+    } else if (!this.sessionCommandAllowlist.has(command)) {
       const { id, decision } = run.writeGate.await({ kind: 'command', summary });
       this.post(run, {
         type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
@@ -1113,24 +1295,31 @@ export class ChatService {
    * the model as a tool error carrying the user's feedback.
    */
   private async gatedWrite(run: SessionRun, write: PreparedWrite, roots: NamedRoot[]): Promise<unknown> {
-    const { id, decision } = run.writeGate.await(write);
     const diff = buildReviewDiff(write.before, write.after);
-    this.post(run, {
-      type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
-      id,
-      kind: write.kind,
-      path: write.displayPath,
-      summary: write.summary,
-      diff,
-    });
+    // Autonomous runs skip the review card — nobody is present to click it, and
+    // a parked gate would hang the run. The change is still checkpointed below
+    // (revertible per turn), recorded in the files-changed bar with a Review
+    // diff, and audited with decision 'auto'.
+    const decisionKind: 'auto' | 'approved' = run.autonomous ? 'auto' : 'approved';
+    if (!run.autonomous) {
+      const { id, decision } = run.writeGate.await(write);
+      this.post(run, {
+        type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
+        id,
+        kind: write.kind,
+        path: write.displayPath,
+        summary: write.summary,
+        diff,
+      });
 
-    const result = await decision;
-    if (!result.approved) {
-      await this.audit(write.kind, write.summary, 'rejected', 'skipped');
-      throw new Error(
-        `The user rejected this ${write.kind}.${result.feedback ? ` Feedback: ${result.feedback}` : ''} ` +
-          'Do not retry the same change — adjust per the feedback or ask the user how to proceed.'
-      );
+      const result = await decision;
+      if (!result.approved) {
+        await this.audit(write.kind, write.summary, 'rejected', 'skipped');
+        throw new Error(
+          `The user rejected this ${write.kind}.${result.feedback ? ` Feedback: ${result.feedback}` : ''} ` +
+            'Do not retry the same change — adjust per the feedback or ask the user how to proceed.'
+        );
+      }
     }
 
     // Snapshot BEFORE mutating, so "revert this step" is always available.
@@ -1146,10 +1335,10 @@ export class ChatService {
     try {
       await applyWrite(write);
     } catch (e) {
-      await this.audit(write.kind, write.summary, 'approved', 'failed', e instanceof Error ? e.message : String(e));
+      await this.audit(write.kind, write.summary, decisionKind, 'failed', e instanceof Error ? e.message : String(e));
       throw e;
     }
-    await this.audit(write.kind, write.summary, 'approved', 'applied');
+    await this.audit(write.kind, write.summary, decisionKind, 'applied');
     const prior = run.turnFilesChanged.get(write.displayPath);
     run.turnFilesChanged.set(write.displayPath, {
       path: write.displayPath,
@@ -1500,9 +1689,16 @@ Query: "${query}"`;
     attachments: ChatAttachment[] = [],
     resolvedMentions: ResolvedMention[] = [],
     /** This turn carries out a plan the user just approved — see APPROVAL_RE. */
-    executeMandate = false
+    executeMandate = false,
+    /** Work item pre-fetched by sendMessage's FETCH stage (null: none named). */
+    ticketContext: TicketDetail | null = null,
+    /** Click-to-run: gates are open, the worker prompt drops permission-seeking. */
+    autonomous = false,
+    /** Plan mode: deliverable is the plan; writes forbidden, anti-plan gates off. */
+    planMode = false
   ): Promise<string> {
     try {
+      run.lastAnswerStallShaped = false;
       // Create a new worker for model inference
       const workerPath = path.join(
         __dirname,
@@ -1557,15 +1753,26 @@ Query: "${query}"`;
           textAttachments: attachments
             .filter((a) => a.kind === 'text')
             .map((a) => ({ name: a.name, content: a.content })),
-          imageAttachments: attachments
-            .filter((a) => a.kind === 'image')
-            .map((a) => ({ name: a.name, dataUrl: a.content })),
+          imageAttachments: [
+            ...attachments
+              .filter((a) => a.kind === 'image')
+              .map((a) => ({ name: a.name, dataUrl: a.content })),
+            // The pre-fetched ticket's screenshots — often the clearest
+            // statement of the bug. Capped: description images can be numerous
+            // and each is base64 megabytes.
+            ...(ticketContext?.images ?? [])
+              .slice(0, 2)
+              .map((img) => ({ name: img.name, dataUrl: img.dataUrl })),
+          ],
           // Contents of the files/folders the user @-mentioned in this message.
           mentionedFiles: resolvedMentions,
           repoOrientation,
           workspaceRules: codebaseRoots?.length ? loadWorkspaceRules(codebaseRoots) : undefined,
           executeMandate,
           resumeTranscript,
+          ticketContext: ticketContext ? toTicketPromptContext(ticketContext) : undefined,
+          autonomous,
+          planMode,
         },
       });
 
@@ -1574,6 +1781,9 @@ Query: "${query}"`;
       return new Promise((resolve, reject) => {
         run.reject = reject;
         let fullContent = '';
+        // The worker's own stall judgment from its 'done' message — it knows
+        // writesApplied, which the host-side regex fallback below does not.
+        let workerSaidStall = false;
         // Mirror the streamed chunks here so we can salvage a response if the
         // worker dies before it sends 'done' (see settle() below).
         let streamedContent = '';
@@ -1640,7 +1850,22 @@ Query: "${query}"`;
             // them on every later turn in this session. Anything else (provider
             // error, crash, stall, user stop, or a clean exit that produced no
             // text) leaves the transcript in place for a "continue".
-            if ((fullContent || streamedContent).trim()) {
+            //
+            // Exception: a STALL-shaped answer ("grant me another turn to read
+            // X", "I haven't searched Confluence yet") is a handoff, not a
+            // completion — the very next message is almost always "continue",
+            // and without the transcript that continuation re-derives the whole
+            // investigation from zero (observed live as the triple-plan loop on
+            // one ADO bug). Keep it resumable; it's dropped anyway the moment
+            // the user sends anything that isn't a continuation reply.
+            const answerText = (fullContent || streamedContent).trim();
+            const stallShaped =
+              !!answerText &&
+              (workerSaidStall ||
+                PREMATURE_AMBIGUITY_RE.test(answerText) ||
+                PERMISSION_SEEKING_RE.test(answerText));
+            run.lastAnswerStallShaped = stallShaped;
+            if (answerText && !stallShaped) {
               run.agentTranscript = null;
             }
             resolve(fullContent || streamedContent);
@@ -1669,6 +1894,8 @@ Query: "${query}"`;
             /** resumed: how much of an interrupted run this turn picked up. */
             steps?: number;
             writesApplied?: number;
+            /** 'done' only: zero-write stall-shaped answer per the worker's own gates. */
+            stallShaped?: boolean;
           }) => {
             armStallTimer();
             switch (result.type) {
@@ -1684,6 +1911,7 @@ Query: "${query}"`;
               case 'done':
                 // Stream complete
                 fullContent = result.content || '';
+                workerSaidStall = !!result.stallShaped;
                 settle(null);
                 break;
 

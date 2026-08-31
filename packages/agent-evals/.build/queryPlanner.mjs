@@ -1,4 +1,12 @@
 // ../../apps/vscode-extensions/constants.ts
+var ATTACHMENT_LIMITS = {
+  /** Max attachments per message. */
+  MAX_FILES: 4,
+  /** Max raw size for an image attachment (base64 inflates ~33% on top). */
+  MAX_IMAGE_BYTES: 5 * 1024 * 1024,
+  /** Text files are inlined into the prompt — truncate beyond this. */
+  MAX_TEXT_CHARS: 1e5
+};
 var RETRIEVAL_THRESHOLDS = {
   // Per-intent minimum combined (cosine + BM25) score to include a result
   LOOKUP_MIN_SCORE: 0.2,

@@ -21,6 +21,12 @@ interface MyWorkPanelProps {
   isRefreshing: boolean;
   onRefresh: () => void;
   onSelect: (item: WorkItemSummary) => void;
+  /**
+   * Click-to-run: start an autonomous agent run on this ticket immediately —
+   * no composer stop, no per-change approvals. Optional so the panel renders
+   * unchanged for hosts that don't support autonomous runs.
+   */
+  onAutoRun?: (item: WorkItemSummary) => void;
 }
 
 /**
@@ -62,6 +68,7 @@ const MyWorkPanel: React.FC<MyWorkPanelProps> = ({
   isRefreshing,
   onRefresh,
   onSelect,
+  onAutoRun,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? items : items.slice(0, VISIBLE_LIMIT);
@@ -125,6 +132,29 @@ const MyWorkPanel: React.FC<MyWorkPanelProps> = ({
                   {[item.type, item.state, sprintLabel(item.sprint)].filter(Boolean).join(' · ')}
                 </span>
               </span>
+              {onAutoRun && (
+                <span
+                  className='my-work-item-run'
+                  role='button'
+                  tabIndex={0}
+                  data-tooltip='Run autonomously'
+                  aria-label={`Run ticket ${item.id} autonomously`}
+                  onClick={(e) => {
+                    // The row itself seeds the composer; this must not.
+                    e.stopPropagation();
+                    onAutoRun(item);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onAutoRun(item);
+                    }
+                  }}
+                >
+                  ▶
+                </span>
+              )}
               <span className='my-work-item-arrow'>→</span>
             </button>
           ))}

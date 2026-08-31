@@ -137,14 +137,18 @@ function detectSources(intent, query, availableSources) {
   if (intent === "chitchat") {
     return { sources: [], confidence: "high" };
   }
+  const lower = query.toLowerCase();
   if (intent === "lookup" && /\b\d{5,}\b|\b[A-Z]{2,10}-\d+\b/.test(query)) {
+    const hasCodebaseKeyword2 = CODEBASE_KEYWORDS.some((kw) => lower.includes(kw));
+    if (hasCodebaseKeyword2 && availableSources.includes("CODEBASE")) {
+      return { sources: ["CODEBASE"], confidence: "high" };
+    }
     const adoAvailable = availableSources.includes("ADO");
     return {
       sources: adoAvailable ? ["ADO"] : availableSources.filter((s) => s !== "CODEBASE"),
       confidence: adoAvailable ? "high" : "low"
     };
   }
-  const lower = query.toLowerCase();
   const hasCodebaseKeyword = CODEBASE_KEYWORDS.some((kw) => lower.includes(kw));
   if (hasCodebaseKeyword && availableSources.includes("CODEBASE")) {
     return { sources: ["CODEBASE"], confidence: "high" };

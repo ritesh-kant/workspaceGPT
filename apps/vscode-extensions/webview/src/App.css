@@ -800,6 +800,27 @@ input:focus {
   background-color: var(--vscode-testing-iconPassed, #2cbb5d);
 }
 
+/* Chat-mode dropdown (Agent / Plan / Ask) — sits beside the context selector.
+   The accent colour tells the user at a glance which dial is armed: amber for
+   Agent (writes apply unattended), blue for Plan (nothing is written). */
+.chat-mode-selector {
+  flex-shrink: 0;
+}
+
+.chat-mode-selector .searchable-dropdown-trigger {
+  border-color: transparent !important;
+}
+
+.chat-mode-selector--agent .searchable-dropdown-trigger {
+  color: var(--vscode-foreground) !important;
+  border-color: var(--vscode-inputValidation-warningBorder, #d29922) !important;
+}
+
+.chat-mode-selector--plan .searchable-dropdown-trigger {
+  color: var(--vscode-foreground) !important;
+  border-color: var(--vscode-charts-blue, var(--vscode-textLink-foreground)) !important;
+}
+
 /* Button styles.
    Wrapped in :where() so this default chrome carries zero specificity: any
    component class (.my-work-item, .tips-section-toggle, .section-toggle, …)
@@ -2347,6 +2368,29 @@ button:disabled {
   color: var(--vscode-descriptionForeground);
   opacity: 0;
   transition: all 0.2s ease;
+}
+
+/* Click-to-run affordance on a work item. Hidden until the row is hovered,
+   like the arrow — the row must read as one click target at rest. */
+.my-work-item-run {
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+  padding: 0 0.25rem;
+  font-size: 0.7rem;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0;
+  border-radius: 3px;
+  transition: all 0.2s ease;
+}
+
+.my-work-item:hover .my-work-item-run,
+.my-work-item-run:focus-visible {
+  opacity: 1;
+}
+
+.my-work-item-run:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground);
 }
 
 .my-work-empty {

@@ -1,12 +1,24 @@
 import { parentPort, workerData } from 'worker_threads';
 import { randomUUID } from 'crypto';
-import { createStructuredPrompt, createContinuationPrompt } from '../../utils/promptTemplates';
+import { createStructuredPrompt, createContinuationPrompt, TicketPromptContext } from '../../utils/promptTemplates';
 import { MODEL_PROVIDERS } from '../../../constants';
 import OpenAI from 'openai';
 import { EmbeddingSearchResult } from 'src/types/types';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
 import { extractBalancedJsonObjects } from './jsonExtract';
 import { runExplorationPhase, defaultExplorationConfig } from './explorationPhase';
+import {
+  INCOMPLETE_ANSWER_RE,
+  PERMISSION_SEEKING_RE,
+  CHANGE_PLAN_RE,
+  PREMATURE_AMBIGUITY_RE,
+  TICKET_TERMINAL_RE,
+  IMPLEMENT_MANDATE_RE,
+  CLAIMS_CHANGES_RE,
+  MISSING_TOOL_CLAIM_RE,
+  extractAnswerFilePaths,
+  isStallShapedAnswer,
+} from './answerGates';
 import { normalizeModelId } from '../../utils/normalizeModelId';
 
 interface WorkerData {
@@ -47,6 +59,27 @@ interface WorkerData {
    * rebuilding one from scratch — see runAgentLoop's seedFromTranscript.
    */
   resumeTranscript?: unknown[];
+  /**
+   * The work item this turn is about, pre-fetched live from Azure DevOps by
+   * the host (the message named a ticket ID). Grounds BOTH the exploration
+   * phase's scout (the ticket body carries the discriminating vocabulary the
+   * prompt lacks) and the prompt itself (acceptance criteria = definition of
+   * done). Images from the ticket ride separately in imageAttachments.
+   */
+  ticketContext?: TicketPromptContext;
+  /**
+   * Click-to-run mode: no human is watching. Writes are auto-applied host-side,
+   * permission-seeking is a failure, and the code-enforced verification gate
+   * gets extra bounded retries instead of one.
+   */
+  autonomous?: boolean;
+  /**
+   * Plan mode: this turn's deliverable IS a plan — investigate with read
+   * tools, propose exact edits, do not write. Disarms the anti-plan gates
+   * (plan-instead-of-execute, ticket-completion, permission-seeking, force-
+   * read) whose whole job is to punish exactly that shape of answer.
+   */
+  planMode?: boolean;
 }
 
 const {
@@ -68,6 +101,9 @@ const {
   workspaceRules,
   executeMandate,
   resumeTranscript,
+  ticketContext,
+  autonomous,
+  planMode,
 } = workerData as WorkerData;
 
 // Prefer the full key list; fall back to the single legacy key.
@@ -485,7 +521,13 @@ const isLocalProvider = (provider ?? '').toLowerCase() === 'ollama';
 // announcing the remaining edit. The tool-output char budget (below) still
 // bounds context growth independently, and the harness/UI wall-clock stays
 // well inside its timeout at this depth.
-const MAX_TOOL_ITERATIONS = isLocalProvider ? 20 : 25;
+// An implement-mandated ticket run has to afford BOTH a full investigation
+// and the edits after it — the fifth observed ticket-1324128 stall was a
+// complete, correct investigation that exhausted the tool budget before a
+// single write, which skips every honesty gate by design. Give those runs
+// double the char budget and extra iterations instead of nudging harder.
+const TICKET_IMPLEMENT_RUN = !!ticketContext && IMPLEMENT_MANDATE_RE.test(prompt);
+const MAX_TOOL_ITERATIONS = (isLocalProvider ? 20 : 25) + (TICKET_IMPLEMENT_RUN ? 8 : 0);
 
 const isOpenRouter = (provider ?? '').toLowerCase() === 'openrouter';
 
@@ -510,6 +552,24 @@ const MUTATING_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 
 
 /** File-mutating subset whose success must be verified by diagnostics before the run may end. */
 const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file']);
+
+// The autonomous prompt block says "NO ONE IS WATCHING", but the write tools'
+// descriptions say "the user reviews and approves each edit" — a direct
+// contradiction, and the sixth observed ticket-1324128 stall read exactly like
+// a model resolving it in favor of deferring ("Applying the edit would require
+// the file write tool, which I have not invoked — say the word"). In
+// autonomous runs, rewrite that sentence so the tool contract matches the run
+// contract.
+if (autonomous) {
+  for (const d of TOOL_DEFS as any[]) {
+    const f = d?.function;
+    if (!f || !FILE_WRITE_TOOL_NAMES.has(f.name) || typeof f.description !== 'string') continue;
+    f.description = f.description.replace(
+      /The user reviews and approves (each edit before it is applied; a rejection comes back as an error with their feedback|the creation before it happens|the deletion before it happens)\./,
+      'This is an AUTONOMOUS run: the change is applied immediately (checkpointed and auditable) — no human review happens first, so never wait for or ask about approval.'
+    );
+  }
+}
 
 /**
  * GMI Cloud's MiniMax-M3 endpoint doesn't convert the model's tool-call
@@ -656,6 +716,9 @@ async function generateResponse(): Promise<void> {
         imageAttachmentNames: imageAttachments?.map((img) => img.name),
         mentionedFiles,
         executeMandate,
+        ticketContext,
+        autonomous,
+        planMode,
       }
     );
 
@@ -1062,7 +1125,7 @@ async function runToolTurn(
 // iteration, so without a cumulative cap a long exploration can blow the
 // context window (especially on local models) before the model ever answers.
 const MAX_TOOL_RESULT_CHARS = isLocalProvider ? 12_000 : 20_000;
-const MAX_TOTAL_TOOL_CHARS = isLocalProvider ? 48_000 : 200_000;
+const MAX_TOTAL_TOOL_CHARS = (isLocalProvider ? 48_000 : 200_000) * (TICKET_IMPLEMENT_RUN ? 2 : 1);
 
 /** One message of a resumed transcript, as the host streamed it up from the previous run. */
 type ResumeMessage = Record<string, any>;
@@ -1296,10 +1359,19 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   let iterationCap = MAX_TOOL_ITERATIONS;
   const enterSlowMode = (observedMs: number, atIteration: number) => {
     if (slowModelMode) return;
+    // An autonomous run has no one waiting on latency — degrading it only
+    // starves the investigation. Observed live: a ticket run on a slow local
+    // model hit the slow-mode cap at 13 tool calls with 9% of the tool budget
+    // used, got its tools cut off mid-read, and delivered a "## Blocked"
+    // blaming the harness. Autonomous runs keep their full iteration cap.
+    if (autonomous) return;
     slowModelMode = true;
     // Leave a little room past the current iteration so a run detected late
     // can still land an answer, but never extend beyond the original cap.
-    iterationCap = Math.min(MAX_TOOL_ITERATIONS, Math.max(atIteration + 2, SLOW_MODEL_ITERATION_CAP));
+    // An implement-mandated ticket run gets a higher floor even when a human
+    // IS waiting — 8 turns cannot hold an investigation plus the edits.
+    const slowFloor = TICKET_IMPLEMENT_RUN ? 16 : SLOW_MODEL_ITERATION_CAP;
+    iterationCap = Math.min(MAX_TOOL_ITERATIONS, Math.max(atIteration + 2, slowFloor));
     parentPort?.postMessage({
       type: 'slow_model',
       avgSec: Math.round(observedMs / 1000),
@@ -1318,7 +1390,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // especially — skip both when left to their own devices.
   let writesApplied = 0;
   let writesSinceDiagnostics = 0;
-  let autoDiagnosticsRan = false;
+  // Autonomous runs get bounded retries instead of one shot: see the error, fix
+  // it, get re-checked — the loop a human reviewer would otherwise drive.
+  const AUTO_DIAGNOSTICS_LIMIT = autonomous ? 3 : 1;
+  let autoDiagnosticsRuns = 0;
   let summaryNudgeUsed = false;
   // Repeating an identical call that already failed burns turns for nothing —
   // qwen retried the SAME failing edit 6× in one observed run. Short-circuit
@@ -1338,6 +1413,43 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   const lastWriteOutcome = new Map<string, boolean>();
   let failedWritesNudgeUsed = false;
   let anyWriteAttempted = false;
+  // Delivery-time honesty stamp: when a zero-write turn NARRATES completed
+  // changes ("## Implemented fix", "the block is removed") on a run that was
+  // supposed to write, append a harness correction to the answer itself. The
+  // confrontation gates above are bounded and budget-guarded, so a persistent
+  // (or budget-exhausted) model can still deliver the lie — this line cannot
+  // be phrased around, because the model never sees it. Scoped to runs where
+  // writing was on the table, so a Q&A answer mentioning "X has been updated
+  // in PR #123" is never stamped.
+  const finalizeDeliverable = (text: string): string => {
+    let out = text;
+    if (out && writesApplied === 0 && (TICKET_IMPLEMENT_RUN || executeMandate || anyWriteAttempted) && CLAIMS_CHANGES_RE.test(out)) {
+      out +=
+        '\n\n---\n⚠️ **Harness note:** zero file edits were actually applied in this run — the working tree is unchanged, so any "implemented fix" above is a proposal only. Reply "go ahead" to have it applied.';
+    }
+    // Self-diagnosing zero-write ticket runs: every failure so far had to be
+    // diagnosed from answer prose because the [agent-metrics] console line
+    // never made it into the bug report. Stamp the numbers that matter onto
+    // the answer itself (plan mode excluded — zero writes is its contract).
+    if (out && TICKET_IMPLEMENT_RUN && !planMode && writesApplied === 0) {
+      const pct = Math.min(100, Math.round((toolCharsUsed / MAX_TOTAL_TOOL_CHARS) * 100));
+      const nudgesFired = [
+        planInsteadOfExecuteNudgeUsed ? 'plan' : '',
+        incompleteAnswerNudgesUsed > 0 ? `incomplete×${incompleteAnswerNudgesUsed}` : '',
+        prematureAmbiguityNudgeUsed ? 'ambiguity' : '',
+        ticketCompletionNudgeUsed ? 'ticket' : '',
+        missingToolClaimNudgeUsed ? 'missingTool' : '',
+        phantomChangesNudgesUsed > 0 ? `phantom×${phantomChangesNudgesUsed}` : '',
+        forceReadUsed ? 'forceRead' : '',
+      ].filter(Boolean);
+      out +=
+        `\n\n<sub>Run diagnostics: ${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · 0 edits applied` +
+        `${anyWriteAttempted ? ' (writes attempted but none landed)' : ' (no write ever attempted)'}` +
+        ` · tool budget ${pct}% used${budgetExhausted ? ' — EXHAUSTED, honesty gates skipped' : ''}` +
+        ` · nudges fired: ${nudgesFired.length ? nudgesFired.join(', ') : 'none'}</sub>`;
+    }
+    return out;
+  };
   // Two attempts, not one: observed live, qwen answered the first phantom
   // nudge with "I apologize for the confusion. The function has been
   // successfully renamed..." — an apology plus the SAME false claim — and the
@@ -1368,23 +1480,23 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // gaps with tools, or return the same answer.
   let completenessReflectionUsed = false;
   let incompleteAnswerNudgesUsed = 0;
-  const INCOMPLETE_ANSWER_RE =
-    /\b(needs? to be (examined|checked|read|inspected|verified|investigated|explored)|need(s)? to (examine|check|read|inspect|verify|investigate|explore)|would need to (look|check|read|examine|verify)|further (investigation|examination|analysis|exploration) (is|would be|may be|might be) (needed|required)|next step (is|would be) to|(I|let me|let'?s|let us) (will |shall |now )?(now )?(check|examine|read|look at|inspect|verify|investigate|search|find|locate|update|fix|rename|edit|modify|apply|retry|re-?run)\b|remains? to be (seen|checked|examined|verified)|have (not|n't) (yet )?(checked|examined|read|verified))/i;
-  // Ending by asking the user for permission is the same failure as ending by
-  // announcing remaining work: the task is not done and the user has to type
-  // "yes" to get anything. Observed live as three consecutive turns of "Shall I
-  // go ahead and make the changes?" on one ADO bug. Kept separate from
-  // INCOMPLETE_ANSWER_RE so the nudge can name the real problem, but it shares
-  // that gate's budget — two failure modes, one bounded set of retries.
-  const PERMISSION_SEEKING_RE =
-    /\b(shall i|should i (go ahead|proceed|start|make|apply|implement)|do you want me to|would you like me to|want me to (go ahead|proceed|start|make|apply|implement|fix)|say the word|if you'?d like,? i (can|will)|i can (go ahead and )?(make|apply|implement|start)|ready to (implement|apply|proceed)|awaiting your (approval|confirmation|go)|please confirm|confirm before i|(shall|should) (i|we) (go|proceed)|let me know if you want me to)\b/i;
-  // Structural markers of an answer that PRESENTS a change instead of making
-  // it: a diff fence, a "files to change" list, before/after snippets. Narrow
-  // on purpose — an ordinary read-only explanation containing code must not
-  // match, or every "how does X work" answer would trip the gate below.
-  const CHANGE_PLAN_RE =
-    /```diff|^\s*#{1,4}\s*(proposed |suggested )?(plan|the fix|files? to (change|modify|touch|edit))\b|^\s*\*\*(proposed |suggested )?(plan|the fix|files? to (change|modify|touch|edit))|\/\/\s*(before|after)\b|^\s*(before|after)\s*(\(|:)|\bhere'?s (the|my) (proposed )?plan\b/im;
+  // Answer-shape failure signatures live in answerGates.ts (shared with the
+  // eval harness, which pins the live transcripts that motivated each one).
   let planInsteadOfExecuteNudgeUsed = false;
+  // One-shot: an answer that declares the task unclear while naming
+  // investigation it could still do itself (see PREMATURE_AMBIGUITY_RE).
+  let prematureAmbiguityNudgeUsed = false;
+  // One-shot: the harness force-reads the files a stall answer names as
+  // unread instead of ending the run to ask for another turn.
+  let forceReadUsed = false;
+  // One-shot structural backstop for implement-mandated ticket runs: zero
+  // writes + no terminal section ("## Blocked" / "## No change needed") is a
+  // stall regardless of how the answer is phrased — see TICKET_TERMINAL_RE.
+  let ticketCompletionNudgeUsed = false;
+  // One-shot: the answer claimed a write tool is missing from its tool list —
+  // always false (TOOL_DEFS is sent whole on every request), so confront with
+  // that fact instead of letting a well-formed-but-false "## Blocked" stand.
+  let missingToolClaimNudgeUsed = false;
 
   // Once the cumulative tool-output budget is gone, every further tool call
   // gets back nothing but the "[budget exhausted]" marker — the model can't
@@ -1553,8 +1665,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         failedWrites: failedWritesNudgeUsed ? 1 : 0,
         phantomChanges: phantomChangesNudgesUsed,
         summary: summaryNudgeUsed ? 1 : 0,
+        prematureAmbiguity: prematureAmbiguityNudgeUsed ? 1 : 0,
+        ticketCompletion: ticketCompletionNudgeUsed ? 1 : 0,
+        missingToolClaim: missingToolClaimNudgeUsed ? 1 : 0,
         completenessReflectionUsed,
-        autoDiagnosticsRan,
+        autoDiagnosticsRuns,
       },
       slowModelMode,
       iterationCap,
@@ -1597,7 +1712,15 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           // which unconstrained reasoning burns entirely on thinking.
           ...(isOpenRouter ? { extraBody: { reasoning: { effort: 'low' } } } : {}),
         },
-        isLocalProvider
+        isLocalProvider,
+        // Scout the ticket's own words, not just the prompt's: a seeded ticket
+        // prompt carries only an ID and a title, and the symptom vocabulary
+        // ("strike-through", "unit label") lives in the description/criteria.
+        ticketContext
+          ? [ticketContext.title, ticketContext.description, ticketContext.acceptanceCriteria]
+              .filter(Boolean)
+              .join('\n')
+          : undefined
       );
   if (exploration) {
     const exploreMs = Date.now() - exploreStarted;
@@ -1662,8 +1785,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // unlike nudging): the model then sees the result and either confirms or
       // fixes what it broke. Once per run — a model that ignores the result
       // shouldn't loop forever.
-      if (writesSinceDiagnostics > 0 && !autoDiagnosticsRan) {
-        autoDiagnosticsRan = true;
+      if (writesSinceDiagnostics > 0 && autoDiagnosticsRuns < AUTO_DIAGNOSTICS_LIMIT) {
+        autoDiagnosticsRuns++;
         const diagCallId = 'auto_diagnostics_check';
         messages.push({
           role: 'assistant',
@@ -1720,10 +1843,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // ("Changes Made: renamed..."): the model role-played the task instead
       // of doing it — observed live with qwen writing a full markdown story of
       // edits it never attempted. Confront once.
-      const claimsChanges =
-        /\b(changes made|i (have )?(successfully )?(changed|renamed|updated|modified|created|fixed)|(has|have) been (\w+ly )?(changed|renamed|updated|modified|created|fixed)|were (\w+ly )?(changed|renamed|updated)|successfully (changed|renamed|updated|modified|created|fixed))\b/i.test(
-          outcome.content
-        );
+      const claimsChanges = CLAIMS_CHANGES_RE.test(outcome.content);
       if (writesApplied === 0 && claimsChanges && phantomChangesNudgesUsed < 2) {
         phantomChangesNudgesUsed++;
         // Confront with EVIDENCE, not just exhortation: a live git_status
@@ -1746,6 +1866,29 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         });
         continue;
       }
+      // The answer declares itself blocked because a write tool is "not
+      // exposed"/"unavailable" — categorically false: TOOL_DEFS is sent whole
+      // (edit_file/create_file/delete_file included) on every request of this
+      // loop. Observed live wrapped in an otherwise-valid "## Blocked" section,
+      // which would make the structural ticket gate stand down — so this
+      // confrontation runs first and states the fact the model got wrong.
+      if (
+        !budgetExhausted &&
+        !missingToolClaimNudgeUsed &&
+        writesApplied === 0 &&
+        MISSING_TOOL_CLAIM_RE.test(outcome.content)
+      ) {
+        missingToolClaimNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            'FALSE: edit_file, create_file, and delete_file ARE declared in your tools array on this very request — the same function-calling mechanism that served your read_file and search_codebase calls. You are never given a read-only tool list on a codebase turn. ' +
+            'Do not claim a tool is missing; INVOKE it. Call edit_file NOW for each change you described: read_file the target first, then pass oldString copied character-for-character from that output. ' +
+            'If an edit_file call errors, report the literal error text — do not translate a failed or unparsed call into "the tool is not exposed".',
+        });
+        continue;
+      }
       // The mirror image of the phantom-changes gate above: instead of claiming
       // changes it never made, the model PROPOSES changes it was already told to
       // make. Without this the conversation can loop indefinitely: plan → "fix
@@ -1757,6 +1900,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // investigative ("shall I read the Price element next?"), and a turn that
       // carried that out and answered properly must not be told to start editing.
       if (
+        !planMode &&
         !budgetExhausted &&
         !planInsteadOfExecuteNudgeUsed &&
         writesApplied === 0 &&
@@ -1774,7 +1918,120 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
               : 'STOP: you have described the changes you would make, but you never attempted a single one. ') +
             'Make the edits NOW: read_file each target, then call edit_file with oldString copied character-for-character from that output. ' +
             'You do NOT need permission — every write is shown to the user as a diff they approve or reject before it touches disk, so asking first changes nothing except stalling the task. ' +
+            'If a minor implementation choice is open and you can name a reasonable default, take that default, implement it, and record the assumption in your final answer — do not end the run to ask about it. ' +
             'If you genuinely cannot proceed, name the one specific blocker instead of restating the plan.',
+        });
+        continue;
+      }
+      // A stall answer that NAMES the files it still needs ("grant me another
+      // turn to read mapProducts.ts and the BFF mapper") has already done the
+      // hard part — locating them. Deterministic beats nudging: read those
+      // files NOW as a synthetic tool exchange (same pattern as the forced
+      // get_diagnostics above) so the model continues with the data it asked
+      // for, instead of the run ending so a human can type "continue".
+      // One-shot and capped at 3 files; only fires on a stall-shaped answer,
+      // and only for paths never read this run.
+      if (!planMode && !budgetExhausted && !forceReadUsed &&
+          (PREMATURE_AMBIGUITY_RE.test(outcome.content) ||
+            INCOMPLETE_ANSWER_RE.test(outcome.content) ||
+            PERMISSION_SEEKING_RE.test(outcome.content))) {
+        const unreadPaths = extractAnswerFilePaths(outcome.content).filter((p) => {
+          const norm = normPath(p);
+          // Loose suffix matching: the model may write repo-relative paths
+          // while reads were recorded workspace-relative (or vice versa).
+          for (const read of readPaths) {
+            if (read.endsWith(norm) || norm.endsWith(read)) return false;
+          }
+          return true;
+        });
+        if (unreadPaths.length > 0) {
+          forceReadUsed = true;
+          messages.push({
+            role: 'assistant',
+            content: outcome.content || null,
+            tool_calls: unreadPaths.map((path, idx) => ({
+              id: `auto_force_read_${idx}`,
+              type: 'function',
+              function: { name: 'read_file', arguments: JSON.stringify({ path }) },
+            })),
+          });
+          for (let idx = 0; idx < unreadPaths.length; idx++) {
+            const path = unreadPaths[idx];
+            const transportId = randomUUID();
+            parentPort?.postMessage({ type: 'tool_status', id: transportId, name: 'read_file', arguments: { path, auto: true } });
+            let result: unknown;
+            try {
+              result = await requestTool('read_file', { path }, transportId);
+              readPaths.add(normPath(path));
+            } catch (e) {
+              result = { error: e instanceof Error ? e.message : String(e) };
+            }
+            messages.push({ role: 'tool', tool_call_id: `auto_force_read_${idx}`, content: serializeToolResult(result) });
+            recordToolResult('read_file', i, messages[messages.length - 1].content);
+          }
+          messages.push({
+            role: 'user',
+            content:
+              'The files your answer said you still needed are now above — read them and FINISH the task in this run: ' +
+              'implement the fix (or name the one specific missing product decision), then give ONE complete final answer. ' +
+              'Do not ask for another turn.',
+          });
+          continue;
+        }
+      }
+      // The ambiguity escape hatch, taken early: the answer declares the task
+      // unclear or blocked while NAMING reads/searches the model could still
+      // do itself ("I have not yet read the PLP components", "I haven't
+      // searched Confluence"). That is an unfinished investigation, not an
+      // ambiguous ticket — a real ambiguity is a missing product decision,
+      // which no amount of reading resolves. Confront once with that
+      // distinction; the generic incomplete-answer nudge below handles any
+      // relapse. Runs before the other answer gates so the specific
+      // confrontation wins over the generic one.
+      if (
+        !budgetExhausted &&
+        !prematureAmbiguityNudgeUsed &&
+        writesApplied === 0 &&
+        PREMATURE_AMBIGUITY_RE.test(outcome.content)
+      ) {
+        prematureAmbiguityNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            'STOP: you declared the task unclear or blocked while naming investigation YOU can still do yourself — files not yet read, docs not yet searched. That is not ambiguity; it is an unfinished investigation. ' +
+            '"Too ambiguous to implement" means a required product or behavior DECISION is missing from the ticket even after reading the ticket, the design docs, and the code. ' +
+            'Do the investigation NOW: call search_docs for the design doc, read every file you said you have not read, and trace the code path end to end. ' +
+            'Then either implement the fix, or name the one specific missing decision (quote the gap in the ticket). ' +
+            'Do NOT offer the user a menu of next steps — investigating is YOUR job, not a choice for them to make.',
+        });
+        continue;
+      }
+      // Structural backstop for ticket runs whose prompt mandated implementing
+      // the fix: phrasing gates are whack-a-mole (the fourth observed stall on
+      // one ticket asked NOTHING — a clean investigation report whose
+      // "Assumptions" section described the fix it never applied), but the
+      // invariant survives rephrasing: implement mandate + zero writes + no
+      // "## Blocked" / "## No change needed" section = the run is not done.
+      if (
+        !planMode &&
+        !budgetExhausted &&
+        !ticketCompletionNudgeUsed &&
+        ticketContext &&
+        IMPLEMENT_MANDATE_RE.test(prompt) &&
+        writesApplied === 0 &&
+        !anyWriteAttempted &&
+        !TICKET_TERMINAL_RE.test(outcome.content)
+      ) {
+        ticketCompletionNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            'STOP: this ticket run was instructed to IMPLEMENT the fix, and you are ending it with ZERO edits, no "## Blocked" section, and no "## No change needed" section. An investigation report — however thorough — is not a valid ending. ' +
+            'This run has exactly three valid endings: (1) apply the fix NOW with read_file + edit_file (every write is shown to the user as a diff to approve; implementation choices with a reasonable default are yours to make — record them under "Assumptions" AFTER implementing, never instead of it); ' +
+            '(2) if the code already satisfies the acceptance criteria, end with a "## No change needed" section citing file:line evidence; ' +
+            '(3) if a required product or behavior decision is genuinely missing from the ticket, end with a "## Blocked" section quoting the exact gap. Pick one and finish.',
         });
         continue;
       }
@@ -1805,8 +2062,14 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // polite "let me know if you want me to dig further" on a complete
       // read-only answer would burn a round trip.
       const seeksPermission =
+        !planMode &&
         PERMISSION_SEEKING_RE.test(outcome.content) &&
-        (executeMandate || anyWriteAttempted || CHANGE_PLAN_RE.test(outcome.content));
+        // A ticket-grounded run was seeded with "implement the fix" — ending it
+        // on a permission ask or an options menu is always wrong there, even
+        // before any write was attempted (observed live: a fresh ticket run
+        // ended with "which of these should I do next?" after one directory
+        // listing, and none of the other arming conditions were true yet).
+        (executeMandate || anyWriteAttempted || !!ticketContext || CHANGE_PLAN_RE.test(outcome.content));
       if (
         !budgetExhausted &&
         (announcesWork || seeksPermission) &&
@@ -1889,9 +2152,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         });
         continue;
       }
-      if (cleanedContent) parentPort?.postMessage({ type: 'chunk', content: cleanedContent });
+      const deliverable = finalizeDeliverable(cleanedContent);
+      if (deliverable) parentPort?.postMessage({ type: 'chunk', content: deliverable });
       emitMetrics();
-      parentPort?.postMessage({ type: 'done', content: cleanedContent });
+      parentPort?.postMessage({ type: 'done', content: deliverable, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(deliverable) || CLAIMS_CHANGES_RE.test(deliverable)) });
       return;
     }
 
@@ -2075,7 +2339,22 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
 
   // Either MAX_TOOL_ITERATIONS or the tool-output budget was hit: force a
   // final answer without tools so the user always gets a response instead of
-  // hanging or erroring.
+  // hanging or erroring. Tell the model WHICH limit ended the run — without
+  // this it discovers its tools are gone and invents a reason ("over budget,
+  // then tool access was cut off" — observed live at 9% budget), and that
+  // fabrication ends up in the user-facing answer.
+  messages.push({
+    role: 'user',
+    content:
+      (budgetExhausted
+        ? `The tool-OUTPUT budget for this run is exhausted after ${toolCallsExecuted} tool call(s).`
+        : `The step limit for this run is reached: ${toolCallsExecuted} tool call(s) over ${perTurn.length} turns (cap ${iterationCap}).`) +
+      ' No further tools can run this turn. Answer now in plain prose from what you already gathered. ' +
+      'Be exact about why you stopped — say "' +
+      (budgetExhausted ? 'tool-output budget exhausted' : 'step limit reached') +
+      '" if unfinished; do NOT claim tool access was revoked, cut off, or broken. ' +
+      'If the investigation is unfinished, list the specific files still unread — the run can be resumed with everything gathered so far carried over.',
+  });
   let finalStarted = Date.now();
   syncTranscript();
   let finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
@@ -2118,9 +2397,13 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     });
     return;
   }
-  parentPort?.postMessage({ type: 'chunk', content: finalText });
+  const finalDeliverable = finalizeDeliverable(finalText);
+  parentPort?.postMessage({ type: 'chunk', content: finalDeliverable });
   emitMetrics();
-  parentPort?.postMessage({ type: 'done', content: finalText });
+  // This exit is the budget/iteration-forced final answer — the one path
+  // where the honesty gates were deliberately skipped, so the stall tag is
+  // how the host learns a resume is worth it (a fresh worker = fresh budget).
+  parentPort?.postMessage({ type: 'done', content: finalDeliverable, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(finalDeliverable)) });
 }
 
 // Start processing

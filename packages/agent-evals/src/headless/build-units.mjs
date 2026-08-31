@@ -24,6 +24,9 @@ const UNITS = [
   'src/utils/reranker.ts',
   'src/utils/queryPlanner.ts',
   'src/utils/queryClassifier.ts',
+  'src/utils/ticketDetection.ts',
+  'src/workers/model/explorationPhase.ts',
+  'src/workers/model/answerGates.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
 ];
 
@@ -41,6 +44,19 @@ const ripgrepExternalPlugin = {
   setup(build) {
     build.onResolve({ filter: /^@vscode\/ripgrep$/ }, () => ({
       path: require.resolve('@vscode/ripgrep'),
+      external: true,
+    }));
+  },
+};
+
+// explorationPhase.ts imports the OpenAI SDK, whose CJS deps (node-fetch)
+// use dynamic require() and cannot be bundled into an ESM unit. Same
+// treatment as ripgrep: keep it external at its real installed path.
+const openaiExternalPlugin = {
+  name: 'openai-external',
+  setup(build) {
+    build.onResolve({ filter: /^openai$/ }, () => ({
+      path: require.resolve('openai'),
       external: true,
     }));
   },
@@ -67,7 +83,7 @@ export async function buildUnits() {
     sourcemap: false,
     logLevel: 'silent',
     alias: { vscode: path.join(here, 'vscode-stub.mjs') },
-    plugins: [ripgrepExternalPlugin],
+    plugins: [ripgrepExternalPlugin, openaiExternalPlugin],
   });
   return outDir;
 }

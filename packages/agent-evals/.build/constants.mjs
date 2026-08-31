@@ -7,7 +7,9 @@ var MESSAGE_TYPES = {
   CLEAR_CHAT: "clear-chat",
   NEW_CHAT: "new-chat",
   SHOW_SETTINGS: "show-settings",
-  UPDATE_MODEL: "update-model",
+  // Webview → host: the sidebar was dragged below SIDEBAR_MIN_WIDTH_PX; hide
+  // the bar that currently hosts this view instead of rendering a broken layout.
+  COLLAPSE_SIDEBAR: "collapse-sidebar",
   ERROR_CHAT: "error-chat",
   RESET: "reset",
   STOP_MESSAGE: "stop-message",
@@ -33,6 +35,12 @@ var MESSAGE_TYPES = {
   AGENT_TURN_SUMMARY: "agent-turn-summary",
   // Webview → host: open a diff of an agent-changed file (original vs current).
   OPEN_DIFF_IN_EDITOR: "open-diff-in-editor",
+  // Composer @-mentions: the webview asks for workspace files/folders matching
+  // what the user has typed after "@", and the host answers with the ranked
+  // candidates for the picker. Correlated by requestId so a slow response for
+  // an older keystroke can't overwrite the current suggestions.
+  SEARCH_MENTION_TARGETS: "search-mention-targets",
+  SEARCH_MENTION_TARGETS_RESPONSE: "search-mention-targets-response",
   // Agent write tools: host → webview review card, webview → host decision.
   // The agent loop BLOCKS on the decision (worker awaits tool_response), so
   // every write is human-approved before it touches the workspace.
@@ -117,6 +125,9 @@ var MESSAGE_TYPES = {
   FETCH_ADO_USER_IDENTITY: "fetch-ado-user-identity",
   FETCH_ADO_USER_IDENTITY_SUCCESS: "fetch-ado-user-identity-success",
   FETCH_ADO_USER_IDENTITY_ERROR: "fetch-ado-user-identity-error",
+  /** "Your work" panel: the tickets assigned to the signed-in user. */
+  GET_MY_WORK_ITEMS: "get-my-work-items",
+  GET_MY_WORK_ITEMS_RESPONSE: "get-my-work-items-response",
   SAVE_ADO_USER_DISPLAY_NAME: "save-ado-user-display-name",
   MODEL_DOWNLOAD_IN_PROGRESS: "model-download-in-progress",
   MODEL_DOWNLOAD_COMPLETE: "model-download-complete",
@@ -216,6 +227,20 @@ function normalizeQdrantUrl(raw) {
   }
   return `${u.protocol}//${u.host}${u.pathname}`.replace(/\/+$/, "");
 }
+var MENTION_LIMITS = {
+  /** Candidates offered in the picker. */
+  MAX_SUGGESTIONS: 12,
+  /** Mentions resolved into context for a single message. */
+  MAX_PER_MESSAGE: 8
+};
+var ATTACHMENT_LIMITS = {
+  /** Max attachments per message. */
+  MAX_FILES: 4,
+  /** Max raw size for an image attachment (base64 inflates ~33% on top). */
+  MAX_IMAGE_BYTES: 5 * 1024 * 1024,
+  /** Text files are inlined into the prompt — truncate beyond this. */
+  MAX_TEXT_CHARS: 1e5
+};
 var SEARCH_CONSTANTS = {
   MAX_SEARCH_RESULTS: 15
   // Number of nearest neighbors to retrieve
@@ -242,6 +267,8 @@ var STORAGE_KEYS = {
   CONFLUENCE_OAUTH_TOKENS: "confluence-oauth-tokens",
   ADO_SYNC_PROGRESS: "ado-sync-progress",
   ADO_OAUTH_TOKENS: "ado-oauth-tokens",
+  /** Last successful "assigned to me" fetch, so the panel renders instantly. */
+  ADO_MY_WORK_ITEMS_CACHE: "ado-my-work-items-cache",
   // Deployment automation — write-scoped creds (SecretStorage), never shared to Chrome
   GITHUB_OAUTH_TOKENS: "github-oauth-tokens",
   // (Optional GitHub App mode — see GitHubAppAuthService)
@@ -266,6 +293,7 @@ var EXTENSION = {
   CONTEXT_DEPLOYMENT_ENABLED: "workspacegpt.deploymentEnabled",
   CONTEXT_REMOTE_MODE: "workspacegpt.remoteMode"
 };
+var SIDEBAR_MIN_WIDTH_PX = 220;
 var REMOTE_TASK_MODELS = {
   chat: { provider: "Gemini", model: "models/gemini-3.7-flash" },
   // No stable Gemini 3.x Pro exists (only gemini-3.1-pro-preview); 3.7-flash is
@@ -328,6 +356,24 @@ var MODEL_PROVIDERS = [
     requireApiKey: true,
     BASE_URL: "https://integrate.api.nvidia.com/v1",
     DEFAULT_CHAT_MODEL: "moonshotai/kimi-k2-instruct"
+  },
+  {
+    MODEL_PROVIDER: "AgentRouter",
+    requireApiKey: true,
+    BASE_URL: "https://agentrouter.org/v1",
+    DEFAULT_CHAT_MODEL: "claude-sonnet-4-5-20250929"
+  },
+  {
+    MODEL_PROVIDER: "GMICloud",
+    requireApiKey: true,
+    BASE_URL: "https://api.gmi-serving.com/v1",
+    DEFAULT_CHAT_MODEL: "meta-llama/Llama-3.3-70B-Instruct"
+  },
+  {
+    MODEL_PROVIDER: "ZenMux",
+    requireApiKey: true,
+    BASE_URL: "https://zenmux.ai/api/v1",
+    DEFAULT_CHAT_MODEL: "openai/gpt-5"
   },
   {
     // OpenAI-compatible provider with a user-supplied base URL (self-hosted,
@@ -542,11 +588,13 @@ var UPDATE_CHECK = {
 export {
   ADO_OAUTH,
   ATLASSIAN_OAUTH,
+  ATTACHMENT_LIMITS,
   EMPTY_MACH_REPO,
   EXTENSION,
   GITHUB_API_BASE,
   GITHUB_APP,
   GITHUB_OAUTH,
+  MENTION_LIMITS,
   MESSAGE_TYPES,
   MODEL,
   MODEL_PROVIDERS,
@@ -554,6 +602,7 @@ export {
   REMOTE_TASK_MODELS,
   RETRIEVAL_THRESHOLDS,
   SEARCH_CONSTANTS,
+  SIDEBAR_MIN_WIDTH_PX,
   STORAGE_KEYS,
   SYNC_INTERVAL_MS,
   UPDATE_CHECK,
