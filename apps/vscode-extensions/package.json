@@ -145,7 +145,7 @@
         },
         {
           "command": "workspacegpt.shareToChrome",
-          "when": "view == workspacegpt.chatView && workspacegpt.remoteMode",
+          "when": "view == workspacegpt.chatView && workspacegpt.shareEnabled",
           "group": "1_share@1"
         }
       ]

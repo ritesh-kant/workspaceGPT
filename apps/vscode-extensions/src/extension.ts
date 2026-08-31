@@ -30,6 +30,11 @@ export async function activate(context: vscode.ExtensionContext) {
   adoSyncScheduler = new AdoSyncScheduler(context);
   adoSyncScheduler.start();
 
+  // Load the remote-mode session token into its sync cache before any webview
+  // can request a completion — remote-mode inference uses it as the bearer for
+  // the managed endpoint (see remoteSessionCache.ts).
+  await RemoteSignInService.primeCache(context);
+
   // One-time upgrade: stamp `mode` onto pre-existing settings blobs so
   // upgrading installs infer local/remote from their current config instead
   // of being sent through onboarding.

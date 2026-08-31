@@ -75,13 +75,16 @@ export class WebviewMessageHandler {
       return;
     }
 
-    // GitHub sign-in gate (CLOUDFLARE-REMOTE-MODE-DESIGN.md §5.2) — remote
-    // mode only; local mode stays account-free. The Settings panel's "Sign
-    // Up with WorkspaceGPT" button (RemoteAccountSettings.tsx) is the normal
-    // path in; this is the enforcement point for a remote-mode user who
-    // hasn't signed in yet and tries to chat anyway. Local-only check (no
-    // network per message) — live validity is checked when that button's
-    // status loads and by /v1/* once remote mode's data plane exists.
+    // GitHub sign-in gate — remote mode only; local mode stays account-free.
+    // The Settings panel's "Sign Up with WorkspaceGPT" button
+    // (RemoteAccountSettings.tsx) is the normal path in; this catches a
+    // remote-mode user who never signed in and tries to chat anyway.
+    //
+    // Deliberately a local token-presence check, not a network call: this runs
+    // per message, and it is a UX shortcut, not the security boundary. The
+    // boundary is the Worker, which re-validates the session on every
+    // /v1/chat/completions call and 401s a revoked or expired one (surfaced by
+    // describeLlmFailure in modelWorker.ts).
     if (data.type === MESSAGE_TYPES.SEND_MESSAGE && getMode(this.context) === 'remote') {
       const signedIn = await new RemoteSignInService(this.context).isSignedIn();
       if (!signedIn) {

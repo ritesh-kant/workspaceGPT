@@ -352,11 +352,11 @@ export const STORAGE_KEYS = {
   GITHUB_MACH_PAT: 'github-mach-pat',
   // Update-check throttling: { lastCheckedAt, lastNotifiedVersion }.
   UPDATE_CHECK_STATE: 'update-check-state',
-  // Remote-mode SaaS account session token (SecretStorage) — see REMOTE_AUTH.
+  // Remote-mode account session token (SecretStorage) — see REMOTE_AUTH. Also
+  // doubles as the bearer credential for the inference proxy, so there is no
+  // client-side "last validated" grace window: the Worker re-checks the
+  // session on every /v1/chat/completions call.
   REMOTE_SESSION_TOKEN: 'remote-session-token',
-  // Timestamp (globalState, not secret) of the last server-confirmed valid
-  // session — backs the offline-grace check in sessionGate.ts.
-  REMOTE_LAST_VALIDATED_AT: 'remote-last-validated-at',
 };
 
 // Extension Constants
@@ -373,7 +373,13 @@ export const EXTENSION = {
   COMMAND_SIGN_OUT_REMOTE: 'workspacegpt.signOutRemote',
   VIEW_CONTAINER: 'workspacegpt-sidebar',
   CONTEXT_DEPLOYMENT_ENABLED: 'workspacegpt.deploymentEnabled',
-  CONTEXT_REMOTE_MODE: 'workspacegpt.remoteMode',
+  /**
+   * Gates the Share-to-Chrome title-bar action. Parked (always false) while
+   * remote mode indexes locally: the Chrome extension reads the vector index
+   * directly, and it cannot read a file-based index on someone else's machine.
+   * Flip this to a real condition when a server-side index exists.
+   */
+  CONTEXT_SHARE_ENABLED: 'workspacegpt.shareEnabled',
 };
 
 /**
@@ -384,31 +390,37 @@ export const EXTENSION = {
 export const SIDEBAR_MIN_WIDTH_PX = 220;
 
 /**
- * Workspace mode — the single switch that decides where embeddings, the vector
- * index, and (in `remote`) chat inference live. `local`: bring-your-own chat
- * model (incl. Ollama), bundled local embeddings, file-based vector index,
- * Share-to-Chrome hidden. `remote`: managed Gemini embeddings + Qdrant cloud,
- * no model picker (inference is routed server-side, see {@link REMOTE_TASK_MODELS}),
- * Share-to-Chrome enabled.
+ * Workspace mode — the single switch that decides where chat inference comes
+ * from. `local`: bring-your-own chat model (incl. Ollama), keys on the user's
+ * machine, no account. `remote`: managed inference — the user signs in and
+ * every completion goes through the WorkspaceGPT Worker to the vendor's
+ * OpenRouter key, so there is no model picker and no provider key to enter.
+ *
+ * Indexing is deliberately NOT part of this switch: embeddings and the vector
+ * index are always local, in both modes (see getEmbeddingSettings /
+ * getVectorStoreSettings). Remote mode sells the model, not the index.
  */
 export type WorkspaceMode = 'local' | 'remote';
 
-/** Inference task kinds routed independently in remote mode. */
-export type LlmTask = 'chat' | 'codegen' | 'classification' | 'title';
-
 /**
- * Task → model routing table for remote-mode inference. Not user-facing — the
- * owner edits this in code to move a task to a different model/provider
- * without any UI change. Provider names must match a `MODEL_PROVIDER` entry in
- * {@link MODEL_PROVIDERS} so the base URL resolves the same way local mode does.
+ * The pseudo-provider remote mode presents to the rest of the extension. The
+ * model layer is uniformly `new OpenAI({ apiKey, baseURL })`, so remote mode is
+ * just that client pointed at the Worker with the session token as the key —
+ * no separate transport, and streaming + tool calls work unchanged.
+ *
+ * Intentionally absent from {@link MODEL_PROVIDERS}: that array is what the
+ * local-mode model picker enumerates, and this must never appear there as a
+ * selectable option.
+ *
+ * `ID` is symbolic. The real OpenRouter model id lives in the Worker's
+ * OPENROUTER_MODEL var and replaces this server-side, so changing the managed
+ * model needs no extension release.
  */
-export const REMOTE_TASK_MODELS: Record<LlmTask, { provider: string; model: string }> = {
-  chat: { provider: 'Gemini', model: 'models/gemini-3.7-flash' },
-  // No stable Gemini 3.x Pro exists (only gemini-3.1-pro-preview); 3.7-flash is
-  // Google's recommended GA model for coding/agentic workloads.
-  codegen: { provider: 'Gemini', model: 'models/gemini-3.7-flash' },
-  classification: { provider: 'Gemini', model: 'models/gemini-3.5-flash-lite' },
-  title: { provider: 'Gemini', model: 'models/gemini-3.5-flash-lite' },
+export const REMOTE_MODEL = {
+  PROVIDER: 'WorkspaceGPT',
+  ID: 'workspacegpt-default',
+  /** Human-readable label for the UI, where a model name would otherwise go. */
+  LABEL: 'WorkspaceGPT (managed)',
 };
 
 // Model Constants
@@ -602,14 +614,23 @@ export const GITHUB_APP = {
  * Both reuse the same GitHub OAuth App (GITHUB_OAUTH.CLIENT_ID) registered
  * with two callback URLs; nothing here needs GitHub's client id/secret.
  *
- * API_BASE points at local `wrangler dev` until the Worker is deployed —
- * swap for the real `*.workers.dev` URL at that point.
+ * API_BASE is also the inference endpoint: remote-mode completions POST to
+ * `${API_BASE}/v1/chat/completions` with the session token as the bearer, and
+ * the Worker re-validates that session on every call before spending the
+ * vendor's OpenRouter key.
+ *
+ * TODO(deploy): API_BASE still points at local `wrangler dev`. Swap it for the
+ * deployed `*.workers.dev` URL — remote mode cannot work for a real user until
+ * this changes, since their machine has no Worker on 127.0.0.1:8787.
  */
 export const REMOTE_AUTH = {
   API_BASE: 'http://127.0.0.1:8787',
   CALLBACK_PORT: 32329,
   CALLBACK_PATH: '/callback',
 };
+
+/** Base URL the OpenAI-compatible client uses for managed (remote-mode) inference. */
+export const REMOTE_INFERENCE_BASE_URL = `${REMOTE_AUTH.API_BASE}/v1`;
 
 /** Generic GitHub API base — every install talks to the same GitHub REST endpoint. */
 export const GITHUB_API_BASE = 'https://api.github.com';

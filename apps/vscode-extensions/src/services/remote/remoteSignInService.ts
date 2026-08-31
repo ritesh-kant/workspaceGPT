@@ -1,9 +1,14 @@
 import * as vscode from 'vscode';
 import { REMOTE_AUTH, STORAGE_KEYS } from '../../../constants';
 import { OAuthCallbackServer } from '../deployment/oauthCallbackServer';
+import { setCachedRemoteSessionToken } from './remoteSessionCache';
 
 export interface RemoteProfile {
   github_login: string;
+  plan?: string;
+  status?: string;
+  requests_used_today?: number;
+  requests_limit_daily?: number;
 }
 
 /**
@@ -31,6 +36,15 @@ export class RemoteSignInService {
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
+  /**
+   * Load the stored token into the sync cache. Called once during activation,
+   * before the webview can ask for a completion, so remote-mode inference has
+   * a bearer token available without an async hop.
+   */
+  static async primeCache(context: vscode.ExtensionContext): Promise<void> {
+    setCachedRemoteSessionToken(await context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN));
+  }
+
   /** Open the browser, wait for the Worker's loopback redirect, store the session token. */
   async signIn(): Promise<void> {
     this.cancelSignIn();
@@ -54,7 +68,7 @@ export class RemoteSignInService {
     if (!sessionToken) throw new Error('No session token returned from the WorkspaceGPT server.');
 
     await this.context.secrets.store(STORAGE_KEYS.REMOTE_SESSION_TOKEN, sessionToken);
-    await this.context.globalState.update(STORAGE_KEYS.REMOTE_LAST_VALIDATED_AT, Date.now());
+    setCachedRemoteSessionToken(sessionToken);
   }
 
   cancelSignIn(): void {
@@ -70,7 +84,7 @@ export class RemoteSignInService {
     return !!(await this.context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN));
   }
 
-  /** Confirm the stored session token against the Worker; refreshes the last-validated timestamp on success. */
+  /** Confirm the stored session token against the Worker and read back the account's plan + today's usage. */
   async verifySession(): Promise<RemoteProfile | null> {
     const token = await this.context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN);
     if (!token) return null;
@@ -80,12 +94,11 @@ export class RemoteSignInService {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) return null;
-      const profile = (await response.json()) as RemoteProfile;
-      await this.context.globalState.update(STORAGE_KEYS.REMOTE_LAST_VALIDATED_AT, Date.now());
-      return profile;
+      return (await response.json()) as RemoteProfile;
     } catch {
-      // Network failure — offline-grace handling (sessionGate.ts) decides
-      // whether a stale-but-recent validation timestamp is still good enough.
+      // Network failure. Nothing is cached optimistically: the next inference
+      // request revalidates server-side anyway, so a transient failure here
+      // only makes the Settings card read "not signed in" until it retries.
       return null;
     }
   }
@@ -103,6 +116,6 @@ export class RemoteSignInService {
       }
     }
     await this.context.secrets.delete(STORAGE_KEYS.REMOTE_SESSION_TOKEN);
-    await this.context.globalState.update(STORAGE_KEYS.REMOTE_LAST_VALIDATED_AT, undefined);
+    setCachedRemoteSessionToken(undefined);
   }
 }

@@ -27,10 +27,12 @@ It's a full agent: it searches and reads your code, edits files, runs your tests
 
 ## 🔐 Two modes, your choice
 
-- **Local mode** — bring your own model via [Ollama](https://ollama.com/), local embeddings, local vector store. **Nothing leaves your machine.** Best for strict environments.
-- **Remote mode** — cloud models (Gemini, OpenAI, Groq, OpenRouter, Requestly) and a hosted Qdrant index for speed and quality. You supply the keys; data goes to the providers you choose.
+The switch moves **one** thing: where answers are generated. Your embeddings and search index are always local, in both modes.
 
-The mode switch is the single seam — Local mode never adds a network dependency.
+- **Local mode** — bring your own model: [Ollama](https://ollama.com/) (fully offline), or any OpenAI-compatible provider (OpenAI, Gemini, Groq, OpenRouter…) with your own key. No account.
+- **Remote mode** — WorkspaceGPT's managed model. Sign in with GitHub; no model keys to supply. Your question and the snippets retrieved for it are sent to our inference endpoint; your documents and index stay on your machine.
+
+Local mode never adds a network dependency.
 
 ## 🧠 Features
 

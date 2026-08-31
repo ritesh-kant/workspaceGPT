@@ -7,7 +7,6 @@ import { clearStatusMessageAfterDelay } from './settings/utils';
 import ModeSelector from './settings/ModeSelector';
 import ModelSettings from './settings/ModelSettings';
 import RemoteAccountSettings from './settings/RemoteAccountSettings';
-import ShareSettings from './settings/ShareSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
 import WebSearchSettings from './settings/WebSearchSettings';
@@ -82,8 +81,6 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         {isRemote && <RemoteAccountSettings />}
 
         {!isRemote && <ModelSettings />}
-
-        {isRemote && <ShareSettings />}
 
         {/* The two knowledge sources sit together: ADO feeds "Your work" on the
             home view, so it is core surface area, not a beta experiment. */}

@@ -1,7 +1,7 @@
 import { parentPort, workerData } from 'worker_threads';
 import { randomUUID } from 'crypto';
 import { createStructuredPrompt, createContinuationPrompt, TicketPromptContext } from '../../utils/promptTemplates';
-import { MODEL_PROVIDERS } from '../../../constants';
+import { MODEL_PROVIDERS, REMOTE_MODEL } from '../../../constants';
 import OpenAI from 'openai';
 import { EmbeddingSearchResult } from 'src/types/types';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
@@ -746,9 +746,34 @@ async function generateResponse(): Promise<void> {
     });
     parentPort?.postMessage({
       type: 'error',
-      message: error instanceof Error ? error.message : String(error),
+      message: describeLlmFailure(error, provider),
     });
   }
+}
+
+/**
+ * The SDK's raw message ("401 Your WorkspaceGPT session is not valid…") is
+ * fine for real providers but useless as an instruction when the failing
+ * endpoint is our own managed one: the user has no key to check, only a
+ * session to renew. Rewrite the account-level statuses into the action they
+ * imply, and leave every other error (and every local-mode provider) alone.
+ */
+function describeLlmFailure(error: any, provider?: string): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (provider !== REMOTE_MODEL.PROVIDER) return raw;
+
+  const status = error?.status ?? error?.statusCode ?? error?.response?.status;
+  if (status === 401) {
+    return 'Your WorkspaceGPT session has expired. Sign in again under Settings → Account.';
+  }
+  if (status === 403) {
+    return 'This WorkspaceGPT account is not active. Check Settings → Account.';
+  }
+  if (status === 429) {
+    // The Worker's own message already names the limit and the reset time.
+    return error?.error?.message || error?.message || 'WorkspaceGPT request limit reached.';
+  }
+  return raw;
 }
 
 interface BufferedToolCall {

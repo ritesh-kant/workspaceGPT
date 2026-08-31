@@ -36,8 +36,12 @@
 > Remaining: EDH checklist tail (reject-feedback, revert UI, allowlist) +
 > Ticket Entry Point live verification, P2.5 context mgmt, P2.8 git write
 > tools, P2.9 skills, P3.2 (incl. ticket `@`-mentions), P3.3–3.6, E3;
-> B1–B3/P4 blocked on AWS + Stripe accounts (unblock: create the accounts;
-> B1 code can start against mocks meanwhile). Also shipped this week, outside
+> **B1 shipped 2026-08-31** on Cloudflare (not AWS): GitHub sign-in + session
+> API, and the OpenAI-compatible `/v1/chat/completions` proxy to OpenRouter with
+> per-request session validation and a per-user daily cap — see
+> CLOUDFLARE-REMOTE-MODE-DESIGN.md. One blocker to usability: `REMOTE_AUTH.API_BASE`
+> still points at localhost. B2 is **dropped** (the index stays local); B3 is
+> reduced to Stripe, blocked on a pricing decision. Also shipped this week, outside
 > this roadmap's phase gates: **Track X** (general product UX — message
 > editing, sidebar auto-collapse, collapsible Settings).
 > Those docs own the *what/why*; this doc owns the *when*. Each phase is a
@@ -46,8 +50,9 @@
 
 **Two tracks run in parallel:**
 - **AGENT track** — extension work (the product).
-- **BACKEND track** — AWS SaaS work (the business). Independent codebase
-  (`apps/workspacegpt-api`), can proceed alongside any agent phase.
+- **BACKEND track** — SaaS work (the business), on **Cloudflare Workers**
+  (`apps/workspacegpt-api`). Independent codebase, can proceed alongside any
+  agent phase.
 
 ```
  AGENT:    P0 ──▶ P1 ──▶ P2 ──▶ P3 ─────────▶ P5
@@ -134,47 +139,57 @@ Differentiation on top of a working agent. This phase is the marketing.
 **Exit:** the demo video exists and is reproducible on a fresh repo; G5 (X
 pipeline) starts posting agent demos.
 
-**Decision due here:** SaaS open item — remote-mode code indexing via vendor
-embedding vs local-even-in-remote (roadmap open item 4).
+**Decided 2026-08-31:** local-even-in-remote. Code (and Confluence/ADO)
+indexing is local in both modes; the mode switch moves inference only.
 
 ---
 
-## Backend B1 — Managed chat proxy (BACKEND, medium) · *start during P1*
+## Backend B1 — Managed chat proxy (BACKEND, medium) · **SHIPPED 2026-08-31**
 
-SaaS steps **a** (+ half of h). The smallest sellable backend slice.
+Built on Cloudflare Workers, not AWS. See
+[CLOUDFLARE-REMOTE-MODE-DESIGN.md](CLOUDFLARE-REMOTE-MODE-DESIGN.md) for the
+as-built design; [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) is
+superseded.
 
-- `apps/workspacegpt-api`: entitlement middleware, DynamoDB tenants/usage,
-  SSM provider keys, `/v1/chat` via Lambda Function URL streaming — **with
-  tool-call passthrough + prompt-cache headers from day one (D1)**, since the
-  agent is the main consumer.
-- Logging discipline (no bodies in CloudWatch) + CI lint from the start.
-- AWS Budgets alarm.
+- `apps/workspacegpt-api`: GitHub sign-in (`/auth/*`, KV sessions, D1 accounts,
+  60-day account-age gate) + `POST /v1/chat/completions` — OpenAI-compatible
+  streaming proxy to OpenRouter on the vendor's key, with tool-call passthrough.
+- Session validated on **every** inference request; no client-side grace period.
+- Daily per-user request cap in D1, read from the existing `plan` column.
+- Client cutover done in the same pass: remote mode now points the existing
+  OpenAI client at the Worker with the session token as its key. The
+  client-side `REMOTE_TASK_MODELS` table is deleted — one managed model,
+  chosen server-side.
+- No request or response bodies are logged, anywhere in the data plane.
 
-**Exit:** the extension's remote mode can run the P1/P2 agent through the
-proxy with a hand-issued API key. Agent development now dogfoods the proxy.
+**Exit met**, except: `REMOTE_AUTH.API_BASE` must be swapped to the deployed
+Worker URL, and a live streaming/tool-calling run against a real
+`OPENROUTER_API_KEY` is still unverified. Prompt-cache headers (D1) and
+per-plan model tiers deferred to Phase 4.
 
-## Backend B2 — Managed index (BACKEND, medium)
+## Backend B2 — Managed index — **DROPPED**
 
-SaaS steps **b–d** (b already done in Phase 0.3).
+Remote mode sells managed *inference*, not a managed index: embeddings and the
+vector store stay on the user's machine in both modes. That removes the entire
+reason B2 existed (per-tenant vector storage, client-side AES-GCM, share bundle
+v3) and with it the "vendor-readable content at rest" risk — no customer content
+reaches vendor storage at all.
 
-- `/v1/upsert` `/v1/search` `/v1/chunks` on the chosen vector store;
-  per-tenant indexes; contentHash skip.
-- `packages/vendor-client`: typed API client + AES-256-GCM encrypt/decrypt.
+The one casualty is **Share-to-Chrome**, which needs a network-reachable index;
+it is parked, not deleted (see §1 of the design doc). Revive B2 only if sharing
+becomes worth a hosted index.
 
-**Exit:** a test tenant syncs Confluence through the vendor path; payloads at
-rest verifiably ciphertext; deletion propagates.
+## Backend B3 — Billing plumbing (BACKEND, small) · *reduced*
 
-## Backend B3 — Client cutover + billing plumbing (BACKEND, medium)
+SaaS step **g** only — the client cutover moved into B1 and `VendorVectorStore`
+died with B2.
 
-SaaS steps **e–g**.
+- Stripe checkout + customer portal + webhook → the `plan` column the daily cap
+  already reads.
+- Blocked on a pricing decision, not on code.
 
-- VS Code remote-mode refactor: subscription-key settings, `VendorVectorStore`,
-  legacy re-sync migration prompt; delete client-side `REMOTE_TASK_MODELS`.
-- Chrome: share bundle v3 `{apiKey, tenantId, contentKey}`, local decryption.
-- Stripe checkout + customer portal + webhook → entitlement.
-
-**Exit:** a stranger can pay, get a key, sync, and use remote mode + agent
-with zero vendor-readable data at rest.
+**Exit:** a stranger can pay, sign in, and use remote mode + agent — with no
+customer content in vendor storage at all.
 
 ---
 

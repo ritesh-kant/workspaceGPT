@@ -9,7 +9,6 @@ import {
   ModelType,
   MODEL_PROVIDERS,
   STORAGE_KEYS,
-  LlmTask,
   ChatAttachment,
 } from '../../constants';
 import { CodebaseService } from './codebase/codebaseService';
@@ -649,11 +648,10 @@ export class ChatService {
 
       // All configured keys for the selected provider, tried in failover order
       // on 429. Local mode: the webview's selected model + its stored keys.
-      // Remote mode: the 'chat' task's routed provider/keys (Gemini) — the
-      // task is re-resolved once `useCodebaseTools` is final, right before the
-      // model actually runs (see the generateModelResponse call below).
-      // Falls back to the single key the webview sent.
-      const chatLlm = getLlmSettings(this.context, 'chat');
+      // Remote mode: the WorkspaceGPT Worker's base URL with the account
+      // session token as the key — one managed model for every task, chosen
+      // server-side. Falls back to the single key the webview sent.
+      const chatLlm = getLlmSettings(this.context);
       const apiKeys = chatLlm.apiKeys;
       const failoverKeys = apiKeys.length ? apiKeys : apiKey ? [apiKey] : [];
       // 'Custom' provider's user-supplied base URL (undefined for built-in
@@ -1004,12 +1002,10 @@ export class ChatService {
       });
 
       // ── Step 6: Generate response ──────────────────────────────────────
-      // Resolve the model to actually run only now that `useCodebaseTools` is
-      // final (it can flip late via the LLM reroute above). Local mode keeps
-      // the webview's selection; remote mode routes by task — codegen gets a
-      // different model than a Confluence/ADO chat answer.
-      const finalTask: LlmTask = useCodebaseTools ? 'codegen' : 'chat';
-      const finalLlm = mode === 'remote' ? getLlmSettings(this.context, finalTask) : null;
+      // Remote mode resolves the managed endpoint + session token here rather
+      // than trusting whatever the webview sent (it has no model picker to
+      // send from). One managed model serves every task; the Worker picks it.
+      const finalLlm = mode === 'remote' ? getLlmSettings(this.context) : null;
       const effModelId = finalLlm?.model ?? modelId;
       const effProvider = finalLlm?.provider ?? provider;
       const effApiKeys = finalLlm?.apiKeys.length ? finalLlm.apiKeys : failoverKeys;
@@ -1601,7 +1597,7 @@ export class ChatService {
       let effProvider = provider;
       let effBaseUrl = baseUrl;
       if (getMode(this.context) === 'remote') {
-        const llm = getLlmSettings(this.context, 'classification');
+        const llm = getLlmSettings(this.context);
         effModelId = llm.model ?? effModelId;
         effProvider = llm.provider ?? effProvider;
         effApiKeys = llm.apiKeys.length ? llm.apiKeys : effApiKeys;

@@ -65,7 +65,7 @@ const QuickTipsSection: React.FC<QuickTipsSectionProps> = ({ mode, onOpenSetting
             collapsed, so it doubles as the collapsed summary. */}
         {!expanded && (
           <span className='tips-section-summary'>
-            🛡️ {mode === 'remote' ? 'Remote mode' : 'Local mode — fully offline'}
+            🛡️ {mode === 'remote' ? 'Remote mode — index stays local' : 'Local mode — fully offline'}
           </span>
         )}
       </button>
@@ -76,7 +76,7 @@ const QuickTipsSection: React.FC<QuickTipsSectionProps> = ({ mode, onOpenSetting
             <span className='tip-icon'>🛡️</span>
             <span>
               {mode === 'remote'
-                ? "You're in Remote mode: chat models run in the cloud, and your search index lives in your own Qdrant cluster."
+                ? "You're in Remote mode: answers come from WorkspaceGPT's managed model, but your embeddings and search index still live on this machine — only the question and the retrieved snippets are sent."
                 : "You're in Local mode: everything — chat model, embeddings, and your search index — runs on this machine. No account, no telemetry."}
             </span>
           </div>

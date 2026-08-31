@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { EXTENSION, STORAGE_KEYS } from '../../constants';
-import { getMode } from './getModeSettings';
 
 /**
  * Mirrors persisted toggles into VS Code `when`-clause context keys so
@@ -23,9 +22,7 @@ export async function syncContextKeys(
     EXTENSION.CONTEXT_DEPLOYMENT_ENABLED,
     isDeploymentEnabled,
   );
-  await vscode.commands.executeCommand(
-    'setContext',
-    EXTENSION.CONTEXT_REMOTE_MODE,
-    getMode(context) === 'remote',
-  );
+  // Share-to-Chrome is parked — see EXTENSION.CONTEXT_SHARE_ENABLED. Set
+  // explicitly rather than left undefined so the `when` clause is unambiguous.
+  await vscode.commands.executeCommand('setContext', EXTENSION.CONTEXT_SHARE_ENABLED, false);
 }

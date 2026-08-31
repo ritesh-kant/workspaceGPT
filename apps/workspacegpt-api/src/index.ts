@@ -11,10 +11,21 @@ import {
   getSession,
   isAccountOldEnough,
 } from './auth';
-import { upsertUser } from './db';
+import { handleChatCompletions } from './chat';
+import { getUser, upsertUser } from './db';
 import { renderErrorPage, renderLoginPage } from './loginPage';
+import { dailyLimitFor, readDailyUsage } from './usage';
 
 /**
+ * WorkspaceGPT remote-mode backend. Two planes:
+ *   · control  — `GET /auth/login`, `GET /auth/github/callback`, `GET /v1/me`,
+ *                `POST /auth/logout`: GitHub sign-in, opaque session tokens in
+ *                KV, accounts in D1, 60-day account-age gate.
+ *   · data     — `POST /v1/chat/completions`: OpenAI-compatible proxy to
+ *                OpenRouter on the vendor's key, session-validated per request
+ *                and capped per user per day (chat.ts / usage.ts).
+ * See CLOUDFLARE-REMOTE-MODE-DESIGN.md at the repo root.
+ *
  * RECONSTRUCTED 2026-08-31 — this entire package was deleted by mistake
  * earlier in the same session, before any of it had been committed to git
  * (confirmed via `git log`/`git fsck` — no object exists for it). Rebuilt
@@ -25,9 +36,9 @@ import { renderErrorPage, renderLoginPage } from './loginPage';
  * functional rebuild matching that contract, NOT a byte-identical restore of
  * whatever was actually running before — re-verify against real GitHub
  * OAuth App credentials and Cloudflare D1/KV resources before trusting it in
- * production. See CLOUDFLARE-REMOTE-MODE-DESIGN.md for the fuller design
- * this was extracted from (also lost — not recoverable, would need to be
- * rewritten from scratch if wanted).
+ * production. The design doc it was extracted from was
+ * lost too; CLOUDFLARE-REMOTE-MODE-DESIGN.md has since been rewritten from
+ * the shipped code.
  *
  * The account-age gate (isAccountOldEnough in auth.ts) was missing from the
  * initial reconstruction — `fetchGithubUser` returned `created_at` but
@@ -128,12 +139,28 @@ export default {
       }
     }
 
+    // POST /v1/chat/completions — the remote-mode data plane (OpenAI-compatible
+    // proxy to OpenRouter). Validates the session on every request; see chat.ts.
+    if (url.pathname === '/v1/chat/completions' && request.method === 'POST') {
+      return handleChatCompletions(request, env);
+    }
+
     // GET /v1/me — Authorization: Bearer <sessionToken>
     if (url.pathname === '/v1/me' && request.method === 'GET') {
       const token = bearerToken(request);
       const session = token ? await getSession(env, token) : null;
       if (!session) return json({ error: 'not_signed_in' }, { status: 401 });
-      return json({ github_login: session.login });
+      // Plan + today's usage ride along so Settings → Account can show the
+      // remaining allowance without a second round trip.
+      const user = await getUser(env, session.userId);
+      const plan = user?.plan ?? 'free';
+      return json({
+        github_login: session.login,
+        plan,
+        status: user?.status ?? 'active',
+        requests_used_today: await readDailyUsage(env, session.userId),
+        requests_limit_daily: dailyLimitFor(plan, env),
+      });
     }
 
     // POST /auth/logout — Authorization: Bearer <sessionToken>

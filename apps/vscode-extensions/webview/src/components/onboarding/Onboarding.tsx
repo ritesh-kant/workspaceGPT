@@ -20,12 +20,12 @@ const MODE_COPY: Record<WorkspaceMode, { title: string; description: string }> =
   local: {
     title: 'Local',
     description:
-      'Bring your own chat model — including Ollama, fully offline. Embeddings and the search index stay on this machine.',
+      'Bring your own chat model — including Ollama, fully offline. No account needed.',
   },
   remote: {
     title: 'Remote',
     description:
-      'Managed chat models, no setup. Embeddings and the search index run in the cloud, and you can share your workspace to the Chrome extension.',
+      "WorkspaceGPT's managed model — sign in once, no model keys to supply.",
   },
 };
 
@@ -77,10 +77,11 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  // Remote mode has nothing to configure client-side anymore — inference and
-  // embeddings run on the WorkspaceGPT server, so signing in (RemoteAccountSettings,
-  // rendered below) is the only remote-mode requirement. Signing in is
-  // mandatory to use remote mode, so there is no skip path here.
+  // Remote mode has nothing to configure client-side: inference runs on the
+  // WorkspaceGPT server, so signing in (RemoteAccountSettings, rendered below)
+  // is the only remote-mode requirement. Embeddings and the index are local in
+  // both modes, so neither mode asks for anything else here. Signing in is
+  // mandatory to use remote mode, so there is no skip path.
   const engineReady = chosenMode === 'local' ? !!selectedModelProvider?.selectedModel : remoteSignedIn;
 
   /**

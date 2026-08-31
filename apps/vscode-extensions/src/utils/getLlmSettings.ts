@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { LlmTask, MODEL_PROVIDERS, REMOTE_TASK_MODELS, STORAGE_KEYS } from '../../constants';
+import { MODEL_PROVIDERS, REMOTE_INFERENCE_BASE_URL, REMOTE_MODEL, STORAGE_KEYS } from '../../constants';
+import { getCachedRemoteSessionToken } from '../services/remote/remoteSessionCache';
 import { getMode } from './getModeSettings';
 
 export interface LlmSettings {
@@ -24,51 +25,28 @@ export function normalizeApiKeys(apiKeys: unknown, legacy?: unknown): string[] {
 }
 
 /**
- * Keys for a routed remote-mode provider. Gemini resolves to the same keys the
- * user enters for embeddings (`config.embedding.apiKeys`) — there is only one
- * Gemini key surface in remote mode. Any other provider named in
- * {@link REMOTE_TASK_MODELS} falls back to whatever that provider has stored
- * in the model blob, so routing entries can move to a different provider
- * later without new UI: if the owner adds keys for it there, they resolve.
+ * Read the LLM to use for chat inference.
+ *
+ * `local` mode is unchanged: the currently selected chat model + key(s) from
+ * the persisted webview model store, base URL resolved from MODEL_PROVIDERS.
+ *
+ * `remote` mode is managed inference. There is no model picker and no provider
+ * key: the base URL is the WorkspaceGPT Worker and the "API key" is the user's
+ * session token, which the Worker validates on every request before proxying
+ * to OpenRouter on the vendor's key. The model id is symbolic — the Worker
+ * substitutes the real one — so the managed model can change without an
+ * extension release. Returns no key when signed out, which every caller
+ * already treats as "not configured".
  */
-function remoteKeysForProvider(context: vscode.ExtensionContext, provider: string): string[] {
-  const settings = context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-  if (provider === 'Gemini') {
-    const emb = settings?.state?.config?.embedding;
-    return normalizeApiKeys(emb?.apiKeys, emb?.apiKey);
-  }
-  const model = context.globalState.get(STORAGE_KEYS.MODEL) as any;
-  const sel = model?.state?.selectedModelProvider;
-  if (sel?.provider === provider) {
-    return normalizeApiKeys(sel.apiKeys, sel.apiKey);
-  }
-  return [];
-}
-
-/**
- * Read the LLM to use for a given inference task. In `local` mode this is
- * unchanged: the currently selected chat model + key(s) from the persisted
- * webview model store (STORAGE_KEYS.MODEL), with the base URL resolved from
- * MODEL_PROVIDERS by provider name. In `remote` mode the model picker is
- * hidden entirely — the task is routed via {@link REMOTE_TASK_MODELS} (owner-
- * editable in code) and its keys resolved via {@link remoteKeysForProvider}.
- * `task` defaults to `'chat'` so existing single-purpose callers (share-to-
- * chrome validation, deployment AI helpers) keep working unchanged.
- */
-export function getLlmSettings(
-  context: vscode.ExtensionContext,
-  task: LlmTask = 'chat',
-): LlmSettings {
+export function getLlmSettings(context: vscode.ExtensionContext): LlmSettings {
   if (getMode(context) === 'remote') {
-    const route = REMOTE_TASK_MODELS[task];
-    const baseUrl = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === route.provider)?.BASE_URL;
-    const apiKeys = remoteKeysForProvider(context, route.provider);
+    const sessionToken = getCachedRemoteSessionToken();
     return {
-      provider: route.provider,
-      model: route.model,
-      apiKey: apiKeys[0] || undefined,
-      apiKeys,
-      baseUrl,
+      provider: REMOTE_MODEL.PROVIDER,
+      model: REMOTE_MODEL.ID,
+      apiKey: sessionToken,
+      apiKeys: sessionToken ? [sessionToken] : [],
+      baseUrl: REMOTE_INFERENCE_BASE_URL,
     };
   }
 

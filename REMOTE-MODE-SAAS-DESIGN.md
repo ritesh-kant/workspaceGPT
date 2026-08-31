@@ -1,6 +1,24 @@
 # WorkspaceGPT — Remote Mode as a Managed Service (Design)
 
-> Status: **Draft for review** · Owner: Ritesh · Last updated: 2026-08-15
+> ## ⚠️ SUPERSEDED (2026-08-31) — read [CLOUDFLARE-REMOTE-MODE-DESIGN.md](CLOUDFLARE-REMOTE-MODE-DESIGN.md) instead
+>
+> What shipped differs from this document on three load-bearing points:
+>
+> 1. **Cloudflare Workers + D1 + KV, not AWS Lambda/DynamoDB/S3 Vectors.**
+> 2. **The index never moves.** Remote mode sells managed *inference* only;
+>    embeddings and the vector store stay local in both modes. Everything below
+>    about `/v1/upsert`, `/v1/search`, per-tenant indexes, client-side AES-GCM
+>    encryption, and share bundle v3 is therefore not built and not planned in
+>    this form. §2's "zero readable content at rest" claim is satisfied more
+>    simply: no customer content reaches the vendor's storage at all.
+> 3. **GitHub sign-in with opaque session tokens, not subscription API keys.**
+>    No Stripe yet; the `plan` column exists and a daily request cap reads it.
+>
+> Kept for the reasoning that still holds — the pricing shape (§9), the logging
+> discipline (§6), and the analysis of why a managed index needs client-side
+> encryption if it is ever built (§3.2, §6).
+
+> Status: **Superseded** · Owner: Ritesh · Last updated: 2026-08-15
 >
 > Re-architects **remote mode** from "bring your own Gemini + Qdrant keys" into
 > a commercial, subscription-backed managed engine — while keeping a hard

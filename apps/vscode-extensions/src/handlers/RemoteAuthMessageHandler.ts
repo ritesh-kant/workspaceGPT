@@ -1,7 +1,17 @@
 import * as vscode from 'vscode';
 import { MESSAGE_TYPES } from '../../constants';
 import { AnalyticsService } from '../services/analyticsService';
-import { RemoteSignInService } from '../services/remote/remoteSignInService';
+import { RemoteProfile, RemoteSignInService } from '../services/remote/remoteSignInService';
+
+/** Flatten the Worker's `/v1/me` shape into the camelCase fields the webview reads. */
+function profileFields(profile: RemoteProfile | null) {
+  return {
+    githubLogin: profile?.github_login,
+    plan: profile?.plan,
+    requestsUsedToday: profile?.requests_used_today,
+    requestsLimitDaily: profile?.requests_limit_daily,
+  };
+}
 
 /**
  * RECONSTRUCTED 2026-08-31 — this file was deleted by mistake earlier in the
@@ -30,12 +40,15 @@ export class RemoteAuthMessageHandler {
   public async handleMessage(data: any): Promise<boolean> {
     switch (data.type) {
       case MESSAGE_TYPES.CHECK_REMOTE_SESSION: {
-        const signedIn = await this.service.isSignedIn();
-        const profile = signedIn ? await this.service.verifySession() : null;
+        const profile = (await this.service.isSignedIn()) ? await this.service.verifySession() : null;
+        // Server-confirmed, not just "a token exists": this is the one place
+        // the UI can afford a round trip, so a session revoked or expired
+        // server-side shows as signed out here rather than only failing at the
+        // first chat request.
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.REMOTE_SESSION_STATUS,
-          signedIn,
-          githubLogin: profile?.github_login,
+          signedIn: !!profile,
+          ...profileFields(profile),
         });
         return true;
       }
@@ -46,7 +59,7 @@ export class RemoteAuthMessageHandler {
           const profile = await this.service.verifySession();
           this.webviewView.webview.postMessage({
             type: MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS,
-            githubLogin: profile?.github_login,
+            ...profileFields(profile),
           });
         } catch (error) {
           this.webviewView.webview.postMessage({
