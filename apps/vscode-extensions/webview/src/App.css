@@ -803,14 +803,6 @@ input:focus {
 /* Chat-mode dropdown (Agent / Plan / Ask) — sits beside the context selector.
    The accent colour tells the user at a glance which dial is armed: amber for
    Agent (writes apply unattended), blue for Plan (nothing is written). */
-.chat-mode-selector {
-  flex-shrink: 0;
-}
-
-.chat-mode-selector .searchable-dropdown-trigger {
-  border-color: transparent !important;
-}
-
 .chat-mode-selector--agent .searchable-dropdown-trigger {
   color: var(--vscode-foreground) !important;
   border-color: var(--vscode-inputValidation-warningBorder, #d29922) !important;
@@ -1540,23 +1532,35 @@ button:disabled {
 }
 
 /* Shared base styles for bottom selectors */
+.chat-mode-selector,
 .context-selector-bottom,
 .model-selector-bottom {
   position: relative;
   width: auto;
-  flex-shrink: 1;
   min-width: 0;
+}
+
+.chat-mode-selector {
+  flex-shrink: 0;
+}
+
+.context-selector-bottom,
+.model-selector-bottom {
+  flex-shrink: 1;
 }
 
 /* SearchableDropdown replaces the native <select> here — the popup portion
    of a native select is drawn entirely by the OS and looks inconsistent
    across platforms (plain, unthemed list on Windows vs. a rounded native
    menu on macOS), so the whole trigger + menu is rendered ourselves. */
+.input-selectors .searchable-dropdown-container,
+.chat-mode-selector .searchable-dropdown-container,
 .context-selector-bottom .searchable-dropdown-container,
 .model-selector-bottom .searchable-dropdown-container {
   max-width: 100%;
 }
 
+.chat-mode-selector .searchable-dropdown-trigger,
 .context-selector-bottom .searchable-dropdown-trigger,
 .model-selector-bottom .searchable-dropdown-trigger {
   height: 24px;
@@ -1574,23 +1578,27 @@ button:disabled {
 /* Model names get long and the sidebar drags down to 220px, so the label has
    to be able to ellipsize — a flex item won't shrink below its text without
    an explicit min-width. The popup is unaffected and still shows names whole. */
+.chat-mode-selector .trigger-text,
 .context-selector-bottom .trigger-text,
 .model-selector-bottom .trigger-text {
   min-width: 0;
 }
 
+.chat-mode-selector .searchable-dropdown-trigger:hover,
 .context-selector-bottom .searchable-dropdown-trigger:hover,
 .model-selector-bottom .searchable-dropdown-trigger:hover {
   background-color: var(--vscode-toolbar-hoverBackground);
   border-color: var(--vscode-editor-lineHighlightBorder);
 }
 
+.chat-mode-selector .searchable-dropdown-trigger:focus,
 .context-selector-bottom .searchable-dropdown-trigger:focus,
 .model-selector-bottom .searchable-dropdown-trigger:focus {
   outline: none;
   border-color: var(--vscode-focusBorder);
 }
 
+.chat-mode-selector .trigger-arrow,
 .context-selector-bottom .trigger-arrow,
 .model-selector-bottom .trigger-arrow {
   font-size: 0.65rem;
@@ -1600,6 +1608,8 @@ button:disabled {
 /* Opens upward — these selectors sit on the bottom edge of the panel. Width
    tracks the longest label but stays inside the sidebar, which the user can
    drag arbitrarily narrow. */
+.input-selectors .searchable-dropdown-menu,
+.chat-mode-selector .searchable-dropdown-menu,
 .context-selector-bottom .searchable-dropdown-menu,
 .model-selector-bottom .searchable-dropdown-menu {
   top: auto;
@@ -1617,12 +1627,14 @@ button:disabled {
   border-color: var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
 }
 
+.chat-mode-selector .searchable-dropdown-item,
 .context-selector-bottom .searchable-dropdown-item,
 .model-selector-bottom .searchable-dropdown-item {
   padding: 5px 10px;
   font-size: 0.75rem;
 }
 
+.chat-mode-selector .searchable-dropdown-item .item-title,
 .context-selector-bottom .searchable-dropdown-item .item-title,
 .model-selector-bottom .searchable-dropdown-item .item-title {
   font-weight: 400;

@@ -95,7 +95,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   // keys work immediately after opening via keyboard.
   useEffect(() => {
     if (isOpen && !showSearch) {
-      menuRef.current?.focus();
+      menuRef.current?.focus({ preventScroll: true });
     }
   }, [isOpen, showSearch]);
 
