@@ -56,6 +56,7 @@ exists.
 └───────────────────────────┘ SSE  │                              │
                                    │ KV SESSIONS  · D1 users      │
                                    │              · D1 usage_daily│
+                                   │              · D1 app_config │
                                    └──────────────────────────────┘
 ```
 
@@ -132,15 +133,15 @@ upstream_auth_failed`, and the client's `describeLlmFailure` only rewrites
 
 ## 5. Model selection
 
-One managed model for every task, named by the Worker's `OPENROUTER_MODEL` var.
-
-The client sends the symbolic id `REMOTE_MODEL.ID` (`workspacegpt-default`) and
-the Worker **overrides it**. Changing the managed model is a `wrangler deploy`,
-never an extension release. The former client-side `REMOTE_TASK_MODELS`
+One managed model for every task. The client sends the symbolic id
+`REMOTE_MODEL.ID` (`workspacegpt-default`) and the Worker **overrides it** with
+the configured model — so changing models never touches the extension. It does
+not even need a deploy; see §7. The former client-side `REMOTE_TASK_MODELS`
 (chat/codegen/classification/title → Gemini) is deleted along with the `LlmTask`
 type: task-based routing was cost tuning that belongs on the server, and it
 required shipping the vendor's model choices — and the user's own Gemini keys —
-inside the client.
+inside the client. Per-plan or per-task models can come back as extra
+`app_config` keys without touching the client at all.
 
 Request fields are forwarded by **allowlist**, not blocklist, so the client
 cannot smuggle in OpenRouter routing knobs (`provider`, `models`, `transforms`)
@@ -159,9 +160,11 @@ is not optional. [usage.ts](apps/workspacegpt-api/src/usage.ts):
 - One `INSERT … ON CONFLICT DO UPDATE … RETURNING` per admitted request, so two
   concurrent calls can't both read the same pre-increment value and slip past
   the cap together.
-- Limits come from the `plan` column that already existed: `free` 200/day,
-  `pro` 5000/day, anything else falls back to the `DAILY_REQUEST_LIMIT` var.
-  Raising a customer's ceiling is a one-column `UPDATE`.
+- Limits resolve per account, highest precedence first: the
+  `users.daily_request_limit` override → the configured plan→limit map → the
+  configured fallback for unlisted plans. All three are configurable (§7), so
+  raising one customer's ceiling is a one-column `UPDATE` and raising a whole
+  plan's is a one-row edit.
 - An over-limit request is still counted (it is rejected anyway, and counting it
   stops a hammering client from resetting its own denominator). A malformed
   request is *not* counted — validation runs before the quota is spent.
@@ -171,10 +174,72 @@ is not optional. [usage.ts](apps/workspacegpt-api/src/usage.ts):
 
 ---
 
-## 7. Privacy posture
+## 7. Configuration
 
-- **At rest, vendor side:** nothing but account rows (`users`) and counters
-  (`usage_daily`). No prompts, no answers, no documents, no vectors — the index
+Two knobs matter operationally — **which model** and **how many requests
+per day** — and neither should require a deploy to turn, let alone an extension
+release. Both resolve through three layers, highest precedence first:
+
+| Layer | Where | Changes take effect |
+|---|---|---|
+| 1 | a row in the `app_config` D1 table | **next request** — no deploy |
+| 2 | a `var` in `wrangler.jsonc` | next `wrangler deploy` |
+| 3 | constants in [config.ts](apps/workspacegpt-api/src/config.ts) | next deploy (last-resort fallback) |
+
+Layer 1 is read on **every** request, batched with the user lookup
+(`loadAccount` in [db.ts](apps/workspacegpt-api/src/db.ts)), so configurability
+costs no extra round trip and there is no cache to wait out.
+
+### Turning the knobs
+
+Change the model (must support tool calling — the agent loop depends on it):
+
+```bash
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('openrouter_model', 'anthropic/claude-sonnet-4.5', unixepoch())"
+```
+
+Change every plan's daily cap:
+
+```bash
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_daily_limits', '{\"free\":50,\"pro\":5000}', unixepoch())"
+```
+
+Change the cap for plans absent from that map:
+
+```bash
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('daily_request_limit', '500', unixepoch())"
+```
+
+Raise (or throttle) one account, without inventing a plan for them:
+
+```bash
+wrangler d1 execute workspacegpt-db --remote --command "UPDATE users SET daily_request_limit = 2000 WHERE login = 'someone'"
+```
+
+Revert any override by deleting its row (`DELETE FROM app_config WHERE key =
+'openrouter_model'`) or nulling the column — the layer below takes over.
+
+### Rules the parser follows
+
+- A malformed or non-object `plan_daily_limits` blob is **ignored with a logged
+  error**, and the next layer applies. A typo must never leave requests
+  uncapped.
+- Individual non-positive-integer entries are dropped, not coerced. `{"free":-5}`
+  falls through to the layer below rather than granting -5 or unlimited.
+- Blank/whitespace values count as unset.
+- `/v1/me` resolves the limit through the exact same path the proxy enforces, so
+  the number shown in Settings → Account is always the number in force.
+
+There is deliberately **no admin HTTP endpoint**. It would need its own
+credential and would be attack surface on the one Worker that holds the
+OpenRouter key; the `wrangler` CLI already authenticates as the account owner.
+
+---
+
+## 8. Privacy posture
+
+- **At rest, vendor side:** nothing but account rows (`users`), counters
+  (`usage_daily`), and operator settings (`app_config`). No prompts, no answers, no documents, no vectors — the index
   never leaves the user's machine.
 - **In flight:** the question and the retrieved snippets pass through Worker
   memory on the way to OpenRouter. Disclosed, never logged: the only
@@ -187,11 +252,11 @@ is not optional. [usage.ts](apps/workspacegpt-api/src/usage.ts):
 
 ---
 
-## 8. Deploy checklist
+## 9. Deploy checklist
 
 1. `wrangler secret put GITHUB_CLIENT_SECRET`
 2. `wrangler secret put OPENROUTER_API_KEY`
-3. `wrangler d1 migrations apply workspacegpt-db --remote` (0001 + 0002)
+3. `wrangler d1 migrations apply workspacegpt-db --remote` (0001–0003)
 4. KV `SESSIONS` and D1 `workspacegpt-db` ids in `wrangler.jsonc` must exist.
 5. GitHub OAuth App: add the deployed callback
    `https://<worker>/auth/github/callback`.
@@ -200,32 +265,46 @@ is not optional. [usage.ts](apps/workspacegpt-api/src/usage.ts):
    `*.workers.dev` URL. It still points at `http://127.0.0.1:8787` — remote mode
    cannot work for any real user until this changes, since their machine has no
    Worker on localhost. This is the single remaining blocker.
-7. Pick the production `OPENROUTER_MODEL` (the committed default is
-   `google/gemini-2.5-flash`) and confirm it supports tool calling — the agent
-   loop depends on it.
+7. Pick the production model and daily caps — the committed defaults are
+   `google/gemini-2.5-flash` and free 200 / pro 5000 per day. Both are
+   adjustable afterwards without a deploy (§7), so this is a starting point,
+   not a commitment. Confirm the model supports tool calling.
 
 Pushes to `main` touching `apps/workspacegpt-api/**` deploy automatically via
 [deploy-workspacegpt-api.yml](.github/workflows/deploy-workspacegpt-api.yml).
 
 ---
 
-## 9. Verified / not verified
+## 10. Verified / not verified
 
 Smoke-tested against local `wrangler dev` with seeded KV + D1 state
-(2026-08-31): unauthenticated and bogus-token chat → 401; valid session →
-account + quota checks pass and the request reaches OpenRouter (rejected on a
-deliberately fake vendor key → remapped 502); empty `messages` → 400 without
-spending quota; third request at a limit of 2 → 429 with `Retry-After`;
-`/v1/me` returns plan + usage. Loopback-only `redirect_uri` enforcement → 400
-for `https://evil.com/cb`.
+(2026-08-31).
 
-Not yet verified end to end: a real GitHub OAuth round-trip against the
-deployed Worker, and a real streaming completion with tool calls through a live
-`OPENROUTER_API_KEY`.
+**Auth + proxy:** unauthenticated and bogus-token chat → 401; valid session →
+account + quota checks pass and the request reaches OpenRouter (rejected on a
+deliberately fake vendor key → correctly remapped to 502, *not* 401); empty
+`messages` → 400 without spending quota; `/v1/me` returns plan + usage;
+`redirect_uri=https://evil.com/cb` → 400.
+
+**Configuration, all six precedence cases:** wrangler var applies with no
+config rows (200) → an `app_config` row overrides it with no redeploy (7) → the
+per-user column beats both (3) → clearing the column falls back to the row (7)
+→ an unlisted plan falls through to the fallback key (42) → malformed JSON
+(`{not json`) and a negative limit (`{"free":-5}`) are both ignored in favour of
+the layer below (200), not honoured. A config-set cap of 2 was confirmed
+*enforced*, not merely reported: third request → 429. Model precedence
+(row → var → hardcoded, blanks ignored) checked directly against
+`resolveConfig`.
+
+**Not verified:** a real GitHub OAuth round-trip against the deployed Worker,
+and a real streaming completion with tool calls through a live
+`OPENROUTER_API_KEY` — which is also the only thing that would prove the
+resolved model id reaches OpenRouter end to end (it is one assignment,
+`upstreamBody.model = config.model`).
 
 ---
 
-## 10. Deferred
+## 11. Deferred
 
 | # | Item | Blocked on |
 |---|---|---|
@@ -233,4 +312,5 @@ deployed Worker, and a real streaming completion with tool calls through a live
 | 2 | Stripe checkout/portal → `plan` column | pricing decision |
 | 3 | Token-based (not request-based) metering | evidence that request counts misprice usage |
 | 4 | Per-minute rate limit on top of the daily cap | observed burst abuse |
-| 5 | Prompt-cache headers + per-plan model tiers | agent dogfooding data |
+| 5 | Prompt-cache headers | agent dogfooding data |
+| 6 | Per-plan / per-task model tiers | just extra `app_config` keys — see §5, §7 |

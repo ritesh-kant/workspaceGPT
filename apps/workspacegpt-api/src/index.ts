@@ -12,7 +12,7 @@ import {
   isAccountOldEnough,
 } from './auth';
 import { handleChatCompletions } from './chat';
-import { getUser, upsertUser } from './db';
+import { loadAccount, upsertUser } from './db';
 import { renderErrorPage, renderLoginPage } from './loginPage';
 import { dailyLimitFor, readDailyUsage } from './usage';
 
@@ -151,15 +151,19 @@ export default {
       const session = token ? await getSession(env, token) : null;
       if (!session) return json({ error: 'not_signed_in' }, { status: 401 });
       // Plan + today's usage ride along so Settings → Account can show the
-      // remaining allowance without a second round trip.
-      const user = await getUser(env, session.userId);
-      const plan = user?.plan ?? 'free';
+      // remaining allowance without a second round trip. The limit is resolved
+      // exactly as the chat proxy resolves it, so the number shown here is the
+      // number actually enforced.
+      const { user, config } = await loadAccount(env, session.userId);
       return json({
         github_login: session.login,
-        plan,
+        plan: user?.plan ?? 'free',
         status: user?.status ?? 'active',
         requests_used_today: await readDailyUsage(env, session.userId),
-        requests_limit_daily: dailyLimitFor(plan, env),
+        requests_limit_daily: dailyLimitFor(
+          { plan: user?.plan ?? 'free', daily_request_limit: user?.daily_request_limit ?? null },
+          config
+        ),
       });
     }
 

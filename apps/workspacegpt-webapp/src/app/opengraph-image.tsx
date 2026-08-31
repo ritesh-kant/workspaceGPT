@@ -36,7 +36,7 @@ export default function OpengraphImage() {
             marginBottom: 32,
           }}
         >
-          100% Local &amp; Private
+          Zero data retention &middot; Your data stays local
         </div>
         <div
           style={{
@@ -59,7 +59,7 @@ export default function OpengraphImage() {
             textAlign: "center",
           }}
         >
-          Your AI-powered local coding assistant for VS Code, Cursor &amp;
+          Your AI-powered coding assistant for VS Code, Cursor &amp;
           Antigravity
         </div>
         <div

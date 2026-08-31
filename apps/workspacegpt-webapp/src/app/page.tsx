@@ -125,6 +125,14 @@ export default function Home() {
 
               <div className="pt-2">
                 <p className="text-xs text-slate-500 mb-3">Browser companion (pairs with the IDE extension)</p>
+                <div className="mb-3 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3 py-2">
+                  <p className="text-xs text-yellow-400 font-semibold">Temporarily unavailable for new setups</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    The browser companion reads your search index directly, and that index now lives only on your
+                    machine &mdash; so there is nothing for another browser to connect to. Pairing is paused until a
+                    hosted index ships. Existing installs are unaffected.
+                  </p>
+                </div>
                 <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-white/10 transition-all duration-300">
                   <div className="flex items-center gap-4">
                     <div className="bg-slate-800 p-2 rounded-lg border border-white/5 flex items-center justify-center" style={{ width: 44, height: 44 }}>
@@ -141,8 +149,8 @@ export default function Home() {
                     </div>
                     <span className="font-semibold text-white">Chrome</span>
                   </div>
-                  <button onClick={openChrome} className="bg-brand-blue hover:bg-blue-500 text-white font-medium py-2 px-5 rounded-lg transition-colors text-sm">
-                    Add to Chrome
+                  <button onClick={openChrome} className="bg-white/10 hover:bg-white/15 border border-white/10 text-slate-300 font-medium py-2 px-5 rounded-lg transition-colors text-sm">
+                    View listing
                   </button>
                 </div>
               </div>
@@ -194,13 +202,13 @@ export default function Home() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
                 </span>
-                WorkspaceGPT v1.0.0
+                WorkspaceGPT v2.0 — Local &amp; Remote modes
               </div>
               <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight mb-6 sm:mb-8 leading-[1.1]">
                 Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand to-brand-blue">AI-powered</span> <br/> local coding assistant
               </h1>
               <p className="text-lg sm:text-xl text-slate-300 mb-8 sm:mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
-                Chat with your codebase and your Confluence docs from right inside your IDE. Designed for total privacy running 100% locally or via your own APIs.
+                Chat with your codebase, your Confluence docs, and your Azure DevOps work items from right inside your IDE. Your documents and the search index built from them <span className="text-white font-medium">never leave your machine</span> &mdash; in either mode.
               </p>
               
               <div className="flex flex-wrap gap-4 justify-center lg:justify-start">
@@ -216,10 +224,10 @@ export default function Home() {
                   <span>Install Extension</span>
                 </button>
                 <Link
-                  href="#features"
+                  href="#modes"
                   className="bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium px-6 py-3 sm:px-8 sm:py-4 rounded-full transition-all backdrop-blur-sm"
                 >
-                  Explore Features
+                  How privacy works
                 </Link>
               </div>
             </div>
@@ -258,18 +266,100 @@ export default function Home() {
         {/* Privacy Highlight Row */}
         <section className="py-12 border-y border-white/5 bg-slate-900/30 backdrop-blur-md">
           <div className="container mx-auto px-6">
-            <div className="flex flex-col md:flex-row items-center justify-center gap-10 md:gap-20 text-center">
-              <div className="flex flex-col items-center max-w-xs">
-                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4 text-2xl border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]">🔐</div>
-                <h3 className="text-lg font-semibold text-white mb-2">100% Local & Private</h3>
-                <p className="text-slate-300 text-sm">Run with Ollama locally with zero data sent out. Total privacy.</p>
+            <div className="flex flex-col md:flex-row items-start justify-center gap-10 md:gap-16 text-center">
+              <div className="flex flex-col items-center max-w-xs mx-auto">
+                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4 text-2xl border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]">💾</div>
+                <h3 className="text-lg font-semibold text-white mb-2">Your data stays on your machine</h3>
+                <p className="text-slate-300 text-sm">Indexing and embeddings run on-device, and the vector index is written to local files. We never upload your documents or your code.</p>
               </div>
               <div className="hidden md:block w-px h-20 bg-gradient-to-b from-transparent via-white/10 to-transparent"></div>
-              <div className="flex flex-col items-center max-w-xs">
-                <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-4 text-2xl border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)]">☁️</div>
-                <h3 className="text-lg font-semibold text-white mb-2">Cloud Connectors</h3>
-                <p className="text-slate-300 text-sm">Hook into OpenAI, Gemini, Groq, or OpenRouter for maximum power.</p>
+              <div className="flex flex-col items-center max-w-xs mx-auto">
+                <div className="w-12 h-12 rounded-full bg-brand/10 text-brand flex items-center justify-center mb-4 text-2xl border border-brand/20 shadow-[0_0_15px_rgba(31,242,180,0.15)]">🗑️</div>
+                <h3 className="text-lg font-semibold text-white mb-2">Zero data retention</h3>
+                <p className="text-slate-300 text-sm">We store no prompts, no answers, no documents &mdash; not even in logs. In Remote mode your question is processed in memory and discarded.</p>
               </div>
+              <div className="hidden md:block w-px h-20 bg-gradient-to-b from-transparent via-white/10 to-transparent"></div>
+              <div className="flex flex-col items-center max-w-xs mx-auto">
+                <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-4 text-2xl border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)]">🙈</div>
+                <h3 className="text-lg font-semibold text-white mb-2">Never used for training</h3>
+                <p className="text-slate-300 text-sm">Nothing you ask is used to train a model, sold, or shared. Anonymous feature-usage counts are all we measure &mdash; never your content.</p>
+              </div>
+            </div>
+            <p className="text-center text-slate-500 text-sm mt-8">
+              Read the full{" "}
+              <Link href="/privacy" className="text-brand hover:underline">privacy policy</Link>{" "}
+              &mdash; it lists every byte we hold.
+            </p>
+          </div>
+        </section>
+
+        {/* Two Modes */}
+        <section id="modes" className="py-16 sm:py-24 border-b border-white/5">
+          <div className="container mx-auto px-6 max-w-5xl">
+            <div className="text-center mb-12 sm:mb-16">
+              <h2 className="text-3xl sm:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-300 mb-4 tracking-tight">Two modes, one guarantee</h2>
+              <p className="text-slate-300 text-base sm:text-lg max-w-2xl mx-auto">
+                The mode changes exactly one thing: <span className="text-white font-medium">where the answer is generated</span>.
+                Your documents, your code, and the search index built from them stay local either way.
+              </p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Local */}
+              <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 rounded-3xl p-8 hover:border-emerald-500/40 transition-colors duration-500 relative overflow-hidden flex flex-col">
+                <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none"></div>
+                <div className="relative z-10 flex-1">
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className="text-2xl">🔐</span>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">Local &middot; Free</span>
+                  </div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Everything runs locally</h3>
+                  <p className="text-slate-300 leading-relaxed mb-6">
+                    Your model, your hardware. With Ollama, none of your content leaves your computer &mdash; no
+                    account, no cloud round-trip. Prefer a bigger model? Plug in your own provider key and you still
+                    decide exactly where your data goes.
+                  </p>
+                  <ul className="space-y-2.5 text-sm text-slate-300">
+                    <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> Chat model on your machine via Ollama &mdash; or your own API key</li>
+                    <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> Embeddings generated on-device</li>
+                    <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> Vector index in local files</li>
+                    <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> No account &mdash; runs offline with a local model</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Remote */}
+              <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 rounded-3xl p-8 hover:border-brand/40 transition-colors duration-500 relative overflow-hidden flex flex-col">
+                <div className="absolute top-0 right-0 w-48 h-48 bg-brand/5 rounded-full blur-3xl pointer-events-none"></div>
+                <div className="relative z-10 flex-1">
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className="text-2xl">⚡</span>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-brand/10 text-brand border-brand/20">Remote &middot; Preview</span>
+                  </div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">We run the infrastructure</h3>
+                  <p className="text-slate-300 leading-relaxed mb-6">
+                    We host the inference and choose the model, so there is nothing to configure and no model key to
+                    buy. Your data still stays local: only your question and the snippets retrieved for it reach our
+                    endpoint &mdash; and we keep none of it.
+                  </p>
+                  <ul className="space-y-2.5 text-sm text-slate-300">
+                    <li className="flex gap-3"><span className="text-brand flex-shrink-0">✓</span> Managed model &mdash; no provider keys, no setup</li>
+                    <li className="flex gap-3"><span className="text-brand flex-shrink-0">✓</span> Embeddings <em className="text-white not-italic font-medium">still</em> generated on-device</li>
+                    <li className="flex gap-3"><span className="text-brand flex-shrink-0">✓</span> Vector index <em className="text-white not-italic font-medium">still</em> in local files</li>
+                    <li className="flex gap-3"><span className="text-brand flex-shrink-0">✓</span> Sign in with GitHub; every request re-verified</li>
+                    <li className="flex gap-3"><span className="text-brand flex-shrink-0">✓</span> Zero retention &mdash; nothing stored, nothing logged</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 p-5 bg-slate-900 border border-yellow-500/20 rounded-2xl text-sm text-slate-300">
+              <span className="text-yellow-400 font-semibold">Remote mode is in preview.</span>{" "}
+              It is rolling out now and may change while we tune capacity and models. Local mode is generally
+              available and is unaffected. Inference in Remote mode is performed by an upstream model provider under
+              its own policy &mdash; see the{" "}
+              <Link href="/privacy" className="text-brand hover:underline">privacy policy</Link> for exactly what
+              travels where.
             </div>
           </div>
         </section>
@@ -352,30 +442,30 @@ export default function Home() {
                 <div>
                   <div className="flex items-center gap-4 mb-4">
                     <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">2</div>
-                    <h3 className="text-2xl font-semibold text-white">Choose Provider</h3>
+                    <h3 className="text-2xl font-semibold text-white">Pick your mode</h3>
                   </div>
                   <div className="pl-12 text-slate-300 space-y-4">
-                    <p>Select your engine in <code className="bg-white/10 text-slate-200 px-2 rounded">Settings {`>`} Providers</code>.</p>
+                    <p>Open <code className="bg-white/10 text-slate-200 px-2 rounded">Settings {`>`} Mode</code>. Either way, indexing stays on your machine.</p>
                     <ul className="space-y-4">
                       <li className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 mt-[0.4rem]"></div> 
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 mt-[0.4rem]"></div>
                         <div className="leading-relaxed">
-                          <span className="font-medium text-slate-200">Ollama (100% Local)</span> - Default: <code className="font-mono text-xs bg-white/10 px-1 py-0.5 rounded text-slate-300 ml-1">llama3.2:1b</code>
+                          <span className="font-medium text-slate-200">Local</span> &mdash; bring your own model. Ollama for fully offline (default{" "}
+                          <code className="font-mono text-xs bg-white/10 px-1 py-0.5 rounded text-slate-300">llama3.2:1b</code>), or your own
+                          OpenAI / Gemini / Groq / OpenRouter key.
                         </div>
                       </li>
                       <li className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0 mt-[0.4rem]"></div> 
+                        <div className="w-2 h-2 rounded-full bg-brand flex-shrink-0 mt-[0.4rem]"></div>
                         <div className="leading-relaxed">
-                          <span className="font-medium text-slate-200">OpenAI / Gemini</span> - High performance models
-                        </div>
-                      </li>
-                      <li className="flex items-start gap-3">
-                        <div className="w-2 h-2 rounded-full bg-purple-500 flex-shrink-0 mt-[0.4rem]"></div> 
-                        <div className="leading-relaxed">
-                          <span className="font-medium text-slate-200">OpenRouter</span> - Multiple model access
+                          <span className="font-medium text-slate-200">Remote</span> <span className="text-xs text-brand">(preview)</span> &mdash; sign in with GitHub and we
+                          handle the model. No keys, nothing to configure.
                         </div>
                       </li>
                     </ul>
+                    <p className="text-sm text-slate-400">
+                      No re-index when you switch &mdash; the mode only moves inference, never your index.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -423,12 +513,13 @@ export default function Home() {
               </div>
               <div>
                 <h2 className="text-lg font-bold text-white tracking-tight">WorkspaceGPT</h2>
-                <p className="text-slate-500 text-sm">Locally, privately, intelligently.</p>
+                <p className="text-slate-500 text-sm">Your data stays yours. Zero retention.</p>
               </div>
             </div>
             
             <div className="flex gap-8 text-sm font-medium">
               <Link href="/docs" className="text-slate-400 hover:text-white transition-colors">Docs</Link>
+              <Link href="/privacy" className="text-slate-400 hover:text-white transition-colors">Privacy</Link>
               <a href="https://github.com/ritesh-kant/workspaceGPT/issues" className="text-slate-400 hover:text-white transition-colors">GitHub Issues</a>
               <a href="mailto:contact@workspacegpt.in" className="text-slate-400 hover:text-white transition-colors">Contact</a>
               <a href="https://devnotes.tech/tag/workspacegpt/" className="text-slate-400 hover:text-white transition-colors">Blog</a>

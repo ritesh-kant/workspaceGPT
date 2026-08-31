@@ -1,22 +1,23 @@
+import type { RuntimeConfig } from './config';
+import type { UserRow } from './db';
 import type { Env } from './env';
 
 /**
- * Daily request caps by plan. `plan` already exists on the `users` row (see
- * migrations/0001_init.sql), so raising a customer's ceiling is a one-column
- * UPDATE with no schema change and no deploy.
+ * The daily cap for one account, highest precedence first:
+ *   1. `users.daily_request_limit` — a deliberate per-account override
+ *   2. the plan's entry in the configured plan→limit map
+ *   3. the configured fallback for unlisted plans
+ *
+ * Layers 2 and 3 are themselves configurable at runtime (config.ts), so raising
+ * a whole plan's ceiling is a one-row edit and raising one customer's is a
+ * one-column edit — neither needs a deploy.
  */
-const PLAN_DAILY_LIMITS: Record<string, number> = {
-  free: 200,
-  pro: 5000,
-};
-
-const FALLBACK_DAILY_LIMIT = 200;
-
-export function dailyLimitFor(plan: string, env: Env): number {
-  const known = PLAN_DAILY_LIMITS[plan];
-  if (typeof known === 'number') return known;
-  const configured = Number(env.DAILY_REQUEST_LIMIT);
-  return Number.isFinite(configured) && configured > 0 ? configured : FALLBACK_DAILY_LIMIT;
+export function dailyLimitFor(user: Pick<UserRow, 'plan' | 'daily_request_limit'>, config: RuntimeConfig): number {
+  const override = user.daily_request_limit;
+  if (typeof override === 'number' && Number.isInteger(override) && override > 0) {
+    return override;
+  }
+  return config.planDailyLimits[user.plan] ?? config.fallbackDailyLimit;
 }
 
 /** UTC calendar day, 'YYYY-MM-DD' — the reset boundary is midnight UTC for everyone. */

@@ -77,7 +77,7 @@ const QuickTipsSection: React.FC<QuickTipsSectionProps> = ({ mode, onOpenSetting
             <span>
               {mode === 'remote'
                 ? "You're in Remote mode: answers come from WorkspaceGPT's managed model, but your embeddings and search index still live on this machine — only the question and the retrieved snippets are sent."
-                : "You're in Local mode: everything — chat model, embeddings, and your search index — runs on this machine. No account, no telemetry."}
+                : "You're in Local mode: everything — chat model, embeddings, and your search index — runs on this machine. No account needed, and none of your content leaves it."}
             </span>
           </div>
           <div

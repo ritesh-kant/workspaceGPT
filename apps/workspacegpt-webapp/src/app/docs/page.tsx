@@ -7,6 +7,7 @@ import { useState } from "react";
 const sections = [
   { id: "overview", label: "Overview" },
   { id: "installation", label: "Installation" },
+  { id: "modes", label: "Modes & Privacy" },
   { id: "ai-providers", label: "AI Providers" },
   { id: "codebase", label: "Codebase Indexing" },
   { id: "embeddings", label: "Embeddings & Vector Storage" },
@@ -165,7 +166,7 @@ export default function DocsPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-brand" />
               </span>
-              v1.0.5 — Latest Release
+              v2.0 — Local &amp; Remote modes
             </div>
             <SectionTitle>WorkspaceGPT Extension Docs</SectionTitle>
             <SectionSubtitle>
@@ -174,7 +175,7 @@ export default function DocsPage() {
 
             <div className="grid sm:grid-cols-3 gap-4">
               <Card icon="🔐" title="Privacy-First" accent="green">
-                <p>100% local with Ollama — no data leaves your machine. Cloud providers available optionally.</p>
+                <p>Indexing and embeddings run on-device and the vector index stays in local files — in <em>both</em> modes. We retain nothing.</p>
               </Card>
               <Card icon="🤖" title="RAG-Powered" accent="brand">
                 <p>Retrieval-Augmented Generation over your codebase, Confluence docs, and ADO tickets.</p>
@@ -236,12 +237,96 @@ export default function DocsPage() {
             </div>
           </section>
 
+          {/* ── Modes & Privacy ──────────────────────────────── */}
+          <SectionAnchor id="modes" />
+          <section className="mb-16">
+            <SectionTitle>Modes &amp; Privacy</SectionTitle>
+            <SectionSubtitle>
+              WorkspaceGPT has exactly one mode switch, under{" "}
+              <code className="bg-white/10 px-1 rounded text-xs">Settings → Mode</code>. It changes where
+              answers are generated &mdash; nothing else.
+            </SectionSubtitle>
+
+            <div className="p-5 bg-slate-900 border border-emerald-500/20 rounded-2xl text-sm text-slate-300 mb-8">
+              <span className="text-emerald-400 font-semibold">Your index never moves.</span> Embeddings are
+              generated on-device and the vector index is written to local files inside the extension&apos;s
+              storage, in <strong className="text-white">both</strong> modes. Switching modes never uploads
+              anything and never requires a re-index.
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4 mb-8">
+              <Card icon="🔐" title="Local" accent="green">
+                <p>Everything runs on your machine: the chat model, the embeddings, the index, the retrieval.</p>
+                <p>Use Ollama for a fully offline setup, or supply your own key for OpenAI, Gemini, Groq, OpenRouter, NVIDIA, or any OpenAI-compatible endpoint. No WorkspaceGPT account needed.</p>
+              </Card>
+              <Card icon="⚡" title="Remote" accent="brand">
+                <div className="mb-2"><Badge color="brand">Preview</Badge></div>
+                <p>We run the inference infrastructure and pick the model, so there is no provider key to buy and nothing to configure.</p>
+                <p>Sign in with GitHub once. Your question and the snippets retrieved for it are sent to our endpoint per request; your documents, code and index stay on your machine.</p>
+              </Card>
+            </div>
+
+            <h3 className="text-lg font-semibold text-white mb-4">What each mode sends</h3>
+            <div className="overflow-x-auto rounded-2xl border border-white/10 mb-8">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 bg-slate-900">
+                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">&nbsp;</th>
+                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">Local</th>
+                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">Remote</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {[
+                    ["Documents, code, work items", "Never leave your machine", "Never leave your machine"],
+                    ["Embeddings", "Generated on-device", "Generated on-device"],
+                    ["Vector index", "Local files", "Local files"],
+                    ["Question + retrieved snippets", "To your chosen provider, or nowhere with Ollama", "To our endpoint, then the upstream model"],
+                    ["Account", "None", "GitHub sign-in, verified per request"],
+                    ["Model keys you supply", "Yours, or none with Ollama", "None"],
+                    ["Stored by WorkspaceGPT", "Nothing", "Nothing but your account row"],
+                  ].map(([label, local, remote]) => (
+                    <tr key={label} className="bg-slate-950 align-top">
+                      <td className="px-5 py-3 font-medium text-white">{label}</td>
+                      <td className="px-5 py-3 text-slate-400">{local}</td>
+                      <td className="px-5 py-3 text-slate-400">{remote}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <h3 className="text-lg font-semibold text-white mb-4">Zero data retention</h3>
+            <p className="text-slate-300 text-sm leading-relaxed mb-4">
+              In Remote mode your request is held in memory only for as long as it takes to stream the answer
+              back, then discarded. We do not write prompts, answers, or retrieved snippets to any database, any
+              file, or any log &mdash; our servers log status codes and error types only. The entirety of what we
+              store per account is: your GitHub id and handle, your plan and status, an opaque session token that
+              expires in 30 days, and a count of how many requests you made today.
+            </p>
+            <p className="text-slate-300 text-sm leading-relaxed mb-8">
+              Generation itself is performed by an upstream model provider (currently OpenRouter) under its own
+              policy. If you need a guarantee that covers the whole path contractually, use Local mode with
+              Ollama &mdash; no third party is involved at all. Full detail in the{" "}
+              <Link href="/privacy" className="text-brand hover:underline">privacy policy</Link>.
+            </p>
+
+            <div className="p-5 bg-slate-900 border border-yellow-500/20 rounded-2xl text-sm text-slate-300">
+              <span className="text-yellow-400 font-semibold">Remote mode is in preview.</span> It is rolling out
+              now, and models, limits and behaviour may change while we tune it. Local mode is generally
+              available and unaffected. Remote mode applies a fair-use daily request limit per account; you can
+              see today&apos;s usage under <code className="bg-white/10 px-1 rounded text-xs">Settings → Account</code>.
+            </div>
+          </section>
+
           {/* ── AI Providers ─────────────────────────────────── */}
           <SectionAnchor id="ai-providers" />
           <section className="mb-16">
             <SectionTitle>AI Providers</SectionTitle>
             <SectionSubtitle>
-              Choose between fully local operation with Ollama or cloud-based providers for maximum capability.
+              These apply to <strong className="text-white">Local mode</strong>, where you bring your own model.
+              In Remote mode there is no provider to choose &mdash; we run the model for you (see{" "}
+              <a href="#modes" className="text-brand hover:underline">Modes &amp; Privacy</a>).
             </SectionSubtitle>
 
             <div className="overflow-x-auto rounded-2xl border border-white/10 mb-8">
@@ -327,12 +412,18 @@ ollama pull mistral`}</CodeBlock>
           <section className="mb-16">
             <SectionTitle>Embeddings &amp; Vector Storage</SectionTitle>
             <SectionSubtitle>
-              Every connected source (codebase, Confluence, ADO) is turned into vector embeddings and stored so
-              WorkspaceGPT can retrieve the right context. You control both halves: which model makes the embeddings,
-              and where the vectors live.
+              Every connected source (codebase, Confluence, ADO) is turned into vector embeddings so WorkspaceGPT can
+              retrieve the right context. Both halves &mdash; making the embeddings and storing them &mdash; happen
+              entirely on your machine, in either mode.
             </SectionSubtitle>
 
-            <h3 className="text-lg font-semibold text-white mb-4">Embedding provider</h3>
+            <div className="p-5 bg-slate-900 border border-emerald-500/20 rounded-2xl text-sm text-slate-300 mb-8">
+              <span className="text-emerald-400 font-semibold">On-device, always.</span> Indexing is not affected by
+              the Local/Remote mode switch. There is no cloud embedding provider and no hosted vector store to
+              configure &mdash; and therefore no way for your content to reach us.
+            </div>
+
+            <h3 className="text-lg font-semibold text-white mb-4">Embedding model</h3>
             <div className="overflow-x-auto rounded-2xl border border-white/10 mb-4">
               <table className="w-full text-sm">
                 <thead>
@@ -345,41 +436,31 @@ ollama pull mistral`}</CodeBlock>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   <tr className="bg-slate-950 align-top">
-                    <td className="px-5 py-3 font-medium text-white">Local <Badge color="green">Default</Badge></td>
+                    <td className="px-5 py-3 font-medium text-white">Text <Badge color="green">Bundled</Badge></td>
                     <td className="px-5 py-3 text-slate-400">Xenova/all-MiniLM-L6-v2 (384-dim)</td>
                     <td className="px-5 py-3 text-slate-400">Not needed</td>
-                    <td className="px-5 py-3 text-slate-400">Full privacy — runs on-device, nothing leaves your machine. First run downloads ~200&nbsp;MB.</td>
-                  </tr>
-                  <tr className="bg-slate-950 align-top">
-                    <td className="px-5 py-3 font-medium text-white">Google Gemini</td>
-                    <td className="px-5 py-3 text-slate-400">gemini-embedding-001 (768-dim)</td>
-                    <td className="px-5 py-3 text-slate-400">Required</td>
-                    <td className="px-5 py-3 text-slate-400">Faster, higher quality, and required for sharing to the Chrome extension.</td>
+                    <td className="px-5 py-3 text-slate-400">Confluence pages and ADO work items. Runs on-device; first run downloads ~200&nbsp;MB.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-400 text-sm mb-8">
-              Configure under <code className="bg-white/10 px-1 rounded text-xs">Settings → Embeddings</code>. Keys are stored in VS Code&apos;s encrypted secret storage.
+              Nothing to configure &mdash; the models ship with the extension and are used automatically.
             </p>
 
             <h3 className="text-lg font-semibold text-white mb-4">Vector storage</h3>
-            <div className="grid sm:grid-cols-2 gap-4 mb-4">
-              <Card icon="💾" title="Local (on this machine)" accent="green">
-                <p>Vectors are written to binary files in the extension&apos;s storage. Nothing leaves your machine. The default — ideal for solo, privacy-critical use.</p>
-              </Card>
-              <Card icon="☁️" title="Cloud — Qdrant" accent="blue">
-                <p>Vectors live in a Qdrant cluster (self-hosted or Qdrant Cloud). Provide the cluster <strong className="text-white">URL</strong> and <strong className="text-white">API key</strong>, then click <strong className="text-white">Test connection</strong>. Enables sharing and larger datasets.</p>
+            <div className="mb-4">
+              <Card icon="💾" title="Local files, on this machine" accent="green">
+                <p>Vectors are written to binary files in the extension&apos;s own storage directory. They are never uploaded, mirrored, or backed up by us.</p>
+                <p>Clear them any time with <code className="bg-white/10 px-1 rounded text-xs">Settings → Reset</code> or the <strong className="text-white">Clear Data</strong> command.</p>
               </Card>
             </div>
-            <p className="text-slate-400 text-sm mb-4">
-              Configure under <code className="bg-white/10 px-1 rounded text-xs">Settings → Vector Storage</code>. Cloud-Qdrant URLs from the dashboard are auto-normalized to include the <code className="bg-white/10 px-1 rounded text-xs">:6333</code> port.
-            </p>
 
             <div className="p-5 bg-slate-900 border border-yellow-500/20 rounded-2xl text-sm text-slate-300">
-              <span className="text-yellow-400 font-semibold">Re-index when you switch:</span> changing the embedding
-              provider or the storage location means existing vectors no longer match — WorkspaceGPT will prompt you to
-              re-index your connected sources. (Different models also produce different vector dimensions.)
+              <span className="text-yellow-400 font-semibold">Upgrading from an older version?</span> Earlier releases
+              could store vectors in a Qdrant cluster. That option is gone &mdash; indexing is on-device only now. If
+              your install used it, WorkspaceGPT tells you once on startup and you just re-sync your sources to rebuild
+              the index locally.
             </div>
           </section>
 
@@ -515,13 +596,28 @@ ollama pull mistral`}</CodeBlock>
           {/* ── Chrome Extension ─────────────────────────────────── */}
           <SectionAnchor id="chrome" />
           <section className="mb-16">
-            <div className="mb-4"><Badge color="purple">Companion app</Badge></div>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <Badge color="purple">Companion app</Badge>
+              <Badge color="yellow">Pairing unavailable</Badge>
+            </div>
             <SectionTitle>Chrome Extension</SectionTitle>
             <SectionSubtitle>
               A browser side-panel that lets you (or a teammate) chat with your indexed Confluence pages and Azure DevOps
               work items — without opening VS Code. It runs entirely in the browser, talking directly to your providers;
               there&apos;s no WorkspaceGPT server in between.
             </SectionSubtitle>
+
+            <div className="p-5 bg-slate-900 border border-yellow-500/20 rounded-2xl text-sm text-slate-300 mb-8">
+              <p className="text-yellow-400 font-semibold mb-1">New pairings are paused</p>
+              <p>
+                The companion reads your vector index directly, and that index now lives only on your machine &mdash;
+                so there is nothing for a browser on another device to connect to. The{" "}
+                <strong className="text-white">Share to Chrome</strong> action is hidden in the current extension, and
+                the setup steps below cannot be completed on a fresh install. Existing paired installs keep working
+                against whatever they were configured with. We will bring this back if and when a hosted index ships;
+                the steps are kept here for reference and for anyone already set up.
+              </p>
+            </div>
 
             <div className="grid sm:grid-cols-3 gap-4 mb-8">
               <Card icon="🧭" title="Side panel" accent="purple">
@@ -537,14 +633,15 @@ ollama pull mistral`}</CodeBlock>
 
             <h3 className="text-lg font-semibold text-white mb-3">Prerequisites</h3>
             <p className="text-slate-300 text-sm leading-relaxed mb-4">
-              Because the browser needs cloud-reachable services, the share flow requires:{" "}
-              <strong className="text-white">Gemini embeddings</strong>, a{" "}
+              Because the browser needs cloud-reachable services, the share flow required a cloud embedding provider, a{" "}
               <strong className="text-white">Qdrant Cloud</strong> vector store, and a{" "}
-              <strong className="text-white">chat model</strong> with an API key — all configured in VS Code first
-              (see <a href="#embeddings" className="text-brand hover:underline">Embeddings &amp; Vector Storage</a>).
+              <strong className="text-white">chat model</strong> with an API key, all configured in VS Code first.
+              Indexing is now on-device only (see{" "}
+              <a href="#embeddings" className="text-brand hover:underline">Embeddings &amp; Vector Storage</a>), which
+              is exactly why pairing is paused.
             </p>
 
-            <h3 className="text-lg font-semibold text-white mb-4">Setup</h3>
+            <h3 className="text-lg font-semibold text-white mb-4">Setup <span className="text-sm font-normal text-slate-500">(for reference)</span></h3>
             <div className="space-y-0">
               <Step number={1} title="Install from the Chrome Web Store">
                 <p>
@@ -557,7 +654,7 @@ ollama pull mistral`}</CodeBlock>
               </Step>
               <Step number={2} title="Create a share code in VS Code">
                 <p>In the WorkspaceGPT sidebar, open <code className="bg-white/10 px-1 rounded text-xs">Settings → Share to Chrome</code> and click <strong className="text-white">Create share code</strong>. It&apos;s copied to your clipboard.</p>
-                <p className="text-slate-400">If a prerequisite is missing, the button tells you exactly what to fix first.</p>
+                <p className="text-yellow-400/90">This card is not shown in the current extension &mdash; see the notice above.</p>
               </Step>
               <Step number={3} title="Paste it into the extension">
                 <p>Open the Chrome side panel → <strong className="text-white">Settings</strong> → paste the code → <strong className="text-white">Connect</strong>. You&apos;ll see a confirmation with your Qdrant URL.</p>

@@ -1,12 +1,9 @@
 import type { Env } from './env';
 import { bearerToken, getSession } from './auth';
-import { getUser } from './db';
+import { loadAccount } from './db';
 import { consumeDailyRequest, dailyLimitFor, secondsUntilReset } from './usage';
 
 const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
-
-/** Used only if OPENROUTER_MODEL is somehow unset — never silently no-op. */
-const FALLBACK_MODEL = 'google/gemini-2.5-flash';
 
 /**
  * Request fields forwarded upstream verbatim. An allowlist, not a blocklist:
@@ -79,8 +76,9 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
   }
 
   // The KV session is the fast path; the D1 row is the authority on whether
-  // the account is still allowed to spend (suspension, plan changes).
-  const user = await getUser(env, session.userId);
+  // the account is still allowed to spend (suspension, plan changes). The
+  // runtime config rides along in the same batch — see loadAccount.
+  const { user, config } = await loadAccount(env, session.userId);
   if (!user || user.status !== 'active') {
     return errorResponse(403, 'This WorkspaceGPT account is not active.', 'account_inactive');
   }
@@ -98,7 +96,7 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
   // Quota is spent only once the request is known to be well-formed and
   // serveable — a malformed body shouldn't cost the user part of their day's
   // allowance.
-  const limit = dailyLimitFor(user.plan, env);
+  const limit = dailyLimitFor(user, config);
   const quota = await consumeDailyRequest(env, session.userId, limit);
   if (!quota.allowed) {
     return errorResponse(
@@ -110,8 +108,8 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
   }
 
   // Model choice is ours, not the client's: whatever id the extension sends is
-  // symbolic (REMOTE_MODEL.ID) and replaced here.
-  const upstreamBody: Record<string, unknown> = { model: env.OPENROUTER_MODEL || FALLBACK_MODEL };
+  // symbolic (REMOTE_MODEL.ID) and replaced with the configured one here.
+  const upstreamBody: Record<string, unknown> = { model: config.model };
   for (const field of PASSTHROUGH_FIELDS) {
     if (body[field] !== undefined) upstreamBody[field] = body[field];
   }

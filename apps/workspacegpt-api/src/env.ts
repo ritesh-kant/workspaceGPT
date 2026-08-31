@@ -12,12 +12,15 @@ export interface Env {
    * optional.
    */
   OPENROUTER_API_KEY: string;
-  /**
-   * The single OpenRouter model id every remote-mode request is routed to.
-   * Server-side config on purpose: changing the model is a `wrangler deploy`,
-   * not an extension release.
-   */
+  // ── Deploy-time defaults ────────────────────────────────────────────────
+  // Each of these is overridable at runtime by an `app_config` row, with no
+  // deploy at all — see src/config.ts for the precedence rules. They are the
+  // committed defaults, not the last word.
+
+  /** The single OpenRouter model id remote-mode requests are routed to. */
   OPENROUTER_MODEL: string;
-  /** Daily per-user request cap for plans not listed in PLAN_DAILY_LIMITS. */
+  /** JSON `{"plan": requestsPerDay}` map, e.g. `{"free":200,"pro":5000}`. */
+  PLAN_DAILY_LIMITS: string;
+  /** Requests/day for a plan absent from PLAN_DAILY_LIMITS. */
   DAILY_REQUEST_LIMIT: string;
 }

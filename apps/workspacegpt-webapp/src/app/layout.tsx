@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "A RAG-based AI coding assistant that runs 100% locally. Chat with your codebase, Confluence docs, and Azure DevOps inside VS Code, Cursor, or Antigravity.",
+    "A RAG-based AI coding assistant with zero data retention. Your documents, code, and search index never leave your machine — in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor, and Antigravity.",
   applicationName: "WorkspaceGPT",
   keywords: [
     "AI coding assistant",
@@ -35,6 +35,10 @@ export const metadata: Metadata = {
     "Confluence AI integration",
     "Azure DevOps AI integration",
     "chat with codebase",
+    "zero data retention AI",
+    "on-device embeddings",
+    "no data retention coding assistant",
+    "GDPR-friendly AI assistant",
   ],
   authors: [{ name: "Ritesh Kant", url: "https://github.com/ritesh-kant" }],
   creator: "Ritesh Kant",
@@ -47,14 +51,14 @@ export const metadata: Metadata = {
     siteName: "WorkspaceGPT",
     title: "WorkspaceGPT — Local, Private AI Coding Assistant",
     description:
-      "Chat with your codebase, Confluence docs, and Azure DevOps inside your IDE. 100% local and private.",
+      "Chat with your codebase, Confluence docs, and Azure DevOps inside your IDE. Zero data retention — your content and search index stay on your machine.",
     locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
     title: "WorkspaceGPT — Local, Private AI Coding Assistant",
     description:
-      "Chat with your codebase, Confluence docs, and Azure DevOps inside your IDE. 100% local and private.",
+      "Chat with your codebase, Confluence docs, and Azure DevOps inside your IDE. Zero data retention — your content and search index stay on your machine.",
   },
   robots: {
     index: true,
@@ -80,7 +84,7 @@ const jsonLd = {
       "@id": `${SITE_URL}/#software`,
       name: "WorkspaceGPT",
       description:
-        "A RAG-based AI coding assistant that runs 100% locally. Chat with your codebase, Confluence docs, and Azure DevOps work items inside VS Code, Cursor, or Antigravity.",
+        "A RAG-based AI coding assistant with zero data retention. Indexing and the vector store run on-device in both Local and Remote mode. Chat with your codebase, Confluence docs, and Azure DevOps work items inside VS Code, Cursor, or Antigravity.",
       url: SITE_URL,
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Windows, macOS, Linux",

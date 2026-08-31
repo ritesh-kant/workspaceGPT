@@ -22,7 +22,7 @@ It's a full agent: it searches and reads your code, edits files, runs your tests
 ## 🧭 What makes it different
 
 - **It knows your org, not just your repo.** Your Confluence docs and ADO tickets are first-class context the agent can pull mid-task — ask about a ticket and it can find the design doc *and* the code that implements it.
-- **Privacy is architecture, not a promise.** In **Local mode** the model, embeddings, and search index all run on your machine — nothing leaves it, no account, no telemetry. Other tools offer a privacy *policy*; this is a privacy *mode*.
+- **Privacy is architecture, not a promise.** Embeddings and the search index are always on your machine — in *both* modes. In **Local mode** the model runs there too, so none of your content leaves it, and no account is needed. Other tools offer a privacy *policy*; this is a privacy *mode*.
 - **It participates in shipping.** Release config-sync and hotfix automation (plan → approve → apply) mean the work doesn't stop at "PR opened."
 
 ## 🔐 Two modes, your choice

@@ -10,13 +10,20 @@
     // sensitive; it is set separately via `wrangler secret put GITHUB_CLIENT_SECRET`
     // (or apps/workspacegpt-api/.dev.vars, gitignored, for local `wrangler dev`).
     "GITHUB_CLIENT_ID": "Ov23liuwYl36ZVETh3Nk",
-    // The one model every remote-mode request is routed to. Server-side on
-    // purpose — swapping models is a `wrangler deploy`, not an extension
-    // release. The OpenRouter key itself is a secret:
-    // `wrangler secret put OPENROUTER_API_KEY`.
+    // ── Deploy-time defaults ─────────────────────────────────────────────
+    // Every value below is overridable at runtime by a row in the `app_config`
+    // D1 table, with no redeploy — the Worker reads that table on each request
+    // (batched with the user lookup, so it's free). Precedence and the exact
+    // key names live in src/config.ts; the wrangler commands to set them are in
+    // CLOUDFLARE-REMOTE-MODE-DESIGN.md §"Configuration".
+
+    // The model remote-mode requests are routed to. Must support tool calling —
+    // the agent loop depends on it.
     "OPENROUTER_MODEL": "google/gemini-2.5-flash",
-    // Daily per-user request cap for plans not named in PLAN_DAILY_LIMITS
-    // (src/usage.ts). Every request spends the vendor's OpenRouter key.
+    // Per-plan daily request cap, keyed on the `users.plan` column. Every
+    // request spends the vendor's OpenRouter key, so this is the spend control.
+    "PLAN_DAILY_LIMITS": "{\"free\":200,\"pro\":5000}",
+    // Cap for a plan not named above.
     "DAILY_REQUEST_LIMIT": "200"
   },
   "kv_namespaces": [
