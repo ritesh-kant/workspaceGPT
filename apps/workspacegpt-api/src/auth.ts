@@ -94,6 +94,15 @@ export async function fetchGithubUser(accessToken: string): Promise<GithubUser> 
   return res.json();
 }
 
+const MIN_ACCOUNT_AGE_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
+
+/** Anti-abuse gate: reject sign-ins from GitHub accounts newer than 60 days. */
+export function isAccountOldEnough(githubCreatedAt: string): boolean {
+  const createdMs = Date.parse(githubCreatedAt);
+  if (Number.isNaN(createdMs)) return false;
+  return Date.now() - createdMs >= MIN_ACCOUNT_AGE_MS;
+}
+
 function randomToken(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);

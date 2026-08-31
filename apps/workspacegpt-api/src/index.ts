@@ -9,6 +9,7 @@ import {
   exchangeCodeForGithubToken,
   fetchGithubUser,
   getSession,
+  isAccountOldEnough,
 } from './auth';
 import { upsertUser } from './db';
 import { renderErrorPage, renderLoginPage } from './loginPage';
@@ -27,6 +28,11 @@ import { renderErrorPage, renderLoginPage } from './loginPage';
  * production. See CLOUDFLARE-REMOTE-MODE-DESIGN.md for the fuller design
  * this was extracted from (also lost — not recoverable, would need to be
  * rewritten from scratch if wanted).
+ *
+ * The account-age gate (isAccountOldEnough in auth.ts) was missing from the
+ * initial reconstruction — `fetchGithubUser` returned `created_at` but
+ * nothing checked it, so a brand-new GitHub account could sign in same as an
+ * old one. Added back 2026-08-31; see the callback handler below.
  */
 
 /** Only ever redirect back to a loopback address the extension itself opened a server on — never an arbitrary host. */
@@ -111,7 +117,10 @@ export default {
         const callbackUrl = `${url.origin}/auth/github/callback`;
         const accessToken = await exchangeCodeForGithubToken(env, code, callbackUrl);
         const ghUser = await fetchGithubUser(accessToken);
-        await upsertUser(env, ghUser.id, ghUser.login);
+        if (!isAccountOldEnough(ghUser.created_at)) {
+          return backToClient({ error: 'account_too_new' });
+        }
+        await upsertUser(env, ghUser.id, ghUser.login, ghUser.created_at);
         const sessionToken = await createSession(env, String(ghUser.id), ghUser.login);
         return backToClient({ sessionToken });
       } catch (error) {

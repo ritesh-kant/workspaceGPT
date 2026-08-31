@@ -14,14 +14,14 @@
   "kv_namespaces": [
     {
       "binding": "SESSIONS",
-      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+      "id": "ca21bd65cff24fccbd72d4b92096e596"
     }
   ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "workspacegpt-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+      "database_id": "ff61b37d-47e6-4c22-a507-7bd703f49cbb"
     }
   ]
 }

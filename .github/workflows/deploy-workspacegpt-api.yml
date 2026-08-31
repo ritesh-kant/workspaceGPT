@@ -1,0 +1,56 @@
+name: Deploy WorkspaceGPT API
+
+# Deploys the Cloudflare Worker backend (apps/workspacegpt-api) — the GitHub
+# sign-in + session API described in CLOUDFLARE-REMOTE-MODE-DESIGN.md.
+#   - Push to main touching apps/workspacegpt-api/**: typecheck, apply D1
+#     migrations, deploy.
+#   - Manual run (workflow_dispatch): same steps, on demand.
+# Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repo secrets.
+# wrangler.jsonc's KV/D1 resource ids and the GITHUB_CLIENT_SECRET Worker
+# secret must already exist (see that file's comments) — this workflow does
+# not provision either.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/workspacegpt-api/**'
+      - '.github/workflows/deploy-workspacegpt-api.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/workspacegpt-api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # Install at the repo root so workspace deps resolve.
+      - name: Install dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Apply D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler d1 migrations apply workspacegpt-db --remote
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm run deploy
