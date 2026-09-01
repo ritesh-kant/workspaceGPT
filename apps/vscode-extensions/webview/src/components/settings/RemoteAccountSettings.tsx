@@ -18,8 +18,8 @@ interface RemoteSessionStatus {
   signedIn: boolean;
   githubLogin?: string;
   plan?: string;
-  requestsUsedToday?: number;
-  requestsLimitDaily?: number;
+  requestsUsedThisWeek?: number;
+  requestsLimitWeekly?: number;
 }
 
 const RemoteAccountSettings: React.FC = () => {
@@ -39,8 +39,8 @@ const RemoteAccountSettings: React.FC = () => {
             signedIn: !!message.signedIn,
             githubLogin: message.githubLogin,
             plan: message.plan,
-            requestsUsedToday: message.requestsUsedToday,
-            requestsLimitDaily: message.requestsLimitDaily,
+            requestsUsedThisWeek: message.requestsUsedThisWeek,
+            requestsLimitWeekly: message.requestsLimitWeekly,
           });
           setLoading(false);
           break;
@@ -49,8 +49,8 @@ const RemoteAccountSettings: React.FC = () => {
             signedIn: true,
             githubLogin: message.githubLogin,
             plan: message.plan,
-            requestsUsedToday: message.requestsUsedToday,
-            requestsLimitDaily: message.requestsLimitDaily,
+            requestsUsedThisWeek: message.requestsUsedThisWeek,
+            requestsLimitWeekly: message.requestsLimitWeekly,
           });
           setLoading(false);
           setError(null);
@@ -99,11 +99,11 @@ const RemoteAccountSettings: React.FC = () => {
               model key to supply. Your Confluence, Azure DevOps and codebase indexes stay
               on this machine in both modes.
             </small>
-            {typeof status.requestsLimitDaily === 'number' && (
+            {typeof status.requestsLimitWeekly === 'number' && (
               <small className='form-text'>
                 {status.plan ? `${status.plan} plan · ` : ''}
-                {status.requestsUsedToday ?? 0} of {status.requestsLimitDaily} requests used
-                today (resets at midnight UTC).
+                {status.requestsUsedThisWeek ?? 0} of {status.requestsLimitWeekly} requests used
+                this week (resets Monday 00:00 UTC).
               </small>
             )}
             <button type='button' className='secondary-button' onClick={signOut} disabled={loading}>

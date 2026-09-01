@@ -8,7 +8,7 @@ export interface Env {
    * The vendor's own OpenRouter key — the whole point of remote mode is that
    * users never hold a model key. Set via `wrangler secret put
    * OPENROUTER_API_KEY` (or .dev.vars locally). Every /v1/chat/completions
-   * request spends against it, which is why the daily cap in usage.ts is not
+   * request spends against it, which is why the weekly cap in usage.ts is not
    * optional.
    */
   OPENROUTER_API_KEY: string;
@@ -19,8 +19,8 @@ export interface Env {
 
   /** The single OpenRouter model id remote-mode requests are routed to. */
   OPENROUTER_MODEL: string;
-  /** JSON `{"plan": requestsPerDay}` map, e.g. `{"free":200,"pro":5000}`. */
-  PLAN_DAILY_LIMITS: string;
-  /** Requests/day for a plan absent from PLAN_DAILY_LIMITS. */
-  DAILY_REQUEST_LIMIT: string;
+  /** JSON `{"plan": requestsPerWeek}` map, e.g. `{"free":200,"pro":5000}`. */
+  PLAN_WEEKLY_LIMITS: string;
+  /** Requests/week for a plan absent from PLAN_WEEKLY_LIMITS. */
+  WEEKLY_REQUEST_LIMIT: string;
 }

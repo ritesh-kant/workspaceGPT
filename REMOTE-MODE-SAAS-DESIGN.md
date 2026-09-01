@@ -12,7 +12,7 @@
 >    this form. §2's "zero readable content at rest" claim is satisfied more
 >    simply: no customer content reaches the vendor's storage at all.
 > 3. **GitHub sign-in with opaque session tokens, not subscription API keys.**
->    No Stripe yet; the `plan` column exists and a daily request cap reads it.
+>    No Stripe yet; the `plan` column exists and a weekly request cap reads it.
 >
 > Kept for the reasoning that still holds — the pricing shape (§9), the logging
 > discipline (§6), and the analysis of why a managed index needs client-side

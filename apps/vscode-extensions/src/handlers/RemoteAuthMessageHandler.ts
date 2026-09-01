@@ -8,8 +8,8 @@ function profileFields(profile: RemoteProfile | null) {
   return {
     githubLogin: profile?.github_login,
     plan: profile?.plan,
-    requestsUsedToday: profile?.requests_used_today,
-    requestsLimitDaily: profile?.requests_limit_daily,
+    requestsUsedThisWeek: profile?.requests_used_this_week,
+    requestsLimitWeekly: profile?.requests_limit_weekly,
   };
 }
 

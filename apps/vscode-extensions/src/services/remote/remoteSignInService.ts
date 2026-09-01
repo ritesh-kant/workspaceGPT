@@ -7,8 +7,8 @@ export interface RemoteProfile {
   github_login: string;
   plan?: string;
   status?: string;
-  requests_used_today?: number;
-  requests_limit_daily?: number;
+  requests_used_this_week?: number;
+  requests_limit_weekly?: number;
 }
 
 /**
@@ -84,7 +84,7 @@ export class RemoteSignInService {
     return !!(await this.context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN));
   }
 
-  /** Confirm the stored session token against the Worker and read back the account's plan + today's usage. */
+  /** Confirm the stored session token against the Worker and read back the account's plan + this week's usage. */
   async verifySession(): Promise<RemoteProfile | null> {
     const token = await this.context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN);
     if (!token) return null;

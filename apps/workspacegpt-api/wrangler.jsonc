@@ -20,11 +20,12 @@
     // The model remote-mode requests are routed to. Must support tool calling —
     // the agent loop depends on it.
     "OPENROUTER_MODEL": "google/gemini-2.5-flash",
-    // Per-plan daily request cap, keyed on the `users.plan` column. Every
-    // request spends the vendor's OpenRouter key, so this is the spend control.
-    "PLAN_DAILY_LIMITS": "{\"free\":200,\"pro\":5000}",
-    // Cap for a plan not named above.
-    "DAILY_REQUEST_LIMIT": "200"
+    // Per-plan request cap, per ISO week (Monday 00:00 UTC reset), keyed on the
+    // `users.plan` column. Every request spends the vendor's OpenRouter key, so
+    // this is the spend control.
+    "PLAN_WEEKLY_LIMITS": "{\"free\":200,\"pro\":5000}",
+    // Weekly cap for a plan not named above.
+    "WEEKLY_REQUEST_LIMIT": "200"
   },
   "kv_namespaces": [
     {

@@ -51,12 +51,12 @@ exists.
 │                           │      │  GET  /v1/me                 │   │ OpenRouter   │
 │ new OpenAI({              │─────▶│  POST /auth/logout           │──▶│ (vendor key) │
 │   baseURL: API_BASE/v1,   │      │                              │   └──────────────┘
-│   apiKey: sessionToken })  │      │ data plane                   │
+│   apiKey: sessionToken }) │      │ data plane                   │
 │                           │◀─────│  POST /v1/chat/completions   │
 └───────────────────────────┘ SSE  │                              │
-                                   │ KV SESSIONS  · D1 users      │
-                                   │              · D1 usage_daily│
-                                   │              · D1 app_config │
+                                   │ KV: SESSIONS                 │
+                                   │ D1: users · usage_weekly ·   │
+                                   │     app_config               │
                                    └──────────────────────────────┘
 ```
 
@@ -113,7 +113,7 @@ Requirement: *every* inference request proves the caller is signed in and valid.
 | KV session for the bearer token | `401 not_signed_in` |
 | D1 user row exists and `status = 'active'` | `403 account_inactive` |
 | Body is JSON with non-empty `messages` | `400 invalid_request` |
-| Daily quota (increment-then-compare, one statement) | `429 daily_limit_reached` + `Retry-After` |
+| Weekly quota (increment-then-compare, one statement) | `429 weekly_limit_reached` + `Retry-After` |
 | Upstream OpenRouter call | `502 upstream_unreachable` / `502 upstream_auth_failed` |
 
 There is **no client-side grace period**. An expired or revoked session stops
@@ -154,30 +154,47 @@ would silently reduce remote mode to plain chat.
 ## 6. Usage caps
 
 Every request spends the vendor's single OpenRouter key, so admission control
-is not optional. [usage.ts](apps/workspacegpt-api/src/usage.ts):
+is not optional. **200 requests per week** is the default.
+[usage.ts](apps/workspacegpt-api/src/usage.ts):
 
-- `usage_daily(user_id, day, requests)` in D1, UTC calendar day.
+- `usage_weekly(user_id, week, requests)` in D1, bucketed by **ISO-8601 week in
+  UTC** (`2026-W36`) — weeks start Monday, so the cap resets Monday 00:00 UTC
+  for everyone.
+- ISO weeks, not "day-of-year / 7": the boundary is always a Monday midnight and
+  never drifts per year. The key carries the ISO *week-year*, so late December
+  and early January land in the same bucket when they share a week
+  (`2025-12-29` → `2026-W01`).
 - One `INSERT … ON CONFLICT DO UPDATE … RETURNING` per admitted request, so two
   concurrent calls can't both read the same pre-increment value and slip past
   the cap together.
 - Limits resolve per account, highest precedence first: the
-  `users.daily_request_limit` override → the configured plan→limit map → the
+  `users.weekly_request_limit` override → the configured plan→limit map → the
   configured fallback for unlisted plans. All three are configurable (§7), so
   raising one customer's ceiling is a one-column `UPDATE` and raising a whole
   plan's is a one-row edit.
 - An over-limit request is still counted (it is rejected anyway, and counting it
   stops a hammering client from resetting its own denominator). A malformed
   request is *not* counted — validation runs before the quota is spent.
+- `429` carries `Retry-After` (seconds to the next Monday). Note the `openai`
+  client ignores `Retry-After` above 60s, so it surfaces the error rather than
+  sleeping for days.
 
-`/v1/me` returns `plan`, `requests_used_today` and `requests_limit_daily` so
-`Settings → Account` can show the remaining allowance without a second call.
+`/v1/me` returns `plan`, `requests_used_this_week` and `requests_limit_weekly`
+so Settings → Account can show the remaining allowance without a second call.
+Successful proxy responses also carry `X-WorkspaceGPT-Requests-Used`,
+`-Limit` and `-Period: week`.
+
+**The window itself is fixed at a week**, deliberately not configurable: the
+bucket key encodes the period, so flipping it at runtime would leave existing
+rows keyed by the old window and make every in-flight count ambiguous. Changing
+it is a migration (as `0004_weekly_usage.sql` was), not a config edit.
 
 ---
 
 ## 7. Configuration
 
 Two knobs matter operationally — **which model** and **how many requests
-per day** — and neither should require a deploy to turn, let alone an extension
+per week** — and neither should require a deploy to turn, let alone an extension
 release. Both resolve through three layers, highest precedence first:
 
 | Layer | Where | Changes take effect |
@@ -198,22 +215,22 @@ Change the model (must support tool calling — the agent loop depends on it):
 wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('openrouter_model', 'anthropic/claude-sonnet-4.5', unixepoch())"
 ```
 
-Change every plan's daily cap:
+Change every plan's weekly cap:
 
 ```bash
-wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_daily_limits', '{\"free\":50,\"pro\":5000}', unixepoch())"
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_weekly_limits', '{\"free\":200,\"pro\":5000}', unixepoch())"
 ```
 
-Change the cap for plans absent from that map:
+Change the weekly cap for plans absent from that map:
 
 ```bash
-wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('daily_request_limit', '500', unixepoch())"
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('weekly_request_limit', '500', unixepoch())"
 ```
 
 Raise (or throttle) one account, without inventing a plan for them:
 
 ```bash
-wrangler d1 execute workspacegpt-db --remote --command "UPDATE users SET daily_request_limit = 2000 WHERE login = 'someone'"
+wrangler d1 execute workspacegpt-db --remote --command "UPDATE users SET weekly_request_limit = 2000 WHERE login = 'someone'"
 ```
 
 Revert any override by deleting its row (`DELETE FROM app_config WHERE key =
@@ -221,7 +238,7 @@ Revert any override by deleting its row (`DELETE FROM app_config WHERE key =
 
 ### Rules the parser follows
 
-- A malformed or non-object `plan_daily_limits` blob is **ignored with a logged
+- A malformed or non-object `plan_weekly_limits` blob is **ignored with a logged
   error**, and the next layer applies. A typo must never leave requests
   uncapped.
 - Individual non-positive-integer entries are dropped, not coerced. `{"free":-5}`
@@ -239,8 +256,8 @@ OpenRouter key; the `wrangler` CLI already authenticates as the account owner.
 ## 8. Privacy posture
 
 - **At rest, vendor side:** nothing but account rows (`users`), counters
-  (`usage_daily`), and operator settings (`app_config`). No prompts, no answers, no documents, no vectors — the index
-  never leaves the user's machine.
+  (`usage_weekly`), and operator settings (`app_config`). No prompts, no
+  answers, no documents, no vectors — the index never leaves the user's machine.
 - **In flight:** the question and the retrieved snippets pass through Worker
   memory on the way to OpenRouter. Disclosed, never logged: the only
   `console.error` calls in the data plane log a status code and an error
@@ -256,7 +273,7 @@ OpenRouter key; the `wrangler` CLI already authenticates as the account owner.
 
 1. `wrangler secret put GITHUB_CLIENT_SECRET`
 2. `wrangler secret put OPENROUTER_API_KEY`
-3. `wrangler d1 migrations apply workspacegpt-db --remote` (0001–0003)
+3. `wrangler d1 migrations apply workspacegpt-db --remote` (0001–0004)
 4. KV `SESSIONS` and D1 `workspacegpt-db` ids in `wrangler.jsonc` must exist.
 5. GitHub OAuth App: add the deployed callback
    `https://<worker>/auth/github/callback`.
@@ -265,8 +282,8 @@ OpenRouter key; the `wrangler` CLI already authenticates as the account owner.
    `*.workers.dev` URL. It still points at `http://127.0.0.1:8787` — remote mode
    cannot work for any real user until this changes, since their machine has no
    Worker on localhost. This is the single remaining blocker.
-7. Pick the production model and daily caps — the committed defaults are
-   `google/gemini-2.5-flash` and free 200 / pro 5000 per day. Both are
+7. Pick the production model and weekly caps — the committed defaults are
+   `google/gemini-2.5-flash` and free 200 / pro 5000 per week. Both are
    adjustable afterwards without a deploy (§7), so this is a starting point,
    not a commitment. Confirm the model supports tool calling.
 
@@ -286,15 +303,22 @@ deliberately fake vendor key → correctly remapped to 502, *not* 401); empty
 `messages` → 400 without spending quota; `/v1/me` returns plan + usage;
 `redirect_uri=https://evil.com/cb` → 400.
 
-**Configuration, all six precedence cases:** wrangler var applies with no
-config rows (200) → an `app_config` row overrides it with no redeploy (7) → the
-per-user column beats both (3) → clearing the column falls back to the row (7)
-→ an unlisted plan falls through to the fallback key (42) → malformed JSON
-(`{not json`) and a negative limit (`{"free":-5}`) are both ignored in favour of
-the layer below (200), not honoured. A config-set cap of 2 was confirmed
-*enforced*, not merely reported: third request → 429. Model precedence
-(row → var → hardcoded, blanks ignored) checked directly against
-`resolveConfig`.
+**Configuration, all six precedence cases** (re-run after the move to weekly):
+wrangler var applies with no config rows (200/week) → an `app_config` row
+overrides it with no redeploy (25) → the per-user column beats both (4) →
+clearing the column falls back to the row (25) → an unlisted plan falls through
+to the fallback key (60) → malformed JSON (`{nope`) and a negative limit
+(`{"free":-5}`) are both ignored in favour of the layer below (200), not
+honoured. A config-set cap of 2 was confirmed *enforced*, not merely reported:
+third request → `429 weekly_limit_reached` with `Retry-After`, and the D1 row
+bucketed under `2026-W36`. Model precedence (row → var → hardcoded, blanks
+ignored) checked directly against `resolveConfig`.
+
+**Week math** checked directly against `utcWeek`/`secondsUntilReset`: Sunday and
+the following Monday land in different buckets, a full Mon–Sun run shares one
+bucket, `2025-12-29` → `2026-W01` (ISO week-year rollover), and the reset
+countdown lands exactly on the next Monday 00:00 UTC from Mon, Thu and Sun
+starting points.
 
 **Not verified:** a real GitHub OAuth round-trip against the deployed Worker,
 and a real streaming completion with tool calls through a live
@@ -311,6 +335,6 @@ resolved model id reaches OpenRouter end to end (it is one assignment,
 | 1 | Share-to-Chrome | a hosted index (see §1) |
 | 2 | Stripe checkout/portal → `plan` column | pricing decision |
 | 3 | Token-based (not request-based) metering | evidence that request counts misprice usage |
-| 4 | Per-minute rate limit on top of the daily cap | observed burst abuse |
+| 4 | Per-minute rate limit on top of the weekly cap | observed burst abuse |
 | 5 | Prompt-cache headers | agent dogfooding data |
 | 6 | Per-plan / per-task model tiers | just extra `app_config` keys — see §5, §7 |

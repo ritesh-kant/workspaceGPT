@@ -1,7 +1,7 @@
 import type { Env } from './env';
 import { bearerToken, getSession } from './auth';
 import { loadAccount } from './db';
-import { consumeDailyRequest, dailyLimitFor, secondsUntilReset } from './usage';
+import { consumeWeeklyRequest, secondsUntilReset, weeklyLimitFor } from './usage';
 
 const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -94,15 +94,15 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
   }
 
   // Quota is spent only once the request is known to be well-formed and
-  // serveable — a malformed body shouldn't cost the user part of their day's
+  // serveable — a malformed body shouldn't cost the user part of their week's
   // allowance.
-  const limit = dailyLimitFor(user, config);
-  const quota = await consumeDailyRequest(env, session.userId, limit);
+  const limit = weeklyLimitFor(user, config);
+  const quota = await consumeWeeklyRequest(env, session.userId, limit);
   if (!quota.allowed) {
     return errorResponse(
       429,
-      `Daily WorkspaceGPT request limit reached (${limit}). It resets at midnight UTC.`,
-      'daily_limit_reached',
+      `Weekly WorkspaceGPT request limit reached (${limit}). It resets Monday at 00:00 UTC.`,
+      'weekly_limit_reached',
       { 'Retry-After': String(secondsUntilReset()) }
     );
   }
@@ -156,6 +156,7 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
     'Cache-Control': 'no-store',
     'X-WorkspaceGPT-Requests-Used': String(quota.used),
     'X-WorkspaceGPT-Requests-Limit': String(limit),
+    'X-WorkspaceGPT-Requests-Period': 'week',
   });
   return new Response(upstream.body, { status: upstream.status, headers });
 }

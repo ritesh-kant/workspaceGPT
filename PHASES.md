@@ -38,7 +38,7 @@
 > tools, P2.9 skills, P3.2 (incl. ticket `@`-mentions), P3.3–3.6, E3;
 > **B1 shipped 2026-08-31** on Cloudflare (not AWS): GitHub sign-in + session
 > API, and the OpenAI-compatible `/v1/chat/completions` proxy to OpenRouter with
-> per-request session validation and a per-user daily cap — see
+> per-request session validation and a configurable per-user weekly cap — see
 > CLOUDFLARE-REMOTE-MODE-DESIGN.md. One blocker to usability: `REMOTE_AUTH.API_BASE`
 > still points at localhost. B2 is **dropped** (the index stays local); B3 is
 > reduced to Stripe, blocked on a pricing decision. Also shipped this week, outside
@@ -155,7 +155,9 @@ superseded.
   60-day account-age gate) + `POST /v1/chat/completions` — OpenAI-compatible
   streaming proxy to OpenRouter on the vendor's key, with tool-call passthrough.
 - Session validated on **every** inference request; no client-side grace period.
-- Daily per-user request cap in D1, read from the existing `plan` column.
+- Per-user weekly request cap (200/week default) in D1, keyed on the existing
+  `plan` column, with a per-user override. The cap and the managed model id are
+  both changeable at runtime via an `app_config` table — no redeploy.
 - Client cutover done in the same pass: remote mode now points the existing
   OpenAI client at the Worker with the session token as its key. The
   client-side `REMOTE_TASK_MODELS` table is deleted — one managed model,
@@ -184,7 +186,7 @@ becomes worth a hosted index.
 SaaS step **g** only — the client cutover moved into B1 and `VendorVectorStore`
 died with B2.
 
-- Stripe checkout + customer portal + webhook → the `plan` column the daily cap
+- Stripe checkout + customer portal + webhook → the `plan` column the weekly cap
   already reads.
 - Blocked on a pricing decision, not on code.
 

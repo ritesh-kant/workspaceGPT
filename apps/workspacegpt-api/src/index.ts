@@ -14,7 +14,7 @@ import {
 import { handleChatCompletions } from './chat';
 import { loadAccount, upsertUser } from './db';
 import { renderErrorPage, renderLoginPage } from './loginPage';
-import { dailyLimitFor, readDailyUsage } from './usage';
+import { readWeeklyUsage, weeklyLimitFor } from './usage';
 
 /**
  * WorkspaceGPT remote-mode backend. Two planes:
@@ -159,9 +159,9 @@ export default {
         github_login: session.login,
         plan: user?.plan ?? 'free',
         status: user?.status ?? 'active',
-        requests_used_today: await readDailyUsage(env, session.userId),
-        requests_limit_daily: dailyLimitFor(
-          { plan: user?.plan ?? 'free', daily_request_limit: user?.daily_request_limit ?? null },
+        requests_used_this_week: await readWeeklyUsage(env, session.userId),
+        requests_limit_weekly: weeklyLimitFor(
+          { plan: user?.plan ?? 'free', weekly_request_limit: user?.weekly_request_limit ?? null },
           config
         ),
       });

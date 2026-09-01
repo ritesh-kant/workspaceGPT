@@ -8,8 +8,8 @@ export interface UserRow {
   github_created_at: string;
   plan: string;
   status: string;
-  /** Per-user daily cap override; NULL means "use the plan's limit". */
-  daily_request_limit: number | null;
+  /** Per-user weekly cap override; NULL means "use the plan's limit". */
+  weekly_request_limit: number | null;
 }
 
 /** Insert the user on first sign-in (only ever called after the age gate passes); otherwise just refresh their `login` (GitHub handles can change). */
@@ -37,7 +37,7 @@ export async function upsertUser(
     status: 'active',
     // Left NULL on purpose: a new account follows its plan's limit until
     // someone deliberately overrides it.
-    daily_request_limit: null,
+    weekly_request_limit: null,
   };
   await env.DB.prepare(
     'INSERT INTO users (id, login, created_at, github_created_at, plan, status) VALUES (?, ?, ?, ?, ?, ?)'

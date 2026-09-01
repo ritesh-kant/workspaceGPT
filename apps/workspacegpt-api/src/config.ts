@@ -18,22 +18,22 @@ import type { Env } from './env';
 export interface RuntimeConfig {
   /** OpenRouter model id every remote-mode request is routed to. */
   model: string;
-  /** plan name → requests/day. */
-  planDailyLimits: Record<string, number>;
-  /** requests/day for a plan absent from {@link planDailyLimits}. */
-  fallbackDailyLimit: number;
+  /** plan name → requests/week. */
+  planWeeklyLimits: Record<string, number>;
+  /** requests/week for a plan absent from {@link planWeeklyLimits}. */
+  fallbackWeeklyLimit: number;
 }
 
 /** Recognised `app_config.key` values. */
 export const CONFIG_KEYS = {
   MODEL: 'openrouter_model',
-  PLAN_DAILY_LIMITS: 'plan_daily_limits',
-  FALLBACK_DAILY_LIMIT: 'daily_request_limit',
+  PLAN_WEEKLY_LIMITS: 'plan_weekly_limits',
+  FALLBACK_WEEKLY_LIMIT: 'weekly_request_limit',
 } as const;
 
 const DEFAULT_MODEL = 'google/gemini-2.5-flash';
-const DEFAULT_PLAN_DAILY_LIMITS: Record<string, number> = { free: 200, pro: 5000 };
-const DEFAULT_FALLBACK_DAILY_LIMIT = 200;
+const DEFAULT_PLAN_WEEKLY_LIMITS: Record<string, number> = { free: 200, pro: 5000 };
+const DEFAULT_FALLBACK_WEEKLY_LIMIT = 200;
 
 export interface ConfigRow {
   key: string;
@@ -52,8 +52,8 @@ function positiveInt(raw: unknown): number | undefined {
 }
 
 /**
- * Parse a `{"plan": limit}` map, dropping any entry that isn't a positive
- * integer. A malformed blob yields undefined so the next layer down applies —
+ * Parse a `{"plan": requestsPerWeek}` map, dropping any entry that isn't a
+ * positive integer. A malformed blob yields undefined so the next layer down applies —
  * a typo in one config value must never leave requests uncapped.
  */
 function parsePlanLimits(raw: string | undefined, source: string): Record<string, number> | undefined {
@@ -88,15 +88,15 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
   const model =
     overrides.get(CONFIG_KEYS.MODEL)?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL;
 
-  const planDailyLimits =
-    parsePlanLimits(overrides.get(CONFIG_KEYS.PLAN_DAILY_LIMITS), 'app_config') ??
-    parsePlanLimits(env.PLAN_DAILY_LIMITS, 'wrangler var') ??
-    DEFAULT_PLAN_DAILY_LIMITS;
+  const planWeeklyLimits =
+    parsePlanLimits(overrides.get(CONFIG_KEYS.PLAN_WEEKLY_LIMITS), 'app_config') ??
+    parsePlanLimits(env.PLAN_WEEKLY_LIMITS, 'wrangler var') ??
+    DEFAULT_PLAN_WEEKLY_LIMITS;
 
-  const fallbackDailyLimit =
-    positiveInt(overrides.get(CONFIG_KEYS.FALLBACK_DAILY_LIMIT)) ??
-    positiveInt(env.DAILY_REQUEST_LIMIT) ??
-    DEFAULT_FALLBACK_DAILY_LIMIT;
+  const fallbackWeeklyLimit =
+    positiveInt(overrides.get(CONFIG_KEYS.FALLBACK_WEEKLY_LIMIT)) ??
+    positiveInt(env.WEEKLY_REQUEST_LIMIT) ??
+    DEFAULT_FALLBACK_WEEKLY_LIMIT;
 
-  return { model, planDailyLimits, fallbackDailyLimit };
+  return { model, planWeeklyLimits, fallbackWeeklyLimit };
 }
