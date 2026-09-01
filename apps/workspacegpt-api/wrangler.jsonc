@@ -17,9 +17,15 @@
     // key names live in src/config.ts; the wrangler commands to set them are in
     // CLOUDFLARE-REMOTE-MODE-DESIGN.md §"Configuration".
 
-    // The model remote-mode requests are routed to. Must support tool calling —
-    // the agent loop depends on it.
-    "OPENROUTER_MODEL": "google/gemini-2.5-flash",
+    // Which upstream vendor remote-mode requests are routed to — "openrouter"
+    // or "gmicloud" (see PROVIDERS in src/config.ts). Switching providers also
+    // requires that vendor's API key to be set (`wrangler secret put
+    // GMICLOUD_API_KEY` for gmicloud).
+    "INFERENCE_PROVIDER": "gmicloud",
+    // The model remote-mode requests are routed to, in the chosen provider's
+    // format. Must support tool calling — the agent loop depends on it.
+    // "OPENROUTER_MODEL": "google/gemini-2.5-flash",
+    "OPENROUTER_MODEL": "MiniMaxAI/MiniMax-M3",
     // Per-plan request cap, per ISO week (Monday 00:00 UTC reset), keyed on the
     // `users.plan` column. Every request spends the vendor's OpenRouter key, so
     // this is the spend control.

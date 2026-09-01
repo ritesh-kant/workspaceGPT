@@ -1,9 +1,8 @@
 import type { Env } from './env';
 import { bearerToken, getSession } from './auth';
 import { loadAccount } from './db';
+import { PROVIDERS } from './config';
 import { consumeWeeklyRequest, secondsUntilReset, weeklyLimitFor } from './usage';
-
-const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 /**
  * Request fields forwarded upstream verbatim. An allowlist, not a blocklist:
@@ -59,12 +58,6 @@ function errorResponse(
  * or stored. Nothing in this handler may log the request or response body.
  */
 export async function handleChatCompletions(request: Request, env: Env): Promise<Response> {
-  // Checked before anything is charged or even parsed: a deploy that forgot the
-  // secret must not consume anyone's daily allowance.
-  if (!env.OPENROUTER_API_KEY) {
-    return errorResponse(500, 'Inference is not configured on the server.', 'server_misconfigured');
-  }
-
   const token = bearerToken(request);
   const session = token ? await getSession(env, token) : null;
   if (!session) {
@@ -81,6 +74,17 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
   const { user, config } = await loadAccount(env, session.userId);
   if (!user || user.status !== 'active') {
     return errorResponse(403, 'This WorkspaceGPT account is not active.', 'account_inactive');
+  }
+
+  // Checked before anything is charged or even parsed: a deploy that forgot the
+  // secret must not consume anyone's weekly allowance.
+  const provider = PROVIDERS[config.provider];
+  const apiKey = env[provider.apiKeyEnv as keyof Env] as string | undefined;
+  if (!apiKey) {
+    console.error('[workspacegpt-api] missing vendor key for configured provider', {
+      provider: config.provider,
+    });
+    return errorResponse(500, 'Inference is not configured on the server.', 'server_misconfigured');
   }
 
   let body: any;
@@ -114,33 +118,41 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
     if (body[field] !== undefined) upstreamBody[field] = body[field];
   }
 
+  const requestHeaders: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+  if (config.provider === 'openrouter') {
+    // OpenRouter attribution headers — identify the app, not the user.
+    requestHeaders['HTTP-Referer'] = 'https://workspacegpt.dev';
+    requestHeaders['X-Title'] = 'WorkspaceGPT';
+  }
+
   let upstream: Response;
   try {
-    upstream = await fetch(OPENROUTER_CHAT_URL, {
+    upstream = await fetch(provider.chatUrl, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        // OpenRouter attribution headers — identify the app, not the user.
-        'HTTP-Referer': 'https://workspacegpt.dev',
-        'X-Title': 'WorkspaceGPT',
-      },
+      headers: requestHeaders,
       body: JSON.stringify(upstreamBody),
     });
   } catch (error) {
     // Status/shape only — never the request body.
-    console.error('[workspacegpt-api] openrouter fetch failed', {
+    console.error('[workspacegpt-api] upstream fetch failed', {
+      provider: config.provider,
       message: error instanceof Error ? error.message : 'unknown',
     });
     return errorResponse(502, 'The inference provider could not be reached.', 'upstream_unreachable');
   }
 
-  // An upstream 401/403 means OUR OpenRouter key is bad, not that the user's
+  // An upstream 401/403 means OUR vendor key is bad, not that the user's
   // session is — and the client maps 401 to "sign in again"
   // (describeLlmFailure in modelWorker.ts), which would blame the user for a
   // server misconfiguration. Never let those two statuses collide.
   if (upstream.status === 401 || upstream.status === 403) {
-    console.error('[workspacegpt-api] openrouter rejected the vendor key', { status: upstream.status });
+    console.error('[workspacegpt-api] provider rejected the vendor key', {
+      provider: config.provider,
+      status: upstream.status,
+    });
     return errorResponse(
       502,
       'WorkspaceGPT could not authenticate with the inference provider. This is a server-side problem, not your account.',

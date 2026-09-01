@@ -193,9 +193,10 @@ it is a migration (as `0004_weekly_usage.sql` was), not a config edit.
 
 ## 7. Configuration
 
-Two knobs matter operationally — **which model** and **how many requests
-per week** — and neither should require a deploy to turn, let alone an extension
-release. Both resolve through three layers, highest precedence first:
+Three knobs matter operationally — **which provider**, **which model**, and
+**how many requests per week** — and none should require a deploy to turn, let
+alone an extension release. All three resolve through three layers, highest
+precedence first:
 
 | Layer | Where | Changes take effect |
 |---|---|---|
@@ -209,7 +210,18 @@ costs no extra round trip and there is no cache to wait out.
 
 ### Turning the knobs
 
-Change the model (must support tool calling — the agent loop depends on it):
+Change the provider (`openrouter` or `gmicloud` — see `PROVIDERS` in
+[config.ts](apps/workspacegpt-api/src/config.ts)). Switching to a provider
+whose key was never set fails closed with `server_misconfigured`, so set the
+key first:
+
+```bash
+wrangler secret put GMICLOUD_API_KEY
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('inference_provider', 'gmicloud', unixepoch())"
+```
+
+Change the model (must support tool calling — the agent loop depends on it;
+use whatever id format the currently configured provider expects):
 
 ```bash
 wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('openrouter_model', 'anthropic/claude-sonnet-4.5', unixepoch())"
@@ -233,8 +245,9 @@ Raise (or throttle) one account, without inventing a plan for them:
 wrangler d1 execute workspacegpt-db --remote --command "UPDATE users SET weekly_request_limit = 2000 WHERE login = 'someone'"
 ```
 
-Revert any override by deleting its row (`DELETE FROM app_config WHERE key =
-'openrouter_model'`) or nulling the column — the layer below takes over.
+Revert any override by deleting its row (e.g. `DELETE FROM app_config WHERE
+key = 'openrouter_model'` or `key = 'inference_provider'`) or nulling the
+column — the layer below takes over.
 
 ### Rules the parser follows
 
@@ -272,7 +285,7 @@ OpenRouter key; the `wrangler` CLI already authenticates as the account owner.
 ## 9. Deploy checklist
 
 1. `wrangler secret put GITHUB_CLIENT_SECRET`
-2. `wrangler secret put OPENROUTER_API_KEY`
+2. `wrangler secret put OPENROUTER_API_KEY` (and `wrangler secret put GMICLOUD_API_KEY` if `inference_provider`/`INFERENCE_PROVIDER` will ever be set to `gmicloud`)
 3. `wrangler d1 migrations apply workspacegpt-db --remote` (0001–0004)
 4. KV `SESSIONS` and D1 `workspacegpt-db` ids in `wrangler.jsonc` must exist.
 5. GitHub OAuth App: add the deployed callback

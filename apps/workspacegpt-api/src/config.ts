@@ -15,8 +15,28 @@ import type { Env } from './env';
  * no extra round trip and an edit takes effect on the very next call — no
  * cache to wait out, no isolate to recycle.
  */
+/** Upstream inference vendors the Worker knows how to talk to. */
+export const PROVIDERS = {
+  openrouter: {
+    chatUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKeyEnv: 'OPENROUTER_API_KEY',
+  },
+  gmicloud: {
+    chatUrl: 'https://api.gmi-serving.com/v1/chat/completions',
+    apiKeyEnv: 'GMICLOUD_API_KEY',
+  },
+} as const;
+
+export type ProviderName = keyof typeof PROVIDERS;
+
+function isProviderName(value: string): value is ProviderName {
+  return value in PROVIDERS;
+}
+
 export interface RuntimeConfig {
-  /** OpenRouter model id every remote-mode request is routed to. */
+  /** Which upstream vendor remote-mode requests are routed to. */
+  provider: ProviderName;
+  /** Model id, in the format the chosen provider expects. */
   model: string;
   /** plan name → requests/week. */
   planWeeklyLimits: Record<string, number>;
@@ -26,11 +46,13 @@ export interface RuntimeConfig {
 
 /** Recognised `app_config.key` values. */
 export const CONFIG_KEYS = {
+  PROVIDER: 'inference_provider',
   MODEL: 'openrouter_model',
   PLAN_WEEKLY_LIMITS: 'plan_weekly_limits',
   FALLBACK_WEEKLY_LIMIT: 'weekly_request_limit',
 } as const;
 
+const DEFAULT_PROVIDER: ProviderName = 'openrouter';
 const DEFAULT_MODEL = 'google/gemini-2.5-flash';
 const DEFAULT_PLAN_WEEKLY_LIMITS: Record<string, number> = { free: 200, pro: 5000 };
 const DEFAULT_FALLBACK_WEEKLY_LIMIT = 200;
@@ -85,6 +107,15 @@ function parsePlanLimits(raw: string | undefined, source: string): Record<string
 export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): RuntimeConfig {
   const overrides = new Map((rows ?? []).map((r) => [r.key, r.value]));
 
+  const rawProvider =
+    overrides.get(CONFIG_KEYS.PROVIDER)?.trim() || env.INFERENCE_PROVIDER?.trim() || DEFAULT_PROVIDER;
+  if (!isProviderName(rawProvider)) {
+    console.error('[workspacegpt-api] unknown inference provider; falling back to default', {
+      rawProvider,
+    });
+  }
+  const provider = isProviderName(rawProvider) ? rawProvider : DEFAULT_PROVIDER;
+
   const model =
     overrides.get(CONFIG_KEYS.MODEL)?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL;
 
@@ -98,5 +129,5 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
     positiveInt(env.WEEKLY_REQUEST_LIMIT) ??
     DEFAULT_FALLBACK_WEEKLY_LIMIT;
 
-  return { model, planWeeklyLimits, fallbackWeeklyLimit };
+  return { provider, model, planWeeklyLimits, fallbackWeeklyLimit };
 }
