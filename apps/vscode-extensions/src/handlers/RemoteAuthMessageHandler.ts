@@ -1,17 +1,11 @@
 import * as vscode from 'vscode';
 import { MESSAGE_TYPES } from '../../constants';
 import { AnalyticsService } from '../services/analyticsService';
-import { RemoteProfile, RemoteSignInService } from '../services/remote/remoteSignInService';
-
-/** Flatten the Worker's `/v1/me` shape into the camelCase fields the webview reads. */
-function profileFields(profile: RemoteProfile | null) {
-  return {
-    githubLogin: profile?.github_login,
-    plan: profile?.plan,
-    requestsUsedThisWeek: profile?.requests_used_this_week,
-    requestsLimitWeekly: profile?.requests_limit_weekly,
-  };
-}
+import {
+  describeRemoteAuthError,
+  RemoteSignInService,
+  webviewFieldsFromProfile,
+} from '../services/remote/remoteSignInService';
 
 /**
  * RECONSTRUCTED 2026-08-31 — this file was deleted by mistake earlier in the
@@ -40,15 +34,13 @@ export class RemoteAuthMessageHandler {
   public async handleMessage(data: any): Promise<boolean> {
     switch (data.type) {
       case MESSAGE_TYPES.CHECK_REMOTE_SESSION: {
-        const profile = (await this.service.isSignedIn()) ? await this.service.verifySession() : null;
-        // Server-confirmed, not just "a token exists": this is the one place
-        // the UI can afford a round trip, so a session revoked or expired
-        // server-side shows as signed out here rather than only failing at the
-        // first chat request.
+        const result = await this.service.verifySession();
+        const signedIn = result.state !== 'signed_out';
+        const profile = result.state === 'signed_in' ? result.profile : null;
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.REMOTE_SESSION_STATUS,
-          signedIn: !!profile,
-          ...profileFields(profile),
+          signedIn,
+          ...webviewFieldsFromProfile(profile),
         });
         return true;
       }
@@ -56,15 +48,16 @@ export class RemoteAuthMessageHandler {
         this.analyticsService.trackEvent('remote_sign_in_started');
         try {
           await this.service.signIn();
-          const profile = await this.service.verifySession();
+          const result = await this.service.verifySession();
+          const profile = result.state === 'signed_in' ? result.profile : null;
           this.webviewView.webview.postMessage({
             type: MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS,
-            ...profileFields(profile),
+            ...webviewFieldsFromProfile(profile),
           });
         } catch (error) {
           this.webviewView.webview.postMessage({
             type: MESSAGE_TYPES.REMOTE_SIGN_IN_ERROR,
-            message: error instanceof Error ? error.message : String(error),
+            message: describeRemoteAuthError(error),
           });
         }
         return true;

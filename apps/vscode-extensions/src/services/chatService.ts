@@ -65,6 +65,7 @@ import {
 } from './agent/commandTools';
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { searchWeb } from './webSearchTool';
+import { RemoteSignInService } from './remote/remoteSignInService';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -502,6 +503,12 @@ export class ChatService {
   private post(run: SessionRun, payload: { type: string; [key: string]: unknown }): void {
     if (run.cancelled) return;
     this.webviewView.webview.postMessage({ ...payload, sessionId: run.sessionId });
+  }
+
+  /** Local-only: Worker already 401'd this session. Keep the Account card in sync. */
+  private async forgetInvalidRemoteSession(): Promise<void> {
+    await new RemoteSignInService(this.context).clearLocalSession();
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS });
   }
 
   /**
@@ -1881,6 +1888,7 @@ Query: "${query}"`;
             name?: string;
             arguments?: any;
             ms?: number;
+            sessionInvalid?: boolean;
             /** slow_model: observed seconds per completion and the trimmed iteration cap. */
             avgSec?: number;
             cap?: number;
@@ -1912,6 +1920,9 @@ Query: "${query}"`;
                 break;
 
               case 'error':
+                if (result.sessionInvalid) {
+                  void this.forgetInvalidRemoteSession();
+                }
                 settle(new Error(result.message));
                 break;
 

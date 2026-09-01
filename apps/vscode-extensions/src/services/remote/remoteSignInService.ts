@@ -11,6 +11,38 @@ export interface RemoteProfile {
   requests_limit_weekly?: number;
 }
 
+export type SessionVerifyResult =
+  | { state: 'signed_out' }
+  | { state: 'signed_in'; profile: RemoteProfile }
+  | { state: 'unreachable' };
+
+/** Flatten `/v1/me` for the webview's camelCase fields. */
+export function webviewFieldsFromProfile(profile: RemoteProfile | null) {
+  return {
+    githubLogin: profile?.github_login,
+    plan: profile?.plan,
+    requestsUsedThisWeek: profile?.requests_used_this_week,
+    requestsLimitWeekly: profile?.requests_limit_weekly,
+  };
+}
+
+export function describeRemoteAuthError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (raw.includes('account_too_new')) {
+    return 'This GitHub account is too new. WorkspaceGPT requires accounts older than 60 days.';
+  }
+  if (raw.includes('access_denied')) {
+    return 'GitHub authorization was denied.';
+  }
+  if (raw.includes('oauth_failed') || raw.includes('no_code')) {
+    return 'Sign-in failed. Please try again.';
+  }
+  return raw;
+}
+
+/** At most one loopback callback server — Settings and the Command Palette share this. */
+let inFlightSignIn: RemoteSignInService | null = null;
+
 /**
  * RECONSTRUCTED 2026-08-31 — this file was deleted by mistake earlier in the
  * same session (before it had ever been committed) and rebuilt from the
@@ -47,28 +79,40 @@ export class RemoteSignInService {
 
   /** Open the browser, wait for the Worker's loopback redirect, store the session token. */
   async signIn(): Promise<void> {
+    if (inFlightSignIn && inFlightSignIn !== this) inFlightSignIn.cancelSignIn();
     this.cancelSignIn();
+    inFlightSignIn = this;
 
-    const state = OAuthCallbackServer.generateState();
-    const redirectUri = `http://127.0.0.1:${REMOTE_AUTH.CALLBACK_PORT}${REMOTE_AUTH.CALLBACK_PATH}`;
-    this.callbackServer = new OAuthCallbackServer();
+    try {
+      const state = OAuthCallbackServer.generateState();
+      const redirectUri = `http://127.0.0.1:${REMOTE_AUTH.CALLBACK_PORT}${REMOTE_AUTH.CALLBACK_PATH}`;
+      this.callbackServer = new OAuthCallbackServer();
 
-    const { params } = await this.callbackServer.waitForCallback({
-      port: REMOTE_AUTH.CALLBACK_PORT,
-      path: REMOTE_AUTH.CALLBACK_PATH,
-      state,
-      buildAuthUrl: () => {
-        const qs = new URLSearchParams({ redirect_uri: redirectUri, state });
-        return `${REMOTE_AUTH.API_BASE}/auth/login?${qs.toString()}`;
-      },
-    });
-    this.callbackServer = null;
+      const { params } = await this.callbackServer.waitForCallback({
+        port: REMOTE_AUTH.CALLBACK_PORT,
+        path: REMOTE_AUTH.CALLBACK_PATH,
+        state,
+        buildAuthUrl: () => {
+          const qs = new URLSearchParams({ redirect_uri: redirectUri, state });
+          return `${REMOTE_AUTH.API_BASE}/auth/login?${qs.toString()}`;
+        },
+      });
+      this.callbackServer = null;
 
-    const sessionToken = params.get('sessionToken');
-    if (!sessionToken) throw new Error('No session token returned from the WorkspaceGPT server.');
+      const sessionToken = params.get('sessionToken');
+      if (!sessionToken) throw new Error('No session token returned from the WorkspaceGPT server.');
 
-    await this.context.secrets.store(STORAGE_KEYS.REMOTE_SESSION_TOKEN, sessionToken);
-    setCachedRemoteSessionToken(sessionToken);
+      // Re-login must not leave the previous KV session alive for 30 days.
+      const previous = await this.context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN);
+      if (previous && previous !== sessionToken) {
+        await this.revokeServerSession(previous);
+      }
+
+      await this.context.secrets.store(STORAGE_KEYS.REMOTE_SESSION_TOKEN, sessionToken);
+      setCachedRemoteSessionToken(sessionToken);
+    } finally {
+      if (inFlightSignIn === this) inFlightSignIn = null;
+    }
   }
 
   cancelSignIn(): void {
@@ -85,37 +129,49 @@ export class RemoteSignInService {
   }
 
   /** Confirm the stored session token against the Worker and read back the account's plan + this week's usage. */
-  async verifySession(): Promise<RemoteProfile | null> {
+  async verifySession(): Promise<SessionVerifyResult> {
     const token = await this.context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN);
-    if (!token) return null;
+    if (!token) return { state: 'signed_out' };
 
     try {
       const response = await fetch(`${REMOTE_AUTH.API_BASE}/v1/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) return null;
-      return (await response.json()) as RemoteProfile;
+      if (response.status === 401) {
+        await this.clearLocalSession();
+        return { state: 'signed_out' };
+      }
+      if (!response.ok) return { state: 'unreachable' };
+      const profile = (await response.json()) as RemoteProfile;
+      if (!profile?.github_login) return { state: 'unreachable' };
+      return { state: 'signed_in', profile };
     } catch {
-      // Network failure. Nothing is cached optimistically: the next inference
-      // request revalidates server-side anyway, so a transient failure here
-      // only makes the Settings card read "not signed in" until it retries.
-      return null;
+      // Network failure: keep the local token. The next inference request
+      // revalidates server-side; the Settings card should not flash "signed out".
+      return { state: 'unreachable' };
     }
   }
 
   async signOut(): Promise<void> {
     const token = await this.context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN);
-    if (token) {
-      try {
-        await fetch(`${REMOTE_AUTH.API_BASE}/auth/logout`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch {
-        // Best-effort — the Worker session will simply expire if this fails.
-      }
-    }
+    if (token) await this.revokeServerSession(token);
+    await this.clearLocalSession();
+  }
+
+  /** Drop the local credential without talking to the Worker (already 401 / expired). */
+  async clearLocalSession(): Promise<void> {
     await this.context.secrets.delete(STORAGE_KEYS.REMOTE_SESSION_TOKEN);
     setCachedRemoteSessionToken(undefined);
+  }
+
+  private async revokeServerSession(token: string): Promise<void> {
+    try {
+      await fetch(`${REMOTE_AUTH.API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      // Best-effort — the Worker session will simply expire if this fails.
+    }
   }
 }

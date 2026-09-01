@@ -1344,3 +1344,114 @@ input.dep-preset-dropdown {
 .dep-checkbox input {
   margin-top: 2px;
 }
+
+/* Weekly quota: number lives inside the ring so a narrow sidebar doesn't
+   squeeze copy against a meter. Color is remaining-based — green while you
+   can keep going, yellow under 25%, red under 10%. */
+.usage-meter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 8px 0 4px;
+}
+
+.usage-ring-wrap {
+  position: relative;
+  width: 72px;
+  height: 72px;
+}
+
+.usage-ring-wrap svg {
+  display: block;
+}
+
+.usage-ring-track {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.usage-ring-value {
+  transition: stroke-dashoffset 0.4s ease, stroke 0.2s ease;
+}
+
+.usage-ring-pct {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-foreground);
+}
+
+.usage-meter-title {
+  margin-top: 4px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.usage-meter-detail {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground);
+}
+
+.usage-meter--ok .usage-ring-value {
+  stroke: var(--wgpt-success);
+}
+
+.usage-meter--warn .usage-ring-value,
+.usage-meter--warn .usage-ring-pct {
+  stroke: var(--wgpt-warning);
+  color: var(--wgpt-warning);
+}
+
+.usage-meter--critical .usage-ring-value,
+.usage-meter--critical .usage-ring-pct,
+.usage-meter--critical .usage-meter-title {
+  stroke: var(--wgpt-danger);
+  color: var(--wgpt-danger);
+}
+
+.account-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(255, 255, 255, 0.08)));
+}
+
+.account-identity {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.account-signout {
+  flex-shrink: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--vscode-textLink-foreground);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.account-signout:hover {
+  text-decoration: underline;
+}
+
+.account-signout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

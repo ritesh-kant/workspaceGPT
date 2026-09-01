@@ -28,21 +28,56 @@ function fromUrlSafeBase64(s: string): string {
  * (which loopback port to 302 back to, and the client's own CSRF token) so
  * this Worker stays stateless between `/auth/login` and
  * `/auth/github/callback` — no KV write for a flow that might never finish.
+ *
+ * HMAC-SHA256 with the GitHub client secret so an attacker cannot mint or
+ * rewrite `redirectUri` / `csrf` in flight.
  */
-export function encodePendingLogin(pending: PendingLogin): string {
-  return toUrlSafeBase64(JSON.stringify(pending));
+export async function encodePendingLogin(pending: PendingLogin, secret: string): Promise<string> {
+  const payload = toUrlSafeBase64(JSON.stringify(pending));
+  const sig = await hmacSha256Hex(secret, payload);
+  return `${payload}.${sig}`;
 }
 
-export function decodePendingLogin(state: string): PendingLogin | null {
+export async function decodePendingLogin(state: string, secret: string): Promise<PendingLogin | null> {
+  const dot = state.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const payload = state.slice(0, dot);
+  const sig = state.slice(dot + 1);
+  const expected = await hmacSha256Hex(secret, payload);
+  if (!timingSafeEqualHex(sig, expected)) return null;
   try {
-    const parsed = JSON.parse(fromUrlSafeBase64(state));
-    if (typeof parsed?.redirectUri === 'string' && typeof parsed?.csrf === 'string') {
+    const parsed = JSON.parse(fromUrlSafeBase64(payload));
+    if (
+      typeof parsed?.redirectUri === 'string' &&
+      typeof parsed?.csrf === 'string' &&
+      parsed.csrf.length >= 16 &&
+      parsed.csrf.length <= 128
+    ) {
       return parsed;
     }
     return null;
   } catch {
     return null;
   }
+}
+
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
 }
 
 export function buildGithubAuthorizeUrl(env: Env, callbackUrl: string, state: string): string {
@@ -91,7 +126,18 @@ export async function fetchGithubUser(accessToken: string): Promise<GithubUser> 
     },
   });
   if (!res.ok) throw new Error(`GitHub /user failed (${res.status})`);
-  return res.json();
+  const data: unknown = await res.json();
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    typeof (data as GithubUser).id !== 'number' ||
+    typeof (data as GithubUser).login !== 'string' ||
+    typeof (data as GithubUser).created_at !== 'string'
+  ) {
+    throw new Error('GitHub /user returned an unexpected payload');
+  }
+  const user = data as GithubUser;
+  return { id: user.id, login: user.login, created_at: user.created_at };
 }
 
 const MIN_ACCOUNT_AGE_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
@@ -140,6 +186,6 @@ export async function deleteSession(env: Env, token: string): Promise<void> {
 
 export function bearerToken(request: Request): string | null {
   const header = request.headers.get('Authorization') ?? '';
-  const match = /^Bearer\s+(.+)$/i.exec(header);
+  const match = /^Bearer\s+(\S+)$/i.exec(header);
   return match ? match[1] : null;
 }

@@ -46,28 +46,54 @@ import { readWeeklyUsage, weeklyLimitFor } from './usage';
  * old one. Added back 2026-08-31; see the callback handler below.
  */
 
-/** Only ever redirect back to a loopback address the extension itself opened a server on — never an arbitrary host. */
-function isLoopbackRedirect(url: string): boolean {
+/**
+ * Only ever 302 the session token back to the extension's fixed loopback
+ * callback (see REMOTE_AUTH in apps/vscode-extensions/constants.ts). An
+ * arbitrary `localhost` port would let a same-machine phishing page steal
+ * the token after GitHub consent.
+ */
+const CLIENT_CALLBACK_PORT = '32329';
+const CLIENT_CALLBACK_PATH = '/callback';
+
+function isAllowedClientRedirect(url: string): boolean {
   try {
     const u = new URL(url);
-    return (u.hostname === '127.0.0.1' || u.hostname === 'localhost') && u.protocol === 'http:';
+    return (
+      u.protocol === 'http:' &&
+      u.hostname === '127.0.0.1' &&
+      !u.username &&
+      !u.password &&
+      u.port === CLIENT_CALLBACK_PORT &&
+      u.pathname === CLIENT_CALLBACK_PATH &&
+      !u.search &&
+      !u.hash
+    );
   } catch {
     return false;
   }
 }
 
+const NO_STORE = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+
 function json(data: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(data), {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers: { 'Content-Type': 'application/json', ...NO_STORE, ...(init?.headers ?? {}) },
   });
 }
 
 function html(body: string, init?: ResponseInit): Response {
   return new Response(body, {
     ...init,
-    headers: { 'Content-Type': 'text/html; charset=utf-8', ...(init?.headers ?? {}) },
+    headers: { 'Content-Type': 'text/html; charset=utf-8', ...NO_STORE, ...(init?.headers ?? {}) },
   });
+}
+
+/** Stable codes only — never put Error.message in the loopback query string. */
+function oauthErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (message.includes('account_too_new')) return 'account_too_new';
+  return 'oauth_failed';
 }
 
 export default {
@@ -80,19 +106,23 @@ export default {
 
     // GET /auth/login?redirect_uri=<client loopback>&state=<client csrf>
     if (url.pathname === '/auth/login' && request.method === 'GET') {
+      if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) {
+        return html(renderErrorPage('Sign-in is not configured on the server.'), { status: 503 });
+      }
       const redirectUri = url.searchParams.get('redirect_uri') ?? '';
       const csrf = url.searchParams.get('state') ?? '';
-      if (!redirectUri || !csrf) {
+      if (!redirectUri || !csrf || csrf.length < 16 || csrf.length > 128) {
         return html(renderErrorPage('Missing redirect_uri or state.'), { status: 400 });
       }
-      if (!isLoopbackRedirect(redirectUri)) {
-        return html(renderErrorPage('redirect_uri must be a loopback (127.0.0.1/localhost) address.'), {
-          status: 400,
-        });
+      if (!isAllowedClientRedirect(redirectUri)) {
+        return html(
+          renderErrorPage('redirect_uri must be the WorkspaceGPT extension callback (http://127.0.0.1:32329/callback).'),
+          { status: 400 }
+        );
       }
 
       const callbackUrl = `${url.origin}/auth/github/callback`;
-      const pendingState = encodePendingLogin({ redirectUri, csrf });
+      const pendingState = await encodePendingLogin({ redirectUri, csrf }, env.GITHUB_CLIENT_SECRET);
       const githubAuthorizeUrl = buildGithubAuthorizeUrl(env, callbackUrl, pendingState);
       return html(renderLoginPage(githubAuthorizeUrl));
     }
@@ -102,9 +132,9 @@ export default {
       const code = url.searchParams.get('code');
       const state = url.searchParams.get('state') ?? '';
       const githubError = url.searchParams.get('error');
-      const pending = decodePendingLogin(state);
+      const pending = await decodePendingLogin(state, env.GITHUB_CLIENT_SECRET);
 
-      if (!pending || !isLoopbackRedirect(pending.redirectUri)) {
+      if (!pending || !isAllowedClientRedirect(pending.redirectUri)) {
         return html(renderErrorPage('Invalid or expired sign-in attempt. Please try again from VS Code.'), {
           status: 400,
         });
@@ -135,7 +165,7 @@ export default {
         const sessionToken = await createSession(env, String(ghUser.id), ghUser.login);
         return backToClient({ sessionToken });
       } catch (error) {
-        return backToClient({ error: error instanceof Error ? error.message : 'oauth_failed' });
+        return backToClient({ error: oauthErrorCode(error) });
       }
     }
 

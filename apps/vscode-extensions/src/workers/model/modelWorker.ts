@@ -747,6 +747,9 @@ async function generateResponse(): Promise<void> {
     parentPort?.postMessage({
       type: 'error',
       message: describeLlmFailure(error, provider),
+      sessionInvalid:
+        provider === REMOTE_MODEL.PROVIDER &&
+        (error?.status ?? error?.statusCode ?? error?.response?.status) === 401,
     });
   }
 }

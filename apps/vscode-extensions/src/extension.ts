@@ -8,7 +8,7 @@ import { McpUiManager } from './utils/mcpUiManager';
 import { syncContextKeys } from './utils/syncContextKeys';
 import { migrateModeSettings } from './utils/migrateModeSettings';
 import { UpdateChecker } from './utils/updateChecker';
-import { RemoteSignInService } from './services/remote/remoteSignInService';
+import { RemoteSignInService, describeRemoteAuthError, webviewFieldsFromProfile } from './services/remote/remoteSignInService';
 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
@@ -294,7 +294,12 @@ export async function activate(context: vscode.ExtensionContext) {
       const service = new RemoteSignInService(context);
       try {
         await service.signIn();
-        const profile = await service.verifySession();
+        const result = await service.verifySession();
+        const profile = result.state === 'signed_in' ? result.profile : null;
+        webViewProvider.getWebviewView()?.webview.postMessage({
+          type: MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS,
+          ...webviewFieldsFromProfile(profile),
+        });
         vscode.window.showInformationMessage(
           profile
             ? `WorkspaceGPT: signed in as ${profile.github_login}.`
@@ -302,7 +307,7 @@ export async function activate(context: vscode.ExtensionContext) {
         );
       } catch (error) {
         vscode.window.showErrorMessage(
-          `WorkspaceGPT: sign-in failed — ${error instanceof Error ? error.message : String(error)}`
+          `WorkspaceGPT: sign-in failed — ${describeRemoteAuthError(error)}`
         );
       }
     }
@@ -319,6 +324,9 @@ export async function activate(context: vscode.ExtensionContext) {
         return;
       }
       await service.signOut();
+      webViewProvider.getWebviewView()?.webview.postMessage({
+        type: MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS,
+      });
       vscode.window.showInformationMessage('WorkspaceGPT: signed out.');
     }
   );

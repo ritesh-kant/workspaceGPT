@@ -27,6 +27,7 @@ export interface WaitForCallbackOptions {
 export class OAuthCallbackServer {
   private server: http.Server | null = null;
   private pendingReject: ((reason?: unknown) => void) | null = null;
+  private timeout: ReturnType<typeof setTimeout> | null = null;
 
   static generateState(): string {
     const array = new Uint8Array(32);
@@ -40,7 +41,7 @@ export class OAuthCallbackServer {
     const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
 
     return new Promise<CallbackResult>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      this.timeout = setTimeout(() => {
         this.cleanup();
         reject(new Error('Authorization timed out. Please try again.'));
       }, timeoutMs);
@@ -48,12 +49,16 @@ export class OAuthCallbackServer {
       this.pendingReject = reject;
 
       const finish = (fn: () => void) => {
-        clearTimeout(timeout);
         this.cleanup();
         fn();
       };
 
       this.server = http.createServer((req, res) => {
+        if (req.method && req.method !== 'GET') {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
         const url = new URL(req.url || '', `http://127.0.0.1:${port}`);
         if (url.pathname !== path) {
           res.writeHead(404);
@@ -124,6 +129,10 @@ export class OAuthCallbackServer {
   }
 
   private cleanup(): void {
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = null;
+    }
     this.pendingReject = null;
     if (this.server) {
       this.server.close();
@@ -144,10 +153,19 @@ export class OAuthCallbackServer {
 <html><head><meta charset="utf-8"><title>WorkspaceGPT</title></head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #1a1a2e; color: #e0e0e0;">
   <div style="text-align: center; padding: 40px; background: #16213e; border-radius: 16px;">
-    <div style="font-size: 64px; margin-bottom: 16px;">${icon}</div>
-    <h1 style="color: ${color}; margin-bottom: 8px;">${title}</h1>
-    <p style="color: #a0a0a0;">${body}</p>
+    <div style="font-size: 64px; margin-bottom: 16px;">${escapeHtml(icon)}</div>
+    <h1 style="color: ${escapeHtml(color)}; margin-bottom: 8px;">${escapeHtml(title)}</h1>
+    <p style="color: #a0a0a0;">${escapeHtml(body)}</p>
   </div>
 </body></html>`;
   }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
