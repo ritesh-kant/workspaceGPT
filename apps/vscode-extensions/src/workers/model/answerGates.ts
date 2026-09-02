@@ -104,7 +104,45 @@ export const PREMATURE_AMBIGUITY_RE =
  * exact opposite.
  */
 export const TICKET_TERMINAL_RE =
-  /^\s*(#{1,4}|\*\*)\s*(blocked|no change (is )?needed|nothing to change|already (fixed|implemented|resolved))\s*(\*\*)?\s*([:—–-].*| on .*)?$/im;
+  /^\s*(#{1,4}|\*\*)\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(blocked|no change (is )?needed|nothing to change|already (fixed|implemented|resolved))\s*(\*\*)?\s*([:—–-].*| on .*)?$/imu;
+
+/**
+ * A finished run's REPORT, as the FINAL REPORT FORMAT in promptTemplates
+ * teaches it: an "Acceptance criteria" or "Verification" section heading
+ * (optionally emoji-prefixed). The worker uses it, together with
+ * writesApplied > 0 and clean post-write diagnostics, to exempt a completed
+ * report from the phrasing gates — a courteous closing under "Notes" ("let
+ * me know if you want the AQA sweep pulled into a follow-up") used to match
+ * PERMISSION_SEEKING_RE and send a DONE run back to re-verify itself until
+ * the step limit, whose forced final answer then headlined "Step limit
+ * reached" over a finished task (observed live on ticket 1516750).
+ */
+export const REPORT_SHAPED_RE =
+  /^\s*(#{1,4}|\*\*)\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(acceptance criteria|verification)\b/imu;
+
+/**
+ * The status heading that opens a FINAL-REPORT-FORMAT answer ("## ✅ Done —",
+ * "## 🚫 Blocked —", …). Anchored to a level-2 heading so a "### Notes" line
+ * or prose never matches.
+ */
+export const REPORT_STATUS_HEADING_RE =
+  /^##\s+(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(done|partially done|partial|blocked|no change (is )?needed|nothing to change|already (fixed|implemented|resolved)|complete|completed|fixed|implemented)\b.*$/imu;
+
+/**
+ * Drop a narrated preamble ahead of the report's status heading — "Diagnostics
+ * are clean across the whole Checkout folder. Now let me write the final
+ * report." (observed live) — so the webview's status banner is the first thing
+ * the user sees. Conservative: only a short, heading-free prefix is removed; a
+ * long lead-in is left alone in case it carries something the report does not.
+ */
+export function stripReportPreamble(answer: string): string {
+  const text = String(answer ?? '');
+  const m = REPORT_STATUS_HEADING_RE.exec(text);
+  if (!m || m.index === 0) return text;
+  const preamble = text.slice(0, m.index);
+  if (preamble.length > 600 || /^\s*#{1,6}\s/m.test(preamble) || /```/.test(preamble)) return text;
+  return text.slice(m.index);
+}
 
 /**
  * Does the user's message actually ask for the ticket to be IMPLEMENTED (as

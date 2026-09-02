@@ -26,7 +26,7 @@ const { CheckpointService } = await import(path.join(outDir, 'checkpointService.
 const { loadWorkspaceRules } = await import(path.join(outDir, 'rulesFiles.mjs'));
 const { detectTicketId } = await import(path.join(outDir, 'ticketDetection.mjs'));
 const { extractSearchTerms, termWeight, scout } = await import(path.join(outDir, 'explorationPhase.mjs'));
-const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, TICKET_TERMINAL_RE, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer } = await import(path.join(outDir, 'answerGates.mjs'));
+const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer } = await import(path.join(outDir, 'answerGates.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -720,6 +720,68 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     assert.ok(!MISSING_TOOL_CLAIM_RE.test('search_web may be unconfigured (no API key); falling back to my own knowledge.'));
     assert.ok(!MISSING_TOOL_CLAIM_RE.test('I used edit_file to change ProductTile.tsx and get_diagnostics is clean.'));
     assert.ok(!MISSING_TOOL_CLAIM_RE.test('The write tool showed the user a review card for approval.'));
+  });
+
+  // Ninth observed failure (ticket 1516750): a FINISHED run — fix applied,
+  // jest + eslint + diagnostics green, per-criterion verdicts — ended with a
+  // courteous "Flag it if you want it pulled into a follow-up" under "Out of
+  // scope". The host's regex fallback called that stall-shaped, auto-resumed
+  // the completed run, and the resumed worker re-verified until the step
+  // limit; its forced final answer opened with "## Step limit reached — no
+  // further work to do". The FINAL REPORT FORMAT (emoji status headings) and
+  // REPORT_SHAPED_RE exist so a done report is recognised as done.
+  const FINISHED_REPORT_9 = `## ✅ Done — add_shipping_info now fires on every successful shipping step submission
+
+### Acceptance criteria
+| Criterion | Verdict | Evidence |
+|---|---|---|
+| Event fires even when the shipping method is pre-set | ✅ Met | \`apps/mms/mms-webapp/src/api/features/Checkout/Steps/ShippingMethod/useShippingMethodStep.ts:L130-L138\` |
+| Existing change-method behavior preserved | ✅ Met | 5 passed |
+
+### Changes
+- \`apps/mms/mms-webapp/src/api/features/Checkout/Steps/ShippingMethod/useShippingMethodStep.ts\` — fire the event after updateShippingMethodIfNeeded regardless of its result
+
+### Verification
+- ✅ \`pnpm --filter @phoenix/mms-webapp exec jest useShippingMethodStep.test.ts\` — 5 passed
+- ✅ Diagnostics — 0 problems
+
+### Notes
+- Out of scope: the AQA sweep across all GTM funnel events — let me know if you want me to pull it into a follow-up.`;
+
+  await t('emoji-prefixed terminal headings still read as terminal', () => {
+    assert.ok(TICKET_TERMINAL_RE.test('## 🚫 Blocked — the ticket does not decide rounding direction'));
+    assert.ok(TICKET_TERMINAL_RE.test('## ✅ No change needed — ProductTile.tsx:L202 already derives from the variant'));
+    assert.ok(!TICKET_TERMINAL_RE.test('## ✅ Done — add_shipping_info now fires on every submission'));
+    assert.ok(!TICKET_TERMINAL_RE.test('## 🚫 Blocked? No.\nThe expected behaviour is unambiguous.'));
+  });
+  await t('finished report is report-shaped even with a courteous closing', () => {
+    assert.ok(REPORT_SHAPED_RE.test(FINISHED_REPORT_9));
+    // The closing line alone still trips the phrasing gate — the worker's
+    // exemption is what stands it down, and only once writes have landed and
+    // diagnostics ran after them.
+    assert.ok(PERMISSION_SEEKING_RE.test(FINISHED_REPORT_9));
+  });
+  await t('narrated preamble before the status heading is stripped', () => {
+    const live = 'Diagnostics are clean across the whole Checkout folder. Now let me write the final report.\n\n## ✅ Done — `add_shipping_info` fires on every Continue\n\n### Acceptance criteria\n| a | b | c |';
+    assert.ok(REPORT_STATUS_HEADING_RE.test(live));
+    assert.ok(stripReportPreamble(live).startsWith('## ✅ Done'));
+    // Already clean → untouched; blocked heading also recognised.
+    assert.equal(stripReportPreamble(FINISHED_REPORT_9), FINISHED_REPORT_9);
+    assert.ok(stripReportPreamble('One line.\n\n## 🚫 Blocked — rounding undecided').startsWith('## 🚫 Blocked'));
+    // A long lead-in or one with its own heading/code is left alone.
+    const long = 'x'.repeat(700) + '\n\n## ✅ Done — y';
+    assert.equal(stripReportPreamble(long), long);
+    const headed = '## Investigation\nstuff\n\n## ✅ Done — y';
+    assert.equal(stripReportPreamble(headed), headed);
+    // "### Notes" / prose never counts as the status heading.
+    assert.ok(!REPORT_STATUS_HEADING_RE.test('### Done items\n- a'));
+    assert.ok(!REPORT_STATUS_HEADING_RE.test('The work is done — see below.'));
+  });
+  await t('report shape needs a section heading, not prose', () => {
+    assert.ok(REPORT_SHAPED_RE.test('### Acceptance criteria\n| a | b | c |'));
+    assert.ok(REPORT_SHAPED_RE.test('**Verification**\n- ✅ jest — 5 passed'));
+    assert.ok(!REPORT_SHAPED_RE.test('I checked the acceptance criteria and the verification looks fine.'));
+    assert.ok(!REPORT_SHAPED_RE.test('## Blocked\nThe ticket does not decide rounding.'));
   });
 }
 

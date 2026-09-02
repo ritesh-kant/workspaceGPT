@@ -9,6 +9,15 @@ import { getNamedRoots, resolveAgainstRoots } from '../services/codebase/codebas
 import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
 
+const fileExists = async (absPath: string): Promise<boolean> => {
+  try {
+    await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export class ChatMessageHandler {
   private chatService?: ChatService;
 
@@ -160,11 +169,19 @@ export class ChatMessageHandler {
     try {
       const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
       const resolved = resolveAgainstRoots(roots, relOrPrefixed);
-      if (!resolved) {
+      let absPath = resolved ? path.resolve(resolved.root.uri.fsPath, resolved.relPath) : undefined;
+      if (absPath && !(await fileExists(absPath))) absPath = undefined;
+      if (!absPath && !relOrPrefixed.includes('/')) {
+        // A bare `file.ts:L12` citation: the report format asks for full
+        // paths, but models cite the file they just edited by name alone.
+        // Resolve by name when the workspace holds exactly one such file.
+        const hits = await vscode.workspace.findFiles(`**/${relOrPrefixed}`, '**/node_modules/**', 2);
+        if (hits.length === 1) absPath = hits[0].fsPath;
+      }
+      if (!absPath) {
         vscode.window.showWarningMessage(`Could not resolve "${relOrPrefixed}" in the current workspace.`);
         return;
       }
-      const absPath = path.resolve(resolved.root.uri.fsPath, resolved.relPath);
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
       const editor = await vscode.window.showTextDocument(doc, { preview: false });
       if (line) {

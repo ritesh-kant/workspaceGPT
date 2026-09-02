@@ -60,6 +60,50 @@ function groupSteps(steps: AgentStep[]): TimelineItem[] {
   return items;
 }
 
+const EDIT_STAT_RE = /\+(\d+)\s+[−-](\d+)/;
+
+/**
+ * Done-mode compaction. Live, every step shows as it happens; once the turn
+ * is over the transcript reads better as a summary:
+ *  - bare "Thought for Ns" rows (no reasoning prose) are dropped — they only
+ *    record per-turn latency, and each one split the exploration into a new
+ *    "Explored 1 file" group (observed live: 12 alternating rows for one
+ *    investigation);
+ *  - consecutive edits to the same file (ignoring the dropped thoughts) fold
+ *    into one row with the edit count and summed line stats.
+ * Notes (agent prose) are kept — they are the reasoning worth reading.
+ */
+function compactDoneSteps(steps: AgentStep[]): AgentStep[] {
+  const out: AgentStep[] = [];
+  for (const step of steps) {
+    if (step.kind === 'thought') continue;
+    const last = out[out.length - 1];
+    if (
+      step.kind === 'edit' &&
+      last?.kind === 'edit' &&
+      last.path &&
+      last.path === step.path &&
+      last.title === step.title &&
+      last.status !== 'error' &&
+      step.status !== 'error'
+    ) {
+      const a = EDIT_STAT_RE.exec(last.summary ?? '');
+      const b = EDIT_STAT_RE.exec(step.summary ?? '');
+      const count = (last.meta as { editCount?: number } | undefined)?.editCount ?? 1;
+      out[out.length - 1] = {
+        ...last,
+        detail: `${count + 1} edits`,
+        summary:
+          a && b ? `+${Number(a[1]) + Number(b[1])} −${Number(a[2]) + Number(b[2])}` : last.summary ?? step.summary,
+        meta: { ...(last.meta ?? {}), editCount: count + 1 } as AgentStep['meta'],
+      };
+      continue;
+    }
+    out.push(step);
+  }
+  return out;
+}
+
 function groupLabel(steps: AgentStep[]): string {
   // 'read' covers both file reads ("Analyzed") and directory listings
   // ("Explored") — split those out so the label can say "N files, M folders"
@@ -137,6 +181,7 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
     );
   }
 
+  const errorText = step.status === 'error' ? step.meta?.output?.trim() : '';
   return (
     <div className={`agent-step-row${step.status === 'error' ? ' is-error' : ''}`}>
       <div className='agent-step-line'>
@@ -149,7 +194,17 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
         )}
         {step.detail && <span className='agent-step-detail'>{step.detail}</span>}
         {step.summary && <span className='agent-step-summary'>{step.summary}</span>}
+        {errorText && (
+          <button
+            type='button'
+            className='agent-step-output-toggle'
+            onClick={() => setOutputOpen((v) => !v)}
+          >
+            {outputOpen ? 'Hide error' : 'Show error'}
+          </button>
+        )}
       </div>
+      {errorText && outputOpen && <pre className='agent-step-output'>{errorText}</pre>}
     </div>
   );
 };
@@ -187,7 +242,7 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
   // steps at all.
   const notices = normalized.filter((s) => s.kind === 'notice');
   const timelineSteps = normalized.filter((s) => s.kind !== 'notice');
-  const items = groupSteps(timelineSteps);
+  const items = groupSteps(live ? timelineSteps : compactDoneSteps(timelineSteps));
   const anyRunning = live && timelineSteps.some((s) => s.status === 'running');
 
   const noticeRows = notices.map((s, i) => (

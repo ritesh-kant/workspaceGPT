@@ -13,6 +13,8 @@ import {
   CHANGE_PLAN_RE,
   PREMATURE_AMBIGUITY_RE,
   TICKET_TERMINAL_RE,
+  REPORT_SHAPED_RE,
+  stripReportPreamble,
   IMPLEMENT_MANDATE_RE,
   CLAIMS_CHANGES_RE,
   MISSING_TOOL_CLAIM_RE,
@@ -360,7 +362,7 @@ const TOOL_DEFS = [
         type: 'object',
         properties: {
           command: { type: 'string', description: 'The shell command to run, e.g. "npm test -- --run" or "npx tsc --noEmit".' },
-          cwd: { type: 'string', description: 'Workspace-relative working directory. Defaults to the workspace root.' },
+          cwd: { type: 'string', description: 'Workspace-relative working directory. Defaults to the first workspace root; in a multi-root workspace prefix it with the root folder name ("my-repo" or "my-repo/apps/web") to run inside that root. Package-manager commands (pnpm --filter, npm run) must run from the repo that owns the package.' },
           timeoutSec: { type: 'number', description: 'Kill the command after this many seconds (default 60, max 300).' },
         },
         required: ['command'],
@@ -1381,6 +1383,15 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   let toolCharsUsed = 0;
   let toolCallsExecuted = 0;
   let planNudgesUsed = 0;
+  // The last answer that was a finished, verified report (writes landed,
+  // diagnostics clean after them, REPORT_SHAPED_RE). If the gates' follow-up
+  // rounds then eat the remaining iterations, THIS is delivered at the cap —
+  // not a forced "step limit reached" rewrite of a task that was done.
+  let lastReportAnswer = '';
+  // True once run_command succeeded after the most recent applied write —
+  // the report's Verification section is then backed by an actual run, so
+  // the write-oriented completeness reflection has nothing left to ask for.
+  let commandRunSinceWrite = false;
   // ── Latency-adaptive degradation state (see SLOW_TURN_MS above) ──
   let turnMsTotal = 0;
   let slowModelMode = false;
@@ -1450,7 +1461,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // writing was on the table, so a Q&A answer mentioning "X has been updated
   // in PR #123" is never stamped.
   const finalizeDeliverable = (text: string): string => {
-    let out = text;
+    // The FINAL REPORT FORMAT says "no preamble"; models still narrate one
+    // sentence before the status heading. Removing it here keeps the banner
+    // first in the panel and in saved history alike.
+    let out = stripReportPreamble(text);
     if (out && writesApplied === 0 && (TICKET_IMPLEMENT_RUN || executeMandate || anyWriteAttempted) && CLAIMS_CHANGES_RE.test(out)) {
       out +=
         '\n\n---\n⚠️ **Harness note:** zero file edits were actually applied in this run — the working tree is unchanged, so any "implemented fix" above is a proposal only. Reply "go ahead" to have it applied.';
@@ -1808,6 +1822,14 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     maybeEnterSlowMode(i);
 
     if (toolCalls.length === 0) {
+      // A finished, verified report: writes landed, diagnostics ran after the
+      // last one, and the answer is shaped like the FINAL REPORT FORMAT. The
+      // phrasing gates below stand down for it (a courteous "let me know if
+      // you want X pulled into a follow-up" under Notes is not a stall), and
+      // it is what the cap delivers if the run never gets to end cleanly.
+      const finishedReport =
+        writesApplied > 0 && writesSinceDiagnostics === 0 && REPORT_SHAPED_RE.test(outcome.content);
+      if (finishedReport) lastReportAnswer = outcome.content;
       // The model wants to finish — but unverified writes block that. Run
       // get_diagnostics OURSELVES as a synthetic tool exchange (deterministic,
       // unlike nudging): the model then sees the result and either confirms or
@@ -2085,12 +2107,13 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // either back to finish the job itself. Skipped once the tool budget is
       // gone: at that point continuing is impossible and a partial answer is the
       // best we have.
-      const announcesWork = INCOMPLETE_ANSWER_RE.test(outcome.content);
+      const announcesWork = !finishedReport && INCOMPLETE_ANSWER_RE.test(outcome.content);
       // Only armed when the turn was actually supposed to act — otherwise a
       // polite "let me know if you want me to dig further" on a complete
       // read-only answer would burn a round trip.
       const seeksPermission =
         !planMode &&
+        !finishedReport &&
         PERMISSION_SEEKING_RE.test(outcome.content) &&
         // A ticket-grounded run was seeded with "implement the fix" — ending it
         // on a permission ask or an options menu is always wrong there, even
@@ -2126,7 +2149,12 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         !slowModelMode &&
         !budgetExhausted &&
         toolCallsExecuted > 0 &&
-        outcome.content.trim()
+        outcome.content.trim() &&
+        // A finished report whose Verification section is backed by an actual
+        // post-write run_command has already done what the write reflection
+        // asks ("re-run the test now") — asking again just costs a round trip
+        // and, on a slow model, the rest of the iteration budget.
+        !(finishedReport && commandRunSinceWrite)
       ) {
         completenessReflectionUsed = true;
         messages.push({ role: 'assistant', content: outcome.content });
@@ -2183,7 +2211,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       const deliverable = finalizeDeliverable(cleanedContent);
       if (deliverable) parentPort?.postMessage({ type: 'chunk', content: deliverable });
       emitMetrics();
-      parentPort?.postMessage({ type: 'done', content: deliverable, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(deliverable) || CLAIMS_CHANGES_RE.test(deliverable)) });
+      parentPort?.postMessage({ type: 'done', content: deliverable, writesApplied, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(deliverable) || CLAIMS_CHANGES_RE.test(deliverable)) });
       return;
     }
 
@@ -2341,6 +2369,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         if (!failed) {
           writesApplied++;
           writesSinceDiagnostics++;
+          commandRunSinceWrite = false;
         }
         try {
           const p = (JSON.parse(tc.args || '{}') as { path?: string }).path;
@@ -2350,6 +2379,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         }
       }
       if (tc.name === 'get_diagnostics') writesSinceDiagnostics = 0;
+      if (tc.name === 'run_command' && !failed) commandRunSinceWrite = true;
     });
     messages.push(...pendingImageTurns);
     toolCallsExecuted += toolCalls.length;
@@ -2365,6 +2395,24 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     if (budgetExhausted) break;
   }
 
+  // The run already produced a finished, verified report and only the gates'
+  // follow-up rounds (reflection, re-verification) consumed the rest of the
+  // budget. Deliver that report as-is: one more forced turn would only make
+  // the model write "step limit reached" over a task that is done (observed
+  // live on ticket 1516750 — the report opened with "## Step limit reached —
+  // no further work to do" and spent its first paragraph explaining the
+  // previous turn had already finished).
+  if (lastReportAnswer && writesApplied > 0 && writesSinceDiagnostics === 0) {
+    const deliverable = finalizeDeliverable(stripLeakedToolCallSyntax(lastReportAnswer));
+    if (deliverable) {
+      parentPort?.postMessage({ type: 'chunk', content: deliverable });
+      syncTranscript();
+      emitMetrics();
+      parentPort?.postMessage({ type: 'done', content: deliverable, writesApplied, stallShaped: false });
+      return;
+    }
+  }
+
   // Either MAX_TOOL_ITERATIONS or the tool-output budget was hit: force a
   // final answer without tools so the user always gets a response instead of
   // hanging or erroring. Tell the model WHICH limit ended the run — without
@@ -2377,10 +2425,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       (budgetExhausted
         ? `The tool-OUTPUT budget for this run is exhausted after ${toolCallsExecuted} tool call(s).`
         : `The step limit for this run is reached: ${toolCallsExecuted} tool call(s) over ${perTurn.length} turns (cap ${iterationCap}).`) +
-      ' No further tools can run this turn. Answer now in plain prose from what you already gathered. ' +
-      'Be exact about why you stopped — say "' +
+      ' No further tools can run this turn. Answer now from what you already gathered. ' +
+      'If the task itself is complete (fix applied and verified), do NOT mention the limit at all — deliver the final report in the required format as if the run ended normally. ' +
+      'Only if the task is unfinished, be exact about why you stopped — say "' +
       (budgetExhausted ? 'tool-output budget exhausted' : 'step limit reached') +
-      '" if unfinished; do NOT claim tool access was revoked, cut off, or broken. ' +
+      '"; do NOT claim tool access was revoked, cut off, or broken. ' +
       'If the investigation is unfinished, list the specific files still unread — the run can be resumed with everything gathered so far carried over.',
   });
   let finalStarted = Date.now();
@@ -2431,7 +2480,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // This exit is the budget/iteration-forced final answer — the one path
   // where the honesty gates were deliberately skipped, so the stall tag is
   // how the host learns a resume is worth it (a fresh worker = fresh budget).
-  parentPort?.postMessage({ type: 'done', content: finalDeliverable, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(finalDeliverable)) });
+  parentPort?.postMessage({ type: 'done', content: finalDeliverable, writesApplied, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(finalDeliverable)) });
 }
 
 // Start processing

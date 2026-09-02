@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import CodeBlock from './CodeBlock';
@@ -12,6 +12,139 @@ import type { ChatAttachment } from '../constants';
 import { copyToClipboard } from '../utils/clipboard';
 
 type InlineCodeProps = React.ComponentPropsWithoutRef<'code'>;
+
+/** Plain text of a hast subtree — react-markdown hands each renderer its `node`. */
+function hastText(node: unknown): string {
+  if (!node || typeof node !== 'object') return '';
+  const n = node as { type?: string; value?: unknown; children?: unknown[] };
+  if (n.type === 'text') return typeof n.value === 'string' ? n.value : '';
+  return Array.isArray(n.children) ? n.children.map(hastText).join('') : '';
+}
+
+const LEADING_EMOJI_RE = /^\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)+/u;
+
+/**
+ * The status heading that opens an agent report (see FINAL_REPORT_FORMAT in
+ * promptTemplates.ts). Rendered as a coloured banner instead of a bare H2 so
+ * the outcome is readable at a glance in the side panel. Anything that isn't a
+ * status heading falls through to a normal <h2>.
+ */
+type ReportStatusKind = 'ok' | 'warn' | 'blocked' | 'neutral';
+function reportStatusKind(text: string): ReportStatusKind | null {
+  const t = text.replace(LEADING_EMOJI_RE, '').trim().toLowerCase();
+  if (/^(no change (is )?needed|nothing to change|already (fixed|implemented|resolved))\b/.test(t)) return 'neutral';
+  if (/^(blocked|cannot proceed|not done|failed)\b/.test(t)) return 'blocked';
+  if (/^(partially|partial|incomplete|step limit|budget)\b/.test(t)) return 'warn';
+  if (/^(done|complete|completed|fixed|implemented|resolved|shipped|success)\b/.test(t)) return 'ok';
+  return null;
+}
+
+const STATUS_ICON: Record<ReportStatusKind, React.ReactNode> = {
+  ok: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="8 12.5 11 15.5 16 9.5" />
+    </svg>
+  ),
+  warn: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="16.5" x2="12.01" y2="16.5" />
+    </svg>
+  ),
+  blocked: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="5.6" y1="5.6" x2="18.4" y2="18.4" />
+    </svg>
+  ),
+  neutral: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="8" y1="12" x2="16" y2="12" />
+    </svg>
+  ),
+};
+
+/** Drop the leading emoji from the first text child — the banner draws its own icon. */
+function stripLeadingEmoji(children: React.ReactNode): React.ReactNode {
+  const arr = React.Children.toArray(children);
+  if (arr.length && typeof arr[0] === 'string') arr[0] = (arr[0] as string).replace(LEADING_EMOJI_RE, '');
+  return arr;
+}
+
+type H2Props = React.ComponentPropsWithoutRef<'h2'> & ExtraProps;
+const ReportH2: React.FC<H2Props> = ({ node, children, ...rest }) => {
+  const kind = reportStatusKind(hastText(node));
+  if (!kind) return <h2 {...rest}>{children}</h2>;
+  return (
+    <div className={`report-status report-status--${kind}`} role="heading" aria-level={2}>
+      <span className="report-status-icon" aria-hidden="true">{STATUS_ICON[kind]}</span>
+      <span className="report-status-text">{stripLeadingEmoji(children)}</span>
+    </div>
+  );
+};
+
+const REPORT_SECTION_RE = /^(acceptance criteria|changes|files changed|verification|notes|assumptions|out of scope)\b/i;
+type H3Props = React.ComponentPropsWithoutRef<'h3'> & ExtraProps;
+const ReportH3: React.FC<H3Props> = ({ node, children, className, ...rest }) => {
+  const isSection = REPORT_SECTION_RE.test(hastText(node).replace(LEADING_EMOJI_RE, '').trim());
+  return (
+    <h3 className={[className, isSection ? 'report-section-title' : ''].filter(Boolean).join(' ') || undefined} {...rest}>
+      {children}
+    </h3>
+  );
+};
+
+/** A verdict cell ("✅ Met", "Not met", "Could not verify", "pass") → coloured badge. */
+const VERDICT_RE = /^(met|passed?|pass|ok|yes|done|not met|unmet|failed?|fail|no|could not verify|couldn'?t verify|unverified|not verified|partially met|partial)$/i;
+function verdictKind(raw: string): 'met' | 'notmet' | 'unverified' | 'partial' | null {
+  const t = raw.replace(LEADING_EMOJI_RE, '').trim().replace(/\s+/g, ' ');
+  if (!VERDICT_RE.test(t)) return null;
+  const l = t.toLowerCase();
+  if (/^(not met|unmet|failed?|fail|no)$/.test(l)) return 'notmet';
+  if (/verif/.test(l)) return 'unverified';
+  if (/partial/.test(l)) return 'partial';
+  return 'met';
+}
+const VERDICT_LABEL: Record<NonNullable<ReturnType<typeof verdictKind>>, string> = {
+  met: 'Met',
+  notmet: 'Not met',
+  unverified: 'Could not verify',
+  partial: 'Partially met',
+};
+type TdProps = React.ComponentPropsWithoutRef<'td'> & ExtraProps;
+const VerdictTd: React.FC<TdProps> = ({ node, children, ...rest }) => {
+  const kind = verdictKind(hastText(node));
+  if (!kind) return <td {...rest}>{children}</td>;
+  return (
+    <td {...rest} className={`verdict-cell${rest.className ? ` ${rest.className}` : ''}`}>
+      <span className={`verdict verdict--${kind}`} title={hastText(node).trim()}>
+        {VERDICT_LABEL[kind]}
+      </span>
+    </td>
+  );
+};
+
+/**
+ * Tables scroll inside their own wrapper (the panel is ~350px wide). An
+ * acceptance-criteria table — recognised by its "Verdict" header — is
+ * additionally re-flowed by CSS into stacked rows: badge on the left,
+ * criterion + evidence on the right, no header row.
+ */
+type TableProps = React.ComponentPropsWithoutRef<'table'> & ExtraProps;
+const ReportTable: React.FC<TableProps> = ({ node, children, ...rest }) => {
+  const n = node as { children?: unknown[] } | undefined;
+  const thead = (n?.children ?? []).find((c) => (c as { tagName?: string })?.tagName === 'thead');
+  const headers = hastText(thead).toLowerCase();
+  const isAc = /verdict/.test(headers) && /(criteri|requirement)/.test(headers);
+  return (
+    <div className={`md-table-wrap${isAc ? ' md-table-wrap--ac' : ''}`}>
+      <table {...rest}>{children}</table>
+    </div>
+  );
+};
 
 /**
  * react-markdown's `code` renderer. Fenced code blocks get a `language-*`
@@ -287,7 +420,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
-              components={{ pre: CodeBlock, code: InlineCode }}
+              components={{ pre: CodeBlock, code: InlineCode, h2: ReportH2, h3: ReportH3, td: VerdictTd, table: ReportTable }}
             >
               {content}
             </ReactMarkdown>

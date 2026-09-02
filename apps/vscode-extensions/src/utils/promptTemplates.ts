@@ -69,6 +69,50 @@ const clip = (text: string, max: number): string =>
   text.length > max ? text.slice(0, max) + '… (truncated)' : text;
 
 /**
+ * The shape of every autonomous / ticket run's final answer. The webview
+ * renders it as a card (ChatMessage.tsx: status banner from the H2, verdict
+ * badges from the table, clickable file pills from backticked paths), so the
+ * headings here are a contract, not a style preference — and the "## Blocked"
+ * / "## No change needed" variants must stay recognizable to
+ * TICKET_TERMINAL_RE (answerGates.ts), which tolerates the emoji prefix.
+ *
+ * Why so prescriptive: the first live reports were process diaries — "this
+ * turn re-ran the same verifications", harness cache caveats, "uncommitted on
+ * main and visible as a diff" — none of which the user can act on. The user
+ * needs four things: did it work, is each criterion met, what changed, how
+ * was it verified. Everything else is noise in a 350px panel.
+ */
+export const FINAL_REPORT_FORMAT = `## FINAL REPORT FORMAT
+The user reads ONLY your final answer, in a narrow side panel that renders this exact structure as a card. The status heading is the FIRST LINE of your answer — not one sentence before it, not "now let me write the report". Then only the sections below, in this order. No other headings, no sign-off.
+
+## ✅ Done — <what now works, in the ticket's own terms, ≤ 25 words>
+Use exactly one of these status headings instead when it applies:
+  ## ⚠️ Partially done — <what is left, and why>
+  ## 🚫 Blocked — <the ONE product/behavior decision the ticket is missing>
+  ## ✅ No change needed — <why the code already satisfies the ticket>
+
+### Acceptance criteria
+| Criterion | Verdict | Evidence |
+|---|---|---|
+| <criterion paraphrased in ≤ 12 words> | ✅ Met · ❌ Not met · ⚠️ Could not verify (pick one) | <ONE item — a \`path/from/repo/root.ts:L120-L130\`, a test count, or a diagnostic count; never a sentence> |
+
+### Changes
+- \`path/from/repo/root.ts\` — what changed and why, one line each (omit this section when nothing changed)
+
+### Verification
+- ✅ \`<exact command run>\` — <one-line result, e.g. 5 passed>
+- ✅ Diagnostics — 0 problems
+  (use ❌ for anything that failed, and say in the same line what you did about it)
+
+### Notes  (optional, at most 3 bullets)
+- Assumption: <a default you acted on>
+- Out of scope: <related work you deliberately did not do>
+
+Verdict honesty: a criterion about BEHAVIOR is ✅ Met only when a test or command you actually ran proves it — if the relevant test could not be run, that criterion is ⚠️ Could not verify (reading the code is not verification; say so in the evidence cell). A criterion about code SHAPE (a test was added, a call was removed) may cite \`file:line\` as proof.
+Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they become clickable. Never narrate the process: no "this turn" / "previous turn" / "step limit" / "cache artifact" / "I re-ran", no restating the ticket, no "uncommitted on main" or "visible as a diff" boilerplate (the panel already shows changed files and their diffs). Everything outside the table stays under ~150 words. Never invent a criterion the ticket does not contain.
+`;
+
+/**
  * The pre-fetched ticket as a prompt section. This is the run's definition of
  * done: the model is told to key its final answer to the acceptance criteria,
  * which is what makes an autonomous run's report auditable (met / not met /
@@ -99,7 +143,7 @@ function buildTicketBlock(t?: TicketPromptContext): string {
   }
   lines.push(
     `\nTreat the acceptance criteria (or, absent explicit ones, the description's expected behavior) as the definition of done. ` +
-      `End your final answer with an **"Acceptance criteria"** section listing each criterion with a verdict — met, not met, or could not verify — and one line of evidence (file:line, diagnostic, or test output). ` +
+      `Your final answer MUST follow the FINAL REPORT FORMAT given below: one status heading, then an **"Acceptance criteria"** table with a verdict per criterion — met, not met, or could not verify — and ONE item of evidence each (file:line, diagnostic, or test output). ` +
       `Those three are the ONLY verdicts: "met after the fix is applied" is not a verdict, it is an unapplied fix — apply it first, then verify against the changed code. ` +
       `Never invent a criterion that is not in the ticket. ` +
       `"Too ambiguous to implement" means a required product or behavior DECISION is missing from the ticket even after you have read the ticket, searched the design docs, and read the code — it never means your investigation is unfinished. ` +
@@ -110,7 +154,7 @@ function buildTicketBlock(t?: TicketPromptContext): string {
       `A valid "## Blocked" quotes the ticket wording that conflicts, or names the decision wording that is absent. Questions answerable by reading more code — which file owns a behavior, what data a connector or mapper actually supplies, how a value flows on first render — are INVESTIGATION, never blockers: trace them with your tools before declaring anything blocked. Listing multiple "plausible causes" means the investigation is unfinished — read the code until one is proven. Where a fix should land is an implementation choice, not a blocker: default to the file where the root cause lives, even when it is shared code consumed by several apps. ` +
       `Finish the investigation with your tools first; ending your answer by asking the user which file to read or which step to take next is a failure, not caution — and so is presenting a finished diff in prose while asking to confirm before applying it (every write is already shown to the user as a diff they approve or reject).`
   );
-  return lines.join('\n') + '\n';
+  return lines.join('\n') + '\n' + FINAL_REPORT_FORMAT;
 }
 
 export function createStructuredPrompt(
@@ -254,7 +298,7 @@ Do NOT call edit_file/create_file/delete_file this turn. The user will approve t
 This run was started with a single click and nobody will answer questions mid-task.
 - NEVER ask for permission, confirmation, or feedback. File writes apply automatically (each one is checkpointed and shown to the user afterwards as a reviewable diff).
 - Work the task to completion: implement, then VERIFY — run get_diagnostics after edits, and run the nearest relevant test or build with run_command (only test/build/lint commands are permitted in this mode).
-- Finish with a complete report of what you changed and how you verified it.
+- Finish with the FINAL REPORT FORMAT (below) and nothing else — status heading, acceptance criteria table, changes, verification.
 - If the task is genuinely ambiguous, or requires an action you cannot take safely, STOP and report exactly what decision is needed — a clear "blocked on X" report is a successful outcome; guessing is not.
 `
       : '';
@@ -285,7 +329,7 @@ This run was started with a single click and nobody will answer questions mid-ta
   return `
 ${personalityPrompt}
 ${adoContextBlock}
-${planModeBlock}${autonomousBlock}${ticketBlock}${contextInstruction}
+${planModeBlock}${autonomousBlock}${options?.autonomous && !options?.ticketContext ? FINAL_REPORT_FORMAT : ''}${ticketBlock}${contextInstruction}
 
 ${contextBlock}${sourcesMarkdown}
 

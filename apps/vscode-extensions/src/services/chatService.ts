@@ -1061,7 +1061,8 @@ export class ChatService {
         modelResponse = await this.generateModelResponse(
           run,
           'Continue the ticket run from where the previous turn stopped — the investigation so far is carried over above. ' +
-            'Finish it now: apply the fix with your edit tools, or end with a "## Blocked" / "## No change needed" section. Do not re-investigate what is already read.',
+            'Finish it now: apply the fix with your edit tools, or end with a "## Blocked" / "## No change needed" section. Do not re-investigate what is already read. ' +
+            'If the transcript above shows the fix already applied AND verified, do not redo or re-verify it — deliver the final report.',
           finalResults,
           effModelId,
           effProvider,
@@ -1787,6 +1788,8 @@ Query: "${query}"`;
         // The worker's own stall judgment from its 'done' message — it knows
         // writesApplied, which the host-side regex fallback below does not.
         let workerSaidStall = false;
+        /** 'done' payload: how many file writes the worker actually applied (null on a worker that predates the field). */
+        let workerWritesApplied: number | null = null;
         // Mirror the streamed chunks here so we can salvage a response if the
         // worker dies before it sends 'done' (see settle() below).
         let streamedContent = '';
@@ -1862,11 +1865,16 @@ Query: "${query}"`;
             // one ADO bug). Keep it resumable; it's dropped anyway the moment
             // the user sends anything that isn't a continuation reply.
             const answerText = (fullContent || streamedContent).trim();
+            // The regex fallback must never overrule a worker that reports
+            // applied writes: a finished report with a polite "let me know if
+            // you want…" closing is done, not stalled. Treating it as a stall
+            // auto-resumed a completed ticket run (below) into re-verifying
+            // itself until the step limit — observed live on ticket 1516750.
             const stallShaped =
               !!answerText &&
               (workerSaidStall ||
-                PREMATURE_AMBIGUITY_RE.test(answerText) ||
-                PERMISSION_SEEKING_RE.test(answerText));
+                ((workerWritesApplied ?? 0) === 0 &&
+                  (PREMATURE_AMBIGUITY_RE.test(answerText) || PERMISSION_SEEKING_RE.test(answerText))));
             run.lastAnswerStallShaped = stallShaped;
             if (answerText && !stallShaped) {
               run.agentTranscript = null;
@@ -1916,6 +1924,7 @@ Query: "${query}"`;
                 // Stream complete
                 fullContent = result.content || '';
                 workerSaidStall = !!result.stallShaped;
+                workerWritesApplied = typeof result.writesApplied === 'number' ? result.writesApplied : null;
                 settle(null);
                 break;
 
@@ -1987,6 +1996,11 @@ Query: "${query}"`;
                       id: result.id,
                       status: 'error',
                       summary: /rejected/i.test(message) ? 'rejected' : 'failed',
+                      // WHY it failed, behind the row's Show output toggle —
+                      // a bare red "failed" (observed live on a refused
+                      // run_command) left the user unable to tell an allowlist
+                      // refusal from a crash.
+                      meta: { output: message.slice(0, 4000) },
                     });
                     modelWorker.postMessage({
                       type: 'tool_response',

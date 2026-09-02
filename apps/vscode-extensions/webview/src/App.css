@@ -1349,20 +1349,213 @@ button:disabled {
   text-decoration: underline;
 }
 
+/* Tables scroll inside their own wrapper — the panel is narrow and the body
+   must never scroll sideways. Light rules instead of a full grid of borders. */
+.md-table-wrap {
+  margin: 0.75em 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .markdown-content table {
   border-collapse: collapse;
-  margin: 1em 0;
+  margin: 0;
   width: 100%;
+  font-size: 0.95em;
 }
 
 .markdown-content th,
 .markdown-content td {
-  border: 1px solid var(--vscode-input-border);
-  padding: 0.5em;
+  border: 0;
+  border-bottom: 1px solid var(--wgpt-border, var(--vscode-input-border));
+  padding: 0.45em 0.6em;
+  text-align: left;
+  vertical-align: top;
 }
 
 .markdown-content th {
-  background-color: var(--vscode-input-background);
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+}
+
+.markdown-content tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* ── Agent run report (FINAL_REPORT_FORMAT) ───────────────────────────── */
+
+/* Status banner from the opening "## ✅ Done — …" heading. */
+.report-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55em;
+  margin: 0.15em 0 0.85em;
+  padding: 0.6em 0.75em;
+  border-left: 3px solid var(--vscode-focusBorder);
+  border-radius: var(--wgpt-radius-md, 6px);
+  background: rgba(127, 127, 127, 0.1);
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.report-status-icon {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 0.05em;
+}
+
+.report-status-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.report-status-text {
+  min-width: 0;
+}
+
+.report-status--ok {
+  border-color: var(--wgpt-success);
+  background: rgba(var(--wgpt-success-rgb), 0.12);
+}
+.report-status--ok .report-status-icon {
+  color: var(--wgpt-success);
+}
+
+.report-status--warn {
+  border-color: var(--wgpt-warning);
+  background: rgba(var(--wgpt-warning-rgb), 0.12);
+}
+.report-status--warn .report-status-icon {
+  color: var(--wgpt-warning);
+}
+
+.report-status--blocked {
+  border-color: var(--wgpt-danger);
+  background: rgba(var(--wgpt-danger-rgb), 0.12);
+}
+.report-status--blocked .report-status-icon {
+  color: var(--wgpt-danger);
+}
+
+.report-status--neutral {
+  border-color: var(--vscode-descriptionForeground);
+  background: rgba(127, 127, 127, 0.1);
+}
+.report-status--neutral .report-status-icon {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* "### Acceptance criteria" / "### Changes" / … — small-caps section labels. */
+.markdown-content h3.report-section-title {
+  margin: 1.1em 0 0.4em;
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Verdict badge inside a table cell. */
+.verdict {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12em 0.55em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.78em;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.verdict--met {
+  color: var(--wgpt-success);
+  background: rgba(var(--wgpt-success-rgb), 0.14);
+  border-color: rgba(var(--wgpt-success-rgb), 0.35);
+}
+
+.verdict--notmet {
+  color: var(--wgpt-danger);
+  background: rgba(var(--wgpt-danger-rgb), 0.14);
+  border-color: rgba(var(--wgpt-danger-rgb), 0.35);
+}
+
+.verdict--unverified,
+.verdict--partial {
+  color: var(--wgpt-warning);
+  background: rgba(var(--wgpt-warning-rgb), 0.14);
+  border-color: rgba(var(--wgpt-warning-rgb), 0.35);
+}
+
+/* Acceptance-criteria table re-flowed for a narrow panel: no header row, each
+   criterion becomes a card — badge left, criterion + evidence stacked right. */
+.md-table-wrap--ac {
+  overflow-x: visible;
+}
+
+.md-table-wrap--ac table,
+.md-table-wrap--ac tbody {
+  display: block;
+  width: 100%;
+}
+
+.md-table-wrap--ac thead {
+  display: none;
+}
+
+.md-table-wrap--ac tr {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.6em;
+  row-gap: 0.15em;
+  margin: 0.35em 0;
+  padding: 0.5em 0.6em;
+  border: 1px solid var(--wgpt-border, var(--vscode-input-border));
+  border-radius: var(--wgpt-radius-md, 6px);
+  background: var(--wgpt-surface, transparent);
+}
+
+.md-table-wrap--ac td {
+  display: block;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.md-table-wrap--ac td:nth-child(1) {
+  grid-column: 2;
+  grid-row: 1;
+  font-weight: 500;
+}
+
+.md-table-wrap--ac td:nth-child(2) {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: start;
+}
+
+.md-table-wrap--ac td:nth-child(3) {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: 0.92em;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Any further columns wrap below the evidence. */
+.md-table-wrap--ac td:nth-child(n + 4) {
+  grid-column: 2;
+}
+
+.markdown-content li {
+  margin: 0.2em 0;
 }
 
 /* GFM task-list checkboxes (remark-gfm) */

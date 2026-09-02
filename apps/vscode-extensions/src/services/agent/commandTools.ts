@@ -74,13 +74,29 @@ export function assertCommandAllowed(command: string): void {
 
 export function resolveCommandCwd(roots: NamedRoot[], cwdArg?: string): { cwd: string; displayCwd: string } {
   if (!roots.length) throw new WorkspaceRootRequiredError();
-  const rootFsPath = roots[0].uri.fsPath;
-  if (!cwdArg) return { cwd: rootFsPath, displayCwd: '.' };
-  const abs = path.resolve(rootFsPath, cwdArg.replace(/^\.?\//, ''));
+  // Multi-root workspaces: a cwd of "<rootName>" or "<rootName>/sub/dir" picks
+  // that root, the same disambiguation the file tools accept — otherwise
+  // every command ran in roots[0], and a package script in the second repo
+  // failed with pnpm's "node_modules missing" from the wrong directory.
+  let root = roots[0];
+  let rel = (cwdArg ?? '').replace(/^\.?\//, '');
+  if (rel && roots.length > 1) {
+    for (const r of roots) {
+      if (rel === r.name || rel.startsWith(`${r.name}/`)) {
+        root = r;
+        rel = rel.slice(r.name.length).replace(/^\//, '');
+        break;
+      }
+    }
+  }
+  const rootFsPath = root.uri.fsPath;
+  if (!rel) return { cwd: rootFsPath, displayCwd: roots.length > 1 ? root.name : '.' };
+  const abs = path.resolve(rootFsPath, rel);
   if (abs !== rootFsPath && !abs.startsWith(rootFsPath + path.sep)) {
     throw new Error('cwd resolves outside the workspace root.');
   }
-  return { cwd: abs, displayCwd: path.relative(rootFsPath, abs) || '.' };
+  const display = path.relative(rootFsPath, abs) || '.';
+  return { cwd: abs, displayCwd: roots.length > 1 ? `${root.name}/${display}` : display };
 }
 
 export function executeCommand(command: string, cwd: string, timeoutSec?: number): Promise<CommandResult> {
