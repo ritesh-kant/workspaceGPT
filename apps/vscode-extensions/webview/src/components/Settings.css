@@ -141,14 +141,42 @@
 }
 
 .connected-banner .connected-label {
-  color: var(--wgpt-success);
-  font-size: 0.85em;
+  color: var(--vscode-foreground);
+  font-size: 0.8rem;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Disconnect button inside connected banner */
+.connected-banner .connected-label strong {
+  margin-left: 4px;
+}
+
+/* Disconnect inside the connected banner: a quiet text link. Red only on
+   hover, so the one row that says "all good" doesn't carry a red button. */
+.disconnect-link {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  background: none !important;
+  color: var(--vscode-descriptionForeground) !important;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.disconnect-link:hover {
+  color: var(--wgpt-danger) !important;
+  text-decoration: underline;
+}
+
+/* Small red pill still used by Deployment settings (remove environment,
+   clear token). The source banners use .disconnect-link above instead. */
 .disconnect-button {
   padding: 5px 12px;
   font-size: 0.78em;
@@ -163,6 +191,158 @@
 .disconnect-button:hover {
   background: rgba(var(--wgpt-danger-rgb), 0.22) !important;
   border-color: rgba(var(--wgpt-danger-rgb), 0.45);
+}
+
+/* Section-summary status dot (replaces the ✅ emoji). */
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--vscode-descriptionForeground);
+}
+
+.status-dot--ok {
+  background: var(--wgpt-success);
+}
+
+.status-dot--warn {
+  background: var(--wgpt-warning);
+}
+
+.status-dot--err {
+  background: var(--wgpt-danger);
+}
+
+.status-dot--off {
+  opacity: 0.5;
+}
+
+/* Sync row: one primary action plus an overflow for the rare ones. */
+.sync-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.sync-primary {
+  padding: 7px 14px;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+
+.sync-primary:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.sync-overflow {
+  position: relative;
+}
+
+.sync-overflow-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sync-overflow-trigger:hover,
+.sync-overflow-trigger[aria-expanded='true'] {
+  background: var(--vscode-toolbar-hoverBackground) !important;
+  color: var(--vscode-foreground);
+}
+
+.sync-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-dropdown-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+.sync-overflow-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  color: var(--vscode-foreground);
+  border: none;
+  border-radius: 4px;
+  text-align: left;
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.sync-overflow-menu button:hover {
+  background: var(--vscode-list-hoverBackground) !important;
+  color: var(--vscode-foreground);
+}
+
+.sync-overflow-hint {
+  font-size: 0.68rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.sync-status-container {
+  margin-top: 0.6rem;
+}
+
+/* Reset lives in a collapsed Advanced section as a labelled row. */
+.danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.danger-zone-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.danger-zone-title {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.danger-zone-desc {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+}
+
+.danger-button--small {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  border-radius: 6px;
 }
 
 /* Styled select dropdowns */
@@ -571,9 +751,7 @@
 }
 
 .next-sync-time {
-  margin-left: 8px;
-  font-size: 0.7rem;
-  opacity: 0.6;
+  opacity: 0.7;
 }
 
 .stop-sync-button {
@@ -779,21 +957,22 @@
   display: inline-flex;
   align-items: center;
   padding: 1px 6px;
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--wgpt-warning);
-  background: rgba(var(--wgpt-warning-rgb), 0.12);
-  border: 1px solid rgba(var(--wgpt-warning-rgb), 0.3);
+  letter-spacing: 0.04em;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.15));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
   border-radius: 10px;
   vertical-align: middle;
 }
 
+/* Same card chrome as every other section — the amber outline made an
+   optional feature the loudest thing on the page. */
 .beta-section {
-  border: 1px solid rgba(224, 164, 88, 0.3);
-  border-radius: 6px;
-  margin-bottom: 1rem;
+  background-color: var(--vscode-textBlockQuote-background);
+  border-radius: 1rem;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -819,8 +998,8 @@
   user-select: none;
 }
 
-.beta-section-header:hover {
-  background: rgba(224, 164, 88, 0.06);
+.beta-section-header:hover h3 {
+  color: var(--vscode-textLink-foreground);
 }
 
 /* The ring hugs the title, not the full-width row. This header spans the whole
@@ -881,23 +1060,33 @@
   transition: 0.4s;
 }
 
+.slider {
+  border: 1px solid var(--vscode-input-border, transparent);
+  box-sizing: border-box;
+}
+
+/* Off reads as off: grey knob on a dim track. The knob used to be the accent
+   blue in both states, so a disabled source looked half-enabled. */
 .slider:before {
   position: absolute;
   content: '';
-  height: 16px;
-  width: 16px;
+  height: 14px;
+  width: 14px;
   left: 2px;
   bottom: 2px;
-  background-color: var(--vscode-button-background);
-  transition: 0.4s;
+  background-color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  transition: 0.25s;
 }
 
 input:checked + .slider {
   background-color: var(--vscode-button-background);
+  border-color: transparent;
 }
 
 input:checked + .slider:before {
   background-color: var(--vscode-button-foreground);
+  opacity: 1;
   transform: translateX(20px);
 }
 
@@ -1029,6 +1218,85 @@ input:checked + .slider:before {
 }
 .dep-group-label:first-child {
   margin-top: 0;
+}
+
+/* First-run setup card: replaces the empty editor skeleton until the user
+   picks a source, starts from scratch, or imports a preset. */
+.dep-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  background: var(--vscode-editor-background);
+}
+
+.dep-setup-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.dep-setup-text {
+  margin: 0 0 4px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dep-setup-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 0.78rem;
+}
+
+.dep-setup-links .link-like {
+  font-size: 0.78rem;
+  padding: 0;
+}
+
+/* Secondary action that must not stretch to the card width. */
+.dep-add-stage {
+  align-self: flex-start;
+  width: auto;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  border-radius: 6px;
+}
+
+/* Quiet one-liner for an empty section. */
+.dep-empty-note {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 8px;
+}
+
+/* Editor footer: sharing/import disclosure plus the reset link. */
+.dep-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.dep-footer .dep-details {
+  margin-top: 0;
+}
+
+.dep-reset-link {
+  align-self: flex-start;
+  font-size: 0.78rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.dep-reset-link:hover {
+  color: var(--wgpt-danger);
 }
 
 /* Intro / helper paragraph */
@@ -1335,113 +1603,230 @@ input.dep-preset-dropdown {
   margin-top: 2px;
 }
 
-/* Weekly quota: number lives inside the ring so a narrow sidebar doesn't
-   squeeze copy against a meter. Color is remaining-based — green while you
-   can keep going, yellow under 25%, red under 10%. */
-.usage-meter {
+/* Account: identity row, then a thin weekly-quota bar. Colour is
+   remaining-based — accent while you can keep going, amber under 25%, red
+   under 10%. */
+.account-card {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+
+.account-row {
+  display: flex;
   align-items: center;
-  text-align: center;
-  gap: 6px;
-  padding: 8px 0 4px;
+  gap: 10px;
 }
 
-.usage-ring-wrap {
-  position: relative;
-  width: 72px;
-  height: 72px;
-}
-
-.usage-ring-wrap svg {
-  display: block;
-}
-
-.usage-ring-track {
-  stroke: rgba(255, 255, 255, 0.1);
-}
-
-.usage-ring-value {
-  transition: stroke-dashoffset 0.4s ease, stroke 0.2s ease;
-}
-
-.usage-ring-pct {
-  position: absolute;
-  inset: 0;
+.account-avatar {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.05rem;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-  color: var(--vscode-foreground);
-}
-
-.usage-meter-title {
-  margin-top: 4px;
-  font-size: 0.88rem;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  font-size: 0.8rem;
   font-weight: 600;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.account-name {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
   color: var(--vscode-foreground);
-}
-
-.usage-meter-detail {
-  font-size: 0.75rem;
-  line-height: 1.35;
-  color: var(--vscode-descriptionForeground);
-}
-
-.usage-meter--ok .usage-ring-value {
-  stroke: var(--wgpt-success);
-}
-
-.usage-meter--warn .usage-ring-value,
-.usage-meter--warn .usage-ring-pct {
-  stroke: var(--wgpt-warning);
-  color: var(--wgpt-warning);
-}
-
-.usage-meter--critical .usage-ring-value,
-.usage-meter--critical .usage-ring-pct,
-.usage-meter--critical .usage-meter-title {
-  stroke: var(--wgpt-danger);
-  color: var(--wgpt-danger);
-}
-
-.account-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(255, 255, 255, 0.08)));
-}
-
-.account-identity {
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.75rem;
+}
+
+.account-plan {
+  display: block;
+  font-size: 0.7rem;
   color: var(--vscode-descriptionForeground);
+}
+
+.usage-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.usage-row-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--vscode-progressBar-background, rgba(128, 128, 128, 0.25));
+  overflow: hidden;
+}
+
+.usage-row-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--vscode-button-background);
+  transition: width 0.4s ease, background 0.2s ease;
+}
+
+.usage-row--warn .usage-row-fill {
+  background: var(--wgpt-warning);
+}
+
+.usage-row--critical .usage-row-fill {
+  background: var(--wgpt-danger);
+}
+
+.usage-row-detail {
+  font-size: 0.72rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.usage-row--critical .usage-row-detail {
+  color: var(--wgpt-danger);
+}
+
+.account-identity {
+  flex: 1;
+  min-width: 0;
 }
 
 .account-signout {
   flex-shrink: 0;
-  padding: 0;
-  background: none;
+  padding: 2px 4px;
+  background: none !important;
   border: none;
-  color: var(--vscode-textLink-foreground);
+  border-radius: 4px;
+  color: var(--vscode-descriptionForeground) !important;
   font-size: 0.75rem;
+  font-family: inherit;
   cursor: pointer;
 }
 
 .account-signout:hover {
+  color: var(--vscode-foreground) !important;
   text-decoration: underline;
 }
 
 .account-signout:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+
+/* ── Releases view ─────────────────────────────────────────────────────── */
+
+/* Secondary cards (Hotfix, Recent runs) sit below Today's release in weight. */
+.rel-quiet .section-header h3 {
+  font-size: 0.92rem;
+}
+
+.rel-subtitle {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Empty state for Today's release: a next step, not an error. */
+.rel-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  background: var(--vscode-editor-background);
+}
+
+.rel-empty-title {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.rel-empty-text {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+}
+
+.rel-empty-action {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  border-radius: 6px;
+}
+
+.rel-card {
+  padding: 14px 16px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  background: var(--vscode-editor-background);
+}
+
+.rel-step-sep {
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+}
+
+.rel-field-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.78rem;
+  color: var(--vscode-foreground);
+}
+
+.rel-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 0.85em;
+  font-family: inherit;
+  resize: vertical;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+}
+
+.rel-textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  border-color: var(--vscode-focusBorder);
+}
+
+/* One row per distinct run; repeats fold into a count. */
+.rel-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.rel-run:last-child {
+  border-bottom: none;
+}
+
+.rel-run .status-dot {
+  margin-right: 0;
+}
+
+.rel-run-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-foreground);
+}
+
+.rel-run-meta {
+  flex-shrink: 0;
+  font-size: 0.74rem;
+  color: var(--vscode-descriptionForeground);
 }

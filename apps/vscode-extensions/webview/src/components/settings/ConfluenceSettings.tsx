@@ -10,6 +10,7 @@ import { ConfluenceConfig } from '../../types';
 import SearchableDropdown from './SearchableDropdown';
 import SectionShell from './SectionShell';
 import SyncControls, { SyncStatusMessage } from './SyncControls';
+import StatusDot from './StatusDot';
 
 const ConfluenceSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
@@ -71,7 +72,13 @@ const ConfluenceSettings: React.FC = () => {
           ? confluenceConfig.isSyncing
             ? `Syncing… ${confluenceConfig.confluenceSyncProgress || 0}%`
             : `Indexing… ${confluenceConfig.confluenceIndexProgress || 0}%`
-          : `✅ ${confluenceConfig.siteName || 'Connected'} · ${confluenceConfig.spaceKey} · ${formatRelativeTime(confluenceConfig.lastSyncTime)}`;
+          : (
+              <>
+                <StatusDot tone='ok' />
+                {confluenceConfig.siteName || 'Connected'} · {confluenceConfig.spaceKey} ·{' '}
+                {formatRelativeTime(confluenceConfig.lastSyncTime)}
+              </>
+            );
 
   return (
     <SectionShell
@@ -104,11 +111,7 @@ const ConfluenceSettings: React.FC = () => {
                 disabled={confluenceConfig?.isConnecting}
                 className="primary-button-full"
               >
-                {confluenceConfig?.isConnecting ? (
-                  <>⏳ Connecting...</>
-                ) : (
-                  <>🔗 Connect to Confluence</>
-                )}
+                {confluenceConfig?.isConnecting ? 'Connecting…' : 'Connect to Confluence'}
               </button>
               {confluenceConfig?.isConnecting && (
                 <button
@@ -127,19 +130,17 @@ const ConfluenceSettings: React.FC = () => {
               {/* Connected Site */}
               <div className="connected-banner">
                 <span className="connected-label">
-                  ✅ Connected to <strong>{confluenceConfig.siteName || 'Confluence'}</strong>
+                  <StatusDot tone='ok' />
+                  Connected to <strong>{confluenceConfig.siteName || 'Confluence'}</strong>
                 </span>
-                <button
-                  onClick={disconnect}
-                  className="disconnect-button"
-                >
+                <button type='button' onClick={disconnect} className="disconnect-link">
                   Disconnect
                 </button>
               </div>
 
               {/* Space Selection */}
               <div className='form-group'>
-                <label htmlFor='confluence-space'>Select Space</label>
+                <label htmlFor='confluence-space'>Space</label>
                 <SearchableDropdown
                   value={confluenceConfig?.spaceKey ?? ''}
                   options={spaceOptions}

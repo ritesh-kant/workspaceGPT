@@ -15,6 +15,7 @@ import MentionPicker from './components/MentionPicker';
 import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
 import HomeGreeting from './components/HomeGreeting';
 import QuickTipsSection from './components/QuickTipsSection';
+import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
 import Onboarding from './components/onboarding/Onboarding';
@@ -187,12 +188,77 @@ const TURN_SCOPED_TYPES = new Set<string>([
  * the rest cover plain codebase and doc questions. Keep the org-grounded ones
  * first — they're the reason someone picks this over Cursor/Claude Code.
  */
-const STARTER_PROMPTS = [
-  { icon: '', text: 'Show Azure DevOps tickets assigned to me' },
-  { icon: '', text: 'Read ticket TKT-1234 and find the code it affects' },
-  { icon: '', text: 'Explain the architecture of this project' },
-  { icon: '', text: 'What do our docs say about the release process?' },
-];
+interface Suggestion {
+  /** Short chip text the user reads. */
+  label: string;
+  /** The full prompt actually sent — the label is a handle, not the ask. */
+  prompt: string;
+}
+
+/**
+ * "Try asking" suggestions, grounded in what this workspace actually has.
+ *
+ * With tickets on screen, the useful suggestions are things the ticket list
+ * can't do by itself — fix one, explain one, summarise the sprint — rather
+ * than "show my tickets", which duplicated the panel directly above. Without
+ * tickets, fall back to prompts that show the agent's reach across docs and
+ * code.
+ */
+function buildSuggestions(
+  items: WorkItemSummary[],
+  sprintName: string | undefined,
+  hasConfluence: boolean
+): Suggestion[] {
+  const suggestions: Suggestion[] = [];
+  const [first, second] = items;
+
+  if (first) {
+    suggestions.push({
+      label: `Fix #${first.id}`,
+      prompt:
+        `Work on ticket ${first.id} (${first.title}) — read the ticket and any design doc behind it, ` +
+        'find the code it affects, then implement the fix. Show me the diffs as you go.',
+    });
+  }
+  const explainTarget = second ?? first;
+  if (explainTarget) {
+    suggestions.push({
+      label: `Explain #${explainTarget.id} and the code it touches`,
+      prompt:
+        `Read ticket ${explainTarget.id} (${explainTarget.title}), find the code it affects, ` +
+        'and explain what would need to change and why. Do not edit anything yet.',
+    });
+  }
+  if (items.length > 1) {
+    suggestions.push({
+      label: sprintName ? `Summarize my ${sprintName} tickets` : 'Summarize my open tickets',
+      prompt:
+        `Summarize the tickets assigned to me${sprintName ? ` in ${sprintName}` : ''}: ` +
+        'group them by area, flag anything blocked or unclear, and suggest an order to tackle them.',
+    });
+  }
+  if (hasConfluence) {
+    suggestions.push({
+      label: 'What do our docs say about the release process?',
+      prompt: 'What do our docs say about the release process?',
+    });
+  }
+  if (suggestions.length < 3) {
+    suggestions.push({
+      label: 'Explain the architecture of this project',
+      prompt: 'Explain the architecture of this project',
+    });
+  }
+  return suggestions.slice(0, 4);
+}
+
+const SuggestionArrow: React.FC = () => (
+  <span className='prompt-item-arrow' aria-hidden='true'>
+    <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+      <path d='M9 6l6 6-6 6' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+    </svg>
+  </span>
+);
 
 const App: React.FC = () => {
   // Use Zustand stores instead of local state
@@ -278,15 +344,15 @@ const App: React.FC = () => {
   const CHAT_MODE_META: Record<ChatMode, { label: string; title: string }> = {
     agent: {
       label: 'Agent',
-      title: 'Agent mode — edits apply autonomously without review cards (checkpointed & audited). Click for Plan mode.',
+      title: 'Agent: edits apply on their own, checkpointed so you can revert.',
     },
     plan: {
       label: 'Plan',
-      title: 'Plan mode — the agent investigates and proposes exact edits without changing anything; reply "go ahead" to execute. Click for Ask mode.',
+      title: 'Plan: investigates and proposes exact edits without changing anything. Reply "go ahead" to run it.',
     },
     ask: {
       label: 'Ask',
-      title: 'Ask mode — every edit shows a review card for your approval. Click for Agent mode.',
+      title: 'Ask: every edit is shown as a diff for you to approve first.',
     },
   };
   const isConfluenceConnected = config.confluence?.isAuthenticated || false;
@@ -320,7 +386,7 @@ const App: React.FC = () => {
    * stale; this stops new ones being made.
    */
   const contextOptions: DropdownOption[] = [
-    { value: 'Auto', label: 'Context: Auto ✨' },
+    { value: 'Auto', label: 'Context: Auto' },
     {
       value: 'Confluence',
       label: 'Confluence',
@@ -1149,11 +1215,13 @@ const App: React.FC = () => {
     setStatusText('');
   };
 
-  const handleNewChat = () => {
+  // skipSave: the current session's history was just deleted (e.g. from the
+  // history sidebar) — saving it here would just recreate the file we removed.
+  const handleNewChat = (skipSave = false) => {
     backgroundCurrentSession();
 
     // Save current chat before starting a new one
-    if (currentSessionId && messages.length > 0) {
+    if (!skipSave && currentSessionId && messages.length > 0) {
       // Force an immediate save (no debounce)
       vscode.postMessage({
         type: MESSAGE_TYPES.SAVE_CHAT_HISTORY,
@@ -1634,9 +1702,10 @@ const App: React.FC = () => {
       type: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
       sessionId,
     });
-    // If deleting the active session, reset
+    // If deleting the active session, reset — but skip the save-before-new-chat
+    // step, since that would just resave the messages under the file we deleted.
     if (sessionId === currentSessionId) {
-      handleNewChat();
+      handleNewChat(true);
     }
   };
 
@@ -1728,20 +1797,13 @@ const App: React.FC = () => {
     });
   };
 
-  const formatDate = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-  };
+  const suggestions = buildSuggestions(myWorkItems, myWorkSprint, isConfluenceConnected);
+  // Real ticket titles for history group headers whose stored title was cut
+  // short by an older build.
+  const ticketTitles = useMemo(
+    () => new Map(myWorkItems.map((item) => [item.id, item.title] as const)),
+    [myWorkItems]
+  );
 
   // Wait for the persisted settings blob before rendering anything — otherwise
   // a returning user would see a flash of onboarding for the instant before
@@ -1802,9 +1864,9 @@ const App: React.FC = () => {
                           {runningSessionIds.has(session.id) && (
                             <span className='session-running-dot' title='Still working…' />
                           )}
-                          {session.title}
+                          {displaySessionTitle(session.title)}
                         </span>
-                        <span className='recent-chat-card-date'>{formatDate(session.updatedAt)}</span>
+                        <span className='recent-chat-card-date'>{formatRelativeTime(session.updatedAt)}</span>
                       </div>
                       <div className='recent-chat-card-arrow'>→</div>
                     </div>
@@ -1814,13 +1876,14 @@ const App: React.FC = () => {
               <div className='prompt-suggestions recent-chats-prompts'>
                 <h2 className='prompt-suggestions-title'>Try asking</h2>
                 <div className='prompt-suggestions-list'>
-                  {STARTER_PROMPTS.map((prompt) => (
+                  {suggestions.map((suggestion) => (
                     <button
-                      key={prompt.text}
+                      key={suggestion.label}
                       className='prompt-item'
-                      onClick={() => handleStarterPrompt(prompt.text)}
+                      onClick={() => handleStarterPrompt(suggestion.prompt)}
                     >
-                      <span className='prompt-item-text'>{prompt.text}</span>
+                      <span className='prompt-item-text'>{suggestion.label}</span>
+                      <SuggestionArrow />
                     </button>
                   ))}
                 </div>
@@ -1841,22 +1904,26 @@ const App: React.FC = () => {
                   onAutoRun={handleAutoRunWorkItem}
                 />
               )}
-              <QuickTipsSection mode={mode} onOpenSettings={() => setActiveView('settings')} />
               <div className='prompt-suggestions'>
-                <h2 className='prompt-suggestions-title'>💬 Try asking</h2>
+                <h2 className='prompt-suggestions-title'>Try asking</h2>
                 <div className='prompt-suggestions-list'>
-                  {STARTER_PROMPTS.map((prompt) => (
+                  {suggestions.map((suggestion) => (
                     <button
-                      key={prompt.text}
+                      key={suggestion.label}
                       className='prompt-item'
-                      onClick={() => handleStarterPrompt(prompt.text)}
+                      onClick={() => handleStarterPrompt(suggestion.prompt)}
                     >
-                      <span className='prompt-item-icon'>{prompt.icon}</span>
-                      <span className='prompt-item-text'>{prompt.text}</span>
+                      <span className='prompt-item-text'>{suggestion.label}</span>
+                      <SuggestionArrow />
                     </button>
                   ))}
                 </div>
               </div>
+              <QuickTipsSection
+                isConfluenceConnected={isConfluenceConnected}
+                sessionCount={historyList.length}
+                onOpenSettings={() => setActiveView('settings')}
+              />
             </div>
           )
         ) : (
@@ -2095,14 +2162,20 @@ const App: React.FC = () => {
                   type='button'
                   className='mode-chip'
                   onClick={() => setActiveView('settings')}
-                  title={`${mode === 'remote' ? 'Remote' : 'Local'} mode — click to change`}
+                  data-tooltip={
+                    mode === 'remote'
+                      ? 'Remote: answers come from WorkspaceGPT’s managed model. Your search index stays on this machine; only the question and retrieved snippets are sent. Click to change.'
+                      : 'Local: chat model, embeddings and search index all run on this machine. Nothing leaves it. Click to change.'
+                  }
+                  data-tooltip-align='start'
+                  aria-label={`${mode === 'remote' ? 'Remote' : 'Local'} mode. Click to change.`}
                 >
                   <span className={`mode-chip-dot mode-chip-dot--${mode}`} />
                   {mode === 'remote' ? 'Remote' : 'Local'}
                 </button>
                 <div
                   className={`chat-mode-selector chat-mode-selector--${chatMode}`}
-                  title={CHAT_MODE_META[chatMode].title}
+                  data-tooltip={CHAT_MODE_META[chatMode].title}
                 >
                   <SearchableDropdown
                     value={chatMode}
@@ -2114,7 +2187,14 @@ const App: React.FC = () => {
                     }))}
                   />
                 </div>
-                <div className='context-selector-bottom'>
+                <div
+                  className='context-selector-bottom'
+                  data-tooltip={
+                    contextSelection === 'Auto'
+                      ? 'Where answers are grounded. Auto picks between your docs, tickets and code per question.'
+                      : `Answers are grounded in ${contextSelection} only.`
+                  }
+                >
                   <SearchableDropdown
                     value={contextSelection}
                     onChange={setContextSelection}
@@ -2190,12 +2270,12 @@ const App: React.FC = () => {
         <ChatHistorySidebar
           isVisible={activeView === 'history'}
           historyList={historyList}
+          ticketTitles={ticketTitles}
           currentSessionId={currentSessionId}
           runningSessionIds={runningSessionIds}
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
           onClose={() => setActiveView('chat')}
-          onNewChat={handleNewChat}
         />
       </div>
     </div>

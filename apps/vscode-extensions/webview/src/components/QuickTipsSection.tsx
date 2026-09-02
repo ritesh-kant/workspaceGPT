@@ -1,110 +1,87 @@
-import React, { useEffect, useState } from 'react';
-import { WorkspaceMode } from '../constants';
+import React, { useState } from 'react';
 
 interface QuickTipsSectionProps {
-  mode: WorkspaceMode;
+  isConfluenceConnected: boolean;
+  /** Sessions the user has already had — the tip retires once they have a few. */
+  sessionCount: number;
   onOpenSettings: () => void;
 }
 
-const STORAGE_KEY = 'workspacegpt.homeTipsExpanded';
+const DISMISSED_KEY = 'workspacegpt.homeTipDismissed';
+/** After this many chats the user has found their feet; stop showing tips. */
+const RETIRE_AFTER_SESSIONS = 3;
 
-/**
- * Tips are onboarding content: worth a full read once, not worth permanent
- * vertical space on every empty state. Expanded on the very first visit, then
- * collapsed by default — and whatever the user sets afterwards sticks.
- * localStorage can be unavailable in a sandboxed webview, in which case this
- * degrades to "expanded every session", which is just the old behavior.
- */
-function initialExpanded(): boolean {
+function readDismissed(): boolean {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored === null ? true : stored === 'true';
+    return localStorage.getItem(DISMISSED_KEY) === 'true';
   } catch {
-    return true;
+    return false;
   }
 }
 
-const QuickTipsSection: React.FC<QuickTipsSectionProps> = ({ mode, onOpenSettings }) => {
-  const [expanded, setExpanded] = useState<boolean>(initialExpanded);
+/**
+ * One tip at a time, dismissible, gone for good once the user has sent a few
+ * chats.
+ *
+ * The previous version stacked three always-expanded cards — a privacy
+ * paragraph, a Confluence nudge, and a "you can ask for code changes" note —
+ * which pushed the composer down on every launch. The privacy note now lives
+ * on the Remote/Local chip in the composer, where the user looks when they
+ * wonder where their data goes; what remains here is the single most useful
+ * next step for this workspace.
+ */
+const QuickTipsSection: React.FC<QuickTipsSectionProps> = ({
+  isConfluenceConnected,
+  sessionCount,
+  onOpenSettings,
+}) => {
+  const [dismissed, setDismissed] = useState<boolean>(readDismissed);
 
-  useEffect(() => {
+  if (dismissed || sessionCount >= RETIRE_AFTER_SESSIONS) return null;
+
+  const dismiss = () => {
+    setDismissed(true);
     try {
-      if (localStorage.getItem(STORAGE_KEY) === null) {
-        localStorage.setItem(STORAGE_KEY, 'false');
-      }
+      localStorage.setItem(DISMISSED_KEY, 'true');
     } catch {
-      // Non-persistent storage: nothing to mark.
+      // Non-persistent storage: dismissed for this session only.
     }
-  }, []);
-
-  const toggle = () => {
-    setExpanded((wasExpanded) => {
-      const next = !wasExpanded;
-      try {
-        localStorage.setItem(STORAGE_KEY, String(next));
-      } catch {
-        // Non-persistent storage: the toggle still works for this session.
-      }
-      return next;
-    });
   };
 
-  return (
-    <div className='tips-section'>
-      <button
-        type='button'
-        className='tips-section-toggle'
-        onClick={toggle}
-        aria-expanded={expanded}
-      >
-        <span className={`tips-section-chevron${expanded ? ' tips-section-chevron--open' : ''}`}>
-          ▶
-        </span>
-        <span className='tips-section-label'>✨ Quick Tips</span>
-        {/* The privacy posture is the one tip worth a glance even when
-            collapsed, so it doubles as the collapsed summary. */}
-        {!expanded && (
-          <span className='tips-section-summary'>
-            🛡️ {mode === 'remote' ? 'Remote mode — index stays local' : 'Local mode — fully offline'}
-          </span>
-        )}
-      </button>
+  const tip = !isConfluenceConnected
+    ? {
+        text: 'Connect Confluence to ground answers in your team’s docs.',
+        action: 'Open Settings',
+        onAction: onOpenSettings,
+      }
+    : {
+        text: 'Ask for a code change, not just an explanation. Every edit is a diff you approve first, and always revertable.',
+      };
 
-      {expanded && (
-        <div className='tips-list'>
-          <div className='tip-item'>
-            <span className='tip-icon'>🛡️</span>
-            <span>
-              {mode === 'remote'
-                ? "You're in Remote mode: answers come from WorkspaceGPT's managed model, but your embeddings and search index still live on this machine — only the question and the retrieved snippets are sent."
-                : "You're in Local mode: everything — chat model, embeddings, and your search index — runs on this machine. No account needed, and none of your content leaves it."}
-            </span>
-          </div>
-          <div
-            className='tip-item tip-item--interactive'
-            onClick={onOpenSettings}
-            role='button'
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onOpenSettings();
-            }}
-          >
-            <span className='tip-icon'>🔗</span>
-            <span>
-              Connect Confluence in Settings to access your team's knowledge base
-              instantly
-            </span>
-            <span className='tip-arrow'>→</span>
-          </div>
-          <div className='tip-item'>
-            <span className='tip-icon'>🧑‍💻</span>
-            <span>
-              Ask it to change code, not just explain it — every edit is shown as
-              a diff you approve first, and always revertable
-            </span>
-          </div>
-        </div>
+  return (
+    <div className='home-tip' role='note'>
+      <span className='home-tip-icon' aria-hidden='true'>
+        <svg width='14' height='14' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+          <path d='M9 18h6M10 21h4' stroke='currentColor' strokeWidth='2' strokeLinecap='round' />
+          <path
+            d='M12 3a6 6 0 0 0-3.5 10.9c.6.5.9 1 1 1.6l.2 1.5h4.6l.2-1.5c.1-.6.4-1.1 1-1.6A6 6 0 0 0 12 3z'
+            stroke='currentColor'
+            strokeWidth='2'
+            strokeLinejoin='round'
+          />
+        </svg>
+      </span>
+      <span className='home-tip-text'>{tip.text}</span>
+      {tip.action && (
+        <button type='button' className='home-tip-action' onClick={tip.onAction}>
+          {tip.action}
+        </button>
       )}
+      <button type='button' className='home-tip-dismiss' onClick={dismiss} aria-label='Dismiss tip'>
+        <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+          <path d='M6 6l12 12M18 6L6 18' stroke='currentColor' strokeWidth='2' strokeLinecap='round' />
+        </svg>
+      </button>
     </div>
   );
 };

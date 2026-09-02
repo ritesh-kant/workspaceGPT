@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '../../store';
 import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES, SYNC_INTERVAL_MS } from '../../constants';
 import { clearStatusMessageAfterDelay } from '../../store/statusMessage';
+import { formatRelativeTime } from './utils';
 
 export type SyncSection = 'confluence' | 'ado';
 
@@ -90,6 +91,75 @@ export function useSyncActions(section: SyncSection) {
   };
 }
 
+const AUTO_SYNC_MINUTES = Math.round(SYNC_INTERVAL_MS / 60_000);
+
+/**
+ * The rarely-needed actions, behind one "more" button. "Check connection" is
+ * redundant while the banner above already says connected, and a full re-sync
+ * is a recovery tool, not a daily one — neither earns a primary button.
+ */
+const SyncOverflowMenu: React.FC<{
+  onCheckConnection: () => void;
+  onForceFullSync?: () => void;
+}> = ({ onCheckConnection, onForceFullSync }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const run = (action: () => void) => {
+    setOpen(false);
+    action();
+  };
+
+  return (
+    <div className='sync-overflow' ref={ref}>
+      <button
+        type='button'
+        className='sync-overflow-trigger'
+        onClick={() => setOpen((wasOpen) => !wasOpen)}
+        aria-haspopup='menu'
+        aria-expanded={open}
+        aria-label='More sync options'
+        data-tooltip='More'
+      >
+        <svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor' xmlns='http://www.w3.org/2000/svg' aria-hidden='true'>
+          <circle cx='5' cy='12' r='2' />
+          <circle cx='12' cy='12' r='2' />
+          <circle cx='19' cy='12' r='2' />
+        </svg>
+      </button>
+      {open && (
+        <div className='sync-overflow-menu' role='menu'>
+          <button type='button' role='menuitem' onClick={() => run(onCheckConnection)}>
+            Check connection
+          </button>
+          {onForceFullSync && (
+            <button type='button' role='menuitem' onClick={() => run(onForceFullSync)}>
+              <span>Full re-sync</span>
+              <span className='sync-overflow-hint'>Re-fetches everything and rebuilds the index</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 /**
  * The sync button row plus the progress / last-synced line, shared by the
  * Confluence and Azure DevOps sections.
@@ -106,37 +176,31 @@ const SyncControls: React.FC<{ section: SyncSection }> = ({ section }) => {
 
   return (
     <>
-      <div className='button-group'>
-        <button onClick={checkConnection}>Check Connection</button>
+      <div className='sync-row'>
         {isSyncing || isIndexing ? (
-          <button onClick={stopSync} className='stop-sync-button' title='Stop process'>
-            {isIndexing ? 'Stop Indexing' : 'Stop Sync'}
+          <button onClick={stopSync} className='sync-primary stop-sync-button' title='Stop process'>
+            {isIndexing ? 'Stop indexing' : 'Stop sync'}
           </button>
         ) : sectionConfig.canResume ? (
-          <button onClick={resumeSync} className='resume-sync-button' title='Resume sync process'>
-            Resume Sync
+          <button onClick={resumeSync} className='sync-primary resume-sync-button' title='Resume sync process'>
+            Resume sync
           </button>
         ) : (
-          <>
-            <button onClick={() => startSync(false)}>
-              {lastSyncTime ? 'Sync Recent Changes' : 'Start Sync'}
-            </button>
-            {/* Only meaningful once something has been synced — before that,
-                "Start Sync" already fetches everything. */}
-            {lastSyncTime && (
-              <button
-                onClick={() => startSync(true)}
-                className='secondary-button'
-                title='Forces a complete re-fetch and rebuild of the index for this source.'
-              >
-                Force Full Re-Sync
-              </button>
-            )}
-          </>
+          <button onClick={() => startSync(false)} className='sync-primary'>
+            {lastSyncTime ? 'Sync now' : 'Start sync'}
+          </button>
+        )}
+        {!(isSyncing || isIndexing) && (
+          <SyncOverflowMenu
+            onCheckConnection={checkConnection}
+            // Only meaningful once something has been synced — before that,
+            // "Start sync" already fetches everything.
+            onForceFullSync={lastSyncTime ? () => startSync(true) : undefined}
+          />
         )}
       </div>
 
-      <div className='sync-status-container mt-12'>
+      <div className='sync-status-container'>
         {isSyncing || isIndexing ? (
           <div className='active-sync-indicator'>
             <span className='spinner'>
@@ -153,26 +217,23 @@ const SyncControls: React.FC<{ section: SyncSection }> = ({ section }) => {
               </svg>
             </span>
             {isSyncing
-              ? `Syncing... (${sectionConfig[fields.syncProgress] || 0}%)`
-              : `Indexing... (${sectionConfig[fields.indexProgress] || 0}%)`}
+              ? `Syncing… ${sectionConfig[fields.syncProgress] || 0}%`
+              : `Indexing… ${sectionConfig[fields.indexProgress] || 0}%`}
           </div>
         ) : lastSyncTime ? (
           <div className='last-sync-time'>
-            Last Sync: {new Date(lastSyncTime).toLocaleString()}
-            <span className='next-sync-time'>
-              (Next auto-sync at ~
-              {new Date(new Date(lastSyncTime).getTime() + SYNC_INTERVAL_MS).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-              )
-            </span>
+            {capitalize(formatRelativeTime(lastSyncTime))}
+            <span className='next-sync-time'> · auto-syncs every {AUTO_SYNC_MINUTES} min</span>
           </div>
         ) : null}
       </div>
     </>
   );
 };
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 /** The section's transient status line, shared by both integrations. */
 export const SyncStatusMessage: React.FC<{ section: SyncSection }> = ({ section }) => {

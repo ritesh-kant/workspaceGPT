@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES } from '../../constants';
 import SectionShell from './SectionShell';
+import StatusDot from './StatusDot';
 
 /**
  * RECONSTRUCTED 2026-08-31 — deleted by mistake earlier in the same session
@@ -43,56 +44,30 @@ function usageTone(remainingPct: number): 'ok' | 'warn' | 'critical' {
   return 'ok';
 }
 
-const RING_SIZE = 72;
-const RING_STROKE = 5.5;
-const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
-
-const WeeklyUsageCard: React.FC<{ used: number; limit: number }> = ({ used, limit }) => {
+/**
+ * Weekly quota as one line plus a thin bar. The previous 72px ring with the
+ * percentage inside took a third of the Settings viewport for a number the
+ * user glances at occasionally; the fraction and the reset date say the same
+ * thing in a single row.
+ */
+const WeeklyUsageRow: React.FC<{ used: number; limit: number }> = ({ used, limit }) => {
   const remaining = Math.max(0, limit - used);
   const remainingPct = limit > 0 ? Math.round((remaining / limit) * 100) : 0;
   const clampedPct = Math.min(100, Math.max(0, remainingPct));
   const tone = usageTone(clampedPct);
   const exhausted = remaining === 0;
   const refreshIn = formatRefreshIn();
-  const dashOffset = RING_CIRCUMFERENCE * (1 - clampedPct / 100);
 
-  const title = exhausted ? 'Weekly limit reached' : 'Weekly remaining';
-  const detail = `${remaining} / ${limit} left · refreshes in ${refreshIn}`;
+  const detail = exhausted
+    ? `Weekly limit reached · resets in ${refreshIn}`
+    : `${remaining} of ${limit} requests left · resets in ${refreshIn}`;
 
   return (
-    <div
-      className={`usage-meter usage-meter--${tone}`}
-      role='status'
-      aria-label={`${title}: ${clampedPct}% remaining. ${detail}`}
-    >
-      <div className='usage-ring-wrap' aria-hidden='true'>
-        <svg width={RING_SIZE} height={RING_SIZE} viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}>
-          <circle
-            className='usage-ring-track'
-            cx={RING_SIZE / 2}
-            cy={RING_SIZE / 2}
-            r={RING_RADIUS}
-            fill='none'
-            strokeWidth={RING_STROKE}
-          />
-          <circle
-            className='usage-ring-value'
-            cx={RING_SIZE / 2}
-            cy={RING_SIZE / 2}
-            r={RING_RADIUS}
-            fill='none'
-            strokeWidth={RING_STROKE}
-            strokeLinecap='round'
-            strokeDasharray={RING_CIRCUMFERENCE}
-            strokeDashoffset={dashOffset}
-            transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
-          />
-        </svg>
-        <span className='usage-ring-pct'>{clampedPct}%</span>
+    <div className={`usage-row usage-row--${tone}`} role='status' aria-label={detail}>
+      <div className='usage-row-bar' aria-hidden='true'>
+        <div className='usage-row-fill' style={{ width: `${clampedPct}%` }} />
       </div>
-      <div className='usage-meter-title'>{title}</div>
-      <div className='usage-meter-detail'>{detail}</div>
+      <div className='usage-row-detail'>{detail}</div>
     </div>
   );
 };
@@ -159,23 +134,26 @@ const RemoteAccountSettings: React.FC = () => {
     vscode.postMessage({ type: MESSAGE_TYPES.SIGN_OUT_REMOTE });
   };
 
-  const remainingPct =
+  const remaining =
     typeof status.requestsLimitWeekly === 'number' && status.requestsLimitWeekly > 0
-      ? Math.max(
-          0,
-          Math.round(
-            ((status.requestsLimitWeekly - (status.requestsUsedThisWeek ?? 0)) / status.requestsLimitWeekly) * 100
-          )
-        )
+      ? Math.max(0, status.requestsLimitWeekly - (status.requestsUsedThisWeek ?? 0))
       : null;
 
-  const summary = checking
-    ? 'Checking session…'
-    : status.signedIn
-      ? `✅ Signed in${status.githubLogin ? ` as ${status.githubLogin}` : ''}${
-          remainingPct === null ? '' : ` · ${remainingPct}% left this week`
-        }`
-      : 'Not signed in';
+  const summary = checking ? (
+    'Checking session…'
+  ) : status.signedIn ? (
+    <>
+      <StatusDot tone='ok' />
+      {status.githubLogin || 'Signed in'}
+      {remaining === null ? '' : ` · ${remaining} left this week`}
+    </>
+  ) : (
+    'Not signed in'
+  );
+
+  const planLabel = status.plan
+    ? status.plan.charAt(0).toUpperCase() + status.plan.slice(1)
+    : undefined;
 
   return (
     <SectionShell
@@ -186,17 +164,14 @@ const RemoteAccountSettings: React.FC = () => {
     >
       <div className='settings-form'>
         {status.signedIn ? (
-          <div className='form-group'>
-            {typeof status.requestsLimitWeekly === 'number' && (
-              <WeeklyUsageCard
-                used={status.requestsUsedThisWeek ?? 0}
-                limit={status.requestsLimitWeekly}
-              />
-            )}
-            <div className='account-footer'>
+          <div className='account-card'>
+            <div className='account-row'>
+              <span className='account-avatar' aria-hidden='true'>
+                {(status.githubLogin || '?').charAt(0).toUpperCase()}
+              </span>
               <span className='account-identity'>
-                Signed in as {status.githubLogin || 'GitHub'}
-                {status.plan ? ` · ${status.plan}` : ''}
+                <span className='account-name'>{status.githubLogin || 'GitHub account'}</span>
+                {planLabel && <span className='account-plan'>{planLabel} plan</span>}
               </span>
               <button
                 type='button'
@@ -207,6 +182,12 @@ const RemoteAccountSettings: React.FC = () => {
                 {busy ? 'Signing out…' : 'Sign out'}
               </button>
             </div>
+            {typeof status.requestsLimitWeekly === 'number' && (
+              <WeeklyUsageRow
+                used={status.requestsUsedThisWeek ?? 0}
+                limit={status.requestsLimitWeekly}
+              />
+            )}
           </div>
         ) : (
           <div className='form-group'>
@@ -216,15 +197,15 @@ const RemoteAccountSettings: React.FC = () => {
               onClick={signIn}
               disabled={busy || checking}
             >
-              {busy ? '⏳ Signing in…' : '🔗 Sign Up with WorkspaceGPT'}
+              {busy ? 'Signing in…' : 'Sign in to WorkspaceGPT'}
             </button>
             <small className='form-text'>
-              Remote mode needs an account: every answer is generated by WorkspaceGPT's
-              managed model, and each request is checked against your session.
+              Remote mode needs an account: answers come from WorkspaceGPT’s managed
+              model, and each request is checked against your session.
             </small>
             {error && (
               <div className='status-message error' style={{ marginTop: '8px' }}>
-                ❌ {error}
+                {error}
               </div>
             )}
           </div>

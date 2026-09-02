@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES } from '../../constants';
 import SectionShell from './SectionShell';
+import StatusDot from './StatusDot';
 
 /** How long to wait for the host's setup result before offering a retry. */
 const SETUP_TIMEOUT_MS = 30000;
@@ -64,7 +65,12 @@ const McpSettings: React.FC = () => {
     isInstalled === null
       ? 'Checking…'
       : isInstalled
-        ? '✅ Connected'
+        ? (
+          <>
+            <StatusDot tone='ok' />
+            Connected
+          </>
+        )
         : 'Not connected';
 
   return (

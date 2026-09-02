@@ -13,6 +13,7 @@ import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
 // import CodebaseSettings from './settings/CodebaseSettings';
 import McpSettings from './settings/McpSettings';
+import SectionShell from './settings/SectionShell';
 import { SettingsButtonProps } from '../types';
 
 const SettingsButton: React.FC<SettingsButtonProps> = ({
@@ -114,11 +115,24 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
 
         {/* <CodebaseSettings /> */}
 
-        <div className='settings-form'>
-          <button className='danger-button' onClick={() => setConfirmingReset(true)}>
-            Reset WorkspaceGPT
-          </button>
-        </div>
+        {/* Reset used to be a full-width red button at the foot of every
+            Settings visit. It is a once-in-a-blue-moon recovery action, so it
+            lives behind a collapsed section with the confirm dialog below. */}
+        <SectionShell storageKey='advanced' title='Advanced'>
+          <div className='settings-form'>
+            <div className='danger-zone'>
+              <div className='danger-zone-text'>
+                <span className='danger-zone-title'>Reset WorkspaceGPT</span>
+                <span className='danger-zone-desc'>
+                  Clears connections, API keys, indexed sources and chat history on this machine.
+                </span>
+              </div>
+              <button type='button' className='danger-button danger-button--small' onClick={() => setConfirmingReset(true)}>
+                Reset
+              </button>
+            </div>
+          </div>
+        </SectionShell>
       </div>
 
       {/* Reset wipes every connection, key, and chat with no undo — at least as

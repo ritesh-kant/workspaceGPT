@@ -97,6 +97,10 @@ const DeploymentSettings: React.FC = () => {
   const [importError, setImportError] = useState<string | undefined>();
   const [renamingPreset, setRenamingPreset] = useState(false);
   const [presetTab, setPresetTab] = useState<'json' | 'import'>('json');
+  // A pipeline with nothing in it shows a single setup card instead of the
+  // full editor skeleton; `building` is the user's "start from scratch" click.
+  const [building, setBuilding] = useState(false);
+  const [jsonOpen, setJsonOpen] = useState(false);
 
   // ---- preset list + active descriptor + immutable edit helpers ----
   const presets = resolvePresetList(dep);
@@ -743,6 +747,12 @@ const DeploymentSettings: React.FC = () => {
     ? 'Off'
     : `${pipeline?.name || 'Pipeline'}${dep.vercelConnected || machStatus.connected ? ' · connected' : ' · not connected'}`;
 
+  const isBlank =
+    source.provider === 'none' && pipeline.stages.length === 0 && environments.length === 0 && !hotfixEnabled;
+  const showSetup = isBlank && !building;
+  const needsAnyConnection = needsConfluence || needsGithub || needsVercel;
+  const sourceChoices = (Object.keys(SOURCE_LABEL) as PipelineSource['provider'][]).filter((k) => k !== 'none');
+
   return (
     <SectionShell
       storageKey='deployment'
@@ -758,6 +768,9 @@ const DeploymentSettings: React.FC = () => {
     >
       {dep.isDeploymentEnabled && (
         <div className="settings-form">
+          {/* Presets only matter once there is more than one, or once the
+              editor is open; on a blank first visit they are noise. */}
+          {(!showSetup || presets.length > 1) && (
           <div className="dep-preset-row">
             {renamingPreset ? (
               <input
@@ -793,56 +806,47 @@ const DeploymentSettings: React.FC = () => {
             </button>
           </div>
 
-          <details className="dep-details">
-            <summary>Preset JSON</summary>
-            <div className="dep-details-body">
-              <div className="dep-tabs">
-                <button
-                  className={`dep-tab${presetTab === 'json' ? ' active' : ''}`}
-                  onClick={() => setPresetTab('json')}
-                >
-                  View / copy
+          )}
+
+          {showSetup && (
+            <div className="dep-setup">
+              <div className="dep-setup-title">Set up a deployment pipeline</div>
+              <p className="dep-setup-text">
+                Choose where release versions come from, then add the stages that promote them.
+                Credentials never leave this machine.
+              </p>
+              <div className="dep-field-label">Source</div>
+              <SearchableDropdown
+                value=""
+                placeholder="Choose a source…"
+                options={sourceChoices.map((k) => ({ value: k, label: SOURCE_LABEL[k] }))}
+                onChange={(v) => {
+                  setSource({ provider: v as PipelineSource['provider'] });
+                  setBuilding(true);
+                }}
+              />
+              <div className="dep-setup-links">
+                <button type="button" className="link-like" onClick={() => setBuilding(true)}>
+                  Start without a source
                 </button>
+                <span className="dep-muted">·</span>
                 <button
-                  className={`dep-tab${presetTab === 'import' ? ' active' : ''}`}
-                  onClick={() => setPresetTab('import')}
+                  type="button"
+                  className="link-like"
+                  onClick={() => {
+                    setBuilding(true);
+                    setPresetTab('import');
+                    setJsonOpen(true);
+                  }}
                 >
-                  Import
+                  Import a preset
                 </button>
               </div>
-
-              {presetTab === 'json' ? (
-                <>
-                  <p className="dep-inline-note dep-muted">
-                    Non-secret config only — no tokens or credentials are ever included. Safe to share with a teammate.
-                  </p>
-                  <textarea readOnly value={JSON.stringify(pipeline, null, 2)} style={{ width: '100%', minHeight: 140, fontFamily: 'monospace' }} />
-                  <button onClick={copyPresetJson} style={{ marginTop: 6 }}>Copy to clipboard</button>
-                </>
-              ) : (
-                <>
-                  <textarea
-                    value={importJson}
-                    onChange={(e) => setImportJson(e.target.value)}
-                    placeholder="Paste preset JSON here…"
-                    style={{ width: '100%', minHeight: 140, fontFamily: 'monospace' }}
-                  />
-                  {importError && <div className="dep-warn" style={{ fontSize: '0.78em', marginTop: 4 }}>{importError}</div>}
-                  <button onClick={importPreset} disabled={!importJson.trim()} style={{ marginTop: 6 }}>
-                    Import as new preset
-                  </button>
-                </>
-              )}
             </div>
-          </details>
+          )}
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
-            <p className="dep-hint" style={{ flex: 1 }}>
-              Configure your own pipeline below — no provider or org topology is hardwired. Write creds stay in VS Code only.
-            </p>
-            <button onClick={resetPipeline} style={{ flex: '0 0 auto' }} title="Clear everything and start from an empty pipeline">Reset to blank</button>
-          </div>
-
+          {!showSetup && (
+            <>
           {/* SOURCE */}
           <div className="dep-group-label">Source</div>
           <div className="form-group" style={{ marginBottom: 4 }}>
@@ -986,7 +990,7 @@ const DeploymentSettings: React.FC = () => {
             )}
             {(source.provider === 'manual' || source.provider === 'none' || source.provider === 'jira') && (
               <div className="dep-inline-note dep-muted">
-                {source.provider === 'jira' ? 'Jira source is a reserved provider — not yet wired.' : source.provider === 'manual' ? 'You’ll enter the version/environment at run time in the Releases view.' : 'No source — desired state comes from the actions themselves (e.g. component promotion).'}
+                {source.provider === 'jira' ? 'Jira source is a reserved provider — not yet wired.' : source.provider === 'manual' ? 'You’ll enter the version/environment at run time in the Releases view.' : 'No source: each action decides what to deploy.'}
               </div>
             )}
           </div>
@@ -1041,17 +1045,22 @@ const DeploymentSettings: React.FC = () => {
               </div>
             </div>
           ))}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-            <button onClick={addStage}>+ Add stage</button>
-            <span className="dep-muted" style={{ fontSize: '0.74em' }}>switch · canary · verify · rollback — reserved</span>
-          </div>
+          {pipeline.stages.length === 0 && (
+            <div className="dep-empty-note">
+              No stages yet. A stage groups the actions that run together, for example promote to stage, then to production.
+            </div>
+          )}
+          <button type="button" className="secondary-button dep-add-stage" onClick={addStage}>+ Add stage</button>
 
-          {/* ENVIRONMENTS — promotion policy (auto-merge per env) */}
-          <div className="dep-group-label">Environments · promotion policy</div>
+          {/* ENVIRONMENTS — promotion policy (auto-merge per env). Meaningless
+              before there is a stage to promote through, so hidden until then. */}
+          {(pipeline.stages.length > 0 || environments.length > 0) && (
+          <>
+          <div className="dep-group-label">Environments</div>
           <div>
             {environments.length === 0 && (
-              <div className="dep-muted" style={{ fontSize: '0.82em', marginBottom: 8 }}>
-                None declared — promotions never auto-merge (safe default). Add one only to allow auto-merge for a specific environment.
+              <div className="dep-empty-note">
+                Promotions wait for your approval. Add an environment to allow auto-merge for it.
               </div>
             )}
             {environments.map((env, i) => (
@@ -1066,17 +1075,24 @@ const DeploymentSettings: React.FC = () => {
                   <input type="checkbox" checked={env.autoMerge === true} onChange={(e) => updateEnv(i, { autoMerge: e.target.checked })} />
                   auto-merge
                 </label>
-                <button onClick={() => removeEnv(i)} className="disconnect-button" data-tooltip="Remove environment" aria-label="Remove environment">✕</button>
+                <button onClick={() => removeEnv(i)} className="dep-icon-button dep-icon-danger" data-tooltip="Remove environment" aria-label="Remove environment">✕</button>
               </div>
             ))}
-            <button onClick={addEnv} style={{ marginTop: 4 }}>+ Add environment</button>
+            <button type="button" className="link-like" onClick={addEnv}>+ Add environment</button>
           </div>
+          </>
+          )}
 
           {/* HOTFIX — a separate flow (tickets → commits → tags → release) */}
           <div className="dep-group-label">Hotfix flow</div>
           <label className="dep-checkbox">
             <input type="checkbox" checked={hotfixEnabled} onChange={(e) => enableHotfix(e.target.checked)} />
-            Enable hotfix flow (cherry-pick by ticket → tag → GitHub Release)
+            <span>
+              Enable hotfix flow
+              <div className="dep-muted" style={{ fontSize: '0.92em', marginTop: 2 }}>
+                Cherry-pick fixes by ticket, tag them, and publish a GitHub release.
+              </div>
+            </span>
           </label>
           {hotfixEnabled && (
             <div style={{ marginTop: 8 }}>
@@ -1196,10 +1212,9 @@ const DeploymentSettings: React.FC = () => {
           )}
 
           {/* CONNECTIONS — derived from used providers */}
+          {needsAnyConnection && (
+          <>
           <div className="dep-group-label">Connections</div>
-          {!needsConfluence && !needsGithub && !needsVercel && (
-            <div className="dep-muted" style={{ fontSize: '0.82em', marginBottom: 8 }}>Add a source or action to see the connections it needs.</div>
-          )}
           {needsConfluence && (
             <div className="dep-muted" style={{ fontSize: '0.82em', marginBottom: 8 }}>Confluence — connect under Settings → Confluence.</div>
           )}
@@ -1212,14 +1227,14 @@ const DeploymentSettings: React.FC = () => {
                 {machStatus.connected ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span className="dep-ok" style={{ fontSize: '0.82em' }}>
-                      ✅ connected{machStatus.repos && `${machStatus.repos.monorepo ? '' : ' · monorepo unreachable'}${machStatus.repos.stage ? '' : ' · env repo unreachable'}`}
+                      Connected{machStatus.repos && `${machStatus.repos.monorepo ? '' : ' · monorepo unreachable'}${machStatus.repos.stage ? '' : ' · env repo unreachable'}`}
                     </span>
                     <button onClick={clearMachToken} className="disconnect-button">Clear</button>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', gap: 6 }}>
                     <input type="password" value={machToken} placeholder="ghp_… (classic PAT)" onChange={(e) => setMachToken(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveMachToken(); }} autoComplete="off" style={{ flex: 1 }} />
-                    <button onClick={saveMachToken} disabled={machSaving || !machToken.trim()}>{machSaving ? '⏳' : 'Save'}</button>
+                    <button onClick={saveMachToken} disabled={machSaving || !machToken.trim()}>{machSaving ? 'Saving…' : 'Save'}</button>
                   </div>
                 )}
                 {machStatus.detail && <div className="dep-warn dep-inline-note">{machStatus.detail}</div>}
@@ -1228,9 +1243,70 @@ const DeploymentSettings: React.FC = () => {
           )}
           {needsVercel && renderProvider('Vercel', 'frontend env vars', !!dep.vercelConnected, !!dep.isConnectingVercel, connectVercel, disconnectVercel, 'vercel')}
 
-          <button onClick={testConnections} disabled={dep.isTesting} style={{ width: '100%', marginTop: 10 }}>
-            {dep.isTesting ? '⏳ Testing…' : '🔌 Test all connections'}
+          <button className="primary-button-full" onClick={testConnections} disabled={dep.isTesting} style={{ marginTop: 10 }}>
+            {dep.isTesting ? 'Testing…' : 'Test all connections'}
           </button>
+          </>
+          )}
+
+          <div className="dep-footer">
+          <details className="dep-details" open={jsonOpen} onToggle={(e) => setJsonOpen((e.currentTarget as HTMLDetailsElement).open)}>
+            <summary>Share or import as JSON</summary>
+            <div className="dep-details-body">
+              <div className="dep-tabs">
+                <button
+                  className={`dep-tab${presetTab === 'json' ? ' active' : ''}`}
+                  onClick={() => setPresetTab('json')}
+                >
+                  View / copy
+                </button>
+                <button
+                  className={`dep-tab${presetTab === 'import' ? ' active' : ''}`}
+                  onClick={() => setPresetTab('import')}
+                >
+                  Import
+                </button>
+              </div>
+
+              {presetTab === 'json' ? (
+                <>
+                  <p className="dep-inline-note dep-muted">
+                    Non-secret config only — no tokens or credentials are ever included. Safe to share with a teammate.
+                  </p>
+                  <textarea readOnly value={JSON.stringify(pipeline, null, 2)} style={{ width: '100%', minHeight: 140, fontFamily: 'monospace' }} />
+                  <button onClick={copyPresetJson} style={{ marginTop: 6 }}>Copy to clipboard</button>
+                </>
+              ) : (
+                <>
+                  <textarea
+                    value={importJson}
+                    onChange={(e) => setImportJson(e.target.value)}
+                    placeholder="Paste preset JSON here…"
+                    style={{ width: '100%', minHeight: 140, fontFamily: 'monospace' }}
+                  />
+                  {importError && <div className="dep-warn" style={{ fontSize: '0.78em', marginTop: 4 }}>{importError}</div>}
+                  <button onClick={importPreset} disabled={!importJson.trim()} style={{ marginTop: 6 }}>
+                    Import as new preset
+                  </button>
+                </>
+              )}
+            </div>
+          </details>
+
+            <button
+              type="button"
+              className="link-like dep-reset-link"
+              onClick={() => {
+                resetPipeline();
+                setBuilding(false);
+              }}
+              title="Clear this pipeline and start again"
+            >
+              Start over
+            </button>
+          </div>
+            </>
+          )}
         </div>
       )}
     </SectionShell>

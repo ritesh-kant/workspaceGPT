@@ -196,8 +196,10 @@ export class DeploymentMessageHandler {
    */
   private async handleResolveRelease(): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
-    const notConfigured = (reason: string) =>
-      this.post(MESSAGE_TYPES.RESOLVE_RELEASE_RESPONSE, { configured: false, date: today, reason });
+    // `setup` names the missing prerequisite so the webview can offer the fix
+    // as a button instead of printing the sentence as an error.
+    const notConfigured = (reason: string, setup?: 'confluence' | 'roster') =>
+      this.post(MESSAGE_TYPES.RESOLVE_RELEASE_RESPONSE, { configured: false, date: today, reason, setup });
 
     try {
       const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
@@ -210,16 +212,16 @@ export class DeploymentMessageHandler {
         (await this.confluenceAuth.isAuthenticated()) && !!this.confluenceAuth.getStoredSite();
 
       if (!confluenceConnected) {
-        return notConfigured('Connect Confluence (Settings → Confluence) to resolve releases.');
+        return notConfigured('Releases are read from your Confluence release roster.', 'confluence');
       }
       if (!rosterPageUrl) {
-        return notConfigured('Set the Release Roster page URL in Settings → Deployment Automation.');
+        return notConfigured('Point the pipeline at your release roster page to see today’s release here.', 'roster');
       }
 
       const source = this.buildReleaseSource(dep);
       const resolved = await source.resolveRelease(today);
       if (!resolved) {
-        return notConfigured(`No release scheduled for ${today} on the roster.`);
+        return notConfigured('Nothing is scheduled on the roster for today.');
       }
       if (resolved.needsVersion) {
         return this.post(MESSAGE_TYPES.RESOLVE_RELEASE_RESPONSE, {
@@ -228,7 +230,7 @@ export class DeploymentMessageHandler {
           date: resolved.date ?? today,
           environment: resolved.environment,
           pilot: resolved.pilot,
-          reason: `Release scheduled for ${today} (env ${resolved.environment}) but no version is listed on the roster — enter it below.`,
+          reason: `A ${resolved.environment} release is scheduled for today but the roster lists no version. Enter it below.`,
         });
       }
 

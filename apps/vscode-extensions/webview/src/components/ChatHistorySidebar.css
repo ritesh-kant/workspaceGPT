@@ -73,13 +73,51 @@
   color: var(--vscode-icon-foreground);
   cursor: pointer;
   border-radius: 4px;
-  font-size: 0.9rem;
   transition: background-color 0.15s ease;
 }
 
 .history-new-chat-btn:hover,
 .history-close-btn:hover {
   background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+/* Search — a filter over titles, shown once there is anything to filter. */
+.history-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.5rem 0.75rem 0.25rem;
+  padding: 0 0.55rem;
+  height: 28px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 6px;
+  color: var(--vscode-descriptionForeground);
+  flex-shrink: 0;
+}
+
+.history-search:focus-within {
+  border-color: var(--vscode-focusBorder);
+}
+
+.history-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--vscode-input-foreground);
+  font-size: 0.78rem;
+  font-family: inherit;
+}
+
+.history-search input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+.history-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
 }
 
 /* History List */
@@ -98,12 +136,6 @@
   padding: 2rem 1rem;
   text-align: center;
   color: var(--vscode-descriptionForeground);
-}
-
-.history-empty-icon {
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
-  opacity: 0.5;
 }
 
 .history-empty p {
@@ -162,6 +194,78 @@
   opacity: 0.8;
 }
 
+/* Ticket group: one header per ticket, its chats indented beneath it. Groups
+   only form when a ticket has more than one chat — a lone chat is a plain row. */
+.history-group {
+  margin: 0.25rem 0;
+}
+
+.history-group-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem 0.2rem;
+}
+
+.history-group-title {
+  min-width: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-group-id {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-group-count {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+}
+
+.history-item--nested {
+  padding-left: 1.5rem;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+
+.history-item--nested .history-item-title {
+  color: var(--vscode-descriptionForeground);
+}
+
+.history-item--nested .history-item-content {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* "Show N more" under a collapsed ticket group. */
+.history-group-more {
+  display: block;
+  background: none;
+  border: none;
+  padding: 0.3rem 0.75rem 0.3rem 1.5rem;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.history-group-more:hover {
+  background: none;
+  text-decoration: underline;
+}
+
 /* Delete Button */
 .history-item-delete {
   display: flex;
@@ -175,7 +279,6 @@
   color: var(--vscode-icon-foreground);
   cursor: pointer;
   border-radius: 4px;
-  font-size: 0.65rem;
   opacity: 0;
   transition: opacity 0.15s ease, background-color 0.15s ease;
   flex-shrink: 0;
@@ -188,7 +291,8 @@
 
 .history-item-delete:hover {
   opacity: 1 !important;
-  background-color: var(--vscode-inputValidation-errorBackground);
+  color: var(--vscode-errorForeground);
+  background-color: var(--vscode-toolbar-hoverBackground);
 }
 
 /* Pulsing dot for a session whose run is still going in the background. */

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { formatRelativeTime } from '../utils/sessionTitle';
 import './Settings.css';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
@@ -14,6 +15,8 @@ interface ResolvedRelease {
   pageUrl?: string;
   /** Why resolution didn't produce a release (shown in the empty state). */
   reason?: string;
+  /** The missing prerequisite, when there is one the user can go and fix. */
+  setup?: 'confluence' | 'roster';
   /** A roster row exists for today but has no version filled in. */
   needsVersion?: boolean;
 }
@@ -533,7 +536,37 @@ const PIPE = {
   hotfix: '#e879c9', // hotfix cherry-pick → tag → release
 } as const;
 
+/* The hotfix card uses the app's single interactive accent rather than its own
+   magenta, so the screen has one colour that means "act here". */
+const HOTFIX_ACCENT = 'var(--vscode-textLink-foreground, #3794ff)';
+
 type StepState = 'pending' | 'active' | 'done' | 'error' | 'blocked';
+
+/**
+ * Consecutive runs of the same release, environment and status collapse into
+ * one row with a count — the audit log records every apply, and a re-run of
+ * the same release four times is one fact, not four.
+ */
+function groupRuns(runs: ReleaseRun[]): Array<ReleaseRun & { count: number }> {
+  const groups: Array<ReleaseRun & { count: number }> = [];
+  for (const run of runs) {
+    const last = groups[groups.length - 1];
+    if (last && last.release === run.release && last.environment === run.environment && last.status === run.status) {
+      last.count += 1;
+      // Runs arrive newest-first; keep the newest timestamp on the row.
+      if (!last.at && run.at) last.at = run.at;
+    } else {
+      groups.push({ ...run, count: 1 });
+    }
+  }
+  return groups;
+}
+
+function runAge(at?: string): string | undefined {
+  if (!at) return undefined;
+  const t = Date.parse(at);
+  return Number.isFinite(t) ? formatRelativeTime(t) : undefined;
+}
 
 const STEP_LABEL_COLOR: Record<StepState, string> = {
   done: '#4ecca3',
@@ -726,6 +759,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack, mode = 'local', 
             pilot: message.pilot,
             pageUrl: message.pageUrl,
             reason: message.reason,
+            setup: message.setup === 'confluence' || message.setup === 'roster' ? message.setup : undefined,
             needsVersion: !!message.needsVersion,
           });
           // Seed the editable version field from the resolved value so the
@@ -1224,27 +1258,24 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack, mode = 'local', 
               )}
             </div>
           ) : (
-            <div style={{ color: '#a0a0a0', fontSize: '0.9em', lineHeight: 1.6 }}>
-              <p style={{ margin: '0 0 6px' }}>
-                {release?.needsVersion
-                  ? `Release scheduled${release?.date ? ` for today (${release.date})` : ''}, but no version listed.`
-                  : `No release resolved${release?.date ? ` for today (${release.date})` : ''}.`}
+            <div className="rel-empty">
+              <p className="rel-empty-title">
+                {release?.needsVersion ? 'Release scheduled, version missing' : 'No release scheduled for today'}
               </p>
-              {release?.reason ? (
-                <div
-                  className="status-message error"
-                  style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: '0.85em' }}
-                >
-                  <span aria-hidden="true">⚠</span>
-                  <span>{release.reason}</span>
-                </div>
-              ) : (
-                <p style={{ margin: 0, fontSize: '0.85em', color: '#888' }}>
-                  Configure the Release Roster page under Settings → Deployment Automation.
-                </p>
-              )}
+              {release?.reason && <p className="rel-empty-text">{release.reason}</p>}
               {release?.needsVersion && release?.pilot && (
-                <p style={{ margin: '4px 0 0', fontSize: '0.85em', color: '#888' }}>Pilot: {release.pilot}</p>
+                <p className="rel-empty-text">Pilot: {release.pilot}</p>
+              )}
+              {/* A missing prerequisite is a next step, not an error: offer the
+                  fix as the card's one action instead of a red banner. */}
+              {release?.setup && (
+                <button
+                  type="button"
+                  className="rel-empty-action"
+                  onClick={() => onOpenSettings?.()}
+                >
+                  {release.setup === 'confluence' ? 'Connect Confluence' : 'Open pipeline settings'}
+                </button>
               )}
             </div>
           )}
@@ -1261,7 +1292,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack, mode = 'local', 
                 fontSize: '0.82em',
               }}
             >
-              {overrideOpen ? '▾' : '▸'} {release?.needsVersion ? 'Enter version / release page URL' : 'Override version (testing)'}
+              {overrideOpen ? '▾' : '▸'} {release?.needsVersion ? 'Enter version or release page URL' : 'Enter a version manually'}
             </button>
             {overrideOpen && (
               <div
@@ -1334,18 +1365,19 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack, mode = 'local', 
             )}
           </div>
 
-          <button
-            onClick={prepareConfigSync}
-            disabled={!canPrepare || !!preview?.loading}
-            title={canPrepare ? undefined : 'Resolve a release or set an override version first'}
-            style={{ marginTop: 10, width: '100%' }}
-          >
-            {preview?.loading
-              ? '⏳ Preparing…'
-              : hasOverride
-                ? `Prepare config sync (override: ${effectiveVersion || 'linked page'})`
-                : 'Prepare config sync'}
-          </button>
+          {canPrepare && (
+            <button
+              onClick={prepareConfigSync}
+              disabled={!!preview?.loading}
+              style={{ marginTop: 10, width: '100%' }}
+            >
+              {preview?.loading
+                ? 'Preparing…'
+                : hasOverride
+                  ? `Prepare config sync for ${effectiveVersion || 'linked page'}`
+                  : 'Prepare config sync'}
+            </button>
+          )}
 
           {preview && !preview.loading && <ConfigPreview preview={preview} />}
 
@@ -1732,102 +1764,53 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack, mode = 'local', 
         </div>
       </div>
 
-      <div className="settings-section" style={{ marginTop: 16 }}>
+      <div className="settings-section rel-quiet" style={{ marginTop: 16 }}>
         <div className="section-header">
           <h3>Hotfix</h3>
         </div>
         <div className="settings-form">
-          <p style={{ color: '#888', fontSize: '0.85em', margin: '0 0 10px', lineHeight: 1.5 }}>
-            Cherry-pick commits by ticket onto a hotfix branch, then push a scoped tag + GitHub Release for
-            each affected component (which fires its deploy). A separate flow from the config-sync release above.
+          <p className="rel-subtitle">
+            Cherry-pick fixes by ticket, tag them, and publish a GitHub release.
           </p>
-          <div
-            style={{
-              borderRadius: 10,
-              border: `1px solid ${PIPE.hotfix}33`,
-              borderLeft: `3px solid ${PIPE.hotfix}`,
-              background: `${PIPE.hotfix}0d`,
-              padding: '14px 16px',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: '50%',
-                  background: PIPE.hotfix,
-                  color: '#0b0b14',
-                  fontSize: '0.72em',
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                ⛑
-              </span>
-              <span style={{ fontWeight: 600, color: PIPE.hotfix, fontSize: '0.92em' }}>
-                Cherry-pick → tag → release
-              </span>
-              <span style={{ fontSize: '0.68em', color: '#888', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                github
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '9px 0 12px', flexWrap: 'wrap' }}>
+          <div className="rel-card">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '0 0 12px', flexWrap: 'wrap' }}>
               {[
-                { label: '① Plan', state: hfStep1 },
-                { label: '② Apply', state: hfStep2 },
+                { label: 'Plan', state: hfStep1 },
+                { label: 'Apply', state: hfStep2 },
               ].map((s, i) => (
                 <React.Fragment key={i}>
-                  {i > 0 && <span style={{ color: '#3a3a52', fontSize: '0.8em' }}>›</span>}
+                  {i > 0 && <span className="rel-step-sep">›</span>}
                   <span
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 5,
                       fontSize: '0.75em',
-                      color: STEP_LABEL_COLOR[s.state] || PIPE.hotfix,
+                      color: STEP_LABEL_COLOR[s.state] || HOTFIX_ACCENT,
                     }}
                   >
-                    <StepDot state={s.state} accent={PIPE.hotfix} />
+                    <StepDot state={s.state} accent={HOTFIX_ACCENT} />
                     {s.label}
                   </span>
                 </React.Fragment>
               ))}
             </div>
 
-            <label style={{ fontSize: '0.8em', color: '#ccc', display: 'block', marginBottom: 4 }}>
-              Hotfix tickets
-            </label>
+            <label className="rel-field-label">Hotfix tickets</label>
             <textarea
               value={hotfixTickets}
               onChange={(e) => setHotfixTickets(e.target.value)}
               placeholder="D2C-123456, D2C-123457"
               rows={2}
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                background: '#0f0f1a',
-                border: '1px solid #2a2a3e',
-                borderRadius: 6,
-                color: '#e0e0e0',
-                fontSize: '0.85em',
-                padding: '7px 9px',
-                resize: 'vertical',
-                fontFamily: 'inherit',
-              }}
+              className="rel-textarea"
             />
 
             <button
               onClick={planHotfix}
               disabled={hotfixPlan?.loading || parseTickets(hotfixTickets).length === 0}
-              className="primary-button"
-              style={pipeBtn(PIPE.hotfix)}
+              style={{ marginTop: 12, width: '100%' }}
             >
-              {hotfixPlan?.loading ? 'Finding commits…' : hotfixData ? '✓ Re-plan' : 'Plan hotfix →'}
+              {hotfixPlan?.loading ? 'Finding commits…' : hotfixData ? 'Re-plan' : 'Plan hotfix'}
             </button>
 
             {hotfixPlan?.error && (
@@ -1921,7 +1904,7 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack, mode = 'local', 
                   onClick={() => applyHotfix()}
                   disabled={!canApplyHotfix || hotfixApply?.loading}
                   className="primary-button"
-                  style={pipeBtn(PIPE.hotfix)}
+                  style={{ marginTop: 12, width: '100%' }}
                 >
                   {hotfixApply?.loading
                     ? 'Cherry-picking + tagging…'
@@ -1992,33 +1975,31 @@ const Releases: React.FC<ReleasesProps> = ({ isVisible, onBack, mode = 'local', 
         </div>
       </div>
 
-      <div className="settings-section" style={{ marginTop: 16 }}>
+      <div className="settings-section rel-quiet" style={{ marginTop: 16 }}>
         <div className="section-header">
           <h3>Recent runs</h3>
         </div>
         <div className="settings-form">
           {runs.length === 0 ? (
-            <p style={{ color: '#888', fontSize: '0.88em', margin: 0 }}>No runs yet.</p>
+            <p className="rel-subtitle" style={{ margin: 0 }}>No runs yet.</p>
           ) : (
-            runs.map((run, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: '0.85em',
-                  padding: '6px 0',
-                  borderBottom: '1px solid #23233a',
-                }}
-              >
-                <span>
-                  {run.release} · {run.environment}
-                </span>
-                <span style={{ color: run.status === 'applied' ? '#4ecca3' : run.status === 'failed' ? '#e74c3c' : '#e0a93b' }}>
-                  {run.status}
-                </span>
-              </div>
-            ))
+            groupRuns(runs).map((run, i) => {
+              const age = runAge(run.at);
+              const tone = run.status === 'applied' ? 'ok' : run.status === 'failed' ? 'err' : 'warn';
+              return (
+                <div key={i} className="rel-run">
+                  <span className={`status-dot status-dot--${tone}`} aria-hidden="true" />
+                  <span className="rel-run-title">
+                    {run.release} · {run.environment}
+                  </span>
+                  <span className="rel-run-meta">
+                    {run.status}
+                    {run.count > 1 ? ` · ${run.count} times` : ''}
+                    {age ? ` · ${age}` : ''}
+                  </span>
+                </div>
+              );
+            })
           )}
         </div>
       </div>

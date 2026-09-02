@@ -1,6 +1,7 @@
 import React from 'react';
 import { useSettingsStore } from '../../store';
 import SectionShell from './SectionShell';
+import StatusDot from './StatusDot';
 
 const WebSearchSettings: React.FC = () => {
   const { config, updateConfig } = useSettingsStore();
@@ -42,23 +43,30 @@ const WebSearchSettings: React.FC = () => {
     setApiKeys(next);
   };
 
-  const summary = configuredKeyCount > 0 ? `✅ ${configuredKeyCount} key${configuredKeyCount > 1 ? 's' : ''}` : 'Not configured';
+  const summary =
+    configuredKeyCount > 0 ? (
+      <>
+        <StatusDot tone='ok' />
+        On · {configuredKeyCount} key{configuredKeyCount > 1 ? 's' : ''}
+      </>
+    ) : (
+      'Off · add an API key to enable'
+    );
 
   return (
     <SectionShell storageKey='webSearch' title='Web Search' summary={summary}>
       <div className='settings-form'>
         <div className='form-group'>
           <small className='form-text'>
-            Lets the agent look up things it can't know from your code or org
-            docs — a new library, an unfamiliar API, current release notes —
-            mid-task, the same way Cursor and Claude Code do.
+            Lets the agent look up what it can’t know from your code or docs
+            mid-task: a new library, an unfamiliar API, current release notes.
           </small>
         </div>
 
         <div className='form-group'>
           <details className='dep-details'>
             <summary>
-              Tavily API Key(s) · {configuredKeyCount} configured
+              API key{configuredKeyCount === 1 ? '' : 's'} · {configuredKeyCount} configured
             </summary>
             <div className='dep-details-body'>
               {apiKeys.map((key, i) => (
@@ -88,18 +96,12 @@ const WebSearchSettings: React.FC = () => {
                 + Add API key
               </button>
               <small className='form-text'>
-                Free at{' '}
+                Search is powered by Tavily. Get a free key at{' '}
                 <a href='https://tavily.com' target='_blank' rel='noreferrer'>
                   tavily.com
-                </a>{' '}
-                — 1,000 searches/month per key, no card required. Extra keys
-                are tried in order if one is rate-limited (HTTP 429) — spread
-                free-tier quota across several keys the same way Model and
-                Embedding settings do. Paste a comma-separated list into any
-                field to add them all at once. Without any key, the agent's
-                {' '}
-                <code>search_web</code> tool reports itself unavailable
-                instead of failing the whole task.
+                </a>
+                . Extra keys are used in order if one hits its rate limit; paste a
+                comma-separated list to add several at once.
               </small>
             </div>
           </details>

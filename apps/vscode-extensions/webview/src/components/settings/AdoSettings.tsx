@@ -11,6 +11,7 @@ import { MESSAGE_TYPES } from '../../constants';
 import SearchableDropdown from './SearchableDropdown';
 import SectionShell from './SectionShell';
 import SyncControls, { SyncStatusMessage } from './SyncControls';
+import StatusDot from './StatusDot';
 
 const AdoSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
@@ -154,7 +155,12 @@ const AdoSettings: React.FC = () => {
           ? adoConfig.isSyncing
             ? `Syncing… ${adoConfig.adoSyncProgress || 0}%`
             : `Indexing… ${adoConfig.adoIndexProgress || 0}%`
-          : `✅ ${adoConfig.projectName} · ${formatRelativeTime(adoConfig.lastSyncTime)}`;
+          : (
+              <>
+                <StatusDot tone='ok' />
+                {adoConfig.projectName} · {formatRelativeTime(adoConfig.lastSyncTime)}
+              </>
+            );
 
   return (
     <SectionShell
@@ -188,11 +194,7 @@ const AdoSettings: React.FC = () => {
               onClick={connectWithMicrosoft}
               disabled={adoConfig?.isConnecting}
             >
-              {adoConfig?.isConnecting ? (
-                <>⏳ Waiting for Microsoft sign-in…</>
-              ) : (
-                <>🔗 Sign in with Microsoft</>
-              )}
+              {adoConfig?.isConnecting ? 'Waiting for Microsoft sign-in…' : 'Sign in with Microsoft'}
             </button>
 
             {!showMoreOptions ? (
@@ -213,11 +215,7 @@ const AdoSettings: React.FC = () => {
                   onClick={connectWithAzureCli}
                   disabled={adoConfig?.isConnecting}
                 >
-                  {adoConfig?.isConnecting ? (
-                    <>⏳ Connecting…</>
-                  ) : (
-                    <>🖥️ Connect with Azure CLI</>
-                  )}
+                  {adoConfig?.isConnecting ? 'Connecting…' : 'Connect with Azure CLI'}
                 </button>
 
                 {!showPatForm ? (
@@ -242,11 +240,7 @@ const AdoSettings: React.FC = () => {
                       onClick={submitPat}
                       disabled={!patInput.trim() || adoConfig?.isConnecting}
                     >
-                      {adoConfig?.isConnecting ? (
-                        <>⏳ Verifying…</>
-                      ) : (
-                        <>Connect with Token</>
-                      )}
+                      {adoConfig?.isConnecting ? 'Verifying…' : 'Connect with token'}
                     </button>
                   </div>
                 )}
@@ -258,20 +252,22 @@ const AdoSettings: React.FC = () => {
         {/* Authenticated State */}
         {isAuthenticated && (
           <>
+            {/* Disconnect is a quiet text link, not a red button: it sits in
+                the one row that says everything is fine, and it is not a
+                daily action. */}
             <div className="connected-banner">
               <span className="connected-label">
-                ✅ Connected to <strong>Azure DevOps</strong>
+                <StatusDot tone='ok' />
+                Connected to <strong>Azure DevOps</strong>
+                {adoConfig.userDisplayName ? ` as ${adoConfig.userDisplayName}` : ''}
               </span>
-              <button
-                onClick={disconnect}
-                className="disconnect-button"
-              >
+              <button type='button' onClick={disconnect} className="disconnect-link">
                 Disconnect
               </button>
             </div>
 
             <div className="form-group">
-              <label>Organization Name</label>
+              <label>Organization</label>
               {adoConfig.availableOrganizations && adoConfig.availableOrganizations.length > 0 ? (
                 <SearchableDropdown
                   value={adoConfig.orgName || ''}
@@ -311,13 +307,13 @@ const AdoSettings: React.FC = () => {
                     className='link-like'
                     onClick={refreshOrganizations}
                   >
-                    🔄 Fetch my organizations
+                    Fetch my organizations
                   </button>
                 </>
               )}
             </div>
             <div className="form-group">
-              <label>Project Name</label>
+              <label>Project</label>
               {adoConfig.availableProjects && adoConfig.availableProjects.length > 0 ? (
                 /* Same control Confluence uses for spaces — org project lists
                    run long enough that a native select is hard to navigate. */
@@ -346,14 +342,14 @@ const AdoSettings: React.FC = () => {
                     onClick={fetchProjects}
                     disabled={!adoConfig.orgName || adoConfig.isConnecting}
                   >
-                    🔄 Refresh projects
+                    Refresh projects
                   </button>
                 </>
               )}
             </div>
 
             <div className="form-group">
-              <label>Lookback Period</label>
+              <label>Sync tickets from</label>
               <select
                 value={adoConfig.lookbackMonths ?? 24}
                 onChange={(e) => handleInputChange('ado', 'lookbackMonths', Number(e.target.value))}
