@@ -2,7 +2,10 @@ import * as vscode from 'vscode';
 import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { WebviewHtmlTemplate } from './templates/WebviewHtmlTemplate';
 import { MESSAGE_TYPES, MODEL, ModelTypeEnum, STORAGE_KEYS } from '../constants';
-import { collapseWorkspaceGptSidebar } from './utils/collapseSidebar';
+import {
+  collapseWorkspaceGptSidebar,
+  noteWorkspaceGptViewVisibility,
+} from './utils/collapseSidebar';
 
 export class WebViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
@@ -37,9 +40,11 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     webviewView.title = "WorkspaceGPT";
     webviewView.onDidDispose(() => {
       this.messageHandler?.dispose();
+      noteWorkspaceGptViewVisibility(false);
       this._view = undefined;
     });
 
+    this.trackVisibility(webviewView);
     this.configureWebview(webviewView);
     this.setWebviewHtml(webviewView);
     this.setupMessageHandler(webviewView);
@@ -92,6 +97,28 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       }
       this.sendMessage(MESSAGE_TYPES.RESUME_INDEXING_ADO);
     }
+  }
+
+  /**
+   * `retainContextWhenHidden` keeps the webview running when another view takes
+   * over the sidebar, and a retained webview is an iframe whose
+   * `document.hidden` follows the window rather than the sidebar — so from
+   * inside it, "hidden behind another view" and "visible" look the same. Feed
+   * the host's authoritative signal to both the collapse gate and the webview's
+   * width watch, so a resize that happens while the view is off screen is never
+   * mistaken for the user dragging the sash.
+   */
+  private trackVisibility(webviewView: vscode.WebviewView): void {
+    const publish = () => {
+      noteWorkspaceGptViewVisibility(webviewView.visible);
+      void webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.VIEW_VISIBILITY,
+        visible: webviewView.visible,
+      });
+    };
+
+    publish();
+    webviewView.onDidChangeVisibility(publish);
   }
 
   private configureWebview(webviewView: vscode.WebviewView): void {

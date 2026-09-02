@@ -86,8 +86,22 @@ function startSidebarCollapseWatch(api: { postMessage: (message: any) => void })
   let lastWidth = 0;
   let collapsePosted = false;
   let wasHidden = false;
+  // The host is the only place that knows whether the view is really on
+  // screen; assume visible until told otherwise, since the webview is only
+  // created while the view is being revealed.
+  let hostVisible = true;
+  let becameVisibleAt = startedAt;
 
   const tick = () => {
+    // While another view owns the sidebar this webview is retained and still
+    // gets laid out, so it keeps seeing width changes the user is making to
+    // somebody else's view. Freeze the baseline instead of reading them as a
+    // drag of ours.
+    if (!hostVisible) {
+      wasHidden = true;
+      return;
+    }
+
     const width = viewportWidth();
     if (width < 8) {
       wasHidden = true;
@@ -96,7 +110,7 @@ function startSidebarCollapseWatch(api: { postMessage: (message: any) => void })
 
     // Icon click reuses the same webview. The first frames after reveal are
     // not a sash drag — do not treat them as "squeezed too far".
-    if (wasHidden || Date.now() - startedAt < 1500) {
+    if (wasHidden || Date.now() - startedAt < 1500 || Date.now() - becameVisibleAt < 1500) {
       wasHidden = false;
       lastWidth = width;
       collapsePosted = false;
@@ -132,6 +146,26 @@ function startSidebarCollapseWatch(api: { postMessage: (message: any) => void })
     if (document.hidden) {
       wasHidden = true;
     }
+  });
+
+  // ...and visibilitychange alone is not enough either: it reports the window,
+  // not the sidebar, so switching to another view in the same window never
+  // fires it and the poll can keep reading widths that belong to a view the
+  // user is resizing instead of ours. The host tells us the truth.
+  window.addEventListener("message", (event: MessageEvent) => {
+    if (event.data?.type !== MESSAGE_TYPES.VIEW_VISIBILITY) {
+      return;
+    }
+    const visible = event.data.visible !== false;
+    if (visible && !hostVisible) {
+      // Re-entering at whatever width the sidebar now has: adopt it as the new
+      // baseline so the change made while we were away is not a shrink.
+      becameVisibleAt = Date.now();
+      wasHidden = true;
+      lastWidth = 0;
+      collapsePosted = false;
+    }
+    hostVisible = visible;
   });
 
   window.addEventListener("resize", tick);

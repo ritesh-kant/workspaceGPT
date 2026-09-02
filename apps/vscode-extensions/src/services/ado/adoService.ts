@@ -16,7 +16,7 @@ interface ProcessedAdoItem {
 export interface AdoConfig {
   orgName: string;
   projectName: string;
-  accessToken: string;
+  authHeader: string;
   lookbackMonths: number;
 }
 
@@ -28,11 +28,17 @@ interface SyncProgress {
   lastSyncTime: string;
 }
 
+// How often to push a freshly-minted auth header into the worker. Comfortably
+// under a Bearer access token's typical ~60-90min TTL (MSAL/Azure CLI auth
+// modes) so a slow sync never runs its header past expiry mid-flight.
+const AUTH_REFRESH_INTERVAL_MS = 20 * 60 * 1000;
+
 export class AdoService {
   private worker: Worker | null = null;
   private webviewView?: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private syncProgress: SyncProgress | null = null;
+  private authRefreshInterval: NodeJS.Timeout | null = null;
 
   constructor(
     webviewView: vscode.WebviewView | undefined,
@@ -73,13 +79,12 @@ export class AdoService {
 
   async getTotalItems(config: AdoConfig): Promise<number> {
     try {
-      const authHeader = `Basic ${Buffer.from(`:${config.accessToken}`).toString('base64')}`;
       const url = `https://dev.azure.com/${encodeURIComponent(config.orgName)}/${encodeURIComponent(config.projectName)}/_apis/wit/wiql?api-version=7.1&$top=20000`;
 
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: authHeader,
+          Authorization: config.authHeader,
           Accept: 'application/json',
           'Content-Type': 'application/json',
         },
@@ -106,6 +111,7 @@ export class AdoService {
     onComplete?: () => Promise<void>,
     resume: boolean = false,
     onError?: (error: Error) => void,
+    getAuthHeader?: () => Promise<string>,
   ): Promise<void> {
     try {
       this.stopSync();
@@ -149,7 +155,7 @@ export class AdoService {
         workerData: {
           orgName: config.orgName,
           projectName: config.projectName,
-          accessToken: config.accessToken,
+          authHeader: config.authHeader,
           resume: resume,
           lastProcessedId: this.syncProgress?.lastProcessedId,
           processedItems: this.syncProgress?.processedItems || 0,
@@ -190,6 +196,10 @@ export class AdoService {
               type: MESSAGE_TYPES.SYNC_ADO_ERROR,
               message: message.message,
             });
+            // The worker stays alive after posting this (it listens for
+            // refresh-auth messages), so it must be explicitly torn down —
+            // otherwise it leaks as a live thread forever.
+            this.stopSync();
             if (onError) {
               onError(new Error(message.message));
             }
@@ -222,6 +232,17 @@ export class AdoService {
         }
       });
 
+      if (getAuthHeader) {
+        this.authRefreshInterval = setInterval(async () => {
+          try {
+            const freshHeader = await getAuthHeader();
+            this.worker?.postMessage({ type: 'refresh-auth', authHeader: freshHeader });
+          } catch (error) {
+            console.error('Failed to refresh ADO auth token for sync worker:', error);
+          }
+        }, AUTH_REFRESH_INTERVAL_MS);
+      }
+
       this.worker.on('error', (error) => {
         console.error('ADO Worker error:', error);
         this.webviewView?.webview.postMessage({
@@ -245,6 +266,10 @@ export class AdoService {
   }
 
   public stopSync(): void {
+    if (this.authRefreshInterval) {
+      clearInterval(this.authRefreshInterval);
+      this.authRefreshInterval = null;
+    }
     if (this.worker) {
       console.log('Stopping ADO sync process...');
       this.worker.terminate();

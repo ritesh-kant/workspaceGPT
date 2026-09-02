@@ -8,7 +8,12 @@ import { EmbeddingIdentity } from '../types/embeddingManifest';
  */
 export class LocalEmbeddingProvider implements EmbeddingProvider {
   readonly identity: EmbeddingIdentity = EMBEDDING_PROFILES.local;
-  readonly maxBatchSize = 32; // chunk so a huge array doesn't blow worker memory
+  // Peak RSS scales with batch × padded sequence length: BERT attention is
+  // O(seq²) per head, and the batch pads to its longest doc (up to the model's
+  // 512-token cap). Measured over a real 579-doc ADO index: 32 → ~2.2GB peak,
+  // 8 → ~0.78GB, for the same total throughput. The larger footprint is the
+  // likely cause of the forked embedding worker dying mid-batch with no error.
+  readonly maxBatchSize = 8;
 
   constructor(private extractor: any) {}
 

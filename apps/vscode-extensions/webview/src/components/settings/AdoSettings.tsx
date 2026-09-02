@@ -19,10 +19,12 @@ const AdoSettings: React.FC = () => {
 
   // Host messages for this section are handled app-wide in
   // store/settingsMessages.ts — this panel unmounts on every trip back to
-  // chat, and sync/PAT completions are sent exactly once.
+  // chat, and sync/connect completions are sent exactly once.
 
-  const [patInput, setPatInput] = useState('');
   const [showOrgName, setShowOrgName] = useState(false);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
+  const [showPatForm, setShowPatForm] = useState(false);
+  const [patInput, setPatInput] = useState('');
 
   // Auto-detect identity as soon as all required details are available
   useEffect(() => {
@@ -36,15 +38,82 @@ const AdoSettings: React.FC = () => {
     }
   }, [adoConfig?.isAuthenticated, adoConfig?.orgName, adoConfig?.projectName]);
 
-  const submitPat = () => {
+  // Fetch organizations for anyone already authenticated but without a org
+  // picked yet — covers both a fresh connect (belt-and-suspenders alongside
+  // the host's own post-connect fetch) and a session that was authenticated
+  // before this feature existed, where no connect event will ever fire again.
+  useEffect(() => {
+    if (
+      adoConfig?.isAuthenticated &&
+      !adoConfig?.orgName &&
+      (!adoConfig?.availableOrganizations || adoConfig.availableOrganizations.length === 0)
+    ) {
+      vscode.postMessage({ type: MESSAGE_TYPES.FETCH_ADO_ORGANIZATIONS });
+    }
+  }, [adoConfig?.isAuthenticated, adoConfig?.orgName, adoConfig?.availableOrganizations]);
+
+  // Fetch projects as soon as an org is known but no project is picked yet —
+  // same fallback shape as the organizations effect above, so it self-heals
+  // whether the org just got auto-selected, was picked from the dropdown, or
+  // was typed manually into the fallback input.
+  useEffect(() => {
+    if (
+      adoConfig?.isAuthenticated &&
+      adoConfig?.orgName &&
+      !adoConfig?.projectName &&
+      (!adoConfig?.availableProjects || adoConfig.availableProjects.length === 0)
+    ) {
+      vscode.postMessage({ type: MESSAGE_TYPES.FETCH_ADO_PROJECTS, orgName: adoConfig.orgName });
+    }
+  }, [adoConfig?.isAuthenticated, adoConfig?.orgName, adoConfig?.projectName, adoConfig?.availableProjects]);
+
+  const connectWithMicrosoft = () => {
     batchUpdateConfig('ado', {
       isConnecting: true,
-      statusMessage: 'Saving Personal Access Token...',
+      statusMessage: 'Waiting for Microsoft sign-in… (check your browser)',
+      messageType: 'success',
+    });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.CONNECT_ADO_MSAL,
+    });
+  };
+
+  const connectWithAzureCli = () => {
+    batchUpdateConfig('ado', {
+      isConnecting: true,
+      statusMessage: 'Checking Azure CLI session…',
+      messageType: 'success',
+    });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.CONNECT_ADO_AZURE_CLI,
+    });
+  };
+
+  const submitPat = () => {
+    const trimmed = patInput.trim();
+    if (!trimmed) return;
+    batchUpdateConfig('ado', {
+      isConnecting: true,
+      statusMessage: 'Verifying token…',
       messageType: 'success',
     });
     vscode.postMessage({
       type: MESSAGE_TYPES.SAVE_ADO_PAT,
-      pat: patInput
+      pat: trimmed,
+    });
+    setPatInput('');
+  };
+
+  const refreshOrganizations = () => {
+    vscode.postMessage({ type: MESSAGE_TYPES.FETCH_ADO_ORGANIZATIONS });
+  };
+
+  /** Org changed — the previously fetched project list belongs to the old org. */
+  const selectOrg = (orgName: string) => {
+    batchUpdateConfig('ado', {
+      orgName,
+      projectName: '',
+      availableProjects: [],
     });
   };
 
@@ -111,33 +180,78 @@ const AdoSettings: React.FC = () => {
         {!isAuthenticated && (
           <div className="pat-connect">
             <p className='description-text'>
-              Enter your Azure DevOps Personal Access Token (PAT).
+              Sign in with your Microsoft account to connect Azure DevOps —
+              no app install or admin approval needed.
             </p>
-            <div className='pat-scopes'>
-              <span>Required PAT scopes:</span>
-              <span>✅ <strong>Work Items</strong> — Read <em>(tickets, queries, sprint detection)</em></span>
-              <span>✅ <strong>Project and Team</strong> — Read <em>(project listing)</em></span>
-            </div>
-            <div className="form-group">
-              <input
-                type="password"
-                value={patInput}
-                onChange={(e) => setPatInput(e.target.value)}
-                placeholder="Paste your PAT here..."
-                className='pat-input'
-              />
-            </div>
             <button
               className='primary-button-full'
-              onClick={submitPat}
-              disabled={!patInput.trim() || adoConfig?.isConnecting}
+              onClick={connectWithMicrosoft}
+              disabled={adoConfig?.isConnecting}
             >
               {adoConfig?.isConnecting ? (
-                <>⏳ Connecting...</>
+                <>⏳ Waiting for Microsoft sign-in…</>
               ) : (
-                <>🔗 Connect to Azure DevOps</>
+                <>🔗 Sign in with Microsoft</>
               )}
             </button>
+
+            {!showMoreOptions ? (
+              <button
+                type='button'
+                className='secondary-button button-full mt-8'
+                onClick={() => setShowMoreOptions(true)}
+              >
+                More sign-in options
+              </button>
+            ) : (
+              <>
+                <p className='description-text mt-8'>
+                  Already signed in to the Azure CLI (<code>az login</code>)?
+                </p>
+                <button
+                  className='secondary-button button-full'
+                  onClick={connectWithAzureCli}
+                  disabled={adoConfig?.isConnecting}
+                >
+                  {adoConfig?.isConnecting ? (
+                    <>⏳ Connecting…</>
+                  ) : (
+                    <>🖥️ Connect with Azure CLI</>
+                  )}
+                </button>
+
+                {!showPatForm ? (
+                  <button
+                    type='button'
+                    className='secondary-button button-full mt-8'
+                    onClick={() => setShowPatForm(true)}
+                  >
+                    Use a Personal Access Token instead
+                  </button>
+                ) : (
+                  <div className="form-group mt-8">
+                    <label>Personal Access Token</label>
+                    <input
+                      type="password"
+                      value={patInput}
+                      onChange={(e) => setPatInput(e.target.value)}
+                      placeholder="Paste your Azure DevOps PAT"
+                    />
+                    <button
+                      className='secondary-button button-full mt-8'
+                      onClick={submitPat}
+                      disabled={!patInput.trim() || adoConfig?.isConnecting}
+                    >
+                      {adoConfig?.isConnecting ? (
+                        <>⏳ Verifying…</>
+                      ) : (
+                        <>Connect with Token</>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -156,36 +270,51 @@ const AdoSettings: React.FC = () => {
               </button>
             </div>
 
-            <div className="form-row">
-              <div className="form-group">
-                <label>Organization Name</label>
-                <div className="password-input-container">
-                  <input
-                    type={showOrgName ? "text" : "password"}
-                    value={adoConfig.orgName || ''}
-                    onChange={(e) => handleInputChange('ado', 'orgName', e.target.value)}
-                    placeholder="Ex: MyOrganization"
-                  />
+            <div className="form-group">
+              <label>Organization Name</label>
+              {adoConfig.availableOrganizations && adoConfig.availableOrganizations.length > 0 ? (
+                <SearchableDropdown
+                  value={adoConfig.orgName || ''}
+                  options={adoConfig.availableOrganizations.map((o) => ({
+                    value: o.accountName,
+                    label: o.accountName,
+                  }))}
+                  onChange={selectOrg}
+                  placeholder='-- Select an organization --'
+                  searchPlaceholder='Search organizations...'
+                  emptyLabel='No organizations found...'
+                />
+              ) : (
+                <>
+                  <div className="password-input-container">
+                    <input
+                      type={showOrgName ? "text" : "password"}
+                      value={adoConfig.orgName || ''}
+                      onChange={(e) => selectOrg(e.target.value)}
+                      placeholder="Ex: MyOrganization"
+                    />
+                    <button
+                      type="button"
+                      className="password-toggle-btn"
+                      onClick={() => setShowOrgName(!showOrgName)}
+                      title={showOrgName ? "Hide organization name" : "Show organization name"}
+                    >
+                      {showOrgName ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+                      )}
+                    </button>
+                  </div>
                   <button
-                    type="button"
-                    className="password-toggle-btn"
-                    onClick={() => setShowOrgName(!showOrgName)}
-                    title={showOrgName ? "Hide organization name" : "Show organization name"}
+                    type='button'
+                    className='link-like'
+                    onClick={refreshOrganizations}
                   >
-                    {showOrgName ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
-                    )}
+                    🔄 Fetch my organizations
                   </button>
-                </div>
-              </div>
-              <button 
-                onClick={fetchProjects} 
-                disabled={!adoConfig.orgName || adoConfig.isConnecting}
-              >
-                Fetch Projects
-              </button>
+                </>
+              )}
             </div>
             <div className="form-group">
               <label>Project Name</label>
@@ -204,12 +333,22 @@ const AdoSettings: React.FC = () => {
                   emptyLabel='No projects found...'
                 />
               ) : (
-                <input
-                  type="text"
-                  value={adoConfig.projectName || ''}
-                  onChange={(e) => handleInputChange('ado', 'projectName', e.target.value)}
-                  placeholder="Ex: MyProject"
-                />
+                <>
+                  <input
+                    type="text"
+                    value={adoConfig.projectName || ''}
+                    onChange={(e) => handleInputChange('ado', 'projectName', e.target.value)}
+                    placeholder="Ex: MyProject"
+                  />
+                  <button
+                    type='button'
+                    className='link-like'
+                    onClick={fetchProjects}
+                    disabled={!adoConfig.orgName || adoConfig.isConnecting}
+                  >
+                    🔄 Refresh projects
+                  </button>
+                </>
               )}
             </div>
 

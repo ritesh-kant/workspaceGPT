@@ -512,6 +512,20 @@
   opacity: 0.9;
 }
 
+.link-like {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  color: var(--vscode-textLink-foreground);
+  font-size: 0.9em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.link-like:hover {
+  text-decoration: underline;
+}
+
 .trigger-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -732,30 +746,6 @@
 .danger-button:hover {
   background-color: var(--wgpt-error, var(--vscode-errorForeground));
   color: var(--vscode-editor-background);
-}
-
-/* ADO PAT setup — was inline styles with hardcoded greys that ignored the
-   editor theme. */
-.pat-scopes {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0 0 10px 0;
-  font-size: 0.82em;
-  line-height: 1.6;
-  color: var(--vscode-descriptionForeground);
-}
-
-.pat-scopes em {
-  font-style: normal;
-  opacity: 0.75;
-}
-
-.pat-input {
-  width: 100%;
-  padding: 8px;
-  margin-bottom: 8px;
-  box-sizing: border-box;
 }
 
 .mcp-status-row {

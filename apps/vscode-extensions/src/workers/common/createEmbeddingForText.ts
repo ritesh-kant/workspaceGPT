@@ -23,6 +23,8 @@ interface WorkerData {
   resume?: boolean;
   lastProcessedFile?: string;
   processedFiles?: number;
+  /** Enables per-batch logging; set from the `workspacegpt.debugIndexing` setting. */
+  debug?: boolean;
 }
 
 interface Metadata {
@@ -181,6 +183,20 @@ function reportProcessing(current: number, total: number, lastProcessedFile?: st
 /** Greppable diagnostic logger so we can trace local-vs-cloud decisions. */
 function diag(...args: any[]) {
   console.log('[workspaceGPT][embedding]', ...args);
+}
+
+/**
+ * Per-batch logging is one line per batch, so it scales with corpus size
+ * (hundreds of lines for a few thousand docs). Off unless the user enables
+ * `workspacegpt.debugIndexing`, or WORKSPACEGPT_DEBUG is set for a dev run.
+ */
+const DEBUG: boolean =
+  workerData?.debug === true || !!process.env.WORKSPACEGPT_DEBUG;
+
+function diagVerbose(...args: any[]) {
+  if (DEBUG) {
+    diag(...args);
+  }
 }
 
 /** Mask a secret for safe logging (keep first/last few chars). */
@@ -443,9 +459,19 @@ async function createEmbeddings(): Promise<void> {
     if (toEmbed.length === 0) {
       diag('nothing new to embed — finalizing.');
     }
+    const batchCount = Math.ceil(toEmbed.length / batchSize);
     for (let i = 0; i < toEmbed.length; i += batchSize) {
       const batch = toEmbed.slice(i, i + batchSize);
+      const batchNo = Math.floor(i / batchSize) + 1;
+      const chars = batch.reduce((sum, b) => sum + b.text.length, 0);
+      diagVerbose(
+        `batch ${batchNo}/${batchCount}: embedding ${batch.length} docs ` +
+          `(${chars} chars, largest ${Math.max(...batch.map((b) => b.text.length))}), ` +
+          `rss=${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB …`,
+      );
+      const startedAt = Date.now();
       const vectors = await provider.embedBatch(batch.map((b) => b.text), 'document');
+      diagVerbose(`batch ${batchNo}/${batchCount}: embedded in ${Date.now() - startedAt}ms`);
       for (let j = 0; j < batch.length; j++) {
         allEmbeddings.push({
           filename: batch[j].filename,
@@ -457,7 +483,7 @@ async function createEmbeddings(): Promise<void> {
         done++;
       }
       await checkpoint();
-      diag(`checkpoint: ${allEmbeddings.length} embeddings persisted` + (store ? ` (${cloudUpserted} in Qdrant)` : ''));
+      diagVerbose(`checkpoint: ${allEmbeddings.length} embeddings persisted` + (store ? ` (${cloudUpserted} in Qdrant)` : ''));
       reportProcessing(done, total, batch[batch.length - 1].srcFile);
     }
 
@@ -485,6 +511,24 @@ function sourceFromPath(embeddingDirPath: string): EmbeddingIndexManifest['sourc
   if (parent === 'codebase') return 'CODEBASE';
   return 'CONFLUENCE';
 }
+
+// A native crash or OOM inside onnxruntime surfaces here rather than through
+// createEmbeddings()'s try/catch, which only sees ordinary JS throws.
+process.on('uncaughtException', (error) => {
+  diag('✗ UNCAUGHT:', error?.stack || String(error));
+  try {
+    process.send?.({ type: WORKER_STATUS.ERROR, message: `Uncaught: ${error?.message ?? error}` });
+  } catch { /* channel may already be gone */ }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  diag('✗ UNHANDLED REJECTION:', reason?.stack || String(reason));
+  try {
+    process.send?.({ type: WORKER_STATUS.ERROR, message: `Unhandled rejection: ${reason?.message ?? reason}` });
+  } catch { /* channel may already be gone */ }
+  process.exit(1);
+});
 
 // Start processing
 createEmbeddings();

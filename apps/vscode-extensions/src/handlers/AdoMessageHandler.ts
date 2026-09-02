@@ -33,13 +33,21 @@ export class AdoMessageHandler {
 
   public async handleMessage(data: any): Promise<boolean> {
     switch (data.type) {
+      case MESSAGE_TYPES.CONNECT_ADO_MSAL:
+        await this.handleConnectAdoMsal();
+        return true;
+      case MESSAGE_TYPES.CONNECT_ADO_AZURE_CLI:
+        await this.handleConnectAdoAzureCli();
+        return true;
       case MESSAGE_TYPES.SAVE_ADO_PAT:
-        this.analyticsService.trackEvent('ado_pat_saved');
         await this.handleSaveAdoPat(data.pat);
         return true;
       case MESSAGE_TYPES.DISCONNECT_ADO:
         this.analyticsService.trackEvent('ado_disconnected');
         await this.handleDisconnectAdo();
+        return true;
+      case MESSAGE_TYPES.FETCH_ADO_ORGANIZATIONS:
+        await this.handleFetchAdoOrganizations();
         return true;
       case MESSAGE_TYPES.FETCH_ADO_PROJECTS:
         this.analyticsService.trackEvent('ado_projects_fetched');
@@ -79,7 +87,7 @@ export class AdoMessageHandler {
 
   public async reset(): Promise<void> {
     this.adoService.stopSync();
-    this.adoEmbeddingService.stopEmbeddingProcess();
+    await this.adoEmbeddingService.stopEmbeddingProcess();
     await this.adoAuthService.disconnect();
     await this.adoService.resetSyncProgress();
     await this.adoEmbeddingService.resetEmbeddingProgress();
@@ -99,24 +107,63 @@ export class AdoMessageHandler {
     }
 
     this.adoService.stopSync();
-    this.adoEmbeddingService.stopEmbeddingProcess();
+    await this.adoEmbeddingService.stopEmbeddingProcess();
     await this.adoEmbeddingService.clearEmbeddingIndex();
     await this.adoEmbeddingService.resetEmbeddingProgress();
     await this.handleCompleteAdoSync();
     return true;
   }
 
+  private async handleConnectAdoMsal(): Promise<void> {
+    try {
+      await this.adoAuthService.connectWithMicrosoftAccount();
+      this.analyticsService.trackEvent('ado_msal_connected');
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.ADO_MSAL_SUCCESS,
+      });
+      await this.handleFetchAdoOrganizations();
+    } catch (error) {
+      console.error('Error connecting ADO via Microsoft sign-in:', error);
+      this.analyticsService.trackEvent('ado_msal_error', {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.ADO_MSAL_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async handleConnectAdoAzureCli(): Promise<void> {
+    try {
+      await this.adoAuthService.connectWithAzureCli();
+      this.analyticsService.trackEvent('ado_azure_cli_connected');
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.ADO_AZURE_CLI_SUCCESS,
+      });
+      await this.handleFetchAdoOrganizations();
+    } catch (error) {
+      console.error('Error connecting ADO via Azure CLI:', error);
+      this.analyticsService.trackEvent('ado_azure_cli_error', {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.ADO_AZURE_CLI_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private async handleSaveAdoPat(pat: string): Promise<void> {
     try {
-      if (!pat || pat.trim() === '') {
-        throw new Error("Personal Access Token cannot be empty.");
-      }
-      await this.adoAuthService.savePat(pat);
+      await this.adoAuthService.connectWithPat(pat);
+      this.analyticsService.trackEvent('ado_pat_connected');
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.ADO_PAT_SUCCESS,
       });
+      await this.handleFetchAdoOrganizations();
     } catch (error) {
-      console.error('Error in ADO PAT Save:', error);
+      console.error('Error saving ADO PAT:', error);
       this.analyticsService.trackEvent('ado_pat_error', {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
@@ -130,7 +177,7 @@ export class AdoMessageHandler {
   private async handleDisconnectAdo(): Promise<void> {
     try {
       this.adoService.stopSync();
-      this.adoEmbeddingService.stopEmbeddingProcess();
+      await this.adoEmbeddingService.stopEmbeddingProcess();
 
       await this.adoAuthService.disconnect();
 
@@ -176,6 +223,30 @@ export class AdoMessageHandler {
       });
     } catch (error) {
       console.error('Error disconnecting ADO:', error);
+    }
+  }
+
+  /**
+   * Lists the user's Azure DevOps organizations so the settings panel can
+   * offer a dropdown instead of asking them to type the org name. Called
+   * both on explicit request and automatically right after a successful
+   * connect (see the connect handlers above) — a soft failure here (e.g. a
+   * narrowly-scoped PAT that can't read the accounts API) just leaves the
+   * dropdown empty and falls back to manual entry, never blocks connecting.
+   */
+  private async handleFetchAdoOrganizations(): Promise<void> {
+    try {
+      const organizations = await this.adoAuthService.fetchOrganizations();
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.FETCH_ADO_ORGANIZATIONS_SUCCESS,
+        organizations: organizations.map((o) => ({ accountId: o.accountId, accountName: o.accountName })),
+      });
+    } catch (error) {
+      console.warn('Could not fetch ADO organizations:', error);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.FETCH_ADO_ORGANIZATIONS_ERROR,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -244,14 +315,14 @@ export class AdoMessageHandler {
   }
 
   private async getAdoConfig(): Promise<AdoConfig> {
-    const accessToken = await this.adoAuthService.getValidAccessToken();
+    const authHeader = await this.adoAuthService.getValidAuthHeader();
     const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
     const orgName = config?.state?.config?.ado?.orgName;
     const projectName = config?.state?.config?.ado?.projectName;
 
     const lookbackMonths = config?.state?.config?.ado?.lookbackMonths ?? 24;
 
-    if (!accessToken || !orgName || !projectName) {
+    if (!authHeader || !orgName || !projectName) {
       throw new Error(
         'Azure DevOps configuration is incomplete. Please connect.'
       );
@@ -260,7 +331,7 @@ export class AdoMessageHandler {
     return {
       orgName,
       projectName,
-      accessToken,
+      authHeader,
       lookbackMonths,
     };
   }
@@ -347,6 +418,22 @@ export class AdoMessageHandler {
     }
   }
 
+  /**
+   * Clears the persisted isSyncing/isIndexing flags on a sync error, so a
+   * stale "in progress" state doesn't survive a webview/panel reload — the
+   * SYNC_ADO_ERROR postMessage above only corrects the webview's in-memory
+   * store, not what's persisted in globalState.
+   */
+  private async clearAdoSyncFlags(): Promise<void> {
+    const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+    if (settings?.state?.config?.ado) {
+      settings.state.config.ado.isSyncing = false;
+      settings.state.config.ado.isIndexing = false;
+      settings.state.config.ado._needsResume = false;
+      await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
+    }
+  }
+
   private async handleStartAdoSync(forceFull: boolean = false): Promise<void> {
     try {
       if (forceFull) {
@@ -368,15 +455,24 @@ export class AdoMessageHandler {
         (e) => console.warn('Sprint re-fetch on sync start failed:', e)
       );
 
-      await this.adoService.startSync(adoConfig, async () => {
-        const lastSyncTime = new Date().toISOString();
-        const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-        if (settings?.state?.config?.ado) {
-          settings.state.config.ado.lastSyncTime = lastSyncTime;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
-        }
-        this.handleCompleteAdoSync();
-      });
+      await this.adoService.startSync(
+        adoConfig,
+        async () => {
+          const lastSyncTime = new Date().toISOString();
+          const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+          if (settings?.state?.config?.ado) {
+            settings.state.config.ado.lastSyncTime = lastSyncTime;
+            await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
+          }
+          this.handleCompleteAdoSync();
+        },
+        false,
+        (error) => {
+          console.error('ADO sync worker error:', error.message);
+          this.clearAdoSyncFlags().catch((e) => console.error('Failed to clear ADO sync flags:', e));
+        },
+        () => this.adoAuthService.getValidAuthHeader(),
+      );
     } catch (error) {
       console.error('Error in ADO sync:', error);
       this.analyticsService.trackEvent('ado_sync_error', {
@@ -387,6 +483,7 @@ export class AdoMessageHandler {
         type: MESSAGE_TYPES.SYNC_ADO_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
+      await this.clearAdoSyncFlags();
     }
   }
 
@@ -394,7 +491,7 @@ export class AdoMessageHandler {
     try {
       const adoConfig = await this.getAdoConfig();
       const progress = this.adoService.getSyncProgress();
-      
+
       if (!progress || progress.isComplete) {
         await this.handleStartAdoSync();
         return;
@@ -403,7 +500,12 @@ export class AdoMessageHandler {
       await this.adoService.startSync(
         adoConfig,
         () => this.handleCompleteAdoSync(),
-        true
+        true,
+        (error) => {
+          console.error('ADO sync worker error:', error.message);
+          this.clearAdoSyncFlags().catch((e) => console.error('Failed to clear ADO sync flags:', e));
+        },
+        () => this.adoAuthService.getValidAuthHeader(),
       );
     } catch (error) {
       console.error('Error resuming ADO sync:', error);
@@ -411,13 +513,14 @@ export class AdoMessageHandler {
         type: MESSAGE_TYPES.SYNC_ADO_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
+      await this.clearAdoSyncFlags();
     }
   }
 
   private async handleStopAdoSync(): Promise<void> {
     try {
       this.adoService.stopSync();
-      this.adoEmbeddingService.stopEmbeddingProcess();
+      await this.adoEmbeddingService.stopEmbeddingProcess();
 
       const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       if (config?.state?.config?.ado) {

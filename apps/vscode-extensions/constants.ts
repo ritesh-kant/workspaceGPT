@@ -10,6 +10,12 @@ export const MESSAGE_TYPES = {
   // Webview → host: the sidebar was dragged below SIDEBAR_MIN_WIDTH_PX; hide
   // the bar that currently hosts this view instead of rendering a broken layout.
   COLLAPSE_SIDEBAR: 'collapse-sidebar',
+  // Host → webview: the view was shown or hidden (another view took the
+  // sidebar, the bar was closed, the icon was clicked). The webview cannot see
+  // this on its own — a retained webview is an iframe whose `document.hidden`
+  // tracks the window, not the sidebar — and without it the collapse watch
+  // mistakes a reveal at a narrow width for a sash drag.
+  VIEW_VISIBILITY: 'view-visibility',
   ERROR_CHAT: 'error-chat',
   RESET: 'reset',
   STOP_MESSAGE: 'stop-message',
@@ -123,9 +129,22 @@ export const MESSAGE_TYPES = {
   SYNC_ADO_STOP: 'sync-ado-stop',
   RESUME_ADO_SYNC: 'resume-ado-sync',
 
+  // Microsoft sign-in via MSAL, using Microsoft's own well-known ADO client id
+  // (primary auth mode — no local install needed). See ADO_MSAL below.
+  CONNECT_ADO_MSAL: 'connect-ado-msal',
+  ADO_MSAL_SUCCESS: 'ado-msal-success',
+  ADO_MSAL_ERROR: 'ado-msal-error',
+  // Azure CLI passthrough (alternate auth mode for anyone already `az login`'d).
+  CONNECT_ADO_AZURE_CLI: 'connect-ado-azure-cli',
+  ADO_AZURE_CLI_SUCCESS: 'ado-azure-cli-success',
+  ADO_AZURE_CLI_ERROR: 'ado-azure-cli-error',
+  // Personal Access Token (fallback auth mode).
   SAVE_ADO_PAT: 'save-ado-pat',
   ADO_PAT_SUCCESS: 'ado-pat-success',
   ADO_PAT_ERROR: 'ado-pat-error',
+  FETCH_ADO_ORGANIZATIONS: 'fetch-ado-organizations',
+  FETCH_ADO_ORGANIZATIONS_SUCCESS: 'fetch-ado-organizations-success',
+  FETCH_ADO_ORGANIZATIONS_ERROR: 'fetch-ado-organizations-error',
   FETCH_ADO_PROJECTS: 'fetch-ado-projects',
   FETCH_ADO_PROJECTS_SUCCESS: 'fetch-ado-projects-success',
   FETCH_ADO_PROJECTS_ERROR: 'fetch-ado-projects-error',
@@ -339,7 +358,12 @@ export const STORAGE_KEYS = {
   CODEBASE_SYNC_PROGRESS: 'codebase-sync-progress',
   CONFLUENCE_OAUTH_TOKENS: 'confluence-oauth-tokens',
   ADO_SYNC_PROGRESS: 'ado-sync-progress',
-  ADO_OAUTH_TOKENS: 'ado-oauth-tokens',
+  /** Which auth mode is active: 'msal' | 'azcli' | 'pat'. */
+  ADO_AUTH_MODE: 'ado-auth-mode',
+  /** Raw PAT string — only present when ADO_AUTH_MODE is 'pat'. */
+  ADO_PAT: 'ado-pat',
+  /** Serialized MSAL token cache — only present when ADO_AUTH_MODE is 'msal'. */
+  ADO_MSAL_CACHE: 'ado-msal-cache',
   /** Last successful "assigned to me" fetch, so the panel renders instantly. */
   ADO_MY_WORK_ITEMS_CACHE: 'ado-my-work-items-cache',
   // Deployment automation — write-scoped creds (SecretStorage), never shared to Chrome
@@ -535,19 +559,45 @@ export const ATLASSIAN_OAUTH = {
   CALLBACK_PATH: '/callback',
 };
 
-// Azure DevOps OAuth 2.0 Configuration
-export const ADO_OAUTH = {
-  CLIENT_ID: 'REPLACE_WITH_ADO_APP_ID',
-  TOKEN_PROXY_URL: 'https://workspace-gpt-ado-auth-proxy.vercel.app/api/token', // Example Proxy
-  AUTH_URL: 'https://app.vssps.visualstudio.com/oauth2/authorize',
-  TOKEN_URL: 'https://app.vssps.visualstudio.com/oauth2/token',
-  SCOPES: [
-    'vso.work',
-    'vso.project',
-    'vso.code'
-  ],
-  CALLBACK_PORT: 32324, // Use a different port than Confluence
-  CALLBACK_PATH: '/callback',
+/**
+ * Azure DevOps auth. Three modes, none of which needs a custom Entra ID app
+ * registration of our own — all three route around the "unverified app /
+ * admin approval required" wall a brand-new third-party app registration
+ * hits in locked-down tenants (confirmed hitting this wall with a custom
+ * WorkspaceGPT app registration in a real locked-down tenant):
+ *
+ *  - Microsoft sign-in via MSAL (primary): interactive browser sign-in using
+ *    Microsoft's own well-known client id for the official
+ *    `@azure-devops/mcp` server (see its `src/auth.ts`,
+ *    `OAuthAuthenticator.clientId`). That id is a Microsoft first-party app,
+ *    pre-consented in virtually every Entra tenant, so it sidesteps the same
+ *    wall — with no local install required, unlike Azure CLI below. Because
+ *    it's Microsoft's app identity rather than ours, the consent screen the
+ *    user sees names their tool, not WorkspaceGPT.
+ *  - Azure CLI passthrough (alternate): shells out to
+ *    `az account get-access-token --resource <RESOURCE_ID>`, reusing
+ *    whatever `az login` session already exists on the machine — the same
+ *    fallback mechanism `@azure-devops/mcp` itself uses
+ *    (`createAuthenticator('azcli', ...)`). Requires the Azure CLI installed
+ *    and `az login` already run locally.
+ *  - Personal Access Token (fallback): for anyone who'd rather not use
+ *    either of the above.
+ */
+export const ADO_AZURE_CLI = {
+  /** Azure DevOps resource id — same GUID Microsoft's own tooling requests tokens for. */
+  RESOURCE_ID: '499b84ac-1321-427f-aa17-267ca6975798',
+};
+
+export const ADO_MSAL = {
+  /**
+   * Well-known public client id for Microsoft's official `@azure-devops/mcp`
+   * server (microsoft/azure-devops-mcp, src/auth.ts). Not ours — see the
+   * doc comment above for what that means and why it's used anyway.
+   */
+  CLIENT_ID: '0d50963b-7bb9-4fe7-94c7-a99af00b5136',
+  AUTHORITY: 'https://login.microsoftonline.com/common',
+  /** Azure DevOps resource id — same GUID as ADO_AZURE_CLI.RESOURCE_ID. */
+  RESOURCE_ID: '499b84ac-1321-427f-aa17-267ca6975798',
 };
 
 /**

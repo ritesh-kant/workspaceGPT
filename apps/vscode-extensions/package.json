@@ -157,6 +157,11 @@
           "type": "boolean",
           "default": true,
           "description": "Periodically check Open VSX for newer WorkspaceGPT releases and show a notification when an update is available. Mainly useful for manually-installed .vsix builds, which never auto-update."
+        },
+        "workspacegpt.debugIndexing": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log per-batch detail (size, memory, timing) while indexing. Verbose — enable only to diagnose indexing that stalls or stops early, then turn it back off."
         }
       }
     }
@@ -180,6 +185,7 @@
     "create-tag": "git tag workspaceGPT-v${npm_package_version} && git push origin workspaceGPT-v${npm_package_version}"
   },
   "dependencies": {
+    "@azure/msal-node": "^6.0.0",
     "@huggingface/jinja": "^0.5.0",
     "@vscode/ripgrep": "^1.18.0",
     "@workspace-gpt/confluence-utils": "workspace:*",

@@ -4,7 +4,7 @@ import { WORKER_STATUS } from '../../../constants';
 interface WorkerData {
   orgName: string;
   projectName: string;
-  accessToken: string;          // Raw PAT
+  authHeader: string;           // Pre-built `Basic`/`Bearer` Authorization value
   resume?: boolean;
   lastProcessedId?: string;
   processedItems?: number;
@@ -47,7 +47,6 @@ interface Comment {
 const {
   orgName,
   projectName,
-  accessToken,
   resume,
   lastProcessedId,
   processedItems,
@@ -56,46 +55,104 @@ const {
   lookbackMonths,
 } = workerData as WorkerData;
 
+// Mutable: the sync can run well past a Bearer token's ~60-90min TTL (MSAL/Azure
+// CLI auth modes), so AdoService pushes a refreshed header periodically via
+// postMessage rather than this being frozen for the worker's whole lifetime.
+let authHeader = (workerData as WorkerData).authHeader;
+
+parentPort?.on('message', (msg: any) => {
+  if (msg?.type === 'refresh-auth' && typeof msg.authHeader === 'string') {
+    authHeader = msg.authHeader;
+  }
+});
+
 const lookbackDays = (lookbackMonths || 24) * 30;
 
-// ADO PAT requires Basic auth with Base64 encoded ":PAT"
-const authHeader = `Basic ${Buffer.from(`:${accessToken}`).toString('base64')}`;
 const baseUrl = `https://dev.azure.com/${encodeURIComponent(orgName)}/${encodeURIComponent(projectName)}/_apis`;
 
-async function adoFetch(url: string): Promise<any> {
-  const response = await fetch(url, {
-    headers: {
-      Authorization: authHeader,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-  });
+const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 4;
 
-  if (!response.ok) {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function backoffMs(attempt: number): number {
+  return Math.min(1000 * 2 ** attempt, 15_000);
+}
+
+/** Fetch + parse JSON with a request timeout and retry/backoff on 429/5xx. */
+async function requestJson(url: string, init: RequestInit): Promise<any> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers: { ...init.headers, Authorization: authHeader },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < MAX_RETRIES) {
+        await sleep(backoffMs(attempt));
+        continue;
+      }
+      throw new Error(`ADO request failed after ${MAX_RETRIES + 1} attempts: ${lastError.message}`);
+    }
+
+    if (response.ok) {
+      return response.json();
+    }
+
+    if ((response.status === 429 || response.status >= 500) && attempt < MAX_RETRIES) {
+      const retryAfterHeader = response.headers.get('Retry-After');
+      const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : NaN;
+      await sleep(Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : backoffMs(attempt));
+      continue;
+    }
+
     const text = await response.text();
     throw new Error(`ADO API error (${response.status}): ${text.substring(0, 200)}`);
   }
 
-  return response.json();
+  throw lastError ?? new Error('ADO request failed');
+}
+
+async function adoFetch(url: string): Promise<any> {
+  return requestJson(url, {
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+  });
 }
 
 async function adoPost(url: string, body: any): Promise<any> {
-  const response = await fetch(url, {
+  return requestJson(url, {
     method: 'POST',
-    headers: {
-      Authorization: authHeader,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`ADO API error (${response.status}): ${text.substring(0, 200)}`);
+/** Runs `fn` over `items` with at most `limit` in flight; results preserve input order. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+
+  async function worker(): Promise<void> {
+    while (cursor < items.length) {
+      const current = cursor++;
+      results[current] = await fn(items[current], current);
+    }
   }
 
-  return response.json();
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
 }
 
 async function fetchWorkItemIds(): Promise<number[]> {
@@ -240,17 +297,23 @@ async function fetchAndProcessAdoItems() {
 
     // Step 3: Process in batches of 200 (ADO API limit)
     const BATCH_SIZE = 200;
+    const COMMENT_FETCH_CONCURRENCY = 8;
     const idsToProcess = allIds.slice(startIndex);
 
     for (let batchOffset = 0; batchOffset < idsToProcess.length; batchOffset += BATCH_SIZE) {
       const batchIds = idsToProcess.slice(batchOffset, batchOffset + BATCH_SIZE);
       const details = await fetchWorkItemDetails(batchIds);
 
-      for (const item of details) {
-        // Fetch comments if any
-        const comments = (item.fields['System.CommentCount'] ?? 0) > 0
-          ? await fetchComments(item.id)
-          : [];
+      // Comments are fetched concurrently (order preserved) — sequential
+      // one-at-a-time fetches were the main reason large syncs ran long
+      // enough to outlive a Bearer token's TTL.
+      const commentsByItem = await mapWithConcurrency(details, COMMENT_FETCH_CONCURRENCY, (item) =>
+        (item.fields['System.CommentCount'] ?? 0) > 0 ? fetchComments(item.id) : Promise.resolve([])
+      );
+
+      for (let i = 0; i < details.length; i++) {
+        const item = details[i];
+        const comments = commentsByItem[i];
 
         const markdownContent = workItemToMarkdown(item, comments);
         const htmlUrl = item._links?.html?.href ||

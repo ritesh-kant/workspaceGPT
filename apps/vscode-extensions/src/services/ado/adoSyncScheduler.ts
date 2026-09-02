@@ -142,13 +142,13 @@ export class AdoSyncScheduler {
   private async runSync(resume: boolean = false) {
     try {
       const authService = new AdoAuthService(this.context);
-      const accessToken = await authService.getValidAccessToken();
+      const authHeader = await authService.getValidAuthHeader();
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       const orgName = config?.state?.config?.ado?.orgName;
       const projectName = config?.state?.config?.ado?.projectName;
       const lookbackMonths = config?.state?.config?.ado?.lookbackMonths || 24;
 
-      if (!accessToken || !orgName || !projectName) {
+      if (!authHeader || !orgName || !projectName) {
           throw new Error('ADO config incomplete');
       }
 
@@ -162,7 +162,7 @@ export class AdoSyncScheduler {
       const adoConfig: AdoConfig = {
           orgName,
           projectName,
-          accessToken,
+          authHeader,
           lookbackMonths
       };
 
@@ -198,7 +198,7 @@ export class AdoSyncScheduler {
         // Error callback: reset flags so future scheduled syncs aren't blocked
         console.error('❌ Auto-sync ADO: worker error:', error.message);
         this.resetSyncFlags();
-      });
+      }, () => authService.getValidAuthHeader());
 
     } catch (e) {
       console.error('Automated ADO background sync failed:', e);

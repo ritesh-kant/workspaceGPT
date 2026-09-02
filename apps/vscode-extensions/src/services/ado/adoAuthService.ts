@@ -1,5 +1,36 @@
 import * as vscode from 'vscode';
-import { STORAGE_KEYS } from '../../../constants';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import {
+  PublicClientApplication,
+  ICachePlugin,
+  TokenCacheContext,
+  AccountInfo,
+} from '@azure/msal-node';
+import { ADO_AZURE_CLI, ADO_MSAL, STORAGE_KEYS } from '../../../constants';
+
+const execAsync = promisify(exec);
+
+/** Persists MSAL's token cache to VS Code SecretStorage so a sign-in survives restarts. */
+class SecretStorageCachePlugin implements ICachePlugin {
+  constructor(private context: vscode.ExtensionContext) {}
+
+  async beforeCacheAccess(cacheContext: TokenCacheContext): Promise<void> {
+    const cached = await this.context.secrets.get(STORAGE_KEYS.ADO_MSAL_CACHE);
+    if (cached) {
+      cacheContext.tokenCache.deserialize(cached);
+    }
+  }
+
+  async afterCacheAccess(cacheContext: TokenCacheContext): Promise<void> {
+    if (cacheContext.cacheHasChanged) {
+      await this.context.secrets.store(
+        STORAGE_KEYS.ADO_MSAL_CACHE,
+        cacheContext.tokenCache.serialize(),
+      );
+    }
+  }
+}
 
 export interface AdoOrganization {
   accountId: string;
@@ -14,59 +45,207 @@ export interface AdoProject {
   url: string;
 }
 
+type AdoAuthMode = 'msal' | 'azcli' | 'pat';
+
+const ADO_SCOPE = `${ADO_MSAL.RESOURCE_ID}/.default`;
+
+/**
+ * Azure DevOps auth — three modes, none requiring a custom Entra ID app
+ * registration of our own:
+ *
+ *  - Microsoft sign-in (MSAL): interactive browser sign-in via Microsoft's
+ *    own well-known client id (see ADO_MSAL's doc comment in constants.ts).
+ *    MSAL persists its own encrypted-at-rest-by-us token cache in
+ *    SecretStorage and transparently refreshes via acquireTokenSilent.
+ *  - Azure CLI passthrough: gets a fresh access token from `az` on every
+ *    call. `az` keeps its own local token cache and silently refreshes, so
+ *    there's nothing for us to persist beyond "which mode is active" — the
+ *    CLI call itself is the source of truth.
+ *  - Personal Access Token: the raw PAT is stored in SecretStorage and sent
+ *    as Basic auth, same as ADO's classic PAT flow.
+ */
 export class AdoAuthService {
   private context: vscode.ExtensionContext;
+  private msalClient: PublicClientApplication | null = null;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
   }
 
+  private getMsalClient(): PublicClientApplication {
+    if (!this.msalClient) {
+      this.msalClient = new PublicClientApplication({
+        auth: {
+          clientId: ADO_MSAL.CLIENT_ID,
+          authority: ADO_MSAL.AUTHORITY,
+        },
+        cache: {
+          cachePlugin: new SecretStorageCachePlugin(this.context),
+        },
+      });
+    }
+    return this.msalClient;
+  }
+
   /**
-   * Saves the provided Personal Access Token securely in VS Code secrets.
+   * Interactive Microsoft sign-in. Opens the system browser via
+   * `vscode.env.openExternal`; MSAL runs its own loopback listener to catch
+   * the redirect, so unlike the Azure CLI/PAT modes there's no server we
+   * have to manage ourselves.
    */
-  async savePat(pat: string): Promise<void> {
-    if (!pat || pat.trim() === '') {
+  async connectWithMicrosoftAccount(): Promise<void> {
+    const pca = this.getMsalClient();
+    const result = await pca.acquireTokenInteractive({
+      scopes: [ADO_SCOPE],
+      prompt: 'select_account',
+      openBrowser: async (url: string) => {
+        await vscode.env.openExternal(vscode.Uri.parse(url));
+      },
+    });
+    if (!result?.accessToken) {
+      throw new Error('Microsoft sign-in did not return an access token.');
+    }
+    await this.context.secrets.store(STORAGE_KEYS.ADO_AUTH_MODE, 'msal' as AdoAuthMode);
+    await this.context.secrets.delete(STORAGE_KEYS.ADO_PAT);
+  }
+
+  private async getMsalAccessToken(): Promise<string> {
+    const pca = this.getMsalClient();
+    const accounts: AccountInfo[] = await pca.getTokenCache().getAllAccounts();
+    const account = accounts[0];
+    if (!account) {
+      throw new Error('Not signed in with Microsoft. Please connect first.');
+    }
+    try {
+      const result = await pca.acquireTokenSilent({ account, scopes: [ADO_SCOPE] });
+      if (!result?.accessToken) {
+        throw new Error('Silent token acquisition returned no token.');
+      }
+      return result.accessToken;
+    } catch {
+      throw new Error('Microsoft session expired or was revoked. Please reconnect.');
+    }
+  }
+
+  /**
+   * Verifies `az` is installed and logged in by actually requesting a token,
+   * then marks Azure CLI as the active auth mode. Throws a descriptive error
+   * on failure instead of silently falling through.
+   */
+  async connectWithAzureCli(): Promise<void> {
+    await this.getAzureCliAccessToken();
+    await this.context.secrets.store(STORAGE_KEYS.ADO_AUTH_MODE, 'azcli' as AdoAuthMode);
+    await this.context.secrets.delete(STORAGE_KEYS.ADO_PAT);
+  }
+
+  async connectWithPat(pat: string): Promise<void> {
+    const trimmed = pat.trim();
+    if (!trimmed) {
       throw new Error('Personal Access Token cannot be empty.');
     }
-    await this.context.secrets.store(STORAGE_KEYS.ADO_OAUTH_TOKENS, pat.trim());
+    await this.context.secrets.store(STORAGE_KEYS.ADO_PAT, trimmed);
+    await this.context.secrets.store(STORAGE_KEYS.ADO_AUTH_MODE, 'pat' as AdoAuthMode);
   }
 
-  /**
-   * Retrieves the raw PAT from secure storage.
-   */
-  async getRawPat(): Promise<string> {
-    const pat = await this.context.secrets.get(STORAGE_KEYS.ADO_OAUTH_TOKENS);
-    if (!pat) {
-      throw new Error('Not authenticated with Azure DevOps. Please connect first.');
+  private async getAzureCliAccessToken(): Promise<string> {
+    let stdout: string;
+    try {
+      ({ stdout } = await execAsync(
+        `az account get-access-token --resource ${ADO_AZURE_CLI.RESOURCE_ID} --output json`,
+      ));
+    } catch (error: any) {
+      const message: string = error?.stderr || error?.message || String(error);
+      if (/command not found|not recognized|ENOENT/i.test(message)) {
+        throw new Error(
+          'Azure CLI (az) was not found. Install it from https://aka.ms/InstallAzureCLI, run "az login", then try again.',
+        );
+      }
+      if (/az login/i.test(message) || /please run/i.test(message)) {
+        throw new Error('Not logged in to Azure CLI. Run "az login" in a terminal, then try again.');
+      }
+      throw new Error(`Azure CLI could not get a token: ${message.trim().split('\n')[0]}`);
     }
-    return pat;
+
+    let data: any;
+    try {
+      data = JSON.parse(stdout);
+    } catch {
+      throw new Error('Azure CLI returned an unexpected response.');
+    }
+    if (!data?.accessToken) {
+      throw new Error('Azure CLI returned no access token.');
+    }
+    return data.accessToken;
   }
 
   /**
-   * Returns the Authorization header value using Basic Auth formatting required by ADO PATs.
-   * Format: `Basic [base64(:PAT)]`
+   * Returns the Authorization header for ADO REST calls, per the active auth
+   * mode. Azure CLI mode re-fetches a token on every call (cheap — the CLI
+   * itself caches/refreshes locally); PAT mode reads the stored secret.
    */
   async getValidAuthHeader(): Promise<string> {
-    const pat = await this.getRawPat();
-    return `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
+    const mode = (await this.context.secrets.get(STORAGE_KEYS.ADO_AUTH_MODE)) as
+      | AdoAuthMode
+      | undefined;
+
+    if (mode === 'msal') {
+      const token = await this.getMsalAccessToken();
+      return `Bearer ${token}`;
+    }
+
+    if (mode === 'azcli') {
+      const token = await this.getAzureCliAccessToken();
+      return `Bearer ${token}`;
+    }
+
+    if (mode === 'pat') {
+      const pat = await this.context.secrets.get(STORAGE_KEYS.ADO_PAT);
+      if (!pat) {
+        throw new Error('Not authenticated with Azure DevOps. Please connect first.');
+      }
+      return `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
+    }
+
+    throw new Error('Not authenticated with Azure DevOps. Please connect first.');
   }
 
   /**
-   * Compatibility method to return the proxy method's 'accessToken'.
-   * It returns the raw PAT string, but callers should ideally formulate requests using `getValidAuthHeader()`.
+   * Lists the Azure DevOps organizations the signed-in user is a member of,
+   * via the classic vssps "accounts" API (org-agnostic — unlike everything
+   * else here, it isn't scoped to `dev.azure.com/{org}`). Requires the
+   * caller's member id first, from the profile endpoint.
    */
-  async getValidAccessToken(): Promise<string> {
-    return this.getRawPat();
-  }
-
   async fetchOrganizations(): Promise<AdoOrganization[]> {
-    return [
-      {
-        accountId: "mock-org-id",
-        accountUri: "https://dev.azure.com/mock-org",
-        accountName: "mock-org"
-      }
-    ];
+    const authHeader = await this.getValidAuthHeader();
+
+    const profileUrl = 'https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1';
+    const profileResponse = await fetch(profileUrl, {
+      headers: { Authorization: authHeader, Accept: 'application/json' },
+    });
+    if (!profileResponse.ok) {
+      throw new Error(`Failed to fetch ADO profile (${profileResponse.status})`);
+    }
+    const profile: any = await profileResponse.json();
+    const memberId = profile?.id;
+    if (!memberId) {
+      throw new Error('Could not determine Azure DevOps member id.');
+    }
+
+    const accountsUrl = `https://app.vssps.visualstudio.com/_apis/accounts?memberId=${encodeURIComponent(memberId)}&api-version=7.1`;
+    const accountsResponse = await fetch(accountsUrl, {
+      headers: { Authorization: authHeader, Accept: 'application/json' },
+    });
+    if (!accountsResponse.ok) {
+      throw new Error(`Failed to fetch ADO organizations (${accountsResponse.status})`);
+    }
+    const data: any = await accountsResponse.json();
+    return (data.value || [])
+      .map((a: any) => ({
+        accountId: a.accountId,
+        accountUri: a.accountUri,
+        accountName: a.accountName,
+      }))
+      .sort((a: AdoOrganization, b: AdoOrganization) => a.accountName.localeCompare(b.accountName));
   }
 
   async fetchProjects(orgName: string): Promise<AdoProject[]> {
@@ -175,12 +354,15 @@ export class AdoAuthService {
   }
 
   async disconnect(): Promise<void> {
-    await this.context.secrets.delete(STORAGE_KEYS.ADO_OAUTH_TOKENS);
+    await this.context.secrets.delete(STORAGE_KEYS.ADO_AUTH_MODE);
+    await this.context.secrets.delete(STORAGE_KEYS.ADO_PAT);
+    await this.context.secrets.delete(STORAGE_KEYS.ADO_MSAL_CACHE);
+    this.msalClient = null;
   }
 
   async isAuthenticated(): Promise<boolean> {
-    const pat = await this.context.secrets.get(STORAGE_KEYS.ADO_OAUTH_TOKENS);
-    return !!pat;
+    const mode = await this.context.secrets.get(STORAGE_KEYS.ADO_AUTH_MODE);
+    return !!mode;
   }
 
 }

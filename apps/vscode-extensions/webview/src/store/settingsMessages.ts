@@ -170,12 +170,50 @@ function handleAdoMessage(message: any): void {
   const batchUpdateConfig = useSettingsStore.getState().batchUpdateConfig;
 
   switch (message.type) {
+    case MESSAGE_TYPES.ADO_MSAL_SUCCESS:
+      batchUpdateConfig('ado', {
+        isAuthenticated: true,
+        isConnecting: false,
+        messageType: 'success',
+        statusMessage: 'Connected to Azure DevOps',
+      });
+      clearStatusMessageAfterDelay('ado');
+      break;
+
+    case MESSAGE_TYPES.ADO_MSAL_ERROR:
+      batchUpdateConfig('ado', {
+        isConnecting: false,
+        messageType: 'error',
+        statusMessage: message.message || 'Microsoft sign-in failed',
+      });
+      clearStatusMessageAfterDelay('ado');
+      break;
+
+    case MESSAGE_TYPES.ADO_AZURE_CLI_SUCCESS:
+      batchUpdateConfig('ado', {
+        isAuthenticated: true,
+        isConnecting: false,
+        messageType: 'success',
+        statusMessage: 'Connected to Azure DevOps via Azure CLI',
+      });
+      clearStatusMessageAfterDelay('ado');
+      break;
+
+    case MESSAGE_TYPES.ADO_AZURE_CLI_ERROR:
+      batchUpdateConfig('ado', {
+        isConnecting: false,
+        messageType: 'error',
+        statusMessage: message.message || 'Azure CLI connection failed',
+      });
+      clearStatusMessageAfterDelay('ado');
+      break;
+
     case MESSAGE_TYPES.ADO_PAT_SUCCESS:
       batchUpdateConfig('ado', {
         isAuthenticated: true,
         isConnecting: false,
         messageType: 'success',
-        statusMessage: 'Saved Personal Access Token',
+        statusMessage: 'Connected to Azure DevOps',
       });
       clearStatusMessageAfterDelay('ado');
       break;
@@ -184,9 +222,30 @@ function handleAdoMessage(message: any): void {
       batchUpdateConfig('ado', {
         isConnecting: false,
         messageType: 'error',
-        statusMessage: message.message || 'PAT Save failed',
+        statusMessage: message.message || 'Invalid Personal Access Token',
       });
       clearStatusMessageAfterDelay('ado');
+      break;
+
+    case MESSAGE_TYPES.FETCH_ADO_ORGANIZATIONS_SUCCESS: {
+      const organizations = message.organizations || [];
+      const current = useSettingsStore.getState().config.ado;
+      batchUpdateConfig('ado', {
+        availableOrganizations: organizations,
+        // Auto-pick the org when there's only one — the common case — so
+        // the user never has to type or choose anything for this field.
+        ...(organizations.length === 1 && !current?.orgName
+          ? { orgName: organizations[0].accountName }
+          : {}),
+      });
+      break;
+    }
+
+    case MESSAGE_TYPES.FETCH_ADO_ORGANIZATIONS_ERROR:
+      // Soft failure — the org dropdown just stays empty and the user can
+      // still type the name manually. Not surfaced as a status message so
+      // it doesn't look like the connect itself failed.
+      console.warn('ADO organizations fetch error:', message.message);
       break;
 
     case MESSAGE_TYPES.FETCH_ADO_PROJECTS_SUCCESS:
@@ -214,6 +273,8 @@ function handleAdoMessage(message: any): void {
         isAuthenticated: false,
         orgName: '',
         projectName: '',
+        availableOrganizations: [],
+        availableProjects: [],
         userDisplayName: '',
         currentSprint: null,
         isSyncing: false,

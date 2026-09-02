@@ -103,6 +103,9 @@ importers:
 
   apps/vscode-extensions:
     dependencies:
+      '@azure/msal-node':
+        specifier: ^6.0.0
+        version: 6.0.0
       '@huggingface/jinja':
         specifier: ^0.5.0
         version: 0.5.0
@@ -423,8 +426,16 @@ packages:
     resolution: {integrity: sha512-iYtjpanlv6963Jprs0MvzIap07V+QhultjQctfbEDQCflsDAEeO3R7XnVA5gk30fhoBFLdgJT7VqO0TGsEsN9w==}
     engines: {node: '>=0.8.0'}
 
+  '@azure/msal-common@16.14.0':
+    resolution: {integrity: sha512-A4rb55hI86Q9tBl/+jBj7TMz7iX2RFgQs/nExFzcAtoI/BFRVdaH5SL/MivrYD7qvweMpN8AgVvVMHV8UBYxew==}
+    engines: {node: '>=0.8.0'}
+
   '@azure/msal-node@5.3.0':
     resolution: {integrity: sha512-fXtJX811pX8y8QlrQqBSH6+plvWyKZDI0IxkheAcyAw9OtcpXyFivmTC7eGUqutLWaDlKXuQ3yOESD4zAmkjHg==}
+    engines: {node: '>=20'}
+
+  '@azure/msal-node@6.0.0':
+    resolution: {integrity: sha512-PU0l3CsEZVm2K8vZNFxvgmM5d0Yx/sVL/axWW0hJBoeyiB6Q/uv7hXORb7EdzlNxvehsWEF82/o+/sXlIo+UIw==}
     engines: {node: '>=20'}
 
   '@babel/code-frame@7.26.2':
@@ -6454,9 +6465,16 @@ snapshots:
 
   '@azure/msal-common@16.10.0': {}
 
+  '@azure/msal-common@16.14.0': {}
+
   '@azure/msal-node@5.3.0':
     dependencies:
       '@azure/msal-common': 16.10.0
+      jsonwebtoken: 9.0.3
+
+  '@azure/msal-node@6.0.0':
+    dependencies:
+      '@azure/msal-common': 16.14.0
       jsonwebtoken: 9.0.3
 
   '@babel/code-frame@7.26.2':

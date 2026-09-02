@@ -162,7 +162,7 @@ export class AdoEmbeddingService {
     resume: boolean = false
   ) {
     try {
-      this.stopEmbeddingProcess();
+      await this.stopEmbeddingProcess();
       await this.resetStateIfNotResume(resume);
 
       // Inject the active embedding provider/key so the worker embeds with the
@@ -202,7 +202,11 @@ export class AdoEmbeddingService {
       );
 
       this.embeddingProcess = fork(processPath, [], {
+        // ONNX inference allocates well past the default heap on larger
+        // batches; without this the worker is OOM-killed mid-run.
+        execArgv: ['--max-old-space-size=4096'],
         env: {
+          ...process.env,
           workerData: JSON.stringify(workerData),
         },
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
@@ -223,6 +227,29 @@ export class AdoEmbeddingService {
 
       this.embeddingProcess.on('error', (error) => {
         this.handleError(error);
+      });
+
+      // 'error' only fires on spawn/send failure — a child that crashes or is
+      // OOM-killed mid-batch emits 'exit' instead. Without this, that death is
+      // completely silent and the UI sits at the last reported percentage
+      // forever, which is indistinguishable from a hang.
+      const startedProcess = this.embeddingProcess;
+      startedProcess.on('exit', (code, signal) => {
+        if (this.embeddingProcess !== startedProcess) {
+          return; // superseded by a newer run, or stopped deliberately
+        }
+        this.embeddingProcess = null;
+        if (code === 0) {
+          return;
+        }
+        const reason = signal
+          ? `killed by signal ${signal}`
+          : `exited with code ${code}`;
+        console.error(`ADO embedding worker died unexpectedly: ${reason}`);
+        this.webviewView?.webview.postMessage({
+          type: MESSAGE_TYPES.INDEXING_ADO_ERROR,
+          message: `Indexing stopped: the embedding worker ${reason}.`,
+        });
       });
     } catch (error) {
       this.handleError(error);
@@ -299,15 +326,41 @@ export class AdoEmbeddingService {
     await deleteDirectory(embeddingDirPath);
   }
 
-  public stopEmbeddingProcess(): void {
-    if (this.embeddingProcess) {
-      this.embeddingProcess.kill();
-      this.embeddingProcess = null;
+  /**
+   * Kills the embedding child process and waits for it to actually exit
+   * before resolving. A bare `.kill()` returns immediately — the child is
+   * almost always mid-batch (blocked in synchronous ONNX inference, or
+   * mid-checkpoint writing embeddings.bin/embeddings_meta.json) when this is
+   * called, so without waiting, createEmbeddings() would fork a *second*
+   * process against the same files while the first is still alive: both
+   * write the same embeddings.bin/embeddings_meta.json concurrently (a torn
+   * write corrupts entries silently — Float32Array.slice doesn't throw on a
+   * truncated buffer), and the dying process's stray 'message' events can
+   * overwrite this.embeddingProgress with stale numbers after the new
+   * process has already moved further.
+   */
+  public stopEmbeddingProcess(): Promise<void> {
+    const proc = this.embeddingProcess;
+    this.embeddingProcess = null;
+    if (!proc) {
+      return Promise.resolve();
     }
+    proc.removeAllListeners('message');
+    proc.removeAllListeners('error');
+    return new Promise((resolve) => {
+      const forceKillTimer = setTimeout(() => {
+        proc.kill('SIGKILL');
+      }, 3000);
+      proc.once('exit', () => {
+        clearTimeout(forceKillTimer);
+        resolve();
+      });
+      proc.kill();
+    });
   }
 
-  public dispose(): void {
-    this.stopEmbeddingProcess();
+  public async dispose(): Promise<void> {
+    await this.stopEmbeddingProcess();
     this.stopSearchWorker();
   }
 
@@ -374,6 +427,9 @@ export class AdoEmbeddingService {
       resume,
       lastProcessedFile: this.embeddingProgress?.lastProcessedFile,
       processedFiles: this.embeddingProgress?.processedFiles || 0,
+      debug: vscode.workspace
+        .getConfiguration('workspacegpt')
+        .get<boolean>('debugIndexing', false),
     };
     return { workerData };
   }

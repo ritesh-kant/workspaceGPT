@@ -74,6 +74,7 @@ export interface AdoConfig {
   orgName: string;
   projectName: string;
   teamName?: string;
+  availableOrganizations?: { accountId: string; accountName: string }[];
   availableProjects: { id: string; name: string }[];
   lookbackMonths: number;
   userDisplayName?: string;
