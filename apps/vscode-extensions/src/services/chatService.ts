@@ -47,6 +47,8 @@ import {
 } from './agent/agentWriteTools';
 import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { recordOriginalContent } from './agent/agentDiffProvider';
+import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs } from './agent/verifyTools';
+import { shipChanges, ShipInput } from './agent/shipService';
 import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
 import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
 import { fetchWorkItem, TicketDetail } from './ado/adoWorkItemService';
@@ -62,6 +64,8 @@ import {
   recordAgentAudit,
   resolveCommandCwd,
   RunCommandArgs,
+  isAutonomousSafeCommand,
+  describeAutonomousRefusal,
 } from './agent/commandTools';
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { searchWeb } from './webSearchTool';
@@ -187,40 +191,6 @@ function toTicketPromptContext(t: TicketDetail): TicketPromptContext {
   return { ...rest, comments: comments?.slice(0, 5) };
 }
 
-/** Binaries an autonomous run may invoke when followed by a verification verb. */
-const AUTONOMOUS_BINARIES = new Set(['pnpm', 'npm', 'yarn', 'bun', 'turbo', 'npx', 'go', 'cargo', 'make', 'python', 'python3']);
-/** Verification tools safe to run bare — they execute no project-defined code hooks by default. */
-const AUTONOMOUS_STANDALONE = new Set(['tsc', 'jest', 'vitest', 'eslint', 'prettier', 'pytest']);
-/**
- * Read-only inspection commands. They mutate nothing and expose no more than
- * read_file already does, so making an autonomous run stop for them buys no
- * safety — it just kills the run (observed live: an agent-mode ticket run
- * stalled on `wc -l <file>`). Redirection/chaining is still refused below, so
- * these cannot be turned into writes.
- */
-const AUTONOMOUS_READONLY = new Set(['wc', 'ls', 'cat', 'head', 'tail', 'file', 'stat', 'basename', 'dirname']);
-const AUTONOMOUS_VERBS = new Set([
-  'test', 'tests', 'lint', 'typecheck', 'type-check', 'check', 'vet', 'build', 'compile',
-  ...AUTONOMOUS_STANDALONE,
-]);
-
-/**
- * Verification commands an autonomous run may execute without a human — test,
- * lint, type-check, build. Everything else (installs, publishes, deploys, git
- * mutations, arbitrary scripts) stays human-gated even where
- * assertCommandAllowed's denylist would pass it. Chaining and redirection are
- * refused outright: a composite command can smuggle anything.
- */
-function isAutonomousSafeCommand(command: string): boolean {
-  if (/[;&|><`$\n\r]/.test(command)) return false;
-  const tokens = command.trim().split(/\s+/);
-  const binary = tokens[0];
-  if (AUTONOMOUS_READONLY.has(binary)) return true;
-  if (AUTONOMOUS_STANDALONE.has(binary)) return true;
-  if (!AUTONOMOUS_BINARIES.has(binary)) return false;
-  return tokens.slice(1).some((t) => AUTONOMOUS_VERBS.has(t));
-}
-
 /** How each source is named to the user — matches the context dropdown's labels. */
 const SOURCE_LABELS: Record<DataSource, string> = {
   CONFLUENCE: 'Confluence',
@@ -266,8 +236,24 @@ interface SessionRun {
   turnStartMs: number;
   /** File-change rollup for the current agent turn (path → cumulative counts). */
   turnFilesChanged: Map<string, TurnFileChange>;
+  /** What "Create PR" ships: the last turn that changed files, with its report and ticket. */
+  lastShip: ShipInput | null;
   /** First checkpoint of the turn — the "undo this turn" target. */
   turnFirstCheckpointSha: string | null;
+  /**
+   * Applied-write counter for the turn. Verification results are only valid
+   * for the tree they ran against, so this is the cache key's version: any
+   * applied write invalidates every remembered check.
+   */
+  writeSeq: number;
+  /**
+   * Verification results already produced this turn, keyed by the derived
+   * command + cwd. In a monorepo `run_checks` derives the SAME package-wide
+   * command for every file in a package, so a three-file change would
+   * otherwise run one test suite three times (and the loop's own
+   * auto-verification pass makes that the common case, not the rare one).
+   */
+  checkRuns: Map<string, { writeSeq: number; result: unknown }>;
   /**
    * Whether the last completed turn routed to live codebase tools. A bare
    * continuation reply ("go ahead", "continue") carries no topical signal of
@@ -484,7 +470,10 @@ export class ChatService {
         cancelled: false,
         turnStartMs: 0,
         turnFilesChanged: new Map(),
+        lastShip: null,
         turnFirstCheckpointSha: null,
+        writeSeq: 0,
+        checkRuns: new Map(),
         lastUseCodebaseTools: false,
         autonomous: false,
         agentTranscript: null,
@@ -633,6 +622,8 @@ export class ChatService {
       run.turnStartMs = Date.now();
       run.turnFilesChanged.clear();
       run.turnFirstCheckpointSha = null;
+      run.writeSeq = 0;
+      run.checkRuns.clear();
 
       const mode = getMode(this.context);
 
@@ -966,6 +957,24 @@ export class ChatService {
             status: 'done',
             summary: ticketContext.state,
           });
+          // The run's ticket as a chip ABOVE the collapsed timeline: the user
+          // should be able to open what the agent worked from without hunting
+          // for it in Azure DevOps. Rides the agent-step channel so it
+          // persists with the message and routes to background sessions like
+          // every other step ('ticket' is rendered outside the timeline, the
+          // same exception 'notice' already uses).
+          this.post(run, {
+            type: MESSAGE_TYPES.AGENT_STEP,
+            step: {
+              kind: 'ticket',
+              title: `#${ticketContext.id} ${ticketContext.title}`,
+              detail: [ticketContext.type, ticketContext.state, ticketContext.assignedTo]
+                .filter(Boolean)
+                .join(' · '),
+              url: ticketContext.url,
+              status: 'done',
+            },
+          });
         } catch (e) {
           console.warn(`Ticket ${ticketId} pre-fetch failed (continuing without):`, e);
           this.post(run, { type: MESSAGE_TYPES.AGENT_STEP_UPDATE, id: stepId, status: 'error', summary: 'failed' });
@@ -1013,7 +1022,16 @@ export class ChatService {
       // than trusting whatever the webview sent (it has no model picker to
       // send from). One managed model serves every task; the Worker picks it.
       const finalLlm = mode === 'remote' ? getLlmSettings(this.context) : null;
-      const effModelId = finalLlm?.model ?? modelId;
+      // Agent runs (autonomous, or grounded in a ticket) may be routed to a
+      // stronger model than everyday chat — Settings → Model → "Model for
+      // agent runs". Same provider and keys; only the model id differs. The
+      // honesty gates in the worker stay as a safety net, but the lever that
+      // actually moves ticket-run quality is the model, not more gates.
+      const agentModel: string | undefined =
+        mode !== 'remote' && (autonomous || ticketContext)
+          ? (this.context.globalState.get(STORAGE_KEYS.MODEL) as any)?.state?.selectedModelProvider?.agentModel || undefined
+          : undefined;
+      const effModelId = finalLlm?.model ?? agentModel ?? modelId;
       const effProvider = finalLlm?.provider ?? provider;
       const effApiKeys = finalLlm?.apiKeys.length ? finalLlm.apiKeys : failoverKeys;
       const effBaseUrl = finalLlm?.baseUrl ?? baseUrl;
@@ -1081,6 +1099,17 @@ export class ChatService {
       }
 
       run.chatHistory.push({ role: 'assistant', content: modelResponse });
+      // Arm "Create PR" for this turn when it changed files: the report is the
+      // PR body and the ticket comment, the ticket title the commit subject.
+      run.lastShip =
+        run.turnFilesChanged.size > 0
+          ? {
+              ticketId: ticketContext?.id,
+              title: ticketContext?.title || modelResponse.split('\n').find((l) => /^##\s/.test(l))?.replace(/^##\s*/, '').replace(/^[^\w`]+/, '') || 'Agent changes',
+              report: modelResponse,
+              files: [...run.turnFilesChanged.keys()],
+            }
+          : null;
     } catch (error) {
       if (error instanceof Error && error.message === 'Generation cancelled by user.') {
         console.log('Chat generation cancelled by user.');
@@ -1122,7 +1151,8 @@ export class ChatService {
     run: SessionRun,
     name: string,
     args: any,
-    roots: NamedRoot[]
+    roots: NamedRoot[],
+    stepId?: string
   ): Promise<unknown> {
     switch (name) {
       case 'search_codebase':
@@ -1156,7 +1186,9 @@ export class ChatService {
       case 'git_blame':
         return gitBlame(args, roots);
       case 'run_command':
-        return this.gatedCommand(run, args, roots);
+        return this.gatedCommand(run, args, roots, stepId);
+      case 'run_checks':
+        return this.runChecks(run, args, roots, stepId);
       case 'search_docs':
         return this.searchKnowledge('CONFLUENCE', args);
       case 'search_tickets':
@@ -1174,7 +1206,89 @@ export class ChatService {
    * run_command flow: denylist (hard block) → session allowlist (skip the
    * card) → approval card → checkpoint → execute → mirror output + audit.
    */
-  private async gatedCommand(run: SessionRun, args: RunCommandArgs, roots: NamedRoot[]): Promise<unknown> {
+  /**
+   * Live tail of a running command into its timeline row (status stays
+   * 'running'; meta.output grows). Throttled so a chatty test runner doesn't
+   * flood the webview.
+   */
+  private streamOutputTo(run: SessionRun, stepId: string | undefined): ((combined: string) => void) | undefined {
+    if (!stepId) return undefined;
+    let last = 0;
+    return (combined: string) => {
+      const now = Date.now();
+      if (now - last < 700) return;
+      last = now;
+      this.post(run, {
+        type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+        id: stepId,
+        status: 'running',
+        meta: { output: combined.slice(-4000) },
+      });
+    };
+  }
+
+  /**
+   * run_checks: derive the verification command for a file (see verifyTools),
+   * run it, remember it on success. Autonomous-safe by construction — the
+   * command is test/lint/typecheck for the file's own package.
+   */
+  private async runChecks(run: SessionRun, args: RunChecksArgs, roots: NamedRoot[], stepId?: string): Promise<unknown> {
+    const plan = planVerification(roots, args);
+    assertCommandAllowed(plan.command);
+    // Same command, same tree → same result. Replay it instead of re-running:
+    // a package-wide suite derived for three changed files in one package is
+    // one run, not three, and a model that re-runs the suite to "double check"
+    // gets the answer back instantly with the reason why.
+    const cacheKey = `${plan.cwd}::${plan.command}`;
+    const cached = run.checkRuns.get(cacheKey);
+    if (cached && cached.writeSeq === run.writeSeq) {
+      if (stepId) {
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+          id: stepId,
+          status: 'running',
+          summary: `in ${plan.displayCwd}`,
+          meta: { output: `$ ${plan.command}\n(replayed — already ran this turn, no write since)\n` },
+        });
+      }
+      return {
+        ...(cached.result as Record<string, unknown>),
+        cached: true,
+        note: 'This exact command already ran this turn and no write has landed since — the result above is that run, not a new one. Do not run it again unless you change a file first.',
+      };
+    }
+    try {
+      const cp = await this.checkpoints(roots).checkpoint(`Run checks: ${plan.command}`);
+      if (!run.turnFirstCheckpointSha) run.turnFirstCheckpointSha = cp.sha;
+    } catch (e) {
+      console.warn('WorkspaceGPT: checkpoint before run_checks failed (continuing):', e);
+    }
+    this.postStatus(run, `Running ${plan.kind}: ${plan.command}`);
+    if (stepId) {
+      this.post(run, { type: MESSAGE_TYPES.AGENT_STEP_UPDATE, id: stepId, status: 'running', summary: `in ${plan.displayCwd}`, meta: { output: `$ ${plan.command}\n` } });
+    }
+    const res = await executeCommand(plan.command, plan.cwd, undefined, this.streamOutputTo(run, stepId));
+    const channel = agentOutputChannel();
+    channel.appendLine(`\n$ ${plan.command}   (cwd: ${plan.displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms) — run_checks ${plan.kind}`);
+    if (res.output) channel.appendLine(res.output);
+    await this.audit('command', `${plan.command} → exit ${res.exitCode}`, 'auto', res.exitCode === 0 ? 'applied' : 'failed');
+    if (res.exitCode === 0) void rememberRecipe(this.context, plan);
+    const result = {
+      kind: plan.kind,
+      command: plan.command,
+      cwd: plan.displayCwd,
+      package: plan.pkgName,
+      rationale: plan.rationale,
+      ...res,
+      ...(res.exitCode !== 0 && !res.timedOut
+        ? { hint: 'Non-zero exit: read the output above and fix the cause (a failing assertion, a lint error, a missing import). Do not switch to run_command to "try another way" unless the output says the runner itself could not start.' }
+        : {}),
+    };
+    run.checkRuns.set(cacheKey, { writeSeq: run.writeSeq, result });
+    return result;
+  }
+
+  private async gatedCommand(run: SessionRun, args: RunCommandArgs, roots: NamedRoot[], stepId?: string): Promise<unknown> {
     const command = (args.command ?? '').trim();
     if (!command) throw new Error('command must be non-empty.');
     assertCommandAllowed(command);
@@ -1188,10 +1302,7 @@ export class ChatService {
       // refused with guidance the model can act on (report it, don't retry).
       if (!isAutonomousSafeCommand(command)) {
         await this.audit('command', command, 'rejected', 'skipped');
-        throw new Error(
-          `Autonomous runs may only execute verification commands (test / lint / type-check / build via pnpm, npm, yarn, npx, tsc, jest, vitest, pytest, go, cargo, make) — "${command}" is outside that allowlist. ` +
-            'Do not retry it. Note it in your final report as a command for the user to run.'
-        );
+        throw new Error(describeAutonomousRefusal(command));
       }
     } else if (!this.sessionCommandAllowlist.has(command)) {
       const { id, decision } = run.writeGate.await({ kind: 'command', summary });
@@ -1229,7 +1340,7 @@ export class ChatService {
     }
 
     this.postStatus(run, `Running: ${command}`);
-    const res = await executeCommand(command, cwd, args.timeoutSec);
+    const res = await executeCommand(command, cwd, args.timeoutSec, this.streamOutputTo(run, stepId));
     const channel = agentOutputChannel();
     channel.appendLine(`\n$ ${command}   (cwd: ${displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms)`);
     if (res.output) channel.appendLine(res.output);
@@ -1343,6 +1454,8 @@ export class ChatService {
       throw e;
     }
     await this.audit(write.kind, write.summary, decisionKind, 'applied');
+    if (write.kind !== 'delete') await this.formatIfConfigured(write.uri);
+    run.writeSeq++;
     const prior = run.turnFilesChanged.get(write.displayPath);
     run.turnFilesChanged.set(write.displayPath, {
       path: write.displayPath,
@@ -1351,6 +1464,70 @@ export class ChatService {
       removed: (prior?.removed ?? 0) + diff.removed,
     });
     return { applied: true, path: write.displayPath, summary: write.summary, added: diff.added, removed: diff.removed };
+  }
+
+  /**
+   * Mirror the editor's own save behavior on agent writes: when the user has
+   * `editor.formatOnSave` for this file's language, run the configured
+   * formatter (Prettier, etc.) and save — programmatic saves bypass the
+   * editor's hook, which is why an agent edit would otherwise arrive
+   * unformatted and cost a lint-fix round. Silent no-op without a formatter;
+   * bounded so a slow-to-start formatter extension never stalls a run.
+   */
+  private async formatIfConfigured(uri: vscode.Uri): Promise<void> {
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const editorCfg = vscode.workspace.getConfiguration('editor', { uri, languageId: doc.languageId });
+      if (!editorCfg.get<boolean>('formatOnSave')) return;
+      const edits = await Promise.race<vscode.TextEdit[] | undefined>([
+        vscode.commands.executeCommand<vscode.TextEdit[]>('vscode.executeFormatDocumentProvider', uri, {
+          tabSize: editorCfg.get<number>('tabSize', 2),
+          insertSpaces: editorCfg.get<boolean>('insertSpaces', true),
+        }),
+        new Promise<undefined>((r) => setTimeout(() => r(undefined), 5000)),
+      ]);
+      if (!edits?.length) return;
+      const we = new vscode.WorkspaceEdit();
+      we.set(uri, edits);
+      if (await vscode.workspace.applyEdit(we)) await doc.save();
+    } catch (e) {
+      console.warn('WorkspaceGPT: post-write format skipped:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  /**
+   * "Create PR" from the files-changed bar: branch, commit the turn's files,
+   * push, open the PR page, post the report on the ticket. Progress rides the
+   * status line; the outcome goes back correlated by requestId.
+   */
+  public async shipTurn(sessionId: string, requestId?: string): Promise<void> {
+    const run = this.runs.get(sessionId);
+    const reply = (payload: Record<string, unknown>) =>
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_SHIP_DONE, sessionId, requestId, ...payload });
+    if (!run?.lastShip) {
+      reply({ ok: false, error: 'Nothing to ship — no agent changes are recorded for this chat.' });
+      return;
+    }
+    const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+    try {
+      const result = await shipChanges(this.context, roots, run.lastShip, (text) => this.postStatus(run, text));
+      this.postStatus(run, '');
+      const summary =
+        `Branch ${result.branch} pushed` +
+        (result.prUrl ? ' — pull-request page opened' : '') +
+        (result.ticketCommented ? ` — report posted on #${run.lastShip.ticketId}` : '');
+      this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: summary, status: 'done' } });
+      for (const w of result.warnings) {
+        this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: w, status: 'error' } });
+      }
+      run.lastShip = null;
+      reply({ ok: true, branch: result.branch, prUrl: result.prUrl, ticketCommented: result.ticketCommented, warnings: result.warnings });
+    } catch (e) {
+      this.postStatus(run, '');
+      const message = e instanceof Error ? e.message : String(e);
+      this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: `Create PR failed: ${message}`, status: 'error' } });
+      reply({ ok: false, error: message });
+    }
   }
 
   /** Lazily construct the per-workspace shadow-git checkpoint service. */
@@ -1426,7 +1603,17 @@ export class ChatService {
       case 'delete_file':
         return { kind: 'edit', title: 'Deleted', path: args?.path };
       case 'run_command':
-        return { kind: 'command', title: 'Ran', detail: args?.command ?? '' };
+        // The model's own 3-6 word label is the row title; the raw command
+        // moves behind the row's toggle. Three consecutive rows reading
+        // "pnpm --filter @phoenix/mms-webapp exec jest src/api/features/Chec…"
+        // were indistinguishable from each other (observed live).
+        return {
+          kind: 'command',
+          title: (args?.description ?? '').trim() || 'Ran',
+          detail: args?.command ?? '',
+        };
+      case 'run_checks':
+        return { kind: 'command', title: `Ran ${args?.kind ?? 'test'}s for`, detail: String(args?.path ?? '').split('/').pop() ?? '' };
       default:
         return { kind: 'info', title: name };
     }
@@ -1463,12 +1650,17 @@ export class ChatService {
         return { summary: errors > 0 ? `${plural(errors, 'error')} · ${total} total` : plural(total, 'problem') };
       }
       case 'run_command':
+      case 'run_checks':
         return {
-          summary: result?.timedOut ? 'timed out' : `exit ${result?.exitCode ?? '?'}`,
+          summary: result?.timedOut
+            ? 'timed out'
+            : `exit ${result?.exitCode ?? '?'}${result?.cached ? ' · replayed' : ''}`,
           meta: {
             exitCode: result?.exitCode ?? null,
             durationMs: result?.durationMs,
-            output: typeof result?.output === 'string' ? result.output.slice(0, 4000) : '',
+            output:
+              (name === 'run_checks' && result?.command ? `$ ${result.command}   (in ${result.cwd})\n` : '') +
+              (typeof result?.output === 'string' ? result.output.slice(0, 4000) : ''),
           },
         };
       case 'edit_file':
@@ -1506,6 +1698,8 @@ export class ChatService {
         return `Finding definition of "${args?.symbol ?? ''}"...`;
       case 'run_command':
         return `Proposing command: ${args?.command ?? ''} (awaiting your review)...`;
+      case 'run_checks':
+        return `Running ${args?.kind ?? 'test'} checks for ${String(args?.path ?? '').split('/').pop()}...`;
       case 'search_docs':
         return `Searching Confluence for "${args?.query ?? ''}"...`;
       case 'search_tickets':
@@ -1771,7 +1965,9 @@ Query: "${query}"`;
           // Contents of the files/folders the user @-mentioned in this message.
           mentionedFiles: resolvedMentions,
           repoOrientation,
-          workspaceRules: codebaseRoots?.length ? loadWorkspaceRules(codebaseRoots) : undefined,
+          workspaceRules: codebaseRoots?.length
+            ? [loadWorkspaceRules(codebaseRoots), verificationRecipesBlock(this.context)].filter(Boolean).join('\n\n') || undefined
+            : undefined,
           executeMandate,
           resumeTranscript,
           ticketContext: ticketContext ? toTicketPromptContext(ticketContext) : undefined,
@@ -1846,6 +2042,8 @@ Query: "${query}"`;
                 durationMs: Date.now() - run.turnStartMs,
                 filesChanged: [...run.turnFilesChanged.values()],
                 checkpointSha: run.turnFilesChanged.size > 0 ? run.turnFirstCheckpointSha ?? undefined : undefined,
+                ticketId: ticketContext?.id,
+                shippable: run.turnFilesChanged.size > 0,
               });
             }
             this.post(run, {
@@ -1974,7 +2172,7 @@ Query: "${query}"`;
                 // worker thread cannot reach — execute on the main thread and
                 // send the result back so the worker's tool loop can continue.
                 console.log(`[codebase-tool] → ${result.name}(${JSON.stringify(result.arguments)})`);
-                this.executeCodebaseTool(run, result.name!, result.arguments, codebaseRoots ?? [])
+                this.executeCodebaseTool(run, result.name!, result.arguments, codebaseRoots ?? [], result.id)
                   .then((toolResult) => {
                     const summary = JSON.stringify(toolResult);
                     console.log(`[codebase-tool] ← ${result.name}: ${summary.length} chars${summary.length <= 300 ? ` — ${summary}` : ''}`);
@@ -1995,7 +2193,7 @@ Query: "${query}"`;
                       type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
                       id: result.id,
                       status: 'error',
-                      summary: /rejected/i.test(message) ? 'rejected' : 'failed',
+                      summary: /rejected/i.test(message) ? 'rejected' : /^Command refused/i.test(message) ? 'refused' : 'failed',
                       // WHY it failed, behind the row's Show output toggle —
                       // a bare red "failed" (observed live on a refused
                       // run_command) left the user unable to tell an allowlist

@@ -80,6 +80,32 @@
       {
         "command": "workspacegpt.signOutRemote",
         "title": "WorkspaceGPT: Sign Out (Remote Mode)"
+      },
+      {
+        "command": "workspacegpt.openChatInEditor",
+        "title": "WorkspaceGPT: Open Chat in Editor",
+        "icon": {
+          "light": "resources/maximize-dark.svg",
+          "dark": "resources/maximize-light.svg"
+        }
+      },
+      {
+        "command": "workspacegpt.restoreChatToSidebar",
+        "title": "WorkspaceGPT: Restore Chat to Sidebar",
+        "icon": {
+          "light": "resources/restore-dark.svg",
+          "dark": "resources/restore-light.svg"
+        }
+      },
+      {
+        "command": "workspacegpt.refreshSessions",
+        "title": "Refresh Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "workspacegpt.searchSessions",
+        "title": "Search Sessions",
+        "icon": "$(search)"
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -111,7 +137,15 @@
           "id": "workspacegpt.chatView",
           "name": "WorkspaceGPT",
           "icon": "resources/sidebar-icon.svg",
-          "visibility": "visible"
+          "visibility": "visible",
+          "when": "!workspacegpt.chatInEditor"
+        },
+        {
+          "type": "webview",
+          "id": "workspacegpt.sessionsView",
+          "name": "Sessions",
+          "visibility": "visible",
+          "when": "workspacegpt.chatInEditor"
         }
       ]
     },
@@ -147,6 +181,43 @@
           "command": "workspacegpt.shareToChrome",
           "when": "view == workspacegpt.chatView && workspacegpt.shareEnabled",
           "group": "1_share@1"
+        },
+        {
+          "command": "workspacegpt.openChatInEditor",
+          "when": "view == workspacegpt.chatView && !workspacegpt.chatInEditor",
+          "group": "navigation@5"
+        },
+        {
+          "command": "workspacegpt.searchSessions",
+          "when": "view == workspacegpt.sessionsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "workspacegpt.refreshSessions",
+          "when": "view == workspacegpt.sessionsView",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "workspacegpt.restoreChatToSidebar",
+          "when": "activeWebviewPanelId == workspacegpt.chatEditor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "workspacegpt.newChat",
+          "when": "activeWebviewPanelId == workspacegpt.chatEditor",
+          "group": "navigation@2"
+        },
+        {
+          "command": "workspacegpt.history",
+          "when": "activeWebviewPanelId == workspacegpt.chatEditor",
+          "group": "navigation@3"
+        },
+        {
+          "command": "workspacegpt.settings",
+          "when": "activeWebviewPanelId == workspacegpt.chatEditor",
+          "group": "navigation@4"
         }
       ]
     },

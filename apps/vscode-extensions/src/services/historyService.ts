@@ -6,6 +6,9 @@ export interface ChatSessionPreview {
   id: string;
   title: string;
   updatedAt: number;
+  /** Sum of agent turn diffs in this session; omitted when there were no edits. */
+  added?: number;
+  removed?: number;
 }
 
 export interface ChatMessage {
@@ -46,6 +49,23 @@ function truncate(text: string): string {
   return text.length > TITLE_MAX_CHARS ? `${text.slice(0, TITLE_MAX_CHARS - 1).trimEnd()}…` : text;
 }
 
+function sessionDiffStats(messages: unknown): { added: number; removed: number } | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  let added = 0;
+  let removed = 0;
+  for (const message of messages) {
+    const files = (message as { turnSummary?: { filesChanged?: Array<{ added?: number; removed?: number }> } })
+      ?.turnSummary?.filesChanged;
+    if (!Array.isArray(files)) continue;
+    for (const file of files) {
+      added += Number(file?.added) || 0;
+      removed += Number(file?.removed) || 0;
+    }
+  }
+  if (added === 0 && removed === 0) return undefined;
+  return { added, removed };
+}
+
 export class HistoryService {
   private historyDir: vscode.Uri;
 
@@ -53,6 +73,10 @@ export class HistoryService {
     this.historyDir = vscode.Uri.file(
       path.join(this.context.globalStorageUri.fsPath, 'chats')
     );
+  }
+
+  public get storageDir(): vscode.Uri {
+    return this.historyDir;
   }
 
   private async initializeDirectory() {
@@ -125,10 +149,12 @@ export class HistoryService {
               : undefined;
             const title = firstUserMessage ? deriveSessionTitle(firstUserMessage.content) : data.title || 'New Chat';
 
+            const diffs = sessionDiffStats(data.messages);
             previews.push({
               id: data.id,
               title,
               updatedAt: data.updatedAt,
+              ...(diffs ?? {}),
             });
           } catch (e) {
             console.error(`Error reading history file ${filename}:`, e);

@@ -20,10 +20,34 @@ const originals = new Map<string, string>();
 
 let registered = false;
 
+// Created on first use, not at import: this module is also loaded by the
+// headless eval harness, whose vscode stub has no EventEmitter.
+let changed: vscode.EventEmitter<string> | null = null;
+const emitter = (): vscode.EventEmitter<string> => (changed ??= new vscode.EventEmitter<string>());
+/** Subscribe to originals being added or rewritten (hunk lenses re-render). */
+export function onOriginalsChanged(listener: (fsPath: string) => void): vscode.Disposable {
+  return emitter().event(listener);
+}
+
 export function recordOriginalContent(fsPath: string, content: string): void {
   if (!originals.has(fsPath)) {
     originals.set(fsPath, content);
+    changed?.fire(fsPath);
   }
+}
+
+export function hasOriginal(fsPath: string): boolean {
+  return originals.has(fsPath);
+}
+
+export function getOriginalContent(fsPath: string): string | undefined {
+  return originals.get(fsPath);
+}
+
+/** Rewrite the baseline — "keep this hunk" folds the agent's change into it so it stops showing as a diff. */
+export function setOriginalContent(fsPath: string, content: string): void {
+  originals.set(fsPath, content);
+  changed?.fire(fsPath);
 }
 
 function ensureProviderRegistered(context: vscode.ExtensionContext): void {

@@ -5,9 +5,9 @@ import * as fs from 'fs';
 export class WebviewHtmlTemplate {
   constructor(private readonly extensionUri: vscode.Uri) {}
 
-  public getHtml(webview: vscode.Webview): string {
+  public getHtml(webview: vscode.Webview, layout: 'sidebar' | 'editor' = 'sidebar'): string {
     try {
-      const html = this.getReactHtml(webview);
+      const html = this.getReactHtml(webview, layout);
       if (!html) {
         throw new Error('React build not available');
       }
@@ -18,7 +18,7 @@ export class WebviewHtmlTemplate {
     }
   }
 
-  private getReactHtml(webview: vscode.Webview): string | null {
+  private getReactHtml(webview: vscode.Webview, layout: 'sidebar' | 'editor'): string | null {
     const reactDistPath = path.join(this.extensionUri.fsPath, 'webview', 'dist');
     
     if (!this.isReactBuildAvailable(reactDistPath)) {
@@ -32,6 +32,7 @@ export class WebviewHtmlTemplate {
 
     indexHtml = this.convertLocalPathsToWebviewUris(indexHtml, reactDistPath, webview);
     indexHtml = this.addContentSecurityPolicy(indexHtml, webview);
+    indexHtml = this.injectChatLayout(indexHtml, layout);
 
     return indexHtml;
   }
@@ -68,5 +69,16 @@ export class WebviewHtmlTemplate {
     return html;
   }
 
-
+  /**
+   * The editor-tab webview is a separate iframe from the sidebar. Tag it so
+   * the React app can skip the sidebar-collapse watch and show restore vs
+   * maximize without waiting for a host message.
+   */
+  private injectChatLayout(html: string, layout: 'sidebar' | 'editor'): string {
+    const tag = `<script>window.__WGPT_CHAT_LAYOUT__=${JSON.stringify(layout)};</script>`;
+    if (/<body[^>]*>/i.test(html)) {
+      return html.replace(/<body[^>]*>/i, (open) => `${open}${tag}`);
+    }
+    return tag + html;
+  }
 }

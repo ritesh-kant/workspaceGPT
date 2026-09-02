@@ -11,6 +11,8 @@ export interface DropdownOption {
    * row reads as broken.
    */
   disabled?: boolean;
+  /** 0–100. When set, a thin bar is drawn under the subtitle. */
+  progress?: number;
 }
 
 interface SearchableDropdownProps {
@@ -210,13 +212,30 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
                   onClick={() => chooseOption(o)}
                   className={`searchable-dropdown-item${o.value === value ? ' selected' : ''}${
                     highlightedIndex === navIndex ? ' highlighted' : ''
-                  }${o.disabled ? ' disabled' : ''}`}
+                  }${o.disabled ? ' disabled' : ''}${
+                    typeof o.progress === 'number' ? ' has-progress' : ''
+                  }`}
                   role="option"
                   aria-selected={o.value === value}
                   aria-disabled={o.disabled}
                 >
                   <div className="item-title">{o.label}</div>
                   {o.subtitle && <div className="item-subtitle">{o.subtitle}</div>}
+                  {typeof o.progress === 'number' && (
+                    <div
+                      className="item-progress"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={o.progress}
+                      aria-label={o.subtitle || `${o.label} progress`}
+                    >
+                      <div
+                        className="item-progress-fill"
+                        style={{ width: `${Math.max(0, Math.min(100, o.progress))}%` }}
+                      />
+                    </div>
+                  )}
                 </li>
               );
             })}

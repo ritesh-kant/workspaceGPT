@@ -13,6 +13,7 @@ import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 import { getEmbeddingSettings } from 'src/utils/getEmbeddingSettings';
 import { getVectorStoreSettings } from 'src/utils/getVectorStoreSettings';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
+import { publishSyncState } from 'src/utils/syncStateStore';
 
 export class ConfluenceEmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
@@ -239,16 +240,48 @@ export class ConfluenceEmbeddingService {
         process.stderr.write(`[confluence-embed-worker] ${chunk}`)
       );
 
+      // stopEmbeddingProcess() kills without detaching listeners, and a worker
+      // blocked in synchronous inference can still emit after a newer run has
+      // started. Ignore anything from a process we have already replaced —
+      // otherwise its stale COMPLETED clears isIndexing and reports success on
+      // behalf of the run that superseded it.
+      const startedProcess = this.embeddingProcess;
+      const isCurrent = () => this.embeddingProcess === startedProcess;
+
       // Handle messages from the process
-      this.embeddingProcess.on('message', async (data) => {
+      startedProcess.on('message', async (data) => {
+        if (!isCurrent()) return;
         await this.handleCreateEmbeddingMessage(data);
       });
 
-      this.embeddingProcess.on('error', (error) => {
-        this.handleError(error);
+      startedProcess.on('error', async (error) => {
+        if (!isCurrent()) return;
+        await this.handleError(error);
+      });
+
+      // 'error' only fires on spawn/send failure — a worker that crashes or is
+      // OOM-killed mid-batch emits 'exit' instead and reports no terminal
+      // status of its own. Without this, isIndexing stays set for the rest of
+      // the session: checkAndSync skips every tick while indexing is "running",
+      // and each webview resolve re-launches indexing.
+      startedProcess.on('exit', async (code, signal) => {
+        if (!isCurrent()) return; // superseded by a newer run, or stopped deliberately
+        this.embeddingProcess = null;
+        if (code === 0) {
+          return;
+        }
+        const reason = signal
+          ? `killed by signal ${signal}`
+          : `exited with code ${code}`;
+        console.error(`Confluence embedding worker died unexpectedly: ${reason}`);
+        await publishSyncState(this.context, 'confluence', { isIndexing: false });
+        this.webviewView?.webview.postMessage({
+          type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
+          message: `Indexing stopped: the embedding worker ${reason}.`,
+        });
       });
     } catch (error) {
-      this.handleError(error);
+      await this.handleError(error);
     }
   }
 
@@ -331,8 +364,12 @@ export class ConfluenceEmbeddingService {
     this.stopSearchWorker();
   }
 
-  private handleError(error: unknown) {
+  private async handleError(error: unknown) {
     console.error('Error starting embedding process:', error);
+    // Covers the spawn/send failures, where no worker ever runs to report a
+    // terminal status — without this isIndexing stays true until the next
+    // extension restart clears it.
+    await publishSyncState(this.context, 'confluence', { isIndexing: false });
     this.webviewView?.webview.postMessage({
       type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
       message: error instanceof Error ? error.message : String(error),
@@ -354,6 +391,12 @@ export class ConfluenceEmbeddingService {
 
       case WORKER_STATUS.ERROR:
         console.error(`Worker error: ${message.message}`);
+        // Clear the persisted flag here, not in the caller: createEmbeddings
+        // returns as soon as the worker is forked, so this message is the only
+        // point at which indexing is actually known to be over. A background
+        // run has no webview to post to, and would otherwise leave isIndexing
+        // stuck true — blocking every later scheduled sync until restart.
+        await publishSyncState(this.context, 'confluence', { isIndexing: false });
         this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
           message: message.message,
@@ -362,6 +405,7 @@ export class ConfluenceEmbeddingService {
 
       case WORKER_STATUS.COMPLETED:
         console.log('Embedding creation complete');
+        await publishSyncState(this.context, 'confluence', { isIndexing: false });
         this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE,
         });

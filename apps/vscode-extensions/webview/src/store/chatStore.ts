@@ -26,10 +26,11 @@ export interface AgentStep {
   /** Correlates start → completion updates; absent for one-shot steps (thought/note/info). */
   id?: string;
   /**
-   * search | read | check | edit | command | thought | note | info | notice.
-   * 'notice' is the one kind rendered outside the collapsible timeline — it
-   * carries something the user has to see (e.g. an explicit context selection
-   * that could not be honored), not a trace of what the agent did.
+   * search | read | check | edit | command | thought | note | info | notice |
+   * ticket. 'notice' and 'ticket' are the kinds rendered outside the
+   * collapsible timeline — a notice carries something the user has to see
+   * (e.g. an explicit context selection that could not be honored), a ticket
+   * is the work item this run was grounded in, as a clickable chip.
    */
   kind: string;
   /** Verb-first label, e.g. "Searched", "Analyzed", "Edited". */
@@ -38,6 +39,8 @@ export interface AgentStep {
   detail?: string;
   /** Workspace-relative path when the step targets a file/dir (clickable). */
   path?: string;
+  /** External http(s) target — set on 'ticket' steps, opened in the browser. */
+  url?: string;
   status?: 'running' | 'done' | 'error';
   /** Result phrase once completed: "28 results", "+2 −2", "exit 0". */
   summary?: string;
@@ -54,6 +57,10 @@ export interface TurnSummary {
   filesChanged: { path: string; kind: 'edit' | 'create' | 'delete'; added: number; removed: number }[];
   /** Sha of the checkpoint taken before this turn's first change — undo target for the triggering user message. */
   checkpointSha?: string;
+  /** The ADO ticket this turn was grounded in, if any — "Create PR" comments the report on it. */
+  ticketId?: number;
+  /** True when the host holds this turn's changes ready to branch/commit/push. */
+  shippable?: boolean;
 }
 
 interface Message {
@@ -479,3 +486,42 @@ export const useChatStore = create<ChatState>()(
     }
   )
 );
+
+/** Live chat fields copied between the sidebar and editor-tab webviews. */
+export function collectChatSnapshot() {
+  const s = useChatStore.getState();
+  return {
+    messages: s.messages,
+    inputValue: s.inputValue,
+    isLoading: s.isLoading,
+    isStreaming: s.isStreaming,
+    showTips: s.showTips,
+    currentSessionId: s.currentSessionId,
+    historyList: s.historyList,
+    contextSelection: s.contextSelection,
+    statusText: s.statusText,
+    agentSteps: s.agentSteps,
+    pendingTurnSummary: s.pendingTurnSummary,
+    liveSessions: s.liveSessions,
+  };
+}
+
+export function applyChatSnapshot(
+  snapshot: Partial<ReturnType<typeof collectChatSnapshot>> | undefined
+): void {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  useChatStore.setState({
+    messages: snapshot.messages ?? [],
+    inputValue: snapshot.inputValue ?? '',
+    isLoading: !!snapshot.isLoading,
+    isStreaming: !!snapshot.isStreaming,
+    showTips: snapshot.showTips ?? (snapshot.messages?.length ?? 0) === 0,
+    currentSessionId: snapshot.currentSessionId ?? null,
+    historyList: snapshot.historyList ?? [],
+    contextSelection: snapshot.contextSelection ?? 'Auto',
+    statusText: snapshot.statusText ?? '',
+    agentSteps: snapshot.agentSteps ?? [],
+    pendingTurnSummary: snapshot.pendingTurnSummary ?? null,
+    liveSessions: snapshot.liveSessions ?? {},
+  });
+}

@@ -777,11 +777,227 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     assert.ok(!REPORT_STATUS_HEADING_RE.test('### Done items\n- a'));
     assert.ok(!REPORT_STATUS_HEADING_RE.test('The work is done — see below.'));
   });
+  await t('autonomous allowlist tolerates harmless output plumbing, refuses real chaining', () => {
+    const { isAutonomousSafeCommand, describeAutonomousRefusal } = commandTools;
+    // Observed live: two refusals in a row for the same `2>&1 | tail -80`.
+    assert.ok(isAutonomousSafeCommand('pnpm --filter @phoenix/mms-webapp exec jest src/x.test.ts --no-coverage 2>&1 | tail -80'));
+    assert.ok(isAutonomousSafeCommand('npx jest src/x.test.ts --no-coverage 2>&1 | tail -80'));
+    assert.ok(isAutonomousSafeCommand('npx tsc --noEmit | head -n 40'));
+    assert.ok(isAutonomousSafeCommand('pnpm run test -- src/x.test.ts'));
+    assert.ok(!isAutonomousSafeCommand('pnpm test && git push'));
+    assert.ok(!isAutonomousSafeCommand('npx jest | tee out.txt'));
+    assert.ok(!isAutonomousSafeCommand('cat package.json > /tmp/x'));
+    assert.ok(!isAutonomousSafeCommand('pnpm install'));
+    assert.ok(!isAutonomousSafeCommand('npx jest $(cat cmd)'));
+    assert.match(describeAutonomousRefusal('pnpm test && rm -rf dist'), /never execute shell chaining/);
+    assert.match(describeAutonomousRefusal('pnpm install'), /outside that allowlist/);
+  });
   await t('report shape needs a section heading, not prose', () => {
     assert.ok(REPORT_SHAPED_RE.test('### Acceptance criteria\n| a | b | c |'));
     assert.ok(REPORT_SHAPED_RE.test('**Verification**\n- ✅ jest — 5 passed'));
     assert.ok(!REPORT_SHAPED_RE.test('I checked the acceptance criteria and the verification looks fine.'));
     assert.ok(!REPORT_SHAPED_RE.test('## Blocked\nThe ticket does not decide rounding.'));
+  });
+}
+
+// ── verification planner, hunk diff, ship helpers (round 3) ──
+{
+  const { planVerification } = await import(path.join(outDir, 'verifyTools.mjs'));
+  const { computeHunks } = await import(path.join(outDir, 'agentHunkLens.mjs'));
+  const { pullRequestUrl, slugify, reportToHtml } = await import(path.join(outDir, 'shipHelpers.mjs'));
+  const fs = await import('fs');
+  const os = await import('os');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-verify-'));
+  const w = (rel, content) => {
+    const abs = path.join(tmp, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content);
+  };
+  w('pnpm-lock.yaml', 'lockfileVersion: 9\n');
+  w('package.json', JSON.stringify({ name: 'mono', private: true }));
+  w('apps/web/package.json', JSON.stringify({ name: '@acme/web', scripts: { test: 'jest', lint: 'eslint .' }, devDependencies: { jest: '^29', eslint: '^9', typescript: '^5' } }));
+  w('apps/web/tsconfig.json', '{}');
+  w('apps/web/src/features/step/useStep.ts', 'export const a = 1;\n');
+  w('apps/web/src/features/step/useStep.test.ts', 'test("a", () => {});\n');
+  w('apps/api/package.json', JSON.stringify({ name: '@acme/api', scripts: { test: 'vitest run' }, devDependencies: { vitest: '^2' } }));
+  w('apps/api/src/handler.ts', 'export const b = 2;\n');
+  w('svc/go.mod', 'module example.com/svc\n');
+  w('svc/pkg/thing.go', 'package pkg\n');
+  const roots = [{ name: 'mono', uri: { fsPath: tmp } }];
+
+  await t('run_checks: jest package runs the sibling test file from the package dir', () => {
+    const plan = planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'test' });
+    assert.equal(plan.cwd, path.join(tmp, 'apps/web'));
+    assert.equal(plan.command, 'pnpm exec jest src/features/step/useStep.test.ts');
+    assert.equal(plan.displayCwd, 'apps/web');
+    assert.equal(plan.pkgName, '@acme/web');
+  });
+  await t('run_checks: a test file verifies itself; lint and typecheck derive from deps', () => {
+    assert.equal(planVerification(roots, { path: 'apps/web/src/features/step/useStep.test.ts' }).target, 'src/features/step/useStep.test.ts');
+    assert.equal(planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'lint' }).command, 'pnpm exec eslint src/features/step/useStep.ts');
+    assert.equal(planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'typecheck' }).command, 'pnpm exec tsc --noEmit -p tsconfig.json');
+  });
+  await t('run_checks: vitest package without a sibling test runs the whole package; go module uses go test', () => {
+    const plan = planVerification(roots, { path: 'apps/api/src/handler.ts' });
+    assert.equal(plan.command, 'pnpm exec vitest run');
+    assert.match(plan.rationale, /no sibling test file/);
+    assert.equal(planVerification(roots, { path: 'svc/pkg/thing.go' }).command, 'go test ./pkg/...');
+  });
+  await t('run_checks: no runner anywhere → actionable error', () => {
+    w('docs/readme.md', '# hi');
+    assert.throws(() => planVerification(roots, { path: 'docs/readme.md' }), /nothing to run|cannot derive a test command/);
+  });
+
+  await t('computeHunks: single replaced line, insertion, deletion, unchanged', () => {
+    assert.deepEqual(computeHunks('a\nb\nc', 'a\nB\nc'), [{ origStart: 1, origEnd: 2, curStart: 1, curEnd: 2 }]);
+    assert.deepEqual(computeHunks('a\nc', 'a\nb\nc'), [{ origStart: 1, origEnd: 1, curStart: 1, curEnd: 2 }]);
+    assert.deepEqual(computeHunks('a\nb\nc', 'a\nc'), [{ origStart: 1, origEnd: 2, curStart: 1, curEnd: 1 }]);
+    assert.deepEqual(computeHunks('a\nb', 'a\nb'), []);
+  });
+  await t('computeHunks: two separate hunks stay separate', () => {
+    const hunks = computeHunks('a\nb\nc\nd\ne', 'a\nB\nc\nd\nE');
+    assert.equal(hunks.length, 2);
+    assert.equal(hunks[1].curStart, 4);
+  });
+
+  await t('pullRequestUrl: GitHub https/ssh, Azure Repos, GitLab, unknown host', () => {
+    assert.match(pullRequestUrl('https://github.com/acme/web.git', 'main', 'wgpt/x', 'T', 'B'), /^https:\/\/github\.com\/acme\/web\/compare\/main\.\.\.wgpt%2Fx\?expand=1&title=T&body=B$/);
+    assert.match(pullRequestUrl('git@github.com:acme/web.git', 'main', 'wgpt/x', 'T', 'B'), /github\.com\/acme\/web\/compare/);
+    assert.match(pullRequestUrl('https://acme@dev.azure.com/acme/Proj/_git/web', 'main', 'wgpt/x', 'T', 'B'), /dev\.azure\.com\/acme\/Proj\/_git\/web\/pullrequestcreate\?sourceRef=wgpt%2Fx&targetRef=main/);
+    assert.match(pullRequestUrl('git@ssh.dev.azure.com:v3/acme/Proj/web', 'main', 'wgpt/x', 'T', 'B'), /_git\/web\/pullrequestcreate/);
+    assert.match(pullRequestUrl('https://gitlab.com/acme/web.git', 'main', 'wgpt/x', 'T', 'B'), /merge_requests\/new/);
+    assert.equal(pullRequestUrl('https://example.com/acme/web.git', 'main', 'wgpt/x', 'T', 'B'), undefined);
+  });
+  await t('slugify + reportToHtml basics', () => {
+    assert.equal(slugify('1516750-Checkout analytics impacted by a bug fix!'), '1516750-checkout-analytics-impacted-by-a');
+    const html = reportToHtml('## ✅ Done — x\n\n### Acceptance criteria\n| A | B |\n|---|---|\n| `f.ts` | ✅ Met |\n\n- note <b>');
+    assert.match(html, /<h3>✅ Done — x<\/h3>/);
+    assert.match(html, /<table[^>]*>[\s\S]*<th[^>]*>A<\/th>[\s\S]*<code>f\.ts<\/code>/);
+    assert.match(html, /• note &lt;b&gt;/);
+  });
+}
+
+// ── auto-verification bookkeeping (the loop's lint/typecheck/test discipline) ──
+{
+  const { AutoVerifyTracker, AUTO_CHECKABLE_FILE_RE } = await import(path.join(outDir, 'autoVerify.mjs'));
+  const keys = (t) => t.pending().map((c) => `${c.path}::${c.kind}`);
+  const runBatch = (t, result = { exitCode: 0 }) => {
+    const batch = t.nextBatch();
+    for (const c of batch) {
+      t.markRunning(c.path, c.kind);
+      t.noteOutcome(c.kind, typeof result === 'function' ? result(c) : result);
+    }
+    return batch;
+  };
+
+  await t('a changed file owes lint, typecheck and test; a clean run settles it', () => {
+    const av = new AutoVerifyTracker({ limit: 12 });
+    assert.deepEqual(keys(av), []);
+    assert.ok(av.settled(), 'a run that changed nothing owes nothing');
+    av.noteWrite('src/a.ts');
+    assert.deepEqual(keys(av), ['src/a.ts::lint', 'src/a.ts::typecheck', 'src/a.ts::test']);
+    assert.ok(!av.settled());
+    runBatch(av);
+    assert.deepEqual(keys(av), []);
+    assert.ok(av.settled());
+    assert.equal(av.executedChecks, 3);
+  });
+
+  await t('a write re-arms that file (fix-then-re-verify, not one shot)', () => {
+    const av = new AutoVerifyTracker({ limit: 12 });
+    av.noteWrite('src/a.ts');
+    const failing = runBatch(av, (c) => (c.kind === 'test' ? { exitCode: 1 } : { exitCode: 0 }));
+    assert.equal(failing.length, 3);
+    // A failing check is still marked done: one confront-and-fix cycle, not a loop.
+    assert.ok(av.settled(), 'a check that cannot pass must not block the answer forever');
+    av.noteWrite('src/a.ts');
+    assert.deepEqual(keys(av), ['src/a.ts::lint', 'src/a.ts::typecheck', 'src/a.ts::test']);
+  });
+
+  await t("the model's own run_checks call is credited, not repeated", () => {
+    const av = new AutoVerifyTracker({ limit: 12 });
+    av.noteWrite('src/a.ts');
+    av.noteCheckRan('src/a.ts', 'test');
+    assert.deepEqual(keys(av), ['src/a.ts::lint', 'src/a.ts::typecheck']);
+  });
+
+  await t('deleted files and uncheckable files are out of scope', () => {
+    const av = new AutoVerifyTracker({ limit: 12 });
+    av.noteWrite('src/gone.ts');
+    av.noteWrite('src/gone.ts', { deleted: true });
+    av.noteWrite('README.md');
+    av.noteWrite('pnpm-lock.yaml');
+    assert.deepEqual(keys(av), []);
+    assert.ok(AUTO_CHECKABLE_FILE_RE.test('a/b.tsx') && AUTO_CHECKABLE_FILE_RE.test('m.py'));
+    assert.ok(!AUTO_CHECKABLE_FILE_RE.test('README.md') && !AUTO_CHECKABLE_FILE_RE.test('a.json'));
+  });
+
+  await t('only the newest changed files are checked, newest first', () => {
+    const av = new AutoVerifyTracker({ limit: 99, kinds: ['test'], maxFiles: 3 });
+    for (const p of ['a', 'b', 'c', 'd', 'e']) av.noteWrite(`src/${p}.ts`);
+    assert.deepEqual(keys(av), ['src/e.ts::test', 'src/d.ts::test', 'src/c.ts::test']);
+    // Re-editing an older file makes it the newest again.
+    av.noteWrite('src/a.ts');
+    assert.equal(keys(av)[0], 'src/a.ts::test');
+  });
+
+  await t('a kind with no runner is written off after two refusals', () => {
+    const av = new AutoVerifyTracker({ limit: 99, kinds: ['lint', 'test'] });
+    av.noteWrite('src/a.ts');
+    av.noteWrite('src/b.ts');
+    assert.equal(av.noteOutcome('test', { error: 'no "test" script' }), 'unavailable');
+    assert.ok(keys(av).some((k) => k.endsWith('::test')), 'one refusal could be file-specific');
+    av.noteOutcome('test', { error: 'no "test" script' });
+    assert.ok(!keys(av).some((k) => k.endsWith('::test')), 'the second refusal retires the kind');
+    assert.ok(keys(av).every((k) => k.endsWith('::lint')));
+  });
+
+  await t('a runner that never started is "unavailable", not a failure', () => {
+    const av = new AutoVerifyTracker({ limit: 99, kinds: ['lint', 'test'] });
+    av.noteWrite('src/a.ts');
+    assert.equal(
+      av.noteOutcome('lint', { exitCode: 2, output: "Oops! ESLint couldn't find a configuration file." }),
+      'unavailable',
+    );
+    assert.equal(av.noteOutcome('test', { exitCode: 1, output: 'npm ERR! Missing script: "test"' }), 'unavailable');
+    assert.equal(av.noteOutcome('test', { exitCode: 1, output: 'Tests: 1 failed, 4 passed' }), 'failed');
+    assert.equal(av.noteOutcome('test', { exitCode: 143, output: '', timedOut: true }), 'unavailable');
+    // Two non-starts for lint retires it; test saw one non-start and one real failure.
+    assert.ok(av.noteOutcome('lint', { exitCode: 2, output: 'command not found: eslint' }) === 'unavailable');
+    assert.ok(!av.pending().some((c) => c.kind === 'lint'));
+  });
+
+  await t('a replayed command is free; a real one is not', () => {
+    const av = new AutoVerifyTracker({ limit: 2, kinds: ['test'] });
+    av.noteWrite('src/a.ts');
+    av.noteWrite('src/b.ts');
+    av.markRunning('src/a.ts', 'test');
+    assert.equal(av.noteOutcome('test', { exitCode: 0 }), 'passed');
+    av.markRunning('src/b.ts', 'test');
+    // Same package-wide suite, same tree — the host replayed it.
+    assert.equal(av.noteOutcome('test', { exitCode: 0, cached: true }), 'passed');
+    assert.equal(av.executedChecks, 1, 'a replay must not spend the budget');
+  });
+
+  await t('the budget bounds the round and always lets the run finish', () => {
+    const av = new AutoVerifyTracker({ limit: 2, kinds: ['lint', 'typecheck', 'test'], perRound: 6 });
+    av.noteWrite('src/a.ts');
+    assert.equal(av.nextBatch().length, 2, 'a round cannot exceed what is left of the budget');
+    runBatch(av);
+    assert.equal(keys(av).length, 1, 'one check never got to run');
+    assert.ok(av.settled(), 'a spent budget still has to let the answer through');
+    assert.deepEqual(av.nextBatch(), []);
+  });
+
+  await t('a resumed run keeps what the interrupted one verified', () => {
+    const first = new AutoVerifyTracker({ limit: 12 });
+    first.noteWrite('src/a.ts');
+    runBatch(first);
+    first.noteWrite('src/b.ts');
+    const second = new AutoVerifyTracker({ limit: 12 });
+    second.restore(first.snapshot());
+    assert.deepEqual(keys(second), ['src/b.ts::lint', 'src/b.ts::typecheck', 'src/b.ts::test']);
   });
 }
 

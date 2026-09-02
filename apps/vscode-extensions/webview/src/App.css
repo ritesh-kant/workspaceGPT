@@ -27,68 +27,6 @@
   height: var(--banner-height, 30px);
 }
 
-.chat-header {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  /* padding: 0.5rem 0.75rem; */
-  border-bottom: 1px solid var(--vscode-editor-lineHighlightBorder);
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.chat-header h2 {
-  margin: 0;
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: var(--vscode-foreground);
-}
-
-.header-buttons {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.new-chat-button,
-.settings-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--vscode-icon-foreground);
-  background: none;
-  border: none;
-  cursor: pointer;
-  width: 32px;
-  height: 32px;
-  transition: all 0.2s ease;
-  border-radius: 4px;
-}
-
-.new-chat-button::before {
-  content: '+';
-  display: block;
-  width: 16px;
-  height: 16px;
-  font-size: 20px;
-  line-height: 16px;
-  text-align: center;
-}
-
-.settings-button::before {
-  content: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='currentColor' d='M9.1 4.4L8.6 2H7.4l-.5 2.4-.7.3-2-1.3-.9.8 1.3 2-.2.7-2.4.5v1.2l2.4.5.3.8-1.3 2 .8.8 2-1.3.8.3.4 2.3h1.2l.5-2.4.8-.3 2 1.3.8-.8-1.3-2 .3-.8 2.3-.4V7.4l-2.4-.5-.3-.8 1.3-2-.8-.8-2 1.3-.7-.2zM8 9.5A1.5 1.5 0 1 1 8 6.5a1.5 1.5 0 0 1 0 3z'/%3E%3C/svg%3E");
-  display: block;
-  width: 16px;
-  height: 16px;
-}
-
-.new-chat-button:hover,
-.settings-button:hover {
-  color: var(--vscode-foreground);
-  background-color: var(--vscode-toolbar-hoverBackground);
-}
-
 /* Welcome container styles */
 .welcome-container {
   flex: 1;
@@ -923,13 +861,35 @@ button:disabled {
   color: var(--vscode-foreground);
 }
 
+.agent-step-group-stats {
+  padding-left: 0.4rem;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-timeline-thought {
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+/* Steps inside a group read as discrete cards rather than a run-on list —
+   at a glance you can count what happened without reading any of it. */
 .agent-step-group-items {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  margin: 0.25rem 0 0.25rem 0.45rem;
-  padding-left: 0.7rem;
-  border-left: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  gap: 0.25rem;
+  margin: 0.3rem 0 0.35rem 0;
+}
+
+.agent-step-group-items > .agent-step-row {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--wgpt-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.3)));
+  border-radius: var(--wgpt-radius-md, 6px);
+  background: var(--wgpt-surface, transparent);
+}
+
+.agent-step-group-items > .agent-step-row.is-error {
+  border-color: rgba(var(--wgpt-danger-rgb), 0.4);
 }
 
 /* One step row: dot · title · file chip · detail · result summary */
@@ -1028,13 +988,20 @@ button:disabled {
   opacity: 0.9;
 }
 
-/* Prose the model narrated between tool batches — only visible once the
-   thought disclosure is expanded. */
+/* Prose the model narrated between tool batches — the connective tissue of
+   the trace ("Extension host is clean. Now the webview:"), rendered inline
+   between groups. Clamped so a rare long note can't push the actions
+   off-screen; the full text is in the title attribute. */
 .agent-step-row--note {
-  opacity: 0.85;
   padding: 2px 0;
+  color: var(--vscode-foreground);
+  opacity: 0.9;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Always-visible banner for 'notice' steps — rendered above the collapsible
@@ -1072,6 +1039,87 @@ button:disabled {
 .agent-notice-text {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* The run's work item, above the timeline — one click to Azure DevOps. */
+.agent-ticket-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  margin: 0 0 0.5rem 0;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--wgpt-border, var(--vscode-input-border));
+  border-left: 2px solid var(--vscode-textLink-foreground);
+  border-radius: var(--wgpt-radius-md, 6px);
+  background: var(--wgpt-surface, var(--vscode-editorWidget-background));
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-ticket-chip:hover {
+  border-color: var(--vscode-textLink-foreground);
+  background: var(--vscode-list-hoverBackground);
+}
+
+.agent-ticket-chip-icon,
+.agent-ticket-chip-external {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.agent-ticket-chip-icon {
+  color: var(--vscode-textLink-foreground);
+}
+
+.agent-ticket-chip-external {
+  color: var(--vscode-descriptionForeground);
+}
+
+.agent-ticket-chip:hover .agent-ticket-chip-external {
+  color: var(--vscode-textLink-foreground);
+}
+
+.agent-ticket-chip-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-ticket-chip-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-ticket-chip-meta {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.92em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* `#1516750` in prose, linked to the work item. */
+.markdown-content a.ticket-ref {
+  padding: 0.05em 0.35em;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.16);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.markdown-content a.ticket-ref:hover {
+  background: var(--vscode-list-hoverBackground);
+  text-decoration: none;
 }
 
 /* Command rows: "Ran `npm run check`" + collapsible output box */
@@ -2686,3 +2734,42 @@ button:disabled {
   color: var(--vscode-errorForeground);
   background: color-mix(in srgb, var(--vscode-editor-background) 90%, var(--vscode-errorForeground));
 }
+
+/* "Create PR" in the files-changed bar + its outcome line. */
+.files-changed-ship {
+  margin-left: 0.35rem;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: transparent;
+}
+
+.files-changed-ship:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.files-changed-ship:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.files-changed-ship-result {
+  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+  padding: 4px 8px;
+  font-size: 0.74rem;
+  color: var(--vscode-descriptionForeground);
+  overflow-wrap: anywhere;
+}
+
+.files-changed-ship-result code {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.95em;
+}
+
+.files-changed-ship-result a {
+  color: var(--vscode-textLink-foreground);
+}
+
+.files-changed-ship-warning {
+  color: var(--wgpt-warning);
+}
+

@@ -19,7 +19,19 @@ function extractAnswerFilePaths(answer, cap = 3) {
   return out;
 }
 var PREMATURE_AMBIGUITY_RE = /\b(ha(?:ve|s)(?: not|n'?t) (?:yet )?(?:read|searched|explored|looked|located|surfaced|checked|found)|not yet (?:read|searched|explored|checked|located|surfaced)|without (?:reading|searching)|cannot safely (?:diagnose|implement|fix|write)|before i can (?:implement|diagnose|fix|proceed)|i (?:still )?need to (?:read|locate|find|search))\b/i;
-var TICKET_TERMINAL_RE = /^\s*(#{1,4}|\*\*)\s*(blocked|no change (is )?needed|nothing to change|already (fixed|implemented|resolved))\s*(\*\*)?\s*([:—–-].*| on .*)?$/im;
+var TICKET_TERMINAL_RE = /^\s*(#{1,4}|\*\*)\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(blocked|no change (is )?needed|nothing to change|already (fixed|implemented|resolved))\s*(\*\*)?\s*([:—–-].*| on .*)?$/imu;
+var REPORT_SHAPED_RE = /^\s*(#{1,4}|\*\*)\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(acceptance criteria|verification)\b/imu;
+var REPORT_STATUS_HEADING_RE = /^##\s+(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(done|partially done|partial|blocked|no change (is )?needed|nothing to change|already (fixed|implemented|resolved)|complete|completed|fixed|implemented)\b.*$/imu;
+function stripReportPreamble(answer) {
+  const text = String(answer ?? "");
+  const m = REPORT_STATUS_HEADING_RE.exec(text);
+  if (!m || m.index === 0)
+    return text;
+  const preamble = text.slice(0, m.index);
+  if (preamble.length > 600 || /^\s*#{1,6}\s/m.test(preamble) || /```/.test(preamble))
+    return text;
+  return text.slice(m.index);
+}
 var IMPLEMENT_MANDATE_RE = /\b(implement (the|this|a) (fix|change|ticket|solution)|work on (the |this )?ticket|apply the (fix|change)|fix (the|this) (bug|issue|ticket)|resolve (the|this) (bug|issue|ticket))\b/i;
 function isStallShapedAnswer(answer) {
   const a = String(answer ?? "");
@@ -37,7 +49,10 @@ export {
   MISSING_TOOL_CLAIM_RE,
   PERMISSION_SEEKING_RE,
   PREMATURE_AMBIGUITY_RE,
+  REPORT_SHAPED_RE,
+  REPORT_STATUS_HEADING_RE,
   TICKET_TERMINAL_RE,
   extractAnswerFilePaths,
-  isStallShapedAnswer
+  isStallShapedAnswer,
+  stripReportPreamble
 };

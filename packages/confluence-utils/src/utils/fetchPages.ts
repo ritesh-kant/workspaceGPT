@@ -4,6 +4,20 @@ import { ConfluencePageResponse, ConfluencePage, ConfluenceSearchResponse } from
 
 export type AuthMode = 'basic' | 'oauth';
 
+/**
+ * Per-request ceiling. Axios defaults to no timeout at all, which lets a
+ * black-holed connection (a VPN dropping mid-request is the common one) leave a
+ * request pending forever. That hangs the sync worker, which then sends no IPC
+ * at all — so `ConfluenceService.startSync` never settles, the scheduler's
+ * `syncStartedAt` is never cleared, and every later tick logs "skipped — sync
+ * already in progress" until the window is reloaded.
+ *
+ * With a timeout, axios rejects, the worker's catch posts WORKER_STATUS.ERROR,
+ * and the existing onError path resets the sync flags. Matches the 30s the ADO
+ * sync worker already uses.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
 export class ConfluencePageFetcher {
     private spaceKey: string;
     private confluenceBaseUrl: string;
@@ -49,6 +63,7 @@ export class ConfluencePageFetcher {
     private getRequestConfig(extraConfig: AxiosRequestConfig = {}): AxiosRequestConfig {
         if (this.authMode === 'oauth') {
             return {
+                timeout: REQUEST_TIMEOUT_MS,
                 ...extraConfig,
                 headers: {
                     Accept: 'application/json',
@@ -60,6 +75,7 @@ export class ConfluencePageFetcher {
 
         // Basic auth (legacy)
         return {
+            timeout: REQUEST_TIMEOUT_MS,
             ...extraConfig,
             headers: {
                 Accept: 'application/json',

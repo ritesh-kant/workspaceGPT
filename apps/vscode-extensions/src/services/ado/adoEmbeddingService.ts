@@ -12,6 +12,7 @@ import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 import { getEmbeddingSettings } from 'src/utils/getEmbeddingSettings';
 import { getVectorStoreSettings } from 'src/utils/getVectorStoreSettings';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
+import { publishSyncState } from 'src/utils/syncStateStore';
 
 export class AdoEmbeddingService {
   private embeddingProcess: ChildProcess | null = null;
@@ -225,8 +226,8 @@ export class AdoEmbeddingService {
         await this.handleCreateEmbeddingMessage(data);
       });
 
-      this.embeddingProcess.on('error', (error) => {
-        this.handleError(error);
+      this.embeddingProcess.on('error', async (error) => {
+        await this.handleError(error);
       });
 
       // 'error' only fires on spawn/send failure — a child that crashes or is
@@ -234,7 +235,7 @@ export class AdoEmbeddingService {
       // completely silent and the UI sits at the last reported percentage
       // forever, which is indistinguishable from a hang.
       const startedProcess = this.embeddingProcess;
-      startedProcess.on('exit', (code, signal) => {
+      startedProcess.on('exit', async (code, signal) => {
         if (this.embeddingProcess !== startedProcess) {
           return; // superseded by a newer run, or stopped deliberately
         }
@@ -246,13 +247,18 @@ export class AdoEmbeddingService {
           ? `killed by signal ${signal}`
           : `exited with code ${code}`;
         console.error(`ADO embedding worker died unexpectedly: ${reason}`);
+        // A crash emits neither ERROR nor COMPLETED, so this is the only place
+        // isIndexing gets cleared for it. Leaving it set wedges the scheduler
+        // (checkAndSync skips while indexing) and makes every later webview
+        // resolve re-launch indexing, for the rest of the session.
+        await publishSyncState(this.context, 'ado', { isIndexing: false });
         this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_ADO_ERROR,
           message: `Indexing stopped: the embedding worker ${reason}.`,
         });
       });
     } catch (error) {
-      this.handleError(error);
+      await this.handleError(error);
     }
   }
 
@@ -364,13 +370,17 @@ export class AdoEmbeddingService {
     this.stopSearchWorker();
   }
 
-  private handleError(error: unknown) {
+  private async handleError(error: unknown) {
     console.error('Error starting ADO embedding process:', error);
+    // Covers the spawn/send failures, where no worker ever runs to report a
+    // terminal status — without this isIndexing stays true until the next
+    // extension restart clears it.
+    await publishSyncState(this.context, 'ado', { isIndexing: false });
     this.webviewView?.webview.postMessage({
       type: MESSAGE_TYPES.INDEXING_ADO_ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
-    this.stopEmbeddingProcess();
+    await this.stopEmbeddingProcess();
   }
 
   private async handleCreateEmbeddingMessage(message: any) {
@@ -387,6 +397,12 @@ export class AdoEmbeddingService {
 
       case WORKER_STATUS.ERROR:
         console.error(`ADO Worker error: ${message.message}`);
+        // Clear the persisted flag here, not in the caller: createEmbeddings
+        // returns as soon as the worker is forked, so this message is the only
+        // point at which indexing is actually known to be over. A background
+        // run has no webview to post to, and would otherwise leave isIndexing
+        // stuck true — blocking every later scheduled sync until restart.
+        await publishSyncState(this.context, 'ado', { isIndexing: false });
         this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_ADO_ERROR,
           message: message.message,
@@ -395,6 +411,7 @@ export class AdoEmbeddingService {
 
       case WORKER_STATUS.COMPLETED:
         console.log('ADO Embedding creation complete');
+        await publishSyncState(this.context, 'ado', { isIndexing: false });
         this.webviewView?.webview.postMessage({
           type: MESSAGE_TYPES.INDEXING_ADO_COMPLETE,
         });

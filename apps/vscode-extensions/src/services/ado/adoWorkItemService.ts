@@ -391,6 +391,15 @@ async function adoPost(ctx: AdoRequestContext, url: string, body: unknown, what:
   return response.json();
 }
 
+/** Post an HTML comment on a work item (the agent's run report, after "Create PR"). */
+export async function addWorkItemComment(context: vscode.ExtensionContext, id: number, html: string): Promise<void> {
+  const ctx = await getRequestContext(context);
+  const url =
+    `https://dev.azure.com/${encodeURIComponent(ctx.orgName)}/${encodeURIComponent(ctx.projectName)}` +
+    `/_apis/wit/workItems/${id}/comments?api-version=7.1-preview.3`;
+  await adoPost(ctx, url, { text: html }, `comment on work item #${id}`);
+}
+
 /**
  * The work items assigned to whoever the stored token belongs to, most recently
  * changed first.

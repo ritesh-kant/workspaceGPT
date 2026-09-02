@@ -6,6 +6,7 @@ import { ConfluenceAuthService } from '../services/confluence/confluenceAuthServ
 import { ConfluenceEmbeddingService } from '../services/confluence/confluenceEmbeddingService';
 import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
+import { publishSyncState } from '../utils/syncStateStore';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 
 export class ConfluenceMessageHandler {
@@ -259,14 +260,13 @@ export class ConfluenceMessageHandler {
 
       const confluenceConfig = await this.getConfluenceConfig();
 
+      // The host owns isSyncing (see HOST_OWNED_SYNC_FIELDS) — the webview's
+      // optimistic flag no longer reaches global state, and the scheduler's
+      // "user sync already in progress" guard reads it from there.
+      await publishSyncState(this.context, 'confluence', { isSyncing: true });
+
       await this.confluenceService.startSync(confluenceConfig, async () => {
-        const lastSyncTime = new Date().toISOString();
-        const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-        if (settings?.state?.config?.confluence) {
-          settings.state.config.confluence.lastSyncTime = lastSyncTime;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
-        }
-        this.handleCompleteConfluenceSync();
+        await this.handleCompleteConfluenceSync(new Date().toISOString());
       });
     } catch (error) {
       console.error('Error in Confluence sync:', error);
@@ -274,6 +274,10 @@ export class ConfluenceMessageHandler {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
 
+      await publishSyncState(this.context, 'confluence', {
+        isSyncing: false,
+        isIndexing: false,
+      });
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -291,13 +295,19 @@ export class ConfluenceMessageHandler {
         return;
       }
 
+      await publishSyncState(this.context, 'confluence', { isSyncing: true });
+
       await this.confluenceService.startSync(
         confluenceConfig,
-        () => this.handleCompleteConfluenceSync(),
+        () => this.handleCompleteConfluenceSync(new Date().toISOString()),
         true
       );
     } catch (error) {
       console.error('Error resuming Confluence sync:', error);
+      await publishSyncState(this.context, 'confluence', {
+        isSyncing: false,
+        isIndexing: false,
+      });
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -310,10 +320,12 @@ export class ConfluenceMessageHandler {
       this.confluenceService.stopSync();
       this.embeddingService.stopEmbeddingProcess();
 
+      await publishSyncState(this.context, 'confluence', {
+        isSyncing: false,
+        isIndexing: false,
+      });
       const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       if (config?.state?.config) {
-        config.state.config.confluence.isSyncing = false;
-        config.state.config.confluence.isIndexing = false;
         config.state.config.confluence._needsResume = false;
         config.state.config.confluence._needsResumeIndexing = false;
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
@@ -326,13 +338,26 @@ export class ConfluenceMessageHandler {
     }
   }
 
-  private async handleCompleteConfluenceSync(): Promise<void> {
+  private async handleCompleteConfluenceSync(lastSyncTime?: string): Promise<void> {
     try {
+      // Advance the watermark and hand over to indexing in one write.
+      // createEmbeddings only forks the worker, so isIndexing is cleared later
+      // by ConfluenceEmbeddingService on the worker's completion/error message.
+      await publishSyncState(this.context, 'confluence', {
+        ...(lastSyncTime ? { lastSyncTime } : {}),
+        isSyncing: false,
+        isIndexing: true,
+      });
+
       await this.embeddingService.createEmbeddings({
         dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
       } as EmbeddingConfig);
     } catch (error) {
       console.error('Error in Confluence indexing:', error);
+      await publishSyncState(this.context, 'confluence', {
+        isSyncing: false,
+        isIndexing: false,
+      });
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -342,6 +367,12 @@ export class ConfluenceMessageHandler {
 
   private async handleResumeIndexingConfluence(): Promise<void> {
     try {
+      // Mark indexing in-flight before forking. Without this the scheduler sees
+      // isSyncing/isIndexing both false and can start a background sync whose
+      // own createEmbeddings kills this worker mid-batch. Cleared by
+      // ConfluenceEmbeddingService on the worker's terminal message.
+      await publishSyncState(this.context, 'confluence', { isIndexing: true });
+
       const progress = this.embeddingService.getEmbeddingProgress();
       if (!progress || progress.isComplete) {
         await this.embeddingService.createEmbeddings({
@@ -358,6 +389,7 @@ export class ConfluenceMessageHandler {
       );
     } catch (error) {
       console.error('Error resuming Confluence indexing:', error);
+      await publishSyncState(this.context, 'confluence', { isIndexing: false });
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.INDEXING_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),

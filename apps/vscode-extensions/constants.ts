@@ -7,6 +7,18 @@ export const MESSAGE_TYPES = {
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
   SHOW_SETTINGS: 'show-settings',
+  // Webview → host: move the chat into an editor tab / back to the sidebar.
+  OPEN_CHAT_IN_EDITOR: 'open-chat-in-editor',
+  RESTORE_CHAT_TO_SIDEBAR: 'restore-chat-to-sidebar',
+  // Host → webview: which surface this instance is rendering in.
+  CHAT_LAYOUT: 'chat-layout',
+  // Host ↔ webview: copy the live zustand chat (and in-flight stream) between
+  // the sidebar and editor webviews, which do not share a JS heap.
+  CHAT_SNAPSHOT_REQUEST: 'chat-snapshot-request',
+  CHAT_SNAPSHOT: 'chat-snapshot',
+  CHAT_SNAPSHOT_APPLY: 'chat-snapshot-apply',
+  // Webview → host: React has mounted and can receive a snapshot.
+  CHAT_WEBVIEW_READY: 'chat-webview-ready',
   // Webview → host: the sidebar was dragged below SIDEBAR_MIN_WIDTH_PX; hide
   // the bar that currently hosts this view instead of rendering a broken layout.
   COLLAPSE_SIDEBAR: 'collapse-sidebar',
@@ -59,12 +71,20 @@ export const MESSAGE_TYPES = {
   AGENT_WRITE_REVIEWS_CLOSED: 'agent-write-reviews-closed',
   // Webview → host: open a reviewed file (edit/create/delete) in the editor.
   OPEN_FILE_IN_EDITOR: 'open-file-in-editor',
+  // Webview → host: open an http(s) URL in the user's browser — the ticket
+  // chip above an agent answer and any link in model prose. The host validates
+  // the scheme (never command:/file:), since the URL can come from model text.
+  OPEN_EXTERNAL: 'open-external',
 
   // Webview → host: revert the workspace to the checkpoint taken right before
   // a given user turn's changes (per-message "Undo changes up to this point").
   // Host → webview: the outcome, so the button can clear or surface an error.
   AGENT_REVERT_CHECKPOINT: 'agent-revert-checkpoint',
   AGENT_REVERT_DONE: 'agent-revert-done',
+  // Webview → host: branch + commit the turn's changes, push, open the PR page
+  // and post the report on the ticket. Host → webview: outcome (correlated by requestId).
+  AGENT_SHIP: 'agent-ship',
+  AGENT_SHIP_DONE: 'agent-ship-done',
 
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',
@@ -74,12 +94,25 @@ export const MESSAGE_TYPES = {
   GET_CHAT_SESSION: 'get-chat-session',
   GET_CHAT_SESSION_RESPONSE: 'get-chat-session-response',
   SHOW_HISTORY: 'show-history',
+  // Host → chat webview: open this stored session (Sessions panel / commands).
+  LOAD_CHAT_SESSION: 'load-chat-session',
+  // Chat webview → host: the visible session id changed (Sessions panel highlight).
+  SESSION_CHANGED: 'session-changed',
+  // Host → Sessions webview.
+  SESSIONS_LIST: 'sessions-list',
+  SESSIONS_TOGGLE_SEARCH: 'sessions-toggle-search',
 
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',
   CLEAR_GLOBAL_STATE: 'clear-global-state',
   GET_GLOBAL_STATE: 'get-global-state',
   GET_GLOBAL_STATE_RESPONSE: 'get-global-state-response',
+  /**
+   * Host → webview push for the sync fields the host owns (see
+   * HOST_OWNED_SYNC_FIELDS). The settings store hydrates from global state
+   * exactly once, so without this a background sync would never reach the UI.
+   */
+  BACKGROUND_SYNC_STATE: 'background-sync-state',
 
   CHECK_CONFLUENCE_CONNECTION: 'check-confluence-connection',
   START_CONFLUENCE_SYNC: 'start-confluence-sync',
@@ -386,10 +419,17 @@ export const STORAGE_KEYS = {
 // Extension Constants
 export const EXTENSION = {
   VIEW_TYPE: 'workspacegpt.chatView',
+  EDITOR_VIEW_TYPE: 'workspacegpt.chatEditor',
+  SESSIONS_VIEW_TYPE: 'workspacegpt.sessionsView',
   COMMAND_ASK: 'workspacegpt.ask',
   COMMAND_NEW_CHAT: 'workspacegpt.newChat',
   COMMAND_SETTINGS: 'workspacegpt.settings',
   COMMAND_HISTORY: 'workspacegpt.history',
+  COMMAND_OPEN_CHAT_IN_EDITOR: 'workspacegpt.openChatInEditor',
+  COMMAND_RESTORE_CHAT_TO_SIDEBAR: 'workspacegpt.restoreChatToSidebar',
+  COMMAND_REFRESH_SESSIONS: 'workspacegpt.refreshSessions',
+  COMMAND_SEARCH_SESSIONS: 'workspacegpt.searchSessions',
+  CONTEXT_CHAT_IN_EDITOR: 'workspacegpt.chatInEditor',
   COMMAND_CLEAR_DATA: 'workspacegpt.clearData',
   COMMAND_SHARE_TO_CHROME: 'workspacegpt.shareToChrome',
   COMMAND_RELEASES: 'workspacegpt.releases',
@@ -1004,7 +1044,7 @@ export enum ModelTypeEnum {
 }
 
 // Used for incremental sync
-// 20 minutes in milliseconds
+// 15 minutes in milliseconds
 export const SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
 /**

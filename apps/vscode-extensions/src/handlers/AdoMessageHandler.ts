@@ -7,6 +7,7 @@ import { AdoEmbeddingService } from '../services/ado/adoEmbeddingService';
 import { listMyWorkItems, MyWorkItemsResult } from '../services/ado/adoWorkItemService';
 import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
+import { publishSyncState } from '../utils/syncStateStore';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 
 export class AdoMessageHandler {
@@ -425,10 +426,12 @@ export class AdoMessageHandler {
    * store, not what's persisted in globalState.
    */
   private async clearAdoSyncFlags(): Promise<void> {
+    await publishSyncState(this.context, 'ado', {
+      isSyncing: false,
+      isIndexing: false,
+    });
     const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
     if (settings?.state?.config?.ado) {
-      settings.state.config.ado.isSyncing = false;
-      settings.state.config.ado.isIndexing = false;
       settings.state.config.ado._needsResume = false;
       await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
     }
@@ -455,16 +458,15 @@ export class AdoMessageHandler {
         (e) => console.warn('Sprint re-fetch on sync start failed:', e)
       );
 
+      // The host owns isSyncing (see HOST_OWNED_SYNC_FIELDS) — the webview's
+      // optimistic flag no longer reaches global state, and the scheduler's
+      // "user sync already in progress" guard reads it from there.
+      await publishSyncState(this.context, 'ado', { isSyncing: true });
+
       await this.adoService.startSync(
         adoConfig,
         async () => {
-          const lastSyncTime = new Date().toISOString();
-          const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-          if (settings?.state?.config?.ado) {
-            settings.state.config.ado.lastSyncTime = lastSyncTime;
-            await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
-          }
-          this.handleCompleteAdoSync();
+          await this.handleCompleteAdoSync(new Date().toISOString());
         },
         false,
         (error) => {
@@ -497,9 +499,11 @@ export class AdoMessageHandler {
         return;
       }
 
+      await publishSyncState(this.context, 'ado', { isSyncing: true });
+
       await this.adoService.startSync(
         adoConfig,
-        () => this.handleCompleteAdoSync(),
+        () => this.handleCompleteAdoSync(new Date().toISOString()),
         true,
         (error) => {
           console.error('ADO sync worker error:', error.message);
@@ -522,10 +526,12 @@ export class AdoMessageHandler {
       this.adoService.stopSync();
       await this.adoEmbeddingService.stopEmbeddingProcess();
 
+      await publishSyncState(this.context, 'ado', {
+        isSyncing: false,
+        isIndexing: false,
+      });
       const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
       if (config?.state?.config?.ado) {
-        config.state.config.ado.isSyncing = false;
-        config.state.config.ado.isIndexing = false;
         config.state.config.ado._needsResume = false;
         config.state.config.ado._needsResumeIndexing = false;
         await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
@@ -538,13 +544,26 @@ export class AdoMessageHandler {
     }
   }
 
-  private async handleCompleteAdoSync(): Promise<void> {
+  private async handleCompleteAdoSync(lastSyncTime?: string): Promise<void> {
     try {
+      // Advance the watermark and hand over to indexing in one write.
+      // createEmbeddings only forks the worker, so isIndexing is cleared later
+      // by AdoEmbeddingService on the worker's completion/error message.
+      await publishSyncState(this.context, 'ado', {
+        ...(lastSyncTime ? { lastSyncTime } : {}),
+        isSyncing: false,
+        isIndexing: true,
+      });
+
       await this.adoEmbeddingService.createEmbeddings({
         dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
       } as EmbeddingConfig);
     } catch (error) {
       console.error('Error in ADO indexing:', error);
+      await publishSyncState(this.context, 'ado', {
+        isSyncing: false,
+        isIndexing: false,
+      });
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.INDEXING_ADO_ERROR,
         message: error instanceof Error ? error.message : String(error),
@@ -554,6 +573,12 @@ export class AdoMessageHandler {
 
   private async handleResumeIndexingAdo(): Promise<void> {
     try {
+      // Mark indexing in-flight before forking. Without this the scheduler sees
+      // isSyncing/isIndexing both false and can start a background sync whose
+      // own createEmbeddings kills this worker mid-batch. Cleared by
+      // AdoEmbeddingService on the worker's terminal message.
+      await publishSyncState(this.context, 'ado', { isIndexing: true });
+
       const progress = this.adoEmbeddingService.getEmbeddingProgress();
       if (!progress || progress.isComplete) {
         await this.adoEmbeddingService.createEmbeddings({
@@ -570,6 +595,7 @@ export class AdoMessageHandler {
       );
     } catch (error) {
       console.error('Error resuming ADO indexing:', error);
+      await publishSyncState(this.context, 'ado', { isIndexing: false });
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.INDEXING_ADO_ERROR,
         message: error instanceof Error ? error.message : String(error),

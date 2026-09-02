@@ -393,6 +393,25 @@ function handleAdoMessage(message: any): void {
 
 let registered = false;
 
+/**
+ * Host → webview push for the sync fields the host owns. Sent by the
+ * schedulers (which write global state the store never re-reads) and by the
+ * message handlers, so the "synced Nh ago" label tracks background runs
+ * instead of staying frozen at whatever the store hydrated with.
+ */
+function handleBackgroundSyncState(message: any): void {
+  if (message?.type !== MESSAGE_TYPES.BACKGROUND_SYNC_STATE) return;
+  if (message.section !== 'confluence' && message.section !== 'ado') return;
+
+  const patch: Record<string, unknown> = {};
+  for (const field of ['lastSyncTime', 'isSyncing', 'isIndexing'] as const) {
+    if (message[field] !== undefined) patch[field] = message[field];
+  }
+  if (Object.keys(patch).length === 0) return;
+
+  useSettingsStore.getState().batchUpdateConfig(message.section, patch);
+}
+
 /** Idempotent: React StrictMode and hot reloads must not double-apply updates. */
 export function registerSettingsMessageListener(): void {
   if (registered) return;
@@ -401,6 +420,7 @@ export function registerSettingsMessageListener(): void {
   window.addEventListener('message', (event: MessageEvent) => {
     const message = event.data;
     if (!message?.type) return;
+    handleBackgroundSyncState(message);
     handleConfluenceMessage(message);
     handleAdoMessage(message);
   });

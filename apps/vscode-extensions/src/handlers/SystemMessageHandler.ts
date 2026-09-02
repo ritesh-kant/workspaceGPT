@@ -6,6 +6,7 @@ import { AnalyticsService } from '../services/analyticsService';
 import { installMcpServer } from '../utils/mcpInstaller';
 import { isMcpInstalled } from '../utils/mcpStatusChecker';
 import { syncContextKeys } from '../utils/syncContextKeys';
+import { preserveHostOwnedSyncFields } from '../utils/syncStateStore';
 
 /**
  * Analytics-only events the webview may report over ONBOARDING_EVENT (mostly
@@ -145,7 +146,16 @@ export class SystemMessageHandler {
   }
 
   private async updateGlobalState(data: any): Promise<void> {
-    await this.context.globalState.update(data.key, data.state);
+    // The webview persists the entire settings blob on every store change, so
+    // a plain replace would let its once-hydrated (and by now stale) copy of
+    // the sync fields overwrite what the host has since written. Keep the
+    // persisted values for those keys — the host is their only writer.
+    const state =
+      data.key === STORAGE_KEYS.SETTINGS
+        ? preserveHostOwnedSyncFields(this.context, data.state)
+        : data.state;
+
+    await this.context.globalState.update(data.key, state);
     if (data.key === STORAGE_KEYS.SETTINGS) {
       await syncContextKeys(this.context);
     }

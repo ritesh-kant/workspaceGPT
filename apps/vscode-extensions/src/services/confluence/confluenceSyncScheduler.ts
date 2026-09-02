@@ -4,6 +4,7 @@ import { ConfluenceAuthService } from './confluenceAuthService';
 import { ConfluenceEmbeddingService } from './confluenceEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
+import { persistSyncState, publishSyncState } from '../../utils/syncStateStore';
 
 export class ConfluenceSyncScheduler {
   private intervalId?: NodeJS.Timeout;
@@ -134,12 +135,10 @@ export class ConfluenceSyncScheduler {
   }
 
   private async resetSyncFlags() {
-    const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-    if (config?.state?.config?.confluence) {
-      config.state.config.confluence.isSyncing = false;
-      config.state.config.confluence.isIndexing = false;
-      await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-    }
+    await publishSyncState(this.context, 'confluence', {
+      isSyncing: false,
+      isIndexing: false,
+    });
     this.syncStartedAt = undefined;
   }
 
@@ -154,11 +153,10 @@ export class ConfluenceSyncScheduler {
           throw new Error('Confluence config incomplete');
       }
 
-      // Update state to syncing before kicking off
-      if (config?.state?.config?.confluence) {
-          config.state.config.confluence.isSyncing = true;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-      }
+      // Mark the sync in-flight for our own re-entrancy guard, but don't push
+      // it to the UI: this run reports no progress to the webview (the service
+      // below is built without one), so the panel would show a stalled bar.
+      await persistSyncState(this.context, 'confluence', { isSyncing: true });
       this.syncStartedAt = Date.now();
 
       const confluenceConfig: ConfluenceConfig = {
@@ -172,30 +170,26 @@ export class ConfluenceSyncScheduler {
       const embeddingService = new ConfluenceEmbeddingService(undefined, this.context);
 
       await confluenceService.startSync(confluenceConfig, async () => {
-        // Complete callback: update last sync time and start embeddings
-        const syncTime = new Date().toISOString();
-        const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-        if (settings?.state?.config?.confluence) {
-          settings.state.config.confluence.lastSyncTime = syncTime;
-          settings.state.config.confluence.isSyncing = false;
-          settings.state.config.confluence.isIndexing = true;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
-        }
+        // Complete callback: update last sync time and start embeddings.
+        // Pushed to the webview so the settings panel's "synced Nh ago" label
+        // reflects this run instead of staying frozen at what it hydrated with.
+        await publishSyncState(this.context, 'confluence', {
+          lastSyncTime: new Date().toISOString(),
+          isSyncing: false,
+          isIndexing: true,
+        });
 
         console.log('🔄 Auto-sync: page sync complete, starting embedding indexing...');
 
+        // Returns once the embedding worker is forked, not once it finishes —
+        // ConfluenceEmbeddingService clears isIndexing from the worker's
+        // completion/error message.
         await embeddingService.createEmbeddings({
           dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
         } as EmbeddingConfig);
 
-        // Reset isIndexing after embeddings complete so future scheduled syncs aren't blocked
-        const updatedSettings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-        if (updatedSettings?.state?.config?.confluence) {
-          updatedSettings.state.config.confluence.isIndexing = false;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, updatedSettings);
-        }
         this.syncStartedAt = undefined;
-        console.log('✅ Auto-sync: complete');
+        console.log('✅ Auto-sync: page sync complete, indexing running');
       }, resume, (error: Error) => {
         // Error callback: reset flags so future scheduled syncs aren't blocked
         console.error('❌ Auto-sync: worker error:', error.message);

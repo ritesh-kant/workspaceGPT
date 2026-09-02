@@ -279,6 +279,30 @@ const ModelSettings: React.FC = () => {
             />
           </div>
         )}
+
+        {showSelectModelValidator() && (
+          <div className='form-group'>
+            <label htmlFor='agent-model-select'>Model for agent runs (optional)</label>
+            <SearchableDropdown
+              value={selectedModelProvider?.agentModel ?? ''}
+              options={[
+                { value: '', label: 'Same as above' },
+                ...(selectedModelProvider?.availableModels ?? []).map((model) => ({ value: model.id, label: model.id })),
+              ]}
+              onChange={(modelId) => {
+                const next = modelId || undefined;
+                updateModelProvider(selectedModelProvider.provider, 'agentModel', next);
+                updateSelectedModelProvider({ ...selectedModelProvider, agentModel: next });
+              }}
+              searchPlaceholder='Search models...'
+              placeholder='Same as above'
+            />
+            <small className='form-text'>
+              Autonomous ticket runs and Agent-mode turns use this model; ordinary chat keeps the one above.
+              A stronger model here is what moves ticket-run quality most.
+            </small>
+          </div>
+        )}
       </div>
     </SectionShell>
   );

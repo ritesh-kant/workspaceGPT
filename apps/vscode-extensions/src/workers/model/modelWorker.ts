@@ -22,6 +22,7 @@ import {
   isStallShapedAnswer,
 } from './answerGates';
 import { normalizeModelId } from '../../utils/normalizeModelId';
+import { AutoVerifyTracker, CheckResultLike } from './autoVerify';
 
 interface WorkerData {
   prompt: string;
@@ -357,15 +358,32 @@ const TOOL_DEFS = [
     function: {
       name: 'run_command',
       description:
-        'Run a shell command in the workspace (build, test, lint, package scripts). Returns exit code and combined output. The user approves each command before it runs (previously session-approved commands run immediately); destructive commands are blocked outright. Use this to VERIFY your edits — run the relevant test/build after changing code.',
+        'Run a shell command in the workspace (build, test, lint, package scripts). Returns exit code and combined stdout+stderr (already truncated) — pass ONE plain command, never pipes, "2>&1", "| tail", "&&" or "cd x &&" (use the cwd parameter instead). The user approves each command before it runs (previously session-approved commands run immediately); destructive commands are blocked outright. Use this to VERIFY your edits — run the relevant test/build after changing code.',
       parameters: {
         type: 'object',
         properties: {
           command: { type: 'string', description: 'The shell command to run, e.g. "npm test -- --run" or "npx tsc --noEmit".' },
+          description: { type: 'string', description: 'REQUIRED. What this command is for, 3-6 words, sentence case, no trailing period — e.g. "Run the checkout step tests", "Typecheck the webview". This is the label the user sees in the run timeline; the raw command is shown only when they expand the row. Write it for someone who does not read shell.' },
           cwd: { type: 'string', description: 'Workspace-relative working directory. Defaults to the first workspace root; in a multi-root workspace prefix it with the root folder name ("my-repo" or "my-repo/apps/web") to run inside that root. Package-manager commands (pnpm --filter, npm run) must run from the repo that owns the package.' },
           timeoutSec: { type: 'number', description: 'Kill the command after this many seconds (default 60, max 300).' },
         },
         required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_checks',
+      description:
+        'Run the tests, lint, or typecheck that cover ONE FILE — the host derives the command itself: the nearest package, its package manager (pnpm/npm/yarn/bun), its runner (jest/vitest/eslint/tsc or the package script), the sibling test file, and the right working directory. Prefer this over run_command for verification: it cannot pick the wrong directory or an unapproved command, and autonomous runs execute it without a gate. Call it with kind "lint", "typecheck" and "test" for every source or test file you changed; FIX failures before declaring the task done. If you skip it, the run does it FOR you before your answer is accepted — the failures land in your transcript either way, so run it yourself while you still have the context to fix them. Re-running the same derived command without changing a file first replays the previous result instead of running again. Returns the exact command it ran, exit code and output.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace-relative path of the source or test file to verify (root-prefixed in a multi-root workspace).' },
+          kind: { type: 'string', enum: ['test', 'lint', 'typecheck'], description: 'Which check to run. Defaults to "test".' },
+        },
+        required: ['path'],
       },
     },
   },
@@ -446,16 +464,29 @@ const TOOL_DEFS = [
     function: {
       name: 'edit_file',
       description:
-        'Replace text in a workspace file. oldString must be copied character-for-character from the read_file output — KEEP the original line breaks and indentation, NEVER collapse multiple lines onto one line or retype code from memory — and must appear exactly once. A short line like "return a + b;" often occurs in SEVERAL functions: make oldString the WHOLE enclosing block from its header line down (e.g. the full function), so the match is unique on the first try. Set replaceAll only to change every occurrence. The user reviews and approves each edit before it is applied; a rejection comes back as an error with their feedback.',
+        'Replace text in a workspace file. Make ONE call per file: put every change to that file in `edits` (applied in order, all-or-nothing) instead of one call per change. Each oldString must be copied character-for-character from the read_file output — KEEP the original line breaks and indentation, NEVER collapse multiple lines onto one line or retype code from memory — and must appear exactly once. A short line like "return a + b;" often occurs in SEVERAL functions: make oldString the WHOLE enclosing block from its header line down (e.g. the full function), so the match is unique on the first try. Set replaceAll only to change every occurrence. For a single change you may pass oldString/newString at the top level instead of edits. The user reviews and approves each edit before it is applied; a rejection comes back as an error with their feedback.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Workspace-relative file path.' },
-          oldString: { type: 'string', description: 'Exact existing text to replace, copied verbatim from the file.' },
-          newString: { type: 'string', description: 'The replacement text.' },
-          replaceAll: { type: 'boolean', description: 'Replace every occurrence instead of requiring a unique match. Defaults to false.' },
+          edits: {
+            type: 'array',
+            description: 'All replacements for this file, in order. Preferred over top-level oldString/newString whenever a file needs more than one change.',
+            items: {
+              type: 'object',
+              properties: {
+                oldString: { type: 'string', description: 'Exact existing text to replace, copied verbatim from the file.' },
+                newString: { type: 'string', description: 'The replacement text.' },
+                replaceAll: { type: 'boolean', description: 'Replace every occurrence instead of requiring a unique match. Defaults to false.' },
+              },
+              required: ['oldString', 'newString'],
+            },
+          },
+          oldString: { type: 'string', description: 'Single-change form: exact existing text to replace, copied verbatim from the file.' },
+          newString: { type: 'string', description: 'Single-change form: the replacement text.' },
+          replaceAll: { type: 'boolean', description: 'Single-change form: replace every occurrence instead of requiring a unique match. Defaults to false.' },
         },
-        required: ['path', 'oldString', 'newString'],
+        required: ['path'],
       },
     },
   },
@@ -550,7 +581,7 @@ const KNOWN_TOOL_NAMES = new Set(
 );
 
 /** Tools that change workspace state — never executed concurrently. */
-const MUTATING_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 'run_command']);
+const MUTATING_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 'run_command', 'run_checks']);
 
 /** File-mutating subset whose success must be verified by diagnostics before the run may end. */
 const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file']);
@@ -1035,6 +1066,42 @@ function describeEnvelope(messages: any[]): string[] {
   });
 }
 
+/**
+ * Prompt caching for Anthropic models served through OpenRouter: the first
+ * message (structured prompt + repo orientation + ticket, tens of KB) and the
+ * latest message get `cache_control` breakpoints, so every turn of a 25-turn
+ * loop re-reads the stable prefix from cache instead of re-billing it. Other
+ * providers either cache automatically (OpenAI) or ignore the field; the
+ * transform is gated to models that honor it so strict providers never see
+ * an unknown key. Messages are shallow-copied — the loop's own array is the
+ * transcript and must stay plain.
+ */
+const CACHEABLE_MODEL_RE = /claude|anthropic/i;
+function withPromptCache(messages: any[], model: string): any[] {
+  if (!isOpenRouter || !CACHEABLE_MODEL_RE.test(model) || messages.length === 0) return messages;
+  const mark = (msg: any) => {
+    if (!msg || (msg.role !== 'user' && msg.role !== 'system')) return msg;
+    if (typeof msg.content === 'string') {
+      return { ...msg, content: [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }] };
+    }
+    if (Array.isArray(msg.content) && msg.content.length) {
+      const parts = msg.content.slice();
+      const lastText = [...parts].reverse().findIndex((p: any) => p?.type === 'text');
+      if (lastText >= 0) {
+        const idx = parts.length - 1 - lastText;
+        parts[idx] = { ...parts[idx], cache_control: { type: 'ephemeral' } };
+      }
+      return { ...msg, content: parts };
+    }
+    return msg;
+  };
+  const out = messages.slice();
+  out[0] = mark(out[0]);
+  const lastIdx = out.length - 1;
+  if (lastIdx > 0) out[lastIdx] = mark(out[lastIdx]);
+  return out;
+}
+
 async function runToolTurn(
   messages: any[],
   model: string,
@@ -1048,7 +1115,7 @@ async function runToolTurn(
     const openai = new OpenAI({ apiKey, baseURL });
     return openai.chat.completions.create({
       model,
-      messages,
+      messages: withPromptCache(messages, model),
       ...(withTools ? { tools: TOOL_DEFS as any, tool_choice: 'auto' as const } : {}),
       // Cap thinking on reasoning models: tool turns need a quick decision,
       // not a minute of deliberation, and unconstrained reasoning is the main
@@ -1178,6 +1245,10 @@ interface ResumeState {
   writesSinceDiagnostics: number;
   anyWriteAttempted: boolean;
   lastWriteOutcome: Map<string, boolean>;
+  /** Files written (not deleted) in the interrupted run, oldest first. */
+  writtenPaths: Set<string>;
+  /** `${path}::${kind}` checks the interrupted run already ran against the current content. */
+  checksDone: Set<string>;
   okToolResults: number;
   toolCallsExecuted: number;
   /** Sum of the resumed tool results' serialized lengths — seeds the output budget. */
@@ -1232,6 +1303,8 @@ function seedFromTranscript(raw: unknown): ResumeState | null {
     writesSinceDiagnostics: 0,
     anyWriteAttempted: false,
     lastWriteOutcome: new Map<string, boolean>(),
+    writtenPaths: new Set<string>(),
+    checksDone: new Set<string>(),
     okToolResults: 0,
     toolCallsExecuted: 0,
     toolChars: 0,
@@ -1280,7 +1353,7 @@ function seedFromTranscript(raw: unknown): ResumeState | null {
       const failed = toolResultFailed(reply.content);
       if (!failed) state.okToolResults++;
 
-      let args: { path?: unknown } = {};
+      let args: { path?: unknown; kind?: unknown } = {};
       try {
         args = call?.function?.arguments ? JSON.parse(String(call.function.arguments)) : {};
       } catch {
@@ -1295,9 +1368,17 @@ function seedFromTranscript(raw: unknown): ResumeState | null {
         if (!failed) {
           state.writesApplied++;
           state.writesSinceDiagnostics++;
+          if (path) {
+            state.writtenPaths.delete(path);
+            if (name !== 'delete_file') state.writtenPaths.add(path);
+            for (const k of ['lint', 'typecheck', 'test']) state.checksDone.delete(`${path}::${k}`);
+          }
         }
       }
       if (name === 'get_diagnostics' && !failed) state.writesSinceDiagnostics = 0;
+      if (name === 'run_checks' && !failed && path) {
+        state.checksDone.add(`${path}::${typeof args.kind === 'string' ? args.kind : 'test'}`);
+      }
     }
   }
 
@@ -1433,6 +1514,24 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // it, get re-checked — the loop a human reviewer would otherwise drive.
   const AUTO_DIAGNOSTICS_LIMIT = autonomous ? 3 : 1;
   let autoDiagnosticsRuns = 0;
+  // ── Auto-verification: lint / typecheck / tests, not just diagnostics ──
+  // Diagnostics are what the editor's language server happens to know; they
+  // are not proof the change works (see autoVerify.ts). The loop therefore
+  // runs the outstanding checks ITSELF before it will accept a final answer,
+  // as synthetic run_checks calls — the same deterministic trick as the
+  // auto-diagnostics pass below, batched into one round trip — and the model
+  // then sees real failures in its transcript and fixes them, exactly as it
+  // would its own output. run_checks needs no approval gate in either mode:
+  // the host derives a test/lint/typecheck command for the file's own package,
+  // so it is unattended-safe by construction.
+  const autoVerify = new AutoVerifyTracker({
+    // Enough for the checks on a few changed files PLUS a fix-and-re-verify
+    // cycle. Autonomous runs get more: no one is waiting on them, and a
+    // failure nobody sees is the whole thing they exist to prevent.
+    limit: autonomous ? 18 : 12,
+  });
+  /** Round counter, only so synthetic tool_call ids stay unique. */
+  let autoVerifyRounds = 0;
   let summaryNudgeUsed = false;
   // Repeating an identical call that already failed burns turns for nothing —
   // qwen retried the SAME failing edit 6× in one observed run. Short-circuit
@@ -1631,6 +1730,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     anyWriteAttempted = resume.anyWriteAttempted;
     for (const [path, ok] of resume.lastWriteOutcome) lastWriteOutcome.set(path, ok);
     for (const path of resume.readPaths) readPaths.add(path);
+    autoVerify.restore({ writtenPaths: [...resume.writtenPaths], checksDone: [...resume.checksDone] });
     // Resumed rounds are numbered backwards from this segment's round 0, so the
     // keep-recent window keeps meaning what it says across the seam: the last
     // resumed round stays intact for now, everything older is compactable, and
@@ -1828,7 +1928,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // you want X pulled into a follow-up" under Notes is not a stall), and
       // it is what the cap delivers if the run never gets to end cleanly.
       const finishedReport =
-        writesApplied > 0 && writesSinceDiagnostics === 0 && REPORT_SHAPED_RE.test(outcome.content);
+        writesApplied > 0 &&
+        writesSinceDiagnostics === 0 &&
+        autoVerify.settled() &&
+        REPORT_SHAPED_RE.test(outcome.content);
       if (finishedReport) lastReportAnswer = outcome.content;
       // The model wants to finish — but unverified writes block that. Run
       // get_diagnostics OURSELVES as a synthetic tool exchange (deterministic,
@@ -1854,6 +1957,64 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         messages.push({ role: 'tool', tool_call_id: diagCallId, content: serializeToolResult(diagResult) });
         recordToolResult('get_diagnostics', i, messages[messages.length - 1].content);
         writesSinceDiagnostics = 0;
+        continue;
+      }
+      // Diagnostics are clean but the change is still unverified: run the
+      // lint / typecheck / tests that cover each changed file ourselves (see
+      // autoVerify above), batched into one synthetic round.
+      const checkBatch = autoVerify.nextBatch();
+      if (checkBatch.length > 0) {
+        const round = ++autoVerifyRounds;
+        const calls = checkBatch.map((c, n) => ({
+          id: `auto_checks_${round}_${n}`,
+          type: 'function' as const,
+          function: { name: 'run_checks', arguments: JSON.stringify({ path: c.path, kind: c.kind }) },
+        }));
+        messages.push({ role: 'assistant', content: outcome.content || null, tool_calls: calls });
+        const failures: string[] = [];
+        const brokenRunners: string[] = [];
+        for (let n = 0; n < checkBatch.length; n++) {
+          const { path: checkPath, kind } = checkBatch[n];
+          autoVerify.markRunning(checkPath, kind);
+          const transportId = randomUUID();
+          parentPort?.postMessage({
+            type: 'tool_status',
+            id: transportId,
+            name: 'run_checks',
+            arguments: { path: checkPath, kind, auto: true },
+          });
+          let checkResult: unknown;
+          try {
+            checkResult = await requestTool('run_checks', { path: checkPath, kind }, transportId);
+          } catch (e) {
+            checkResult = { error: e instanceof Error ? e.message : String(e) };
+          }
+          const verdict = autoVerify.noteOutcome(kind, checkResult as CheckResultLike);
+          if (verdict === 'failed') failures.push(`${kind} for ${checkPath}`);
+          if (verdict === 'unavailable') brokenRunners.push(kind);
+          messages.push({ role: 'tool', tool_call_id: calls[n].id, content: serializeToolResult(checkResult) });
+          recordToolResult('run_checks', i, messages[messages.length - 1].content);
+        }
+        if (failures.length > 0) {
+          messages.push({
+            role: 'user',
+            content:
+              `VERIFICATION FAILED — ${failures.join('; ')} exited non-zero (output above). The task is NOT complete. ` +
+              'Read the failure output, find the cause in the code, and FIX it now with your write tools — the checks re-run after your fix. ' +
+              'If the failure is genuinely unrelated to your change (it fails the same way on code you did not touch), say so explicitly and name the evidence; do not assume it. ' +
+              'Do not report success, and do not answer with a plan for fixing it — apply the fix.',
+          });
+        } else if (brokenRunners.length > 0) {
+          // The runner never started (no config, missing script, timeout).
+          // Say so plainly, or the model reads the non-zero exit above as its
+          // own breakage and starts "fixing" the repo's tooling.
+          messages.push({
+            role: 'user',
+            content:
+              `The ${[...new Set(brokenRunners)].join(' and ')} runner could not start in this workspace (see the output above) — that is this project's tooling, NOT your change, and not yours to fix. ` +
+              'Do not edit config or install anything to make it run. Finish your answer, and record that check as "could not verify" with the reason.',
+          });
+        }
         continue;
       }
       // Everything attempted so far errored → the model has zero facts from
@@ -2364,6 +2525,12 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
 
       const failed = !!(results[idx] as { error?: unknown } | null)?.error;
       if (!failed) okToolResults++;
+      let argPath = '';
+      try {
+        argPath = normPath((JSON.parse(tc.args || '{}') as { path?: string }).path);
+      } catch {
+        /* unparseable args — nothing to derive from them */
+      }
       if (FILE_WRITE_TOOL_NAMES.has(tc.name)) {
         anyWriteAttempted = true;
         if (!failed) {
@@ -2371,15 +2538,25 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           writesSinceDiagnostics++;
           commandRunSinceWrite = false;
         }
-        try {
-          const p = (JSON.parse(tc.args || '{}') as { path?: string }).path;
-          if (p) lastWriteOutcome.set(p, !failed);
-        } catch {
-          /* unparseable args — nothing to track */
-        }
+        if (argPath) lastWriteOutcome.set(argPath, !failed);
+        // The file changed, so any check that ran against its old content is
+        // void — re-arming it is what turns a failing check into a
+        // fix-then-re-verify cycle instead of a one-shot complaint.
+        if (!failed) autoVerify.noteWrite(argPath, { deleted: tc.name === 'delete_file' });
       }
       if (tc.name === 'get_diagnostics') writesSinceDiagnostics = 0;
-      if (tc.name === 'run_command' && !failed) commandRunSinceWrite = true;
+      if (tc.name === 'run_checks' && !failed && argPath) {
+        // The model verified this file itself — don't re-run that check.
+        let kind = 'test';
+        try {
+          const parsed = (JSON.parse(tc.args || '{}') as { kind?: unknown }).kind;
+          if (typeof parsed === 'string') kind = parsed;
+        } catch {
+          /* unparseable args — the tool's own default applies */
+        }
+        autoVerify.noteCheckRan(argPath, kind);
+      }
+      if ((tc.name === 'run_command' || tc.name === 'run_checks') && !failed) commandRunSinceWrite = true;
     });
     messages.push(...pendingImageTurns);
     toolCallsExecuted += toolCalls.length;

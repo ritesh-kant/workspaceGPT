@@ -8,6 +8,7 @@ declare global {
       setState: (state: any) => void;
       clearState: () => void; // Add this
     };
+    __WGPT_CHAT_LAYOUT__?: 'sidebar' | 'editor';
   }
 }
 
@@ -78,6 +79,9 @@ function guessDock(): "left" | "right" | "bottom" {
  */
 function startSidebarCollapseWatch(api: { postMessage: (message: any) => void }): void {
   if (collapseWatchStarted) {
+    return;
+  }
+  if (window.__WGPT_CHAT_LAYOUT__ === 'editor') {
     return;
   }
   collapseWatchStarted = true;

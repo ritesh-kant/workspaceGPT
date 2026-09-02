@@ -27,6 +27,10 @@ const UNITS = [
   'src/utils/ticketDetection.ts',
   'src/workers/model/explorationPhase.ts',
   'src/workers/model/answerGates.ts',
+  'src/workers/model/autoVerify.ts',
+  'src/services/agent/verifyTools.ts',
+  'src/services/agent/agentHunkLens.ts',
+  'src/services/agent/shipHelpers.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
 ];
 

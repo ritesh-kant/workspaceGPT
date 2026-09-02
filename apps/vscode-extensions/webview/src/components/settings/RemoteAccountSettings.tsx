@@ -59,8 +59,8 @@ const WeeklyUsageRow: React.FC<{ used: number; limit: number }> = ({ used, limit
   const refreshIn = formatRefreshIn();
 
   const detail = exhausted
-    ? `Weekly limit reached · resets in ${refreshIn}`
-    : `${remaining} of ${limit} requests left · resets in ${refreshIn}`;
+    ? `Weekly limit reached · 0 remaining of ${limit} · resets in ${refreshIn}`
+    : `${remaining} remaining · ${used} used of ${limit} · resets in ${refreshIn}`;
 
   return (
     <div className={`usage-row usage-row--${tone}`} role='status' aria-label={detail}>

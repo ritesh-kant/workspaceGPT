@@ -19,6 +19,12 @@ var RETRIEVAL_THRESHOLDS = {
   COSINE_WEIGHT: 0.65,
   BM25_WEIGHT: 0.35
 };
+var REMOTE_AUTH = {
+  API_BASE: "http://127.0.0.1:8787",
+  CALLBACK_PORT: 32329,
+  CALLBACK_PATH: "/callback"
+};
+var REMOTE_INFERENCE_BASE_URL = `${REMOTE_AUTH.API_BASE}/v1`;
 var SYNC_INTERVAL_MS = 15 * 60 * 1e3;
 var UPDATE_CHECK = {
   OPEN_VSX_API_URL: "https://open-vsx.org/api/Riteshkant/workspacegpt-extension",

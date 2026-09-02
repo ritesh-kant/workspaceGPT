@@ -1,5 +1,5 @@
 // ../../apps/vscode-extensions/src/workers/model/explorationPhase.ts
-import OpenAI from "/Users/ritesh/codebase/ritesh-codebase/workspaceGPT/node_modules/.pnpm/openai@4.85.4_ws@8.20.1_zod@3.25.76/node_modules/openai/index.js";
+import OpenAI from "/Users/ritesh/codebase/ritesh-codebase/workspaceGPT/node_modules/.pnpm/openai@4.85.4_ws@8.21.0_zod@3.25.76/node_modules/openai/index.js";
 
 // ../../apps/vscode-extensions/src/utils/apiKeyFailover.ts
 var stickyStart = /* @__PURE__ */ new Map();

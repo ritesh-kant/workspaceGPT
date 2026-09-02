@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 import { WebViewProvider } from './webViewprovider';
+import { SessionsViewProvider } from './sessionsViewProvider';
+import { HistoryService } from './services/historyService';
+import { registerAgentHunkLenses } from './services/agent/agentHunkLens';
 import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { AnalyticsService } from './services/analyticsService';
 import { ConfluenceSyncScheduler } from './services/confluence/confluenceSyncScheduler';
@@ -61,6 +64,18 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register WebViewProvider
   const webViewProvider = new WebViewProvider(context.extensionUri, context);
+  const sessionsViewProvider = new SessionsViewProvider(
+    context.extensionUri,
+    new HistoryService(context),
+    () => {
+      void vscode.commands.executeCommand(EXTENSION.COMMAND_NEW_CHAT);
+    },
+    (sessionId) => {
+      webViewProvider.loadSession(sessionId);
+    }
+  );
+  webViewProvider.setSessionsView(sessionsViewProvider);
+  await vscode.commands.executeCommand('setContext', EXTENSION.CONTEXT_CHAT_IN_EDITOR, false);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       EXTENSION.VIEW_TYPE,
@@ -72,6 +87,20 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     )
   );
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      EXTENSION.SESSIONS_VIEW_TYPE,
+      sessionsViewProvider,
+      {
+        webviewOptions: {
+          retainContextWhenHidden: true
+        }
+      }
+    )
+  );
+
+  // Inline keep/revert lenses on files the agent changed this session.
+  registerAgentHunkLenses(context);
 
   // Register MCP Server for GitHub Copilot / Claude Code discovery (@mcp)
   if (vscode.lm?.registerMcpServerDefinitionProvider) {
@@ -99,10 +128,7 @@ export async function activate(context: vscode.ExtensionContext) {
     EXTENSION.COMMAND_ASK,
     () => {
       analyticsService.trackEvent('command_ask_triggered');
-      // Focus on the chat view when command is triggered
-      vscode.commands.executeCommand(
-        `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
-      );
+      webViewProvider.revealChat();
     }
   );
 
@@ -111,16 +137,8 @@ export async function activate(context: vscode.ExtensionContext) {
     EXTENSION.COMMAND_NEW_CHAT,
     () => {
       analyticsService.trackEvent('command_new_chat_triggered');
-      // Focus on the chat view when command is triggered
-      vscode.commands.executeCommand(
-        `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
-      );
-
-      // Get the webview view and send a message to create a new chat
-      const webviewView = webViewProvider.getWebviewView();
-      if (webviewView) {
-        webviewView.webview.postMessage({ type: MESSAGE_TYPES.NEW_CHAT });
-      }
+      webViewProvider.revealChat();
+      void webViewProvider.postMessage({ type: MESSAGE_TYPES.NEW_CHAT });
     }
   );
 
@@ -129,16 +147,8 @@ export async function activate(context: vscode.ExtensionContext) {
     EXTENSION.COMMAND_SETTINGS,
     () => {
       analyticsService.trackEvent('command_settings_triggered');
-      // Focus on the chat view when command is triggered
-      vscode.commands.executeCommand(
-        `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
-      );
-
-      // Get the webview view and send a message to show settings
-      const webviewView = webViewProvider.getWebviewView();
-      if (webviewView) {
-        webviewView.webview.postMessage({ type: MESSAGE_TYPES.SHOW_SETTINGS });
-      }
+      webViewProvider.revealChat();
+      void webViewProvider.postMessage({ type: MESSAGE_TYPES.SHOW_SETTINGS });
     }
   );
 
@@ -151,36 +161,51 @@ export async function activate(context: vscode.ExtensionContext) {
     EXTENSION.COMMAND_HISTORY,
     () => {
       analyticsService.trackEvent('command_history_triggered');
-      // Focus on the chat view when command is triggered
-      vscode.commands.executeCommand(
-        `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
-      );
-
-      // Get the webview view and send a message to show history
-      const webviewView = webViewProvider.getWebviewView();
-      if (webviewView) {
-        webviewView.webview.postMessage({ type: MESSAGE_TYPES.SHOW_HISTORY });
-      }
+      webViewProvider.revealChat();
+      void webViewProvider.postMessage({ type: MESSAGE_TYPES.SHOW_HISTORY });
     }
   );
   context.subscriptions.push(historyDisposable);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(EXTENSION.COMMAND_REFRESH_SESSIONS, () => {
+      void sessionsViewProvider.refresh();
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(EXTENSION.COMMAND_SEARCH_SESSIONS, () => {
+      sessionsViewProvider.toggleSearch();
+    })
+  );
 
   // Register the releases command
   let releasesDisposable = vscode.commands.registerCommand(
     EXTENSION.COMMAND_RELEASES,
     () => {
       analyticsService.trackEvent('command_releases_triggered');
-      vscode.commands.executeCommand(
-        `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
-      );
-
-      const webviewView = webViewProvider.getWebviewView();
-      if (webviewView) {
-        webviewView.webview.postMessage({ type: MESSAGE_TYPES.SHOW_RELEASES });
-      }
+      webViewProvider.revealChat();
+      void webViewProvider.postMessage({ type: MESSAGE_TYPES.SHOW_RELEASES });
     }
   );
   context.subscriptions.push(releasesDisposable);
+
+  let openChatInEditorDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_OPEN_CHAT_IN_EDITOR,
+    async () => {
+      analyticsService.trackEvent('command_open_chat_in_editor_triggered');
+      await webViewProvider.openChatInEditor();
+    }
+  );
+  context.subscriptions.push(openChatInEditorDisposable);
+
+  let restoreChatDisposable = vscode.commands.registerCommand(
+    EXTENSION.COMMAND_RESTORE_CHAT_TO_SIDEBAR,
+    async () => {
+      analyticsService.trackEvent('command_restore_chat_to_sidebar_triggered');
+      await webViewProvider.restoreChatToSidebar();
+    }
+  );
+  context.subscriptions.push(restoreChatDisposable);
 
   // Revert the workspace to an agent checkpoint (shadow-git snapshots taken
   // before every approved agent write).
@@ -296,7 +321,7 @@ export async function activate(context: vscode.ExtensionContext) {
         await service.signIn();
         const result = await service.verifySession();
         const profile = result.state === 'signed_in' ? result.profile : null;
-        webViewProvider.getWebviewView()?.webview.postMessage({
+        webViewProvider.postMessage({
           type: MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS,
           ...webviewFieldsFromProfile(profile),
         });
@@ -324,7 +349,7 @@ export async function activate(context: vscode.ExtensionContext) {
         return;
       }
       await service.signOut();
-      webViewProvider.getWebviewView()?.webview.postMessage({
+      webViewProvider.postMessage({
         type: MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS,
       });
       vscode.window.showInformationMessage('WorkspaceGPT: signed out.');

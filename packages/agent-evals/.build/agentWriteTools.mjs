@@ -212,10 +212,16 @@ function occurrenceSnippets(content, needle, cap = 3) {
   return out;
 }
 async function prepareEditFile(args, roots) {
-  if (!args.oldString)
-    throw new Error("oldString must be non-empty. To create a new file use create_file.");
-  if (args.oldString === args.newString)
-    throw new Error("oldString and newString are identical \u2014 nothing to change.");
+  const edits = args.edits?.length ? args.edits : [{ oldString: args.oldString ?? "", newString: args.newString ?? "", replaceAll: args.replaceAll }];
+  edits.forEach((e, i) => {
+    const at = edits.length > 1 ? `edits[${i}]: ` : "";
+    if (!e || typeof e.oldString !== "string" || !e.oldString)
+      throw new Error(`${at}oldString must be non-empty. To create a new file use create_file.`);
+    if (typeof e.newString !== "string")
+      throw new Error(`${at}newString must be a string.`);
+    if (e.oldString === e.newString)
+      throw new Error(`${at}oldString and newString are identical \u2014 nothing to change.`);
+  });
   const { uri, displayPath } = assertWritable(roots, args.path);
   let before;
   try {
@@ -226,6 +232,35 @@ async function prepareEditFile(args, roots) {
   if (Buffer.byteLength(before, "utf8") > MAX_WRITE_BYTES) {
     throw new Error(`File exceeds the ${MAX_WRITE_BYTES / 1024}KB agent-edit limit.`);
   }
+  let after = before;
+  let total = 0;
+  const notes = [];
+  for (let i = 0; i < edits.length; i++) {
+    try {
+      const r = applyOneEdit(after, edits[i], displayPath);
+      after = r.after;
+      total += r.n;
+      if (r.note)
+        notes.push(r.note);
+    } catch (e) {
+      if (edits.length === 1)
+        throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `edits[${i}] failed (${i} earlier edit${i === 1 ? "" : "s"} in this call would have applied; NONE were written \u2014 fix this entry and resend the whole call): ${msg}`
+      );
+    }
+  }
+  return {
+    kind: "edit",
+    displayPath,
+    uri,
+    before,
+    after,
+    summary: `Edit ${displayPath} (${total} replacement${total === 1 ? "" : "s"}${notes.length ? ` \u2014 ${notes.join("; ")}` : ""})`
+  };
+}
+function applyOneEdit(before, args, displayPath) {
   const occurrences = countOccurrences(before, args.oldString);
   if (occurrences === 0) {
     const flex = flexibleMatches(before, args.oldString);
@@ -235,14 +270,9 @@ async function prepareEditFile(args, roots) {
       if (replacement !== null && replacement !== matchedText) {
         const after2 = before.slice(0, index) + replacement + before.slice(index + matchedText.length);
         return {
-          kind: "edit",
-          displayPath,
-          uri,
-          before,
           after: after2,
-          // Read by the model (tool result), the user (review card), and the
-          // audit log alike — states plainly that the match was not verbatim.
-          summary: `Edit ${displayPath} (1 replacement \u2014 oldString did not match the file's whitespace/line breaks verbatim; matched ignoring layout, applied with the file's original formatting preserved)`
+          n: 1,
+          note: "oldString did not match the file's whitespace/line breaks verbatim; matched ignoring layout, applied with the file's original formatting preserved"
         };
       }
       throw new Error(
@@ -285,11 +315,11 @@ Retry with oldString copied EXACTLY from this snippet (same line breaks and inde
           firstEnd++;
         const firstRegion = rawFileLines.slice(positions[0], positions[firstEnd] + 1).join("\n");
         throw new Error(
-          `oldString stitches together NON-ADJACENT parts of the file \u2014 its lines all exist, but the file has other code between them that your oldString skips over. Make a SEPARATE edit_file call for EACH contiguous region. The first region actually reads:
+          `oldString stitches together NON-ADJACENT parts of the file \u2014 its lines all exist, but the file has other code between them that your oldString skips over. Make a SEPARATE entry in edits[] (or a separate edit_file call) for EACH contiguous region. The first region actually reads:
 \`\`\`
 ${firstRegion}
 \`\`\`
-Start by editing exactly that, then make further edit_file calls for the other region(s).`
+Start by editing exactly that, then add further entries for the other region(s).`
         );
       }
     }
@@ -314,15 +344,7 @@ ${s}
     );
   }
   const after = args.replaceAll ? before.split(args.oldString).join(args.newString) : before.replace(args.oldString, args.newString);
-  const n = args.replaceAll ? occurrences : 1;
-  return {
-    kind: "edit",
-    displayPath,
-    uri,
-    before,
-    after,
-    summary: `Edit ${displayPath} (${n} replacement${n === 1 ? "" : "s"})`
-  };
+  return { after, n: args.replaceAll ? occurrences : 1 };
 }
 async function prepareCreateFile(args, roots) {
   const { uri, displayPath } = assertWritable(roots, args.path);

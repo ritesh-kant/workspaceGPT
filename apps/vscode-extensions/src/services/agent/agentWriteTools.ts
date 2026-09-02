@@ -29,13 +29,22 @@ import {
 
 // ── Tool argument shapes (mirrored in modelWorker.ts's TOOL_DEFS) ──
 
-export interface EditFileArgs {
-  path: string;
+export interface EditReplacement {
   /** Exact existing text to replace (must be unique in the file unless replaceAll). */
   oldString: string;
   newString: string;
   /** Replace every occurrence instead of requiring uniqueness. */
   replaceAll?: boolean;
+}
+
+export interface EditFileArgs extends Partial<EditReplacement> {
+  path: string;
+  /**
+   * Several replacements to the same file in one call, applied in order —
+   * one edit_file call per FILE instead of one model turn per change (a live
+   * run spent four turns on four edits to one test file).
+   */
+  edits?: EditReplacement[];
 }
 
 export interface CreateFileArgs {
@@ -225,8 +234,15 @@ function occurrenceSnippets(content: string, needle: string, cap = 3): string[] 
 // ── prepare phase ──
 
 export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): Promise<PreparedWrite> {
-  if (!args.oldString) throw new Error('oldString must be non-empty. To create a new file use create_file.');
-  if (args.oldString === args.newString) throw new Error('oldString and newString are identical — nothing to change.');
+  const edits: EditReplacement[] = args.edits?.length
+    ? args.edits
+    : [{ oldString: args.oldString ?? '', newString: args.newString ?? '', replaceAll: args.replaceAll }];
+  edits.forEach((e, i) => {
+    const at = edits.length > 1 ? `edits[${i}]: ` : '';
+    if (!e || typeof e.oldString !== 'string' || !e.oldString) throw new Error(`${at}oldString must be non-empty. To create a new file use create_file.`);
+    if (typeof e.newString !== 'string') throw new Error(`${at}newString must be a string.`);
+    if (e.oldString === e.newString) throw new Error(`${at}oldString and newString are identical — nothing to change.`);
+  });
   const { uri, displayPath } = assertWritable(roots, args.path);
 
   let before: string;
@@ -239,6 +255,35 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
     throw new Error(`File exceeds the ${MAX_WRITE_BYTES / 1024}KB agent-edit limit.`);
   }
 
+  let after = before;
+  let total = 0;
+  const notes: string[] = [];
+  for (let i = 0; i < edits.length; i++) {
+    try {
+      const r = applyOneEdit(after, edits[i], displayPath);
+      after = r.after;
+      total += r.n;
+      if (r.note) notes.push(r.note);
+    } catch (e) {
+      if (edits.length === 1) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `edits[${i}] failed (${i} earlier edit${i === 1 ? '' : 's'} in this call would have applied; NONE were written — fix this entry and resend the whole call): ${msg}`
+      );
+    }
+  }
+  return {
+    kind: 'edit',
+    displayPath,
+    uri,
+    before,
+    after,
+    summary: `Edit ${displayPath} (${total} replacement${total === 1 ? '' : 's'}${notes.length ? ` — ${notes.join('; ')}` : ''})`,
+  };
+}
+
+/** One search/replace against `before`; throws model-actionable errors on miss/ambiguity. */
+function applyOneEdit(before: string, args: EditReplacement, displayPath: string): { after: string; n: number; note?: string } {
   const occurrences = countOccurrences(before, args.oldString);
   if (occurrences === 0) {
     // Whitespace-tolerant rescue before erroring: if the file contains exactly
@@ -253,17 +298,12 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
       const replacement = reflowReplacement(matchedText, args.oldString, args.newString);
       if (replacement !== null && replacement !== matchedText) {
         const after = before.slice(0, index) + replacement + before.slice(index + matchedText.length);
+        // Read by the model (tool result), the user (review card), and the
+        // audit log alike — states plainly that the match was not verbatim.
         return {
-          kind: 'edit',
-          displayPath,
-          uri,
-          before,
           after,
-          // Read by the model (tool result), the user (review card), and the
-          // audit log alike — states plainly that the match was not verbatim.
-          summary:
-            `Edit ${displayPath} (1 replacement — oldString did not match the file's whitespace/line breaks verbatim; ` +
-            'matched ignoring layout, applied with the file\'s original formatting preserved)',
+          n: 1,
+          note: "oldString did not match the file's whitespace/line breaks verbatim; matched ignoring layout, applied with the file's original formatting preserved",
         };
       }
       // Unique region found but new/old token counts differ — re-flowing the
@@ -317,8 +357,8 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
         const firstRegion = rawFileLines.slice(positions[0], positions[firstEnd] + 1).join('\n');
         throw new Error(
           'oldString stitches together NON-ADJACENT parts of the file — its lines all exist, but the file has other code between them that your oldString skips over. ' +
-            'Make a SEPARATE edit_file call for EACH contiguous region. The first region actually reads:\n' +
-            `\`\`\`\n${firstRegion}\n\`\`\`\nStart by editing exactly that, then make further edit_file calls for the other region(s).`
+            'Make a SEPARATE entry in edits[] (or a separate edit_file call) for EACH contiguous region. The first region actually reads:\n' +
+            `\`\`\`\n${firstRegion}\n\`\`\`\nStart by editing exactly that, then add further entries for the other region(s).`
         );
       }
     }
@@ -352,15 +392,7 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
   }
 
   const after = args.replaceAll ? before.split(args.oldString).join(args.newString) : before.replace(args.oldString, args.newString);
-  const n = args.replaceAll ? occurrences : 1;
-  return {
-    kind: 'edit',
-    displayPath,
-    uri,
-    before,
-    after,
-    summary: `Edit ${displayPath} (${n} replacement${n === 1 ? '' : 's'})`,
-  };
+  return { after, n: args.replaceAll ? occurrences : 1 };
 }
 
 export async function prepareCreateFile(args: CreateFileArgs, roots: NamedRoot[]): Promise<PreparedWrite> {

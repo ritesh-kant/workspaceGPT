@@ -1,7 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { TurnSummary } from '../store/chatStore';
+import { TurnSummary, useChatStore } from '../store/chatStore';
+
+type ShipState =
+  | { phase: 'idle' }
+  | { phase: 'running'; requestId: string }
+  | { phase: 'done'; branch: string; prUrl?: string; ticketCommented: boolean; warnings: string[] }
+  | { phase: 'error'; error: string };
 
 /**
  * End-of-turn changed-files bar, Antigravity-style: "1 file changed +2 −2"
@@ -18,9 +24,36 @@ const fileName = (p: string) => p.split('/').pop() || p;
 const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
   const vscode = VSCodeAPI();
   const [expanded, setExpanded] = useState(false);
+  const [ship, setShip] = useState<ShipState>({ phase: 'idle' });
+
+  // Outcome of "Create PR" arrives as a host message correlated by requestId.
+  useEffect(() => {
+    if (ship.phase !== 'running') return;
+    const onMessage = (event: MessageEvent) => {
+      const m = event.data;
+      if (m?.type !== MESSAGE_TYPES.AGENT_SHIP_DONE || m.requestId !== ship.requestId) return;
+      setShip(
+        m.ok
+          ? { phase: 'done', branch: m.branch, prUrl: m.prUrl, ticketCommented: !!m.ticketCommented, warnings: m.warnings ?? [] }
+          : { phase: 'error', error: m.error || 'Create PR failed.' }
+      );
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [ship]);
 
   const files = summary.filesChanged;
   if (!files.length) return null;
+
+  const createPr = () => {
+    const requestId = `ship-${Date.now().toString(36)}`;
+    setShip({ phase: 'running', requestId });
+    vscode.postMessage({
+      type: MESSAGE_TYPES.AGENT_SHIP,
+      sessionId: useChatStore.getState().currentSessionId,
+      requestId,
+    });
+  };
 
   const totalAdded = files.reduce((n, f) => n + f.added, 0);
   const totalRemoved = files.reduce((n, f) => n + f.removed, 0);
@@ -57,7 +90,42 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
         <button type='button' className='files-changed-review' onClick={reviewAll}>
           Review
         </button>
+        {summary.shippable && ship.phase !== 'done' && (
+          <button
+            type='button'
+            className='files-changed-review files-changed-ship'
+            onClick={createPr}
+            disabled={ship.phase === 'running'}
+            title={
+              summary.ticketId
+                ? `Branch, commit, push, open the pull-request page and post the report on #${summary.ticketId}`
+                : 'Branch, commit, push and open the pull-request page'
+            }
+          >
+            {ship.phase === 'running' ? 'Creating…' : 'Create PR'}
+          </button>
+        )}
       </div>
+      {ship.phase === 'done' && (
+        <div className='files-changed-ship-result'>
+          <span className='stat-added'>✓</span> Pushed <code>{ship.branch}</code>
+          {ship.prUrl && (
+            <>
+              {' · '}
+              <a href={ship.prUrl} target='_blank' rel='noreferrer'>
+                pull request
+              </a>
+            </>
+          )}
+          {ship.ticketCommented && summary.ticketId ? ` · report posted on #${summary.ticketId}` : ''}
+          {ship.warnings.map((w, i) => (
+            <div key={i} className='files-changed-ship-warning'>
+              {w}
+            </div>
+          ))}
+        </div>
+      )}
+      {ship.phase === 'error' && <div className='files-changed-ship-result files-changed-ship-warning'>{ship.error}</div>}
       {expanded && (
         <div className='files-changed-list'>
           {files.map((f) => (

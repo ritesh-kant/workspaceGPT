@@ -161,6 +161,23 @@ const SyncOverflowMenu: React.FC<{
 };
 
 /**
+ * Re-render once a minute so the relative "synced Nm ago" label ages on its
+ * own. `formatRelativeTime` reads `Date.now()` at render time, and the panel
+ * can stay mounted for hours (`retainContextWhenHidden`), so without a tick the
+ * label freezes at whatever it read the last time something else happened to
+ * re-render it.
+ */
+function useMinuteTick(enabled: boolean): void {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const id = setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, [enabled]);
+}
+
+/**
  * The sync button row plus the progress / last-synced line, shared by the
  * Confluence and Azure DevOps sections.
  */
@@ -173,6 +190,9 @@ const SyncControls: React.FC<{ section: SyncSection }> = ({ section }) => {
   const isSyncing = !!sectionConfig.isSyncing;
   const isIndexing = !!sectionConfig.isIndexing;
   const lastSyncTime = sectionConfig.lastSyncTime as string | undefined;
+
+  // Only while the relative label is the thing on screen.
+  useMinuteTick(!!lastSyncTime && !isSyncing && !isIndexing);
 
   return (
     <>

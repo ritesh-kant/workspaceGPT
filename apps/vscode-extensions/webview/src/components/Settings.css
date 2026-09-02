@@ -559,6 +559,26 @@
   color: var(--vscode-editorWarning-foreground, #cca700);
 }
 
+/* Live sync/index percent: informational, not a warning. */
+.searchable-dropdown-item.has-progress.disabled .item-subtitle {
+  color: var(--vscode-descriptionForeground);
+}
+
+.searchable-dropdown-item .item-progress {
+  height: 3px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+  overflow: hidden;
+}
+
+.searchable-dropdown-item .item-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--vscode-progressBar-background, var(--vscode-focusBorder));
+  transition: width 0.2s ease-out;
+}
+
 .searchable-dropdown-empty {
   padding: 12px;
   color: var(--vscode-descriptionForeground);
@@ -1655,16 +1675,18 @@ input.dep-preset-dropdown {
 }
 
 .usage-row-bar {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--vscode-progressBar-background, rgba(128, 128, 128, 0.25));
+  height: 6px;
+  border-radius: 3px;
+  /* Empty track: progressBar.background is the fill color in VS Code themes. */
+  background: rgba(128, 128, 128, 0.38);
+  background: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
   overflow: hidden;
 }
 
 .usage-row-fill {
   height: 100%;
-  border-radius: 2px;
-  background: var(--vscode-button-background);
+  border-radius: 3px;
+  background: var(--wgpt-success);
   transition: width 0.4s ease, background 0.2s ease;
 }
 

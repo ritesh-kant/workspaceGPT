@@ -84,12 +84,19 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.OPEN_FILE_IN_EDITOR:
         await this.handleOpenFileInEditor(data.path, data.line, data.endLine);
         return true;
+      case MESSAGE_TYPES.OPEN_EXTERNAL:
+        await this.handleOpenExternal(data.url);
+        return true;
       case MESSAGE_TYPES.AGENT_REVERT_CHECKPOINT:
         this.analyticsService.trackEvent('agent_revert_checkpoint_triggered');
         await this.handleRevertCheckpoint(data.sha);
         return true;
       case MESSAGE_TYPES.OPEN_DIFF_IN_EDITOR:
         await this.handleOpenDiffInEditor(data.path);
+        return true;
+      case MESSAGE_TYPES.AGENT_SHIP:
+        this.analyticsService.trackEvent('agent_ship_triggered');
+        await this.chatService?.shipTurn(data.sessionId, data.requestId);
         return true;
       case MESSAGE_TYPES.SEARCH_MENTION_TARGETS:
         await this.handleSearchMentionTargets(data);
@@ -193,6 +200,28 @@ export class ChatMessageHandler {
     } catch (error) {
       this.handleError('Error opening file:', error);
     }
+  }
+
+  /**
+   * Open a URL in the user's browser (ticket chip, links in model prose).
+   * The URL may originate from model output, so only http(s) is honored — a
+   * `command:` or `file:` URI would turn a chat link into arbitrary local
+   * action.
+   */
+  private async handleOpenExternal(rawUrl: string): Promise<void> {
+    if (!rawUrl) return;
+    let parsed: vscode.Uri;
+    try {
+      parsed = vscode.Uri.parse(rawUrl, true);
+    } catch {
+      vscode.window.showWarningMessage(`Not a valid link: ${rawUrl}`);
+      return;
+    }
+    if (parsed.scheme !== 'http' && parsed.scheme !== 'https') {
+      vscode.window.showWarningMessage(`Refusing to open a "${parsed.scheme}:" link from chat.`);
+      return;
+    }
+    await vscode.env.openExternal(parsed);
   }
 
   /** Open a review diff (original ⟷ current) for a file the agent changed this session. */

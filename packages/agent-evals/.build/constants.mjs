@@ -7,9 +7,27 @@ var MESSAGE_TYPES = {
   CLEAR_CHAT: "clear-chat",
   NEW_CHAT: "new-chat",
   SHOW_SETTINGS: "show-settings",
+  // Webview → host: move the chat into an editor tab / back to the sidebar.
+  OPEN_CHAT_IN_EDITOR: "open-chat-in-editor",
+  RESTORE_CHAT_TO_SIDEBAR: "restore-chat-to-sidebar",
+  // Host → webview: which surface this instance is rendering in.
+  CHAT_LAYOUT: "chat-layout",
+  // Host ↔ webview: copy the live zustand chat (and in-flight stream) between
+  // the sidebar and editor webviews, which do not share a JS heap.
+  CHAT_SNAPSHOT_REQUEST: "chat-snapshot-request",
+  CHAT_SNAPSHOT: "chat-snapshot",
+  CHAT_SNAPSHOT_APPLY: "chat-snapshot-apply",
+  // Webview → host: React has mounted and can receive a snapshot.
+  CHAT_WEBVIEW_READY: "chat-webview-ready",
   // Webview → host: the sidebar was dragged below SIDEBAR_MIN_WIDTH_PX; hide
   // the bar that currently hosts this view instead of rendering a broken layout.
   COLLAPSE_SIDEBAR: "collapse-sidebar",
+  // Host → webview: the view was shown or hidden (another view took the
+  // sidebar, the bar was closed, the icon was clicked). The webview cannot see
+  // this on its own — a retained webview is an iframe whose `document.hidden`
+  // tracks the window, not the sidebar — and without it the collapse watch
+  // mistakes a reveal at a narrow width for a sash drag.
+  VIEW_VISIBILITY: "view-visibility",
   ERROR_CHAT: "error-chat",
   RESET: "reset",
   STOP_MESSAGE: "stop-message",
@@ -51,11 +69,19 @@ var MESSAGE_TYPES = {
   AGENT_WRITE_REVIEWS_CLOSED: "agent-write-reviews-closed",
   // Webview → host: open a reviewed file (edit/create/delete) in the editor.
   OPEN_FILE_IN_EDITOR: "open-file-in-editor",
+  // Webview → host: open an http(s) URL in the user's browser — the ticket
+  // chip above an agent answer and any link in model prose. The host validates
+  // the scheme (never command:/file:), since the URL can come from model text.
+  OPEN_EXTERNAL: "open-external",
   // Webview → host: revert the workspace to the checkpoint taken right before
   // a given user turn's changes (per-message "Undo changes up to this point").
   // Host → webview: the outcome, so the button can clear or surface an error.
   AGENT_REVERT_CHECKPOINT: "agent-revert-checkpoint",
   AGENT_REVERT_DONE: "agent-revert-done",
+  // Webview → host: branch + commit the turn's changes, push, open the PR page
+  // and post the report on the ticket. Host → webview: outcome (correlated by requestId).
+  AGENT_SHIP: "agent-ship",
+  AGENT_SHIP_DONE: "agent-ship-done",
   // Chat History
   SAVE_CHAT_HISTORY: "save-chat-history",
   GET_CHAT_HISTORY_LIST: "get-chat-history-list",
@@ -64,11 +90,24 @@ var MESSAGE_TYPES = {
   GET_CHAT_SESSION: "get-chat-session",
   GET_CHAT_SESSION_RESPONSE: "get-chat-session-response",
   SHOW_HISTORY: "show-history",
+  // Host → chat webview: open this stored session (Sessions panel / commands).
+  LOAD_CHAT_SESSION: "load-chat-session",
+  // Chat webview → host: the visible session id changed (Sessions panel highlight).
+  SESSION_CHANGED: "session-changed",
+  // Host → Sessions webview.
+  SESSIONS_LIST: "sessions-list",
+  SESSIONS_TOGGLE_SEARCH: "sessions-toggle-search",
   UPDATE_SETTINGS: "update-settings",
   UPDATE_GLOBAL_STATE: "update-global-state",
   CLEAR_GLOBAL_STATE: "clear-global-state",
   GET_GLOBAL_STATE: "get-global-state",
   GET_GLOBAL_STATE_RESPONSE: "get-global-state-response",
+  /**
+   * Host → webview push for the sync fields the host owns (see
+   * HOST_OWNED_SYNC_FIELDS). The settings store hydrates from global state
+   * exactly once, so without this a background sync would never reach the UI.
+   */
+  BACKGROUND_SYNC_STATE: "background-sync-state",
   CHECK_CONFLUENCE_CONNECTION: "check-confluence-connection",
   START_CONFLUENCE_SYNC: "start-confluence-sync",
   STOP_CONFLUENCE_SYNC: "stop-confluence-sync",
@@ -111,9 +150,22 @@ var MESSAGE_TYPES = {
   SYNC_ADO_ERROR: "sync-ado-error",
   SYNC_ADO_STOP: "sync-ado-stop",
   RESUME_ADO_SYNC: "resume-ado-sync",
+  // Microsoft sign-in via MSAL, using Microsoft's own well-known ADO client id
+  // (primary auth mode — no local install needed). See ADO_MSAL below.
+  CONNECT_ADO_MSAL: "connect-ado-msal",
+  ADO_MSAL_SUCCESS: "ado-msal-success",
+  ADO_MSAL_ERROR: "ado-msal-error",
+  // Azure CLI passthrough (alternate auth mode for anyone already `az login`'d).
+  CONNECT_ADO_AZURE_CLI: "connect-ado-azure-cli",
+  ADO_AZURE_CLI_SUCCESS: "ado-azure-cli-success",
+  ADO_AZURE_CLI_ERROR: "ado-azure-cli-error",
+  // Personal Access Token (fallback auth mode).
   SAVE_ADO_PAT: "save-ado-pat",
   ADO_PAT_SUCCESS: "ado-pat-success",
   ADO_PAT_ERROR: "ado-pat-error",
+  FETCH_ADO_ORGANIZATIONS: "fetch-ado-organizations",
+  FETCH_ADO_ORGANIZATIONS_SUCCESS: "fetch-ado-organizations-success",
+  FETCH_ADO_ORGANIZATIONS_ERROR: "fetch-ado-organizations-error",
   FETCH_ADO_PROJECTS: "fetch-ado-projects",
   FETCH_ADO_PROJECTS_SUCCESS: "fetch-ado-projects-success",
   FETCH_ADO_PROJECTS_ERROR: "fetch-ado-projects-error",
@@ -161,6 +213,15 @@ var MESSAGE_TYPES = {
   DISCONNECT_VERCEL: "disconnect-vercel",
   TEST_DEPLOYMENT_CONNECTIONS: "test-deployment-connections",
   TEST_DEPLOYMENT_CONNECTIONS_RESULT: "test-deployment-connections-result",
+  // Remote-mode account (apps/workspacegpt-api Worker) — GitHub sign-in
+  // gating use of remote mode. See RemoteSignInService.
+  CHECK_REMOTE_SESSION: "check-remote-session",
+  REMOTE_SESSION_STATUS: "remote-session-status",
+  START_REMOTE_SIGN_IN: "start-remote-sign-in",
+  REMOTE_SIGN_IN_SUCCESS: "remote-sign-in-success",
+  REMOTE_SIGN_IN_ERROR: "remote-sign-in-error",
+  SIGN_OUT_REMOTE: "sign-out-remote",
+  REMOTE_SIGN_OUT_SUCCESS: "remote-sign-out-success",
   // mach backend — classic PAT (set/clear/check), validated against both repos
   CHECK_MACH_TOKEN: "check-mach-token",
   SET_MACH_TOKEN: "set-mach-token",
@@ -266,7 +327,12 @@ var STORAGE_KEYS = {
   CODEBASE_SYNC_PROGRESS: "codebase-sync-progress",
   CONFLUENCE_OAUTH_TOKENS: "confluence-oauth-tokens",
   ADO_SYNC_PROGRESS: "ado-sync-progress",
-  ADO_OAUTH_TOKENS: "ado-oauth-tokens",
+  /** Which auth mode is active: 'msal' | 'azcli' | 'pat'. */
+  ADO_AUTH_MODE: "ado-auth-mode",
+  /** Raw PAT string — only present when ADO_AUTH_MODE is 'pat'. */
+  ADO_PAT: "ado-pat",
+  /** Serialized MSAL token cache — only present when ADO_AUTH_MODE is 'msal'. */
+  ADO_MSAL_CACHE: "ado-msal-cache",
   /** Last successful "assigned to me" fetch, so the panel renders instantly. */
   ADO_MY_WORK_ITEMS_CACHE: "ado-my-work-items-cache",
   // Deployment automation — write-scoped creds (SecretStorage), never shared to Chrome
@@ -278,29 +344,47 @@ var STORAGE_KEYS = {
   // Classic PAT for mach (workflow_dispatch + PR), SSO-authorized by the user.
   GITHUB_MACH_PAT: "github-mach-pat",
   // Update-check throttling: { lastCheckedAt, lastNotifiedVersion }.
-  UPDATE_CHECK_STATE: "update-check-state"
+  UPDATE_CHECK_STATE: "update-check-state",
+  // Remote-mode account session token (SecretStorage) — see REMOTE_AUTH. Also
+  // doubles as the bearer credential for the inference proxy, so there is no
+  // client-side "last validated" grace window: the Worker re-checks the
+  // session on every /v1/chat/completions call.
+  REMOTE_SESSION_TOKEN: "remote-session-token"
 };
 var EXTENSION = {
   VIEW_TYPE: "workspacegpt.chatView",
+  EDITOR_VIEW_TYPE: "workspacegpt.chatEditor",
+  SESSIONS_VIEW_TYPE: "workspacegpt.sessionsView",
   COMMAND_ASK: "workspacegpt.ask",
   COMMAND_NEW_CHAT: "workspacegpt.newChat",
   COMMAND_SETTINGS: "workspacegpt.settings",
   COMMAND_HISTORY: "workspacegpt.history",
+  COMMAND_OPEN_CHAT_IN_EDITOR: "workspacegpt.openChatInEditor",
+  COMMAND_RESTORE_CHAT_TO_SIDEBAR: "workspacegpt.restoreChatToSidebar",
+  COMMAND_REFRESH_SESSIONS: "workspacegpt.refreshSessions",
+  COMMAND_SEARCH_SESSIONS: "workspacegpt.searchSessions",
+  CONTEXT_CHAT_IN_EDITOR: "workspacegpt.chatInEditor",
   COMMAND_CLEAR_DATA: "workspacegpt.clearData",
   COMMAND_SHARE_TO_CHROME: "workspacegpt.shareToChrome",
   COMMAND_RELEASES: "workspacegpt.releases",
+  COMMAND_SIGN_IN_REMOTE: "workspacegpt.signInRemote",
+  COMMAND_SIGN_OUT_REMOTE: "workspacegpt.signOutRemote",
   VIEW_CONTAINER: "workspacegpt-sidebar",
   CONTEXT_DEPLOYMENT_ENABLED: "workspacegpt.deploymentEnabled",
-  CONTEXT_REMOTE_MODE: "workspacegpt.remoteMode"
+  /**
+   * Gates the Share-to-Chrome title-bar action. Parked (always false) while
+   * remote mode indexes locally: the Chrome extension reads the vector index
+   * directly, and it cannot read a file-based index on someone else's machine.
+   * Flip this to a real condition when a server-side index exists.
+   */
+  CONTEXT_SHARE_ENABLED: "workspacegpt.shareEnabled"
 };
 var SIDEBAR_MIN_WIDTH_PX = 220;
-var REMOTE_TASK_MODELS = {
-  chat: { provider: "Gemini", model: "models/gemini-3.7-flash" },
-  // No stable Gemini 3.x Pro exists (only gemini-3.1-pro-preview); 3.7-flash is
-  // Google's recommended GA model for coding/agentic workloads.
-  codegen: { provider: "Gemini", model: "models/gemini-3.7-flash" },
-  classification: { provider: "Gemini", model: "models/gemini-3.5-flash-lite" },
-  title: { provider: "Gemini", model: "models/gemini-3.5-flash-lite" }
+var REMOTE_MODEL = {
+  PROVIDER: "WorkspaceGPT",
+  ID: "workspacegpt-default",
+  /** Human-readable label for the UI, where a model name would otherwise go. */
+  LABEL: "WorkspaceGPT (managed)"
 };
 var MODEL = {
   DEFAULT_CHAT_MODEL: "llama3.2:1b",
@@ -411,20 +495,20 @@ var ATLASSIAN_OAUTH = {
   CALLBACK_PORT: 32323,
   CALLBACK_PATH: "/callback"
 };
-var ADO_OAUTH = {
-  CLIENT_ID: "REPLACE_WITH_ADO_APP_ID",
-  TOKEN_PROXY_URL: "https://workspace-gpt-ado-auth-proxy.vercel.app/api/token",
-  // Example Proxy
-  AUTH_URL: "https://app.vssps.visualstudio.com/oauth2/authorize",
-  TOKEN_URL: "https://app.vssps.visualstudio.com/oauth2/token",
-  SCOPES: [
-    "vso.work",
-    "vso.project",
-    "vso.code"
-  ],
-  CALLBACK_PORT: 32324,
-  // Use a different port than Confluence
-  CALLBACK_PATH: "/callback"
+var ADO_AZURE_CLI = {
+  /** Azure DevOps resource id — same GUID Microsoft's own tooling requests tokens for. */
+  RESOURCE_ID: "499b84ac-1321-427f-aa17-267ca6975798"
+};
+var ADO_MSAL = {
+  /**
+   * Well-known public client id for Microsoft's official `@azure-devops/mcp`
+   * server (microsoft/azure-devops-mcp, src/auth.ts). Not ours — see the
+   * doc comment above for what that means and why it's used anyway.
+   */
+  CLIENT_ID: "0d50963b-7bb9-4fe7-94c7-a99af00b5136",
+  AUTHORITY: "https://login.microsoftonline.com/common",
+  /** Azure DevOps resource id — same GUID as ADO_AZURE_CLI.RESOURCE_ID. */
+  RESOURCE_ID: "499b84ac-1321-427f-aa17-267ca6975798"
 };
 var GITHUB_OAUTH = {
   CLIENT_ID: "Ov23liuwYl36ZVETh3Nk",
@@ -445,6 +529,12 @@ var GITHUB_APP = {
   CALLBACK_PORT: 32325,
   CALLBACK_PATH: "/callback"
 };
+var REMOTE_AUTH = {
+  API_BASE: "http://127.0.0.1:8787",
+  CALLBACK_PORT: 32329,
+  CALLBACK_PATH: "/callback"
+};
+var REMOTE_INFERENCE_BASE_URL = `${REMOTE_AUTH.API_BASE}/v1`;
 var GITHUB_API_BASE = "https://api.github.com";
 var EMPTY_MACH_REPO = {
   apiBase: GITHUB_API_BASE,
@@ -586,7 +676,8 @@ var UPDATE_CHECK = {
   REQUEST_TIMEOUT_MS: 5 * 1e3
 };
 export {
-  ADO_OAUTH,
+  ADO_AZURE_CLI,
+  ADO_MSAL,
   ATLASSIAN_OAUTH,
   ATTACHMENT_LIMITS,
   EMPTY_MACH_REPO,
@@ -599,7 +690,9 @@ export {
   MODEL,
   MODEL_PROVIDERS,
   ModelTypeEnum,
-  REMOTE_TASK_MODELS,
+  REMOTE_AUTH,
+  REMOTE_INFERENCE_BASE_URL,
+  REMOTE_MODEL,
   RETRIEVAL_THRESHOLDS,
   SEARCH_CONSTANTS,
   SIDEBAR_MIN_WIDTH_PX,

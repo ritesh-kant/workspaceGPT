@@ -7,11 +7,41 @@ import AgentTimeline from './AgentTimeline';
 import FilesChangedBar from './FilesChangedBar';
 import InlineFileRef from './InlineFileRef';
 import { parseFileRef } from '../utils/fileRefs';
+import { adoWorkItemUrl, linkifyTicketIds } from '../utils/ticketRefs';
+import { useSettingsStore } from '../store';
+import { VSCodeAPI } from '../vscode';
+import { MESSAGE_TYPES } from '../constants';
 import { AgentStep, TurnSummary } from '../store/chatStore';
 import type { ChatAttachment } from '../constants';
 import { copyToClipboard } from '../utils/clipboard';
 
 type InlineCodeProps = React.ComponentPropsWithoutRef<'code'>;
+
+/**
+ * Links in model prose (and the ticket links this component injects) open in
+ * the user's browser through the host, which validates the scheme. An in-panel
+ * navigation would replace the chat itself, so the default action is always
+ * suppressed. A ticket link renders as a pill, matching file citations.
+ */
+type AnchorProps = React.ComponentPropsWithoutRef<'a'> & ExtraProps;
+const ChatLink: React.FC<AnchorProps> = ({ href, children, className, node: _node, ...rest }) => {
+  const vscode = VSCodeAPI();
+  const isTicket = /\/_workitems\/edit\/\d+/.test(href ?? '');
+  return (
+    <a
+      {...rest}
+      href={href}
+      className={[className, isTicket ? 'ticket-ref' : ''].filter(Boolean).join(' ') || undefined}
+      title={href}
+      onClick={(e) => {
+        e.preventDefault();
+        if (href) vscode.postMessage({ type: MESSAGE_TYPES.OPEN_EXTERNAL, url: href });
+      }}
+    >
+      {children}
+    </a>
+  );
+};
 
 /** Plain text of a hast subtree — react-markdown hands each renderer its `node`. */
 function hastText(node: unknown): string {
@@ -170,6 +200,43 @@ const InlineCode: React.FC<InlineCodeProps> = ({ className, children, ...rest })
   );
 };
 
+const MARKDOWN_COMPONENTS = {
+  pre: CodeBlock,
+  code: InlineCode,
+  h2: ReportH2,
+  h3: ReportH3,
+  td: VerdictTd,
+  table: ReportTable,
+  a: ChatLink,
+};
+
+/**
+ * Isolated so a parent re-render (new callback props, sibling timeline
+ * updates) does not re-parse the markdown unless the text or highlight
+ * mode actually changed.
+ */
+const MarkdownBody = React.memo(function MarkdownBody({
+  content,
+  highlight,
+  orgName,
+  projectName,
+}: {
+  content: string;
+  highlight: boolean;
+  orgName: string;
+  projectName: string;
+}) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={highlight ? [rehypeHighlight] : []}
+      components={MARKDOWN_COMPONENTS}
+    >
+      {linkifyTicketIds(content, (id) => adoWorkItemUrl(orgName, projectName, id))}
+    </ReactMarkdown>
+  );
+});
+
 /** "16:21, 13/07/2026" — matches the format shown in Antigravity's message footer. */
 const formatTimestamp = (ts: number): string => {
   const d = new Date(ts);
@@ -205,6 +272,12 @@ interface ChatMessageProps {
   onEditingChange?: (editing: boolean) => void;
   /** Thumbs up/down on this assistant response — the satisfaction signal. */
   onFeedback?: (rating: 'up' | 'down') => void;
+  /**
+   * True while this bubble is still receiving tokens. Syntax highlighting is
+   * skipped until the stream finishes — rehype-highlight on every typewriter
+   * tick is what made the finished report paint slowly.
+   */
+  isLive?: boolean;
 }
 
 const ChatMessage: React.FC<ChatMessageProps> = ({
@@ -222,9 +295,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   onEdit,
   onEditingChange,
   onFeedback,
+  isLive,
 }) => {
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
+  // Azure DevOps coordinates for turning `#1516750` in the answer into a link.
+  // Absent (not connected yet) → ids stay plain text.
+  const ado = useSettingsStore((s) => s.config.ado);
   const [draft, setDraft] = useState<string | null>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const isEditing = draft !== null;
@@ -417,13 +494,12 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             <AgentTimeline steps={agentSteps} durationMs={turnSummary?.durationMs} />
           )}
           <div className="message-content markdown-content">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
-              components={{ pre: CodeBlock, code: InlineCode, h2: ReportH2, h3: ReportH3, td: VerdictTd, table: ReportTable }}
-            >
-              {content}
-            </ReactMarkdown>
+            <MarkdownBody
+              content={content}
+              highlight={!isLive}
+              orgName={ado?.orgName ?? ''}
+              projectName={ado?.projectName ?? ''}
+            />
           </div>
           {turnSummary && turnSummary.filesChanged.length > 0 && (
             <FilesChangedBar summary={turnSummary} />
@@ -480,4 +556,18 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   );
 };
 
-export default ChatMessage;
+export default React.memo(ChatMessage, (prev, next) => (
+  prev.content === next.content &&
+  prev.isUser === next.isUser &&
+  prev.isError === next.isError &&
+  prev.attachments === next.attachments &&
+  prev.agentSteps === next.agentSteps &&
+  prev.turnSummary === next.turnSummary &&
+  prev.timestamp === next.timestamp &&
+  prev.checkpointSha === next.checkpointSha &&
+  prev.isReverting === next.isReverting &&
+  prev.isLive === next.isLive &&
+  !!prev.onUndo === !!next.onUndo &&
+  !!prev.onRetry === !!next.onRetry &&
+  !!prev.onEdit === !!next.onEdit
+));

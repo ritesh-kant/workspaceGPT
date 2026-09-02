@@ -4,6 +4,7 @@ import { AdoAuthService } from './adoAuthService';
 import { AdoEmbeddingService } from './adoEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
+import { persistSyncState, publishSyncState } from '../../utils/syncStateStore';
 
 export class AdoSyncScheduler {
   private intervalId?: NodeJS.Timeout;
@@ -130,12 +131,10 @@ export class AdoSyncScheduler {
   }
 
   private async resetSyncFlags() {
-    const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-    if (config?.state?.config?.ado) {
-      config.state.config.ado.isSyncing = false;
-      config.state.config.ado.isIndexing = false;
-      await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-    }
+    await publishSyncState(this.context, 'ado', {
+      isSyncing: false,
+      isIndexing: false,
+    });
     this.syncStartedAt = undefined;
   }
 
@@ -152,11 +151,10 @@ export class AdoSyncScheduler {
           throw new Error('ADO config incomplete');
       }
 
-      // Update state to syncing before kicking off
-      if (config?.state?.config?.ado) {
-          config.state.config.ado.isSyncing = true;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-      }
+      // Mark the sync in-flight for our own re-entrancy guard, but don't push
+      // it to the UI: this run reports no progress to the webview (the service
+      // below is built without one), so the panel would show a stalled bar.
+      await persistSyncState(this.context, 'ado', { isSyncing: true });
       this.syncStartedAt = Date.now();
 
       const adoConfig: AdoConfig = {
@@ -170,30 +168,26 @@ export class AdoSyncScheduler {
       const embeddingService = new AdoEmbeddingService(undefined, this.context);
 
       await adoService.startSync(adoConfig, async () => {
-        // Complete callback: update last sync time and start embeddings
-        const syncTime = new Date().toISOString();
-        const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-        if (settings?.state?.config?.ado) {
-          settings.state.config.ado.lastSyncTime = syncTime;
-          settings.state.config.ado.isSyncing = false;
-          settings.state.config.ado.isIndexing = true;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
-        }
+        // Complete callback: update last sync time and start embeddings.
+        // Pushed to the webview so the settings panel's "synced Nh ago" label
+        // reflects this run instead of staying frozen at what it hydrated with.
+        await publishSyncState(this.context, 'ado', {
+          lastSyncTime: new Date().toISOString(),
+          isSyncing: false,
+          isIndexing: true,
+        });
 
         console.log('🔄 Auto-sync ADO: item sync complete, starting embedding indexing...');
 
+        // Returns once the embedding worker is forked, not once it finishes —
+        // AdoEmbeddingService clears isIndexing from the worker's
+        // completion/error message.
         await embeddingService.createEmbeddings({
           dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS,
         } as EmbeddingConfig);
 
-        // Reset isIndexing after embeddings complete so future scheduled syncs aren't blocked
-        const updatedSettings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-        if (updatedSettings?.state?.config?.ado) {
-          updatedSettings.state.config.ado.isIndexing = false;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, updatedSettings);
-        }
         this.syncStartedAt = undefined;
-        console.log('✅ Auto-sync ADO: complete');
+        console.log('✅ Auto-sync ADO: item sync complete, indexing running');
       }, resume, (error: Error) => {
         // Error callback: reset flags so future scheduled syncs aren't blocked
         console.error('❌ Auto-sync ADO: worker error:', error.message);

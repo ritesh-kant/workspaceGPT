@@ -1,5 +1,6 @@
 import { PostHog } from 'posthog-node';
 import * as vscode from 'vscode';
+import { getMode } from '../utils/getModeSettings';
 
 export class AnalyticsService {
   private posthog: PostHog;
@@ -43,6 +44,7 @@ export class AnalyticsService {
             'Riteshkant.workspacegpt-extension'
           )?.packageJSON.version,
           vscodeVersion: vscode.version,
+          mode: getMode(this.context),
         },
       });
     } catch (error) {

@@ -25,6 +25,8 @@ import { VSCodeAPI } from './vscode';
 import {
   setModelState,
   useChatStore,
+  collectChatSnapshot,
+  applyChatSnapshot,
   useModelActions,
   useModelProviders,
   useSelectedModelProvider,
@@ -35,6 +37,10 @@ import { modelDefaultConfig } from './store/modelStore';
 import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS } from './constants';
 import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
+
+function initialChatLayout(): 'sidebar' | 'editor' {
+  return window.__WGPT_CHAT_LAYOUT__ === 'editor' ? 'editor' : 'sidebar';
+}
 
 // Simple UUID generator (no external dep needed)
 function generateSessionId(): string {
@@ -47,6 +53,71 @@ function generateSessionId(): string {
 
 /** File extensions we confidently treat as inline-able text when the browser reports no mime type. */
 const TEXT_FILE_EXTENSIONS = /\.(txt|md|markdown|json|jsonc|yaml|yml|xml|html|htm|css|scss|less|js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|c|h|cpp|hpp|cs|swift|php|sql|sh|bash|zsh|ps1|bat|toml|ini|cfg|conf|env|log|csv|tsv|properties|gradle|tf|proto|graphql|vue|svelte|dockerfile|makefile|lock)$/i;
+
+/**
+ * Context-picker row for Confluence / Azure DevOps. Uses the same live
+ * sync/index fields Settings already receives, so the menu updates while open.
+ */
+function knowledgeContextOption(
+  value: string,
+  label: string,
+  source: {
+    isAuthenticated?: boolean;
+    isSyncing?: boolean;
+    isIndexing?: boolean;
+    isIndexingCompleted?: boolean;
+    canResume?: boolean;
+    canResumeIndexing?: boolean;
+    syncProgress: number;
+    indexProgress: number;
+  }
+): DropdownOption {
+  const canQuery = !!(source.isAuthenticated && source.isIndexingCompleted);
+  if (!source.isAuthenticated) {
+    return {
+      value,
+      label,
+      disabled: true,
+      subtitle: 'Not connected — connect it in Settings',
+    };
+  }
+
+  if (source.isSyncing) {
+    const progress = Math.max(0, Math.min(100, Math.round(source.syncProgress || 0)));
+    return {
+      value,
+      label,
+      disabled: !canQuery,
+      subtitle: `Syncing… ${progress}%`,
+      progress,
+    };
+  }
+
+  if (source.isIndexing) {
+    const progress = Math.max(0, Math.min(100, Math.round(source.indexProgress || 0)));
+    return {
+      value,
+      label,
+      disabled: !canQuery,
+      subtitle: `Indexing… ${progress}%`,
+      progress,
+    };
+  }
+
+  if (canQuery) {
+    return { value, label };
+  }
+
+  return {
+    value,
+    label,
+    disabled: true,
+    subtitle:
+      source.canResume || source.canResumeIndexing
+        ? 'Paused — finish the sync in Settings'
+        : 'Indexing unfinished — finish the sync in Settings',
+  };
+}
 
 const isTextLike = (file: File): boolean =>
   file.type.startsWith('text/') ||
@@ -364,15 +435,6 @@ const App: React.FC = () => {
   const adoProjectName = config.ado?.projectName;
   const isAdoConnected = !!(config.ado?.isAuthenticated && adoOrgName && adoProjectName);
 
-  // Whether each source can actually serve a query — the same three conditions
-  // chatService.sendMessage builds `availableSources` from. Kept separate from
-  // the `is*Connected` flags above, which gate setup UI and My Work and
-  // deliberately ignore indexing state. Used to annotate the context picker so
-  // a source that can't answer isn't offered as if it could.
-  const canQueryConfluence = !!(
-    config.confluence?.isAuthenticated && config.confluence?.isIndexingCompleted
-  );
-  const canQueryAdo = !!(config.ado?.isAuthenticated && config.ado?.isIndexingCompleted);
   // Populated by the WORKSPACE_PATH reply; null until it arrives, so the picker
   // doesn't flash "no folder open" during the first render.
   const [hasWorkspaceFolder, setHasWorkspaceFolder] = useState<boolean | null>(null);
@@ -383,34 +445,31 @@ const App: React.FC = () => {
    * the host skips an override it can't satisfy and quietly routes somewhere
    * else, so "Azure DevOps" on a disconnected setup silently answered from the
    * codebase. The host still says so per-turn when a stored selection goes
-   * stale; this stops new ones being made.
+   * stale; this stops new ones being made. Live sync/index percent comes from
+   * the same store Settings uses, so the menu updates while a run is in flight.
    */
   const contextOptions: DropdownOption[] = [
     { value: 'Auto', label: 'Context: Auto' },
-    {
-      value: 'Confluence',
-      label: 'Confluence',
-      ...(canQueryConfluence
-        ? {}
-        : {
-            disabled: true,
-            subtitle: config.confluence?.isAuthenticated
-              ? 'Indexing unfinished — finish the sync in Settings'
-              : 'Not connected — connect it in Settings',
-          }),
-    },
-    {
-      value: 'Azure DevOps',
-      label: 'Azure DevOps',
-      ...(canQueryAdo
-        ? {}
-        : {
-            disabled: true,
-            subtitle: config.ado?.isAuthenticated
-              ? 'Indexing unfinished — finish the sync in Settings'
-              : 'Not connected — connect it in Settings',
-          }),
-    },
+    knowledgeContextOption('Confluence', 'Confluence', {
+      isAuthenticated: config.confluence?.isAuthenticated,
+      isSyncing: config.confluence?.isSyncing,
+      isIndexing: config.confluence?.isIndexing,
+      isIndexingCompleted: config.confluence?.isIndexingCompleted,
+      canResume: config.confluence?.canResume,
+      canResumeIndexing: config.confluence?.canResumeIndexing,
+      syncProgress: config.confluence?.confluenceSyncProgress ?? 0,
+      indexProgress: config.confluence?.confluenceIndexProgress ?? 0,
+    }),
+    knowledgeContextOption('Azure DevOps', 'Azure DevOps', {
+      isAuthenticated: config.ado?.isAuthenticated,
+      isSyncing: config.ado?.isSyncing,
+      isIndexing: config.ado?.isIndexing,
+      isIndexingCompleted: config.ado?.isIndexingCompleted,
+      canResume: config.ado?.canResume,
+      canResumeIndexing: config.ado?.canResumeIndexing,
+      syncProgress: config.ado?.adoSyncProgress ?? 0,
+      indexProgress: config.ado?.adoIndexProgress ?? 0,
+    }),
     {
       value: 'Codebase',
       label: 'Codebase',
@@ -515,6 +574,7 @@ const App: React.FC = () => {
   const currentSessionIdRef = useRef<string | null>(null);
   // Fresh handleNewChat for the host-initiated NEW_CHAT command (stale closure).
   const handleNewChatRef = useRef<() => void>(() => {});
+  const handleSelectSessionRef = useRef<(sessionId: string) => void>(() => {});
 
   // Typewriter streaming buffer. Network chunk size varies wildly by provider —
   // some (Ollama, Gemini) emit token-sized deltas, others (NVIDIA) ship the whole
@@ -546,32 +606,62 @@ const App: React.FC = () => {
     [vscode]
   );
 
+  // Stop the typewriter and dump whatever is still buffered into the last
+  // message. Used when the host says the stream is finished — typing the
+  // report out after the run is over is the "answer appears slowly" bug:
+  // agent reports often arrive as one large chunk right as the worker
+  // sends `done`, and each pump tick re-parses the growing markdown.
+  const flushStreamRemainder = useCallback(() => {
+    if (pumpRef.current !== null) {
+      clearInterval(pumpRef.current);
+      pumpRef.current = null;
+    }
+    const pending = pendingTextRef.current;
+    if (pending.length > 0) {
+      pendingTextRef.current = '';
+      appendToLastMessage(pending);
+    }
+    if (streamDoneRef.current) {
+      streamDoneRef.current = false;
+      setIsStreaming(false);
+    }
+  }, [appendToLastMessage, setIsStreaming]);
+
   // Drains pendingTextRef into the last message a few chars per tick so the
-  // response "types out" smoothly. Pauses itself when the buffer empties (and
-  // restarts on the next chunk); finalizes streaming state once the stream is
-  // done and fully drained. The slice scales with the backlog, so a provider
-  // that delivers the whole response in one chunk still finishes in ~0.5s
-  // rather than typing for tens of seconds.
+  // response "types out" smoothly while tokens are still arriving. Pauses
+  // itself when the buffer empties; once the stream is marked done, dumps
+  // the rest in one shot instead of animating it.
   const startStreamPump = useCallback(() => {
     if (pumpRef.current !== null) return; // already running
     pumpRef.current = setInterval(() => {
+      if (streamDoneRef.current) {
+        flushStreamRemainder();
+        return;
+      }
       const pending = pendingTextRef.current;
       if (pending.length === 0) {
         if (pumpRef.current !== null) {
           clearInterval(pumpRef.current);
           pumpRef.current = null;
         }
-        if (streamDoneRef.current) {
-          streamDoneRef.current = false;
-          setIsStreaming(false);
-        }
         return;
       }
-      const count = Math.max(2, Math.ceil(pending.length / 30));
+      // Keep a typewriter while tokens are in flight, but drain a large
+      // backlog quickly (NVIDIA/Gemini sometimes dump hundreds of chars per
+      // SSE event) so markdown isn't re-parsed 2 chars at a time for seconds.
+      const count = Math.max(8, Math.ceil(pending.length / 8));
       pendingTextRef.current = pending.slice(count);
       appendToLastMessage(pending.slice(0, count));
     }, 16);
-  }, [appendToLastMessage, setIsStreaming]);
+  }, [appendToLastMessage, flushStreamRemainder]);
+
+  // The message handler lives in a mount-once effect (stale-closure by design
+  // — same as handleNewChatRef). Keep the latest pump helpers here so DONE
+  // always flushes with the current appendToLastMessage.
+  const startStreamPumpRef = useRef(startStreamPump);
+  const flushStreamRemainderRef = useRef(flushStreamRemainder);
+  startStreamPumpRef.current = startStreamPump;
+  flushStreamRemainderRef.current = flushStreamRemainder;
 
   // Stops the pump and discards any buffered text — used when a stream is
   // abandoned (new chat, new message, stop, error).
@@ -664,6 +754,8 @@ const App: React.FC = () => {
             durationMs: message.durationMs || 0,
             filesChanged: message.filesChanged || [],
             checkpointSha: message.checkpointSha,
+            ticketId: message.ticketId,
+            shippable: !!message.shippable,
           });
           break;
         case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
@@ -728,19 +820,26 @@ const App: React.FC = () => {
           setStatusText('');
           setIsLoading(false); // Stop loading animation since we're streaming now
           setIsStreaming(true);
-          startStreamPump();
+          startStreamPumpRef.current();
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE: {
           setStatusText('');
           setIsLoading(false);
-          // Don't clear isStreaming yet — let the pump finish draining the
-          // buffer first, then it flips isStreaming off itself.
           streamDoneRef.current = true;
-          startStreamPump();
-          // The model finished without any text (rare): the steps and
-          // files-changed rollup accumulated this turn must never vanish —
-          // materialize a fallback answer to carry them.
-          if (pendingTextRef.current.length === 0) {
+          // Dump buffered text immediately — don't keep the typewriter
+          // running after the model has finished.
+          if (pendingTextRef.current.length > 0) {
+            flushStreamRemainderRef.current();
+          } else {
+            if (pumpRef.current !== null) {
+              clearInterval(pumpRef.current);
+              pumpRef.current = null;
+            }
+            streamDoneRef.current = false;
+            setIsStreaming(false);
+            // The model finished without any text (rare): the steps and
+            // files-changed rollup accumulated this turn must never vanish —
+            // materialize a fallback answer to carry them.
             const { messages: currentMsgs } = useChatStore.getState();
             const last = currentMsgs[currentMsgs.length - 1];
             if (!last || last.isUser || last.writeReview) {
@@ -774,6 +873,8 @@ const App: React.FC = () => {
             durationMs: message.durationMs || 0,
             filesChanged: message.filesChanged || [],
             checkpointSha: message.checkpointSha,
+            ticketId: message.ticketId,
+            shippable: !!message.shippable,
           });
           break;
         case MESSAGE_TYPES.AGENT_REVERT_DONE:
@@ -841,6 +942,9 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.NEW_CHAT:
           handleNewChatRef.current();
           break;
+        case MESSAGE_TYPES.LOAD_CHAT_SESSION:
+          if (message.sessionId) handleSelectSessionRef.current(message.sessionId);
+          break;
         case MESSAGE_TYPES.SHOW_HISTORY:
           setActiveView('history');
           // Refresh history list when opened
@@ -851,6 +955,29 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.SHOW_RELEASES:
           setActiveView('releases');
           break;
+        case MESSAGE_TYPES.CHAT_SNAPSHOT_REQUEST:
+          flushStreamRemainderRef.current();
+          vscode.postMessage({
+            type: MESSAGE_TYPES.CHAT_SNAPSHOT,
+            snapshot: {
+              ...collectChatSnapshot(),
+              pendingStreamText: pendingTextRef.current,
+              activeView: useUiStore.getState().activeView,
+            },
+          });
+          break;
+        case MESSAGE_TYPES.CHAT_SNAPSHOT_APPLY: {
+          const snap = message.snapshot || {};
+          applyChatSnapshot(snap);
+          if (typeof snap.pendingStreamText === 'string') {
+            pendingTextRef.current = snap.pendingStreamText;
+          }
+          if (snap.activeView) {
+            setActiveView(snap.activeView);
+          }
+          currentSessionIdRef.current = snap.currentSessionId ?? null;
+          break;
+        }
         case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
             const restoredConfig = message.state?.config || settingsDefaultConfig;
@@ -982,8 +1109,19 @@ const App: React.FC = () => {
     };
 
     window.addEventListener('message', handleMessage);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.CHAT_WEBVIEW_READY,
+      layout: initialChatLayout(),
+    });
     return () => window.removeEventListener('message', handleMessage);
   }, []);
+
+  useEffect(() => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SESSION_CHANGED,
+      sessionId: currentSessionId,
+    });
+  }, [currentSessionId]);
 
   // Auto-save whenever messages change (debounced)
   useEffect(() => {
@@ -1193,19 +1331,7 @@ const App: React.FC = () => {
   const backgroundCurrentSession = () => {
     // Synchronously flush what the pump hasn't typed out yet — the stash must
     // capture the full transcript, not the animation's progress.
-    if (pumpRef.current !== null) {
-      clearInterval(pumpRef.current);
-      pumpRef.current = null;
-    }
-    if (pendingTextRef.current.length > 0) {
-      appendToLastMessage(pendingTextRef.current);
-      pendingTextRef.current = '';
-    }
-    if (streamDoneRef.current) {
-      // Stream actually finished while the pump was still typing.
-      streamDoneRef.current = false;
-      setIsStreaming(false);
-    }
+    flushStreamRemainder();
     stashCurrentSession();
     // Reset the visible turn state for whatever session comes next; if a run
     // was stashed, its copy of this state lives in liveSessions now.
@@ -1692,6 +1818,7 @@ const App: React.FC = () => {
       sessionId,
     });
   };
+  handleSelectSessionRef.current = handleSelectSession;
 
   const handleDeleteSession = (sessionId: string) => {
     // Kill any run this session still has going, then forget its live state.
@@ -1974,6 +2101,7 @@ const App: React.FC = () => {
                   onFeedback={
                     !message.isUser ? (rating) => handleFeedback(index, rating) : undefined
                   }
+                  isLive={!message.isUser && isStreaming && index === messages.length - 1}
                 />
               );
             })}

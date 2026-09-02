@@ -23,38 +23,48 @@ interface AgentTimelineProps {
   live?: boolean;
 }
 
-type TimelineItem =
-  | { type: 'group'; steps: AgentStep[] }
-  | { type: 'thought'; steps: AgentStep[]; title: string }
-  | { type: 'step'; step: AgentStep };
+type Family = 'explore' | 'edit' | 'command';
 
-const GROUPABLE = new Set(['search', 'read', 'check', 'info']);
-const THOUGHTISH = new Set(['thought', 'note']);
+type TimelineItem =
+  | { type: 'group'; family: Family; steps: AgentStep[] }
+  | { type: 'thought'; title: string }
+  | { type: 'note'; step: AgentStep };
+
+/**
+ * Which steps collapse together. Reads/searches/checks are one family
+ * ("Explored 3 files, 1 search"); edits and commands are their own, so a run
+ * reads as "Edited 2 files · Ran 5 commands" instead of a flat list of every
+ * individual call. Kinds outside these (notice) never reach here.
+ */
+function familyOf(kind: string): Family | null {
+  if (kind === 'search' || kind === 'read' || kind === 'check' || kind === 'info') return 'explore';
+  if (kind === 'edit') return 'edit';
+  if (kind === 'command') return 'command';
+  return null;
+}
 
 function groupSteps(steps: AgentStep[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   for (const step of steps) {
-    if (THOUGHTISH.has(step.kind)) {
-      const last = items[items.length - 1];
-      if (last && last.type === 'thought') {
-        last.steps.push(step);
-        if (step.kind === 'thought' && step.title) last.title = step.title;
-      } else {
-        items.push({
-          type: 'thought',
-          steps: [step],
-          title: step.kind === 'thought' && step.title ? step.title : 'Thought',
-        });
-      }
-    } else if (GROUPABLE.has(step.kind)) {
-      const last = items[items.length - 1];
-      if (last && last.type === 'group') {
-        last.steps.push(step);
-      } else {
-        items.push({ type: 'group', steps: [step] });
-      }
+    // Prose the model narrated alongside its tool calls is the connective
+    // tissue of the trace ("Extension host is clean. Now the webview:") — it
+    // renders inline between groups, not buried inside a collapsed
+    // "Thought for Ns" disclosure where nobody ever found it.
+    if (step.kind === 'note') {
+      if (noteText(step)) items.push({ type: 'note', step });
+      continue;
+    }
+    if (step.kind === 'thought') {
+      items.push({ type: 'thought', title: step.title || 'Thought' });
+      continue;
+    }
+    const family = familyOf(step.kind);
+    if (!family) continue;
+    const last = items[items.length - 1];
+    if (last && last.type === 'group' && last.family === family) {
+      last.steps.push(step);
     } else {
-      items.push({ type: 'step', step });
+      items.push({ type: 'group', family, steps: [step] });
     }
   }
   return items;
@@ -104,7 +114,22 @@ function compactDoneSteps(steps: AgentStep[]): AgentStep[] {
   return out;
 }
 
-function groupLabel(steps: AgentStep[]): string {
+/** Summed "+a −r" across a set of edit steps, or '' when none carry stats. */
+function sumEditStats(steps: AgentStep[]): string {
+  let added = 0;
+  let removed = 0;
+  let any = false;
+  for (const s of steps) {
+    const m = EDIT_STAT_RE.exec(s.summary ?? '');
+    if (!m) continue;
+    any = true;
+    added += Number(m[1]);
+    removed += Number(m[2]);
+  }
+  return any ? `+${added} −${removed}` : '';
+}
+
+function exploreLabel(steps: AgentStep[]): string {
   // 'read' covers both file reads ("Analyzed") and directory listings
   // ("Explored") — split those out so the label can say "N files, M folders"
   // the way Antigravity's trace does, instead of lumping them together.
@@ -118,6 +143,14 @@ function groupLabel(steps: AgentStep[]): string {
   if (searches > 0) parts.push(`${searches} search${searches === 1 ? '' : 'es'}`);
   if (checks > 0) parts.push(`${checks} check${checks === 1 ? '' : 's'}`);
   return parts.length ? `Explored ${parts.join(', ')}` : `Explored ${steps.length} step${steps.length === 1 ? '' : 's'}`;
+}
+
+/** The collapsed one-liner for a group: what happened, and how much of it. */
+function groupLabel(family: Family, steps: AgentStep[]): string {
+  if (family === 'explore') return exploreLabel(steps);
+  if (family === 'command') return `Ran ${steps.length} command${steps.length === 1 ? '' : 's'}`;
+  const files = new Set(steps.map((s) => s.path ?? s.title)).size;
+  return `Edited ${files} file${files === 1 ? '' : 's'}`;
 }
 
 function noteText(step: AgentStep): string {
@@ -159,24 +192,32 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
 
   if (step.kind === 'command') {
     const output = step.meta?.output?.trim();
+    // The model labels its own commands ("Run the checkout step tests"); only
+    // an unlabelled one (older session, or a model that skipped the field)
+    // falls back to showing the raw command inline. Either way the command
+    // itself is always in the expanded box, so nothing is hidden.
+    const labelled = step.title !== 'Ran' && !!step.detail;
+    const expanded = [step.detail ? `$ ${step.detail}` : '', output].filter(Boolean).join('\n\n');
     return (
       <div className={`agent-step-row agent-step-row--command${step.status === 'error' ? ' is-error' : ''}`}>
         <div className='agent-step-line'>
           <StatusDot step={step} live={live} />
-          <span className='agent-step-title'>{step.title}</span>
-          <code className='agent-step-command'>{step.detail}</code>
+          <span className='agent-step-title' title={step.detail}>
+            {step.title}
+          </span>
+          {!labelled && <code className='agent-step-command'>{step.detail}</code>}
           {step.summary && <span className='agent-step-summary'>{step.summary}</span>}
-          {output && (
+          {expanded && (
             <button
               type='button'
               className='agent-step-output-toggle'
               onClick={() => setOutputOpen((v) => !v)}
             >
-              {outputOpen ? 'Hide output' : 'Show output'}
+              {outputOpen ? 'Hide' : step.status === 'error' ? 'Show error' : 'Show output'}
             </button>
           )}
         </div>
-        {output && outputOpen && <pre className='agent-step-output'>{output}</pre>}
+        {expanded && outputOpen && <pre className='agent-step-output'>{expanded}</pre>}
       </div>
     );
   }
@@ -209,27 +250,43 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
   );
 };
 
-/** Collapsed-by-default reasoning block. Empty thought rows (just a duration) stay a one-liner. */
-const ThoughtGroup: React.FC<{ title: string; steps: AgentStep[] }> = ({ title, steps }) => {
-  const notes = steps.filter((s) => s.kind === 'note' && noteText(s));
-  if (notes.length === 0) {
-    return <div className='agent-step-row agent-step-row--thought'>{title}</div>;
-  }
+/**
+ * The work item this run was grounded in — id + title, type/state underneath,
+ * clickable straight through to Azure DevOps in the browser.
+ */
+const TicketChip: React.FC<{ step: AgentStep }> = ({ step }) => {
+  const vscode = VSCodeAPI();
+  const open = () => {
+    if (step.url) vscode.postMessage({ type: MESSAGE_TYPES.OPEN_EXTERNAL, url: step.url });
+  };
   return (
-    <details className='agent-step-group agent-step-group--thought'>
-      <summary>
-        <span className='agent-step-group-label'>{title}</span>
-      </summary>
-      <div className='agent-step-group-items'>
-        {notes.map((s, i) => (
-          <div key={s.id ?? `n${i}`} className='agent-step-row agent-step-row--note'>
-            {noteText(s)}
-          </div>
-        ))}
-      </div>
-    </details>
+    <button type='button' className='agent-ticket-chip' onClick={open} title={`Open ${step.title} in the browser`}>
+      <svg className='agent-ticket-chip-icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+        <path d='M4 7.5A1.5 1.5 0 0 1 5.5 6h13A1.5 1.5 0 0 1 20 7.5v2a2.5 2.5 0 0 0 0 5v2a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5v-2a2.5 2.5 0 0 0 0-5z' />
+      </svg>
+      <span className='agent-ticket-chip-text'>
+        <span className='agent-ticket-chip-title'>{step.title}</span>
+        {step.detail && <span className='agent-ticket-chip-meta'>{step.detail}</span>}
+      </span>
+      <svg className='agent-ticket-chip-external' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+        <path d='M14 4h6v6' />
+        <path d='M20 4l-8 8' />
+        <path d='M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4' />
+      </svg>
+    </button>
   );
 };
+
+/** Total model thinking time, recovered from the thought rows done mode drops. */
+function thoughtTotalMs(steps: AgentStep[]): number {
+  let total = 0;
+  for (const s of steps) {
+    if (s.kind !== 'thought') continue;
+    const m = /(\d+)\s*s/.exec(s.title ?? '');
+    if (m) total += Number(m[1]) * 1000;
+  }
+  return total;
+}
 
 const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }) => {
   const normalized = steps.map(normalizeAgentStep);
@@ -241,9 +298,14 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
   // invisible in exactly the case it matters most, a doc turn with no other
   // steps at all.
   const notices = normalized.filter((s) => s.kind === 'notice');
-  const timelineSteps = normalized.filter((s) => s.kind !== 'notice');
+  // The run's work item, rendered as a chip above the collapsed timeline —
+  // the point of it is to be reachable in one click, which a row buried in
+  // two disclosures would not be.
+  const tickets = normalized.filter((s) => s.kind === 'ticket' && !!s.url);
+  const timelineSteps = normalized.filter((s) => s.kind !== 'notice' && s.kind !== 'ticket');
   const items = groupSteps(live ? timelineSteps : compactDoneSteps(timelineSteps));
   const anyRunning = live && timelineSteps.some((s) => s.status === 'running');
+  const thoughtMs = live ? 0 : thoughtTotalMs(timelineSteps);
 
   const noticeRows = notices.map((s, i) => (
     <div key={`n${i}`} className='agent-notice'>
@@ -252,19 +314,48 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
     </div>
   ));
 
-  // Notice-only turn (a doc/ticket answer that ran no tools at all): there is
+  const ticketRows = tickets.map((s, i) => <TicketChip key={`t${i}`} step={s} />);
+  const headerRows = (
+    <>
+      {noticeRows}
+      {ticketRows}
+    </>
+  );
+
+  // Notice/ticket-only turn (a doc answer that ran no tools at all): there is
   // no timeline to wrap, so don't render an empty "Worked for 0 steps" shell.
   if (timelineSteps.length === 0) {
-    return <>{noticeRows}</>;
+    return headerRows;
   }
 
   const body = (
     <div className='agent-timeline-body'>
-      {items.map((item, i) =>
-        item.type === 'group' ? (
-          <details key={i} className='agent-step-group'>
+      {items.map((item, i) => {
+        if (item.type === 'thought') {
+          return (
+            <div key={i} className='agent-step-row agent-step-row--thought'>
+              {item.title}
+            </div>
+          );
+        }
+        if (item.type === 'note') {
+          return (
+            <div key={i} className='agent-step-row agent-step-row--note'>
+              {noteText(item.step)}
+            </div>
+          );
+        }
+        // A lone step needs no disclosure — wrapping one edit in "Edited 1
+        // file ▸" just adds a click between the user and the thing itself.
+        if (item.steps.length === 1) {
+          return <StepRow key={item.steps[0].id ?? `s${i}`} step={item.steps[0]} live={live} />;
+        }
+        const stats = item.family === 'edit' ? sumEditStats(item.steps) : '';
+        return (
+          <details key={i} className={`agent-step-group agent-step-group--${item.family}`}>
             <summary>
-              <span className='agent-step-group-label'>{groupLabel(item.steps)}</span>
+              <span className='agent-step-group-label'>{groupLabel(item.family, item.steps)}</span>
+              {stats && <span className='agent-step-group-stats'>{stats}</span>}
             </summary>
             <div className='agent-step-group-items'>
               {item.steps.map((s, j) => (
@@ -272,19 +363,15 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
               ))}
             </div>
           </details>
-        ) : item.type === 'thought' ? (
-          <ThoughtGroup key={i} title={item.title} steps={item.steps} />
-        ) : (
-          <StepRow key={item.step.id ?? `s${i}`} step={item.step} live={live} />
-        )
-      )}
+        );
+      })}
     </div>
   );
 
   if (live) {
     return (
       <>
-        {noticeRows}
+        {headerRows}
         <div className={`agent-timeline agent-timeline--live${anyRunning ? ' is-running' : ''}`}>{body}</div>
       </>
     );
@@ -292,10 +379,11 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
 
   return (
     <>
-      {noticeRows}
+      {headerRows}
       <details className='agent-timeline'>
         <summary>
           Worked for {durationMs ? formatDuration(durationMs) : `${timelineSteps.length} step${timelineSteps.length === 1 ? '' : 's'}`}
+          {thoughtMs > 0 && <span className='agent-timeline-thought'> · thought for {formatDuration(thoughtMs)}</span>}
         </summary>
         {body}
       </details>
