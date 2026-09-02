@@ -5,10 +5,11 @@ import { AgentStep, normalizeAgentStep } from '../store/chatStore';
 
 /**
  * Compact agent timeline, matching how Cursor / Claude Code present a turn:
- * exploration is one collapsed "Explored N …" disclosure, model reasoning is
- * a collapsed "Thought for Xs" disclosure (the prose is inside, not inline),
- * and command stdout stays behind "Show output". Mutations (edits, commands)
- * stay as one-line rows so the user can still see what changed.
+ * exploration is one collapsed "Explored N …" disclosure, and command stdout
+ * stays behind "Show output". Mutations (edits, commands) stay as one-line
+ * rows so the user can still see what changed. Per-step model latency isn't
+ * shown at all — the turn's total elapsed time renders once, in the "Worked
+ * for Xs" summary below, after the response finishes.
  *
  * Live and done use the same collapsed defaults — expanding mid-run is how
  * the noise in the transcript used to happen. The loading indicator already
@@ -27,7 +28,6 @@ type Family = 'explore' | 'edit' | 'command';
 
 type TimelineItem =
   | { type: 'group'; family: Family; steps: AgentStep[] }
-  | { type: 'thought'; title: string }
   | { type: 'note'; step: AgentStep };
 
 /**
@@ -54,10 +54,7 @@ function groupSteps(steps: AgentStep[]): TimelineItem[] {
       if (noteText(step)) items.push({ type: 'note', step });
       continue;
     }
-    if (step.kind === 'thought') {
-      items.push({ type: 'thought', title: step.title || 'Thought' });
-      continue;
-    }
+    if (step.kind === 'thought') continue;
     const family = familyOf(step.kind);
     if (!family) continue;
     const last = items[items.length - 1];
@@ -177,9 +174,6 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
   const vscode = VSCodeAPI();
   const [outputOpen, setOutputOpen] = useState(false);
 
-  if (step.kind === 'thought') {
-    return <div className='agent-step-row agent-step-row--thought'>{step.title}</div>;
-  }
   if (step.kind === 'note') {
     return <div className='agent-step-row agent-step-row--note'>{noteText(step)}</div>;
   }
@@ -277,17 +271,6 @@ const TicketChip: React.FC<{ step: AgentStep }> = ({ step }) => {
   );
 };
 
-/** Total model thinking time, recovered from the thought rows done mode drops. */
-function thoughtTotalMs(steps: AgentStep[]): number {
-  let total = 0;
-  for (const s of steps) {
-    if (s.kind !== 'thought') continue;
-    const m = /(\d+)\s*s/.exec(s.title ?? '');
-    if (m) total += Number(m[1]) * 1000;
-  }
-  return total;
-}
-
 const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }) => {
   const normalized = steps.map(normalizeAgentStep);
   if (normalized.length === 0) return null;
@@ -305,7 +288,6 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
   const timelineSteps = normalized.filter((s) => s.kind !== 'notice' && s.kind !== 'ticket');
   const items = groupSteps(live ? timelineSteps : compactDoneSteps(timelineSteps));
   const anyRunning = live && timelineSteps.some((s) => s.status === 'running');
-  const thoughtMs = live ? 0 : thoughtTotalMs(timelineSteps);
 
   const noticeRows = notices.map((s, i) => (
     <div key={`n${i}`} className='agent-notice'>
@@ -331,13 +313,6 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
   const body = (
     <div className='agent-timeline-body'>
       {items.map((item, i) => {
-        if (item.type === 'thought') {
-          return (
-            <div key={i} className='agent-step-row agent-step-row--thought'>
-              {item.title}
-            </div>
-          );
-        }
         if (item.type === 'note') {
           return (
             <div key={i} className='agent-step-row agent-step-row--note'>
@@ -383,7 +358,6 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
       <details className='agent-timeline'>
         <summary>
           Worked for {durationMs ? formatDuration(durationMs) : `${timelineSteps.length} step${timelineSteps.length === 1 ? '' : 's'}`}
-          {thoughtMs > 0 && <span className='agent-timeline-thought'> · thought for {formatDuration(thoughtMs)}</span>}
         </summary>
         {body}
       </details>

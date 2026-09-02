@@ -867,11 +867,6 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
-.agent-timeline-thought {
-  opacity: 0.7;
-  font-weight: 400;
-}
-
 /* Steps inside a group read as discrete cards rather than a run-on list —
    at a glance you can count what happened without reading any of it. */
 .agent-step-group-items {
@@ -973,19 +968,6 @@ button:disabled {
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-/* "Thought for 2s" separator rows — and the collapsed disclosure that wraps
-   the model's reasoning so the prose isn't inline in the timeline. */
-.agent-step-row--thought,
-.agent-step-group--thought > summary {
-  opacity: 0.6;
-  font-style: italic;
-  padding: 1px 0;
-}
-
-.agent-step-group--thought > summary:hover {
-  opacity: 0.9;
 }
 
 /* Prose the model narrated between tool batches — the connective tissue of

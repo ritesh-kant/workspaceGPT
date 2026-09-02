@@ -2146,16 +2146,11 @@ Query: "${query}"`;
                 break;
               }
 
-              case 'thought': {
-                // Model latency between tool batches — the "Thought for 2s"
-                // rows the timeline shows between exploration groups.
-                const sec = Math.max(1, Math.round((result.ms ?? 0) / 1000));
-                this.post(run, {
-                  type: MESSAGE_TYPES.AGENT_STEP,
-                  step: { kind: 'thought', title: `Thought for ${sec}s` },
-                });
+              case 'thought':
+                // Model latency between tool batches. No longer surfaced as a
+                // per-step timeline row — the turn's total elapsed time is
+                // already shown once the response finishes (AGENT_TURN_SUMMARY).
                 break;
-              }
 
               case 'agent_note':
                 // Prose the model wrote ALONGSIDE tool calls (progress
