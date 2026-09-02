@@ -2170,8 +2170,11 @@ const App: React.FC = () => {
                   data-tooltip-align='start'
                   aria-label={`${mode === 'remote' ? 'Remote' : 'Local'} mode. Click to change.`}
                 >
+                  {/* Dot only: mode is set once in Settings and rarely changed,
+                      so the label was spending composer space on a constant.
+                      The dot keeps the "where does my question go" signal and
+                      carries the privacy note in its tooltip. */}
                   <span className={`mode-chip-dot mode-chip-dot--${mode}`} />
-                  {mode === 'remote' ? 'Remote' : 'Local'}
                 </button>
                 <div
                   className={`chat-mode-selector chat-mode-selector--${chatMode}`}

@@ -770,9 +770,10 @@ input:focus {
 .mode-chip {
   display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
   height: 24px;
-  padding: 0 8px !important;
+  width: 20px;
+  padding: 0 !important;
   background: transparent !important;
   color: var(--vscode-descriptionForeground) !important;
   border: 1px solid transparent !important;
@@ -788,10 +789,15 @@ input:focus {
 }
 
 .mode-chip-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
+  transition: box-shadow 0.15s ease;
+}
+
+.mode-chip:hover .mode-chip-dot {
+  box-shadow: 0 0 0 3px var(--vscode-toolbar-hoverBackground);
 }
 
 .mode-chip-dot--local {
