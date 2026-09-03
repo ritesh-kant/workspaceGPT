@@ -17,11 +17,13 @@ type ShipState =
 
 interface FilesChangedBarProps {
   summary: TurnSummary;
+  /** This turn's answer text — doubles as the PR body/ticket comment. */
+  report: string;
 }
 
 const fileName = (p: string) => p.split('/').pop() || p;
 
-const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
+const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary, report }) => {
   const vscode = VSCodeAPI();
   const [expanded, setExpanded] = useState(false);
   const [ship, setShip] = useState<ShipState>({ phase: 'idle' });
@@ -52,6 +54,17 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
       type: MESSAGE_TYPES.AGENT_SHIP,
       sessionId: useChatStore.getState().currentSessionId,
       requestId,
+      // Carried here (rather than relying solely on the host's in-memory
+      // record of the last shippable turn) so "Create PR" still works after
+      // an extension host restart — everything needed survives in this
+      // persisted message's own turnSummary + content.
+      shipInput: {
+        ticketId: summary.ticketId,
+        ticketType: summary.ticketType,
+        title: summary.title,
+        report,
+        files: files.map((f) => f.path),
+      },
     });
   };
 
@@ -79,7 +92,7 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
           <svg width='11' height='11' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg' style={{ transform: expanded ? 'rotate(90deg)' : 'none' }}>
             <path d='M9 6L15 12L9 18' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
           </svg>
-          <span>
+          <span className='files-changed-label'>
             {files.length} file{files.length === 1 ? '' : 's'} changed
           </span>
           <span className='files-changed-stats'>

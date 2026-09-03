@@ -59,6 +59,10 @@ export interface TurnSummary {
   checkpointSha?: string;
   /** The ADO ticket this turn was grounded in, if any — "Create PR" comments the report on it. */
   ticketId?: number;
+  /** The ticket's work item type (e.g. "Bug", "Feature") — picks the branch's Conventional Commits prefix. */
+  ticketType?: string;
+  /** Commit/PR title, precomputed host-side (ticket title, else the answer's first heading). */
+  title?: string;
   /** True when the host holds this turn's changes ready to branch/commit/push. */
   shippable?: boolean;
 }

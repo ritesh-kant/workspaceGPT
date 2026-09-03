@@ -3,6 +3,7 @@ import type { Env } from './env';
 const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 const GITHUB_TOKEN_URL = 'https://github.com/login/oauth/access_token';
 const GITHUB_USER_URL = 'https://api.github.com/user';
+const GITHUB_USER_EMAILS_URL = 'https://api.github.com/user/emails';
 
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
@@ -84,7 +85,7 @@ export function buildGithubAuthorizeUrl(env: Env, callbackUrl: string, state: st
   const qs = new URLSearchParams({
     client_id: env.GITHUB_CLIENT_ID,
     redirect_uri: callbackUrl,
-    scope: 'read:user',
+    scope: 'read:user user:email',
     state,
   });
   return `${GITHUB_AUTHORIZE_URL}?${qs.toString()}`;
@@ -115,6 +116,38 @@ export interface GithubUser {
   id: number;
   login: string;
   created_at: string;
+  email: string | null;
+}
+
+interface GithubEmail {
+  email: string;
+  primary: boolean;
+  verified: boolean;
+}
+
+/**
+ * `/user`'s own `email` field is only populated when the account has a public
+ * email set, which most accounts don't. `/user/emails` (needs the `user:email`
+ * scope) is the reliable source regardless of that visibility setting.
+ * Best-effort: sign-in must not fail just because this second call did.
+ */
+async function fetchGithubPrimaryEmail(accessToken: string): Promise<string | null> {
+  try {
+    const res = await fetch(GITHUB_USER_EMAILS_URL, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'User-Agent': 'workspacegpt-api',
+        Accept: 'application/vnd.github+json',
+      },
+    });
+    if (!res.ok) return null;
+    const emails = (await res.json()) as GithubEmail[];
+    if (!Array.isArray(emails)) return null;
+    const primary = emails.find((e) => e.primary && e.verified) ?? emails.find((e) => e.verified);
+    return primary?.email ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchGithubUser(accessToken: string): Promise<GithubUser> {
@@ -137,7 +170,8 @@ export async function fetchGithubUser(accessToken: string): Promise<GithubUser> 
     throw new Error('GitHub /user returned an unexpected payload');
   }
   const user = data as GithubUser;
-  return { id: user.id, login: user.login, created_at: user.created_at };
+  const email = (typeof user.email === 'string' && user.email) || (await fetchGithubPrimaryEmail(accessToken));
+  return { id: user.id, login: user.login, created_at: user.created_at, email };
 }
 
 const MIN_ACCOUNT_AGE_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
@@ -158,12 +192,18 @@ function randomToken(): string {
 export interface SessionRecord {
   userId: string;
   login: string;
+  email: string | null;
   createdAt: number;
 }
 
-export async function createSession(env: Env, userId: string, login: string): Promise<string> {
+export async function createSession(
+  env: Env,
+  userId: string,
+  login: string,
+  email: string | null
+): Promise<string> {
   const token = randomToken();
-  const record: SessionRecord = { userId, login, createdAt: Date.now() };
+  const record: SessionRecord = { userId, login, email, createdAt: Date.now() };
   await env.SESSIONS.put(`session:${token}`, JSON.stringify(record), {
     expirationTtl: SESSION_TTL_SECONDS,
   });

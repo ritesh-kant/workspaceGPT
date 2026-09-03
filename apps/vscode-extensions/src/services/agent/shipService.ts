@@ -3,7 +3,7 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import { NamedRoot, resolveAgainstRoots } from '../codebase/codebaseTools';
 import { addWorkItemComment } from '../ado/adoWorkItemService';
-import { pullRequestUrl, reportToHtml, slugify } from './shipHelpers';
+import { conventionalCommitType, pullRequestUrl, reportToHtml, slugify } from './shipHelpers';
 
 /**
  * "Create PR" after an agent turn: branch, commit ONLY the files the agent
@@ -13,12 +13,15 @@ import { pullRequestUrl, reportToHtml, slugify } from './shipHelpers';
  * Deliberately uses the user's own `git` and browser session — no token ever
  * passes through the agent, and it works for GitHub, Azure Repos, GitLab and
  * Bitbucket alike because the PR itself is created by the user on the page
- * that opens. The commit lands on a fresh `wgpt/…` branch, never on the
- * branch the user was on.
+ * that opens. The commit lands on a fresh `<type>/…` branch (Conventional
+ * Commits type, from the ticket's work item type), never on the branch the
+ * user was on.
  */
 
 export interface ShipInput {
   ticketId?: number;
+  /** ADO work item type (e.g. "Bug", "Feature", "Task") — picks the branch's Conventional Commits prefix. */
+  ticketType?: string;
   /** Ticket title (or the first line of the report) — becomes the commit/PR title. */
   title: string;
   /** The agent's final report, markdown. */
@@ -75,11 +78,12 @@ export async function shipChanges(
   const filesFromTop = relFiles.map((f) => path.relative(gitCwd, path.join(cwd, f)));
   const baseBranch = (await git(gitCwd, ['rev-parse', '--abbrev-ref', 'HEAD'])) || 'main';
   if (baseBranch === 'HEAD') throw new Error('HEAD is detached — check out a branch first.');
-  if (baseBranch.startsWith('wgpt/')) warnings.push(`Branching from an existing agent branch (${baseBranch}).`);
+  if (/^(feat|fix|chore)\//.test(baseBranch)) warnings.push(`Branching from an existing agent branch (${baseBranch}).`);
 
   const shortTitle = input.title.replace(/\s+/g, ' ').trim().slice(0, 72);
+  const commitType = conventionalCommitType(input.ticketType);
   const slug = slugify(input.ticketId ? `${input.ticketId}-${input.title}` : input.title);
-  let branch = `wgpt/${slug}`;
+  let branch = `${commitType}/${slug}`;
   const existing = await git(gitCwd, ['branch', '--list', branch]);
   if (existing) branch = `${branch}-${Date.now().toString(36).slice(-4)}`;
 

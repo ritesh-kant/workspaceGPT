@@ -4,6 +4,7 @@ import type { Env } from './env';
 export interface UserRow {
   id: string;
   login: string;
+  email: string | null;
   created_at: number;
   github_created_at: string;
   plan: string;
@@ -12,25 +13,27 @@ export interface UserRow {
   weekly_request_limit: number | null;
 }
 
-/** Insert the user on first sign-in (only ever called after the age gate passes); otherwise just refresh their `login` (GitHub handles can change). */
+/** Insert the user on first sign-in (only ever called after the age gate passes); otherwise just refresh `login`/`email` (both can change on GitHub's side). */
 export async function upsertUser(
   env: Env,
   githubId: number,
   login: string,
-  githubCreatedAt: string
+  githubCreatedAt: string,
+  email: string | null
 ): Promise<UserRow> {
   const id = String(githubId);
   const existing = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<UserRow>();
   if (existing) {
-    if (existing.login !== login) {
-      await env.DB.prepare('UPDATE users SET login = ? WHERE id = ?').bind(login, id).run();
+    if (existing.login !== login || existing.email !== email) {
+      await env.DB.prepare('UPDATE users SET login = ?, email = ? WHERE id = ?').bind(login, email, id).run();
     }
-    return { ...existing, login };
+    return { ...existing, login, email };
   }
 
   const row: UserRow = {
     id,
     login,
+    email,
     created_at: Date.now(),
     github_created_at: githubCreatedAt,
     plan: 'free',
@@ -40,9 +43,9 @@ export async function upsertUser(
     weekly_request_limit: null,
   };
   await env.DB.prepare(
-    'INSERT INTO users (id, login, created_at, github_created_at, plan, status) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO users (id, login, email, created_at, github_created_at, plan, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
-    .bind(row.id, row.login, row.created_at, row.github_created_at, row.plan, row.status)
+    .bind(row.id, row.login, row.email, row.created_at, row.github_created_at, row.plan, row.status)
     .run();
   return row;
 }

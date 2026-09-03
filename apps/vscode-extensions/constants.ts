@@ -709,12 +709,10 @@ export const GITHUB_APP = {
  * the Worker re-validates that session on every call before spending the
  * vendor's OpenRouter key.
  *
- * TODO(deploy): API_BASE still points at local `wrangler dev`. Swap it for the
- * deployed `*.workers.dev` URL — remote mode cannot work for a real user until
- * this changes, since their machine has no Worker on 127.0.0.1:8787.
+ * Points at the deployed Worker (see apps/workspacegpt-api/wrangler.jsonc).
  */
 export const REMOTE_AUTH = {
-  API_BASE: 'http://127.0.0.1:8787',
+  API_BASE: 'https://workspacegpt-api.ritesh-kant47.workers.dev',
   CALLBACK_PORT: 32329,
   CALLBACK_PATH: '/callback',
 };

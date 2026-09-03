@@ -325,7 +325,7 @@ const TOOL_DEFS = [
           id: {
             type: 'string',
             description:
-              'Work item ID as the user wrote it — any prefix is tolerated ("1234", "TKT-1234", "#1234").',
+              'Work item ID as the user wrote it — any prefix is tolerated ("1234", "TKT-1234", "#1234"), and a full work-item URL ("https://dev.azure.com/{org}/{project}/_workitems/edit/1234") also works.',
           },
           includeComments: {
             type: 'boolean',
@@ -340,9 +340,27 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'get_confluence_page',
+      description:
+        'Read ONE Confluence page by id or URL, live from Confluence (always current — the synced docs index used by search_docs may be stale). Use this whenever the user names or pastes a specific Confluence page rather than asking a general question the semantic index can answer.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pageId: {
+            type: 'string',
+            description: 'Confluence page id, or a full page URL — the id will be extracted.',
+          },
+        },
+        required: ['pageId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'search_web',
       description:
-        "Live web search for anything the codebase and org docs can't answer — an unfamiliar library/API/product, current documentation, or something that changed since training. Use it when a name or concept is unrecognized rather than guessing. Returns a synthesized answer (when available) plus source snippets with URLs — cite the URLs when you use them.",
+        "Live web search for anything the codebase and org docs can't answer — an unfamiliar library/API/product, current documentation, or something that changed since training. Use it when a name or concept is unrecognized rather than guessing. Returns a synthesized answer (when available) plus source snippets with URLs — cite the URLs when you use them. Without a Tavily key configured, this falls back to a lower-reliability public search — don't over-trust unlabeled results in that mode. Never use this for Azure DevOps or Confluence links — it cannot reach private instances; use get_ticket/get_confluence_page (they take a URL directly) or search_tickets/search_docs instead.",
       parameters: {
         type: 'object',
         properties: {

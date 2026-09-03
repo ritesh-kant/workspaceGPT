@@ -31,6 +31,22 @@ export class AnalyticsService {
     return 'user_' + Math.random().toString(36).substring(2, 15);
   }
 
+  /**
+   * Attaches identifying traits (e.g. email from remote-mode sign-in) to this
+   * install's distinctId, so PostHog's Persons view shows a real identity
+   * instead of the anonymous `user_xxxxx` id. Safe to call repeatedly (e.g.
+   * on every session-check) — PostHog merges properties into the existing person.
+   */
+  public identifyUser(properties: Record<string, any>): void {
+    if (!this.isEnabled) return;
+
+    try {
+      this.posthog.identify({ distinctId: this.userId, properties });
+    } catch (error) {
+      console.error('Error identifying user:', error);
+    }
+  }
+
   public trackEvent(eventName: string, properties?: Record<string, any>): void {
     if (!this.isEnabled) return;
 

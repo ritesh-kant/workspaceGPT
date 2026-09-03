@@ -17,6 +17,8 @@ const TICKET_REF_PATTERNS: RegExp[] = [
   /\b[A-Z]{2,10}-(\d{3,9})\b/,
   // Bare "#1234" at a word boundary
   /(?:^|[\s(])#(\d{3,9})\b/,
+  // Full work-item URL: ".../_workitems/edit/1234"
+  /_workitems\/edit\/(\d+)/i,
 ];
 
 /**
