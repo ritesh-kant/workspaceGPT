@@ -135,6 +135,25 @@ export class SessionsHtmlTemplate {
       background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
       color: var(--vscode-list-activeSelectionForeground, inherit);
     }
+    .row-delete {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+    }
+    .row:hover .row-delete { display: flex; }
+    .row-delete:hover {
+      background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+      color: var(--vscode-errorForeground, inherit);
+    }
     /* Empty leading column keeps titles aligned with the nav item labels. */
     .dot {
       width: 14px;
@@ -221,6 +240,7 @@ export class SessionsHtmlTemplate {
       LOAD_CHAT_SESSION: MESSAGE_TYPES.LOAD_CHAT_SESSION,
       SESSIONS_LIST: MESSAGE_TYPES.SESSIONS_LIST,
       SESSIONS_TOGGLE_SEARCH: MESSAGE_TYPES.SESSIONS_TOGGLE_SEARCH,
+      DELETE_CHAT_HISTORY: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
     })};
     let sessions = [];
     let activeId = null;
@@ -368,6 +388,10 @@ export class SessionsHtmlTemplate {
             '<span class="dot"></span>' +
             '<span class="title">' + title + '</span>' +
             '<span class="meta">' + diffs + '<span class="age">' + age + '</span></span>' +
+            '<span class="row-delete" data-delete-id="' + escapeHtml(session.id) + '" title="Delete chat" role="button" aria-label="Delete chat">' +
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+            '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '</svg></span>' +
             '</button>';
         }
       }
@@ -375,6 +399,13 @@ export class SessionsHtmlTemplate {
     }
 
     listEl.addEventListener('click', (event) => {
+      const deleteBtn = event.target.closest('.row-delete');
+      if (deleteBtn) {
+        event.stopPropagation();
+        const id = deleteBtn.getAttribute('data-delete-id');
+        if (id) vscode.postMessage({ type: MESSAGE_TYPES.DELETE_CHAT_HISTORY, sessionId: id });
+        return;
+      }
       const row = event.target.closest('.row');
       if (!row) return;
       const id = row.getAttribute('data-id');

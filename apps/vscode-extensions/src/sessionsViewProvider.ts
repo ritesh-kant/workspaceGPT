@@ -51,6 +51,9 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         this.onSelectSession(data.sessionId);
         void this.postList();
       }
+      if (data?.type === MESSAGE_TYPES.DELETE_CHAT_HISTORY && data.sessionId) {
+        void this.deleteSession(data.sessionId);
+      }
     });
 
     webviewView.onDidChangeVisibility(() => {
@@ -104,6 +107,15 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     if (preserveFocus) {
       await tryExecuteCommand('workbench.action.focusActiveEditorGroup');
     }
+  }
+
+  private async deleteSession(sessionId: string): Promise<void> {
+    await this.historyService.deleteChatSession(sessionId);
+    if (sessionId === this.activeSessionId) {
+      this.activeSessionId = null;
+      this.onNewSession();
+    }
+    void this.postList();
   }
 
   private async postList(): Promise<void> {
