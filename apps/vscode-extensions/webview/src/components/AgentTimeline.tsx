@@ -8,8 +8,8 @@ import { AgentStep, normalizeAgentStep } from '../store/chatStore';
  * exploration is one collapsed "Explored N …" disclosure, and command stdout
  * stays behind "Show output". Mutations (edits, commands) stay as one-line
  * rows so the user can still see what changed. Per-step model latency isn't
- * shown at all — the turn's total elapsed time renders once, in the "Worked
- * for Xs" summary below, after the response finishes.
+ * shown at all — the turn's total elapsed time is a separate, always-visible
+ * label in the message footer (see ChatMessage), not part of this timeline.
  *
  * Live and done use the same collapsed defaults — expanding mid-run is how
  * the noise in the transcript used to happen. The loading indicator already
@@ -18,8 +18,6 @@ import { AgentStep, normalizeAgentStep } from '../store/chatStore';
 
 interface AgentTimelineProps {
   steps: (AgentStep | string)[];
-  /** Milliseconds the turn took — renders the "Worked for Xs" header (done mode). */
-  durationMs?: number;
   /** Live mode: pulse the currently running step (once the user expands its group). */
   live?: boolean;
 }
@@ -271,7 +269,7 @@ const TicketChip: React.FC<{ step: AgentStep }> = ({ step }) => {
   );
 };
 
-const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }) => {
+const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, live }) => {
   const normalized = steps.map(normalizeAgentStep);
   if (normalized.length === 0) return null;
   // Notices ("your Confluence pick couldn't be honored") are the one step kind
@@ -356,9 +354,7 @@ const AgentTimeline: React.FC<AgentTimelineProps> = ({ steps, durationMs, live }
     <>
       {headerRows}
       <details className='agent-timeline'>
-        <summary>
-          Worked for {durationMs ? formatDuration(durationMs) : `${timelineSteps.length} step${timelineSteps.length === 1 ? '' : 's'}`}
-        </summary>
+        <summary>{timelineSteps.length} step{timelineSteps.length === 1 ? '' : 's'}</summary>
         {body}
       </details>
     </>

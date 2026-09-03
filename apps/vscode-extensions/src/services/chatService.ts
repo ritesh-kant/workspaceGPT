@@ -2098,10 +2098,12 @@ Query: "${query}"`;
                 error.message
               );
             }
-            // Agent turns get an end-of-run rollup (duration + files changed)
-            // before DONE, so the webview can attach it to the final answer.
-            if (codebaseRoots?.length) {
-              const shippable = run.turnFilesChanged.size > 0;
+            // Every turn gets an end-of-run rollup (at minimum, how long it
+            // took) before DONE, so the webview can attach it to the final
+            // answer — codebase-specific fields (files changed, checkpoint,
+            // ticket) are simply empty for a turn that ran no codebase tools.
+            {
+              const shippable = codebaseRoots?.length ? run.turnFilesChanged.size > 0 : false;
               this.post(run, {
                 type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
                 durationMs: Date.now() - run.turnStartMs,

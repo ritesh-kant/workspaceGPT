@@ -3,7 +3,7 @@ import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import CodeBlock from './CodeBlock';
-import AgentTimeline from './AgentTimeline';
+import AgentTimeline, { formatDuration } from './AgentTimeline';
 import FilesChangedBar from './FilesChangedBar';
 import InlineFileRef from './InlineFileRef';
 import { parseFileRef } from '../utils/fileRefs';
@@ -490,9 +490,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         )
       ) : (
         <>
-          {agentSteps && agentSteps.length > 0 && (
-            <AgentTimeline steps={agentSteps} durationMs={turnSummary?.durationMs} />
-          )}
+          {agentSteps && agentSteps.length > 0 && <AgentTimeline steps={agentSteps} />}
           <div className="message-content markdown-content">
             <MarkdownBody
               content={content}
@@ -548,6 +546,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                   <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
                 </svg>
               </button>
+              {turnSummary?.durationMs != null && (
+                <span className="message-duration">{formatDuration(turnSummary.durationMs)}</span>
+              )}
             </div>
           )}
         </>

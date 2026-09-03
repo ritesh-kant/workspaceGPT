@@ -289,6 +289,14 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       this.sessionsView?.setActiveSession(data.sessionId ?? null);
       return;
     }
+    if (data?.type === MESSAGE_TYPES.SESSIONS_RUNNING_STATE) {
+      this.sessionsView?.setRunningState(
+        Array.isArray(data.runningSessionIds) ? data.runningSessionIds : [],
+        Array.isArray(data.completedSessionIds) ? data.completedSessionIds : [],
+        Array.isArray(data.erroredSessionIds) ? data.erroredSessionIds : []
+      );
+      return;
+    }
     await this.messageHandler?.handleMessage(data);
   }
 

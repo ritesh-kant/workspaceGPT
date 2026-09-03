@@ -9,6 +9,12 @@ const WATCH_DEBOUNCE_MS = 200;
 export class SessionsViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private activeSessionId: string | null = null;
+  /** Sessions with a run currently in flight — drives the row status dot. */
+  private runningSessionIds: string[] = [];
+  /** Sessions that finished a run in the background and haven't been opened since. */
+  private completedSessionIds: string[] = [];
+  /** Sessions whose last run just finished with an error, not yet opened. */
+  private erroredSessionIds: string[] = [];
   private htmlTemplate = new SessionsHtmlTemplate();
   private watcher?: vscode.FileSystemWatcher;
   private watchTimer?: ReturnType<typeof setTimeout>;
@@ -64,6 +70,17 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     void this.postList();
   }
 
+  public setRunningState(
+    runningSessionIds: string[],
+    completedSessionIds: string[],
+    erroredSessionIds: string[]
+  ): void {
+    this.runningSessionIds = runningSessionIds;
+    this.completedSessionIds = completedSessionIds;
+    this.erroredSessionIds = erroredSessionIds;
+    void this.postList();
+  }
+
   public async refresh(): Promise<void> {
     await this.postList();
   }
@@ -96,6 +113,9 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       type: MESSAGE_TYPES.SESSIONS_LIST,
       sessions,
       activeSessionId: this.activeSessionId,
+      runningSessionIds: this.runningSessionIds,
+      completedSessionIds: this.completedSessionIds,
+      erroredSessionIds: this.erroredSessionIds,
     });
   }
 

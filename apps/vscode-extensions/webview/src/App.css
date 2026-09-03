@@ -572,6 +572,14 @@
   opacity: 1;
 }
 
+/* Total turn time, trailing the feedback icons on the same row. */
+.message-duration {
+  margin-left: 0.25rem;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+}
+
 /* Input container styles */
 .input-container {
   display: flex;

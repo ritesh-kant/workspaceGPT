@@ -149,7 +149,20 @@ export class SessionsHtmlTemplate {
       border-radius: 50%;
       background: transparent;
     }
-    .row.active .dot::before { background: var(--vscode-charts-green, #89d185); }
+    /* Run-status dot: pulsing green while a session's turn is in flight,
+       solid blue if it finished in the background and hasn't been opened
+       yet, solid red if it failed and hasn't been opened yet. Independent
+       of selection, which the row background already conveys. */
+    .row.running .dot::before {
+      background: var(--vscode-charts-green, #89d185);
+      animation: dot-pulse 1.2s ease-in-out infinite;
+    }
+    .row.completed .dot::before { background: var(--vscode-charts-blue, #3794ff); }
+    .row.errored .dot::before { background: var(--vscode-charts-red, #f85149); }
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
     .title {
       flex: 1;
       min-width: 0;
@@ -212,6 +225,9 @@ export class SessionsHtmlTemplate {
     let sessions = [];
     let activeId = null;
     let query = '';
+    let runningIds = new Set();
+    let completedIds = new Set();
+    let erroredIds = new Set();
 
     const listEl = document.getElementById('list');
     const searchWrap = document.getElementById('searchWrap');
@@ -249,6 +265,9 @@ export class SessionsHtmlTemplate {
       if (msg.type === MESSAGE_TYPES.SESSIONS_LIST) {
         sessions = Array.isArray(msg.sessions) ? msg.sessions : [];
         if (msg.activeSessionId !== undefined) activeId = msg.activeSessionId || null;
+        runningIds = new Set(Array.isArray(msg.runningSessionIds) ? msg.runningSessionIds : []);
+        completedIds = new Set(Array.isArray(msg.completedSessionIds) ? msg.completedSessionIds : []);
+        erroredIds = new Set(Array.isArray(msg.erroredSessionIds) ? msg.erroredSessionIds : []);
         render();
       }
       if (msg.type === MESSAGE_TYPES.SESSIONS_TOGGLE_SEARCH) {
@@ -328,6 +347,10 @@ export class SessionsHtmlTemplate {
         html += '<div class="group-header">' + label + '</div>';
         for (const session of items) {
           const active = session.id === activeId ? ' active' : '';
+          const running = runningIds.has(session.id) ? ' running' : '';
+          const errored = !running && erroredIds.has(session.id) ? ' errored' : '';
+          const completed = !running && !errored && completedIds.has(session.id) ? ' completed' : '';
+          const statusLabel = running ? ' - running' : errored ? ' - failed' : completed ? ' - done' : '';
           const added = Number(session.added) || 0;
           const removed = Number(session.removed) || 0;
           let diffs = '';
@@ -339,7 +362,8 @@ export class SessionsHtmlTemplate {
           }
           const title = escapeHtml(session.title || 'New Chat');
           const age = escapeHtml(formatAge(session.updatedAt || 0, now));
-          html += '<button class="row' + active + '" type="button" title="' + title + '" data-id="' +
+          html += '<button class="row' + active + running + errored + completed + '" type="button" title="' +
+            title + escapeHtml(statusLabel) + '" data-id="' +
             escapeHtml(session.id) + '">' +
             '<span class="dot"></span>' +
             '<span class="title">' + title + '</span>' +

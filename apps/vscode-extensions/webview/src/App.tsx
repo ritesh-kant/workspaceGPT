@@ -515,6 +515,35 @@ const App: React.FC = () => {
       .map(([id]) => id)
   );
 
+  // Same running signal, but including the visible session (whose turn state
+  // lives at the top level of the store, not in liveSessions) — fed to the
+  // native Sessions sidebar below so it can color-code each row's status dot
+  // for sessions running in parallel.
+  const allRunningSessionIds = new Set(runningSessionIds);
+  if (currentSessionId && (isLoading || isStreaming)) {
+    allRunningSessionIds.add(currentSessionId);
+  }
+  // Backgrounded sessions whose turn just finished while off-screen — kept
+  // marked as "done, not yet seen" / "failed, not yet seen" until the user
+  // actually opens them: activateLiveSession() (see handleSelectSession)
+  // consumes the liveSessions entry on open, which drops it out of both sets
+  // on its own. The visible session is excluded on purpose — it's on screen,
+  // so it's already "read" the moment its turn finishes.
+  const erroredSessionIds = new Set<string>();
+  const completedSessionIds = new Set<string>();
+  for (const [id, entry] of Object.entries(liveSessions)) {
+    if (entry.isLoading || entry.isStreaming) continue;
+    const lastMessage = entry.messages[entry.messages.length - 1];
+    if (lastMessage?.isError) {
+      erroredSessionIds.add(id);
+    } else if (lastMessage && !lastMessage.isUser) {
+      completedSessionIds.add(id);
+    }
+  }
+  const runningIdsKey = [...allRunningSessionIds].sort().join(',');
+  const erroredIdsKey = [...erroredSessionIds].sort().join(',');
+  const completedIdsKey = [...completedSessionIds].sort().join(',');
+
   // Sha currently being reverted to — disables the triggering message's undo
   // button until the host confirms (AGENT_REVERT_DONE).
   const [revertingSha, setRevertingSha] = useState<string | null>(null);
@@ -1122,6 +1151,19 @@ const App: React.FC = () => {
       sessionId: currentSessionId,
     });
   }, [currentSessionId]);
+
+  // Report which sessions are running/completed/errored whenever one of
+  // those sets actually changes (keyed on the sorted id lists, not the Sets
+  // themselves, since those are rebuilt fresh every render) — the Sessions
+  // sidebar webview uses this to color its per-row status dot.
+  useEffect(() => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SESSIONS_RUNNING_STATE,
+      runningSessionIds: runningIdsKey ? runningIdsKey.split(',') : [],
+      completedSessionIds: completedIdsKey ? completedIdsKey.split(',') : [],
+      erroredSessionIds: erroredIdsKey ? erroredIdsKey.split(',') : [],
+    });
+  }, [runningIdsKey, completedIdsKey, erroredIdsKey]);
 
   // Auto-save whenever messages change (debounced)
   useEffect(() => {
