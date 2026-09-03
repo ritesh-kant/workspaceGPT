@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { STORAGE_KEYS } from '../../constants';
 import { withKeyFailover } from '../utils/apiKeyFailover';
+import { searchDuckDuckGo } from './duckDuckGoSearchTool';
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const MAX_SNIPPET_CHARS = 800;
@@ -20,6 +21,8 @@ export interface WebSearchResult {
   /** Tavily's own synthesized answer, when available — read this first. */
   answer?: string;
   results: WebSearchResultItem[];
+  /** Which backend served this — 'duckduckgo-basic' is the no-key fallback. */
+  provider: 'tavily' | 'duckduckgo-basic';
 }
 
 /** All configured Tavily keys (falls back to the legacy single-key field). */
@@ -85,13 +88,15 @@ export async function searchWeb(
   const query = (args?.query ?? '').trim();
   if (!query) throw new Error('query must be non-empty.');
   const apiKeys = getApiKeys(context);
-  if (!apiKeys.length) {
-    throw new Error(
-      'Web search is not configured — add a free Tavily API key in Settings → Web Search ' +
-        '(tavily.com, no card required). Answer from other tools/knowledge, or tell the user this needs setup.'
-    );
-  }
   const maxResults = Math.min(Math.max(args?.maxResults ?? 5, 1), 10);
+
+  if (!apiKeys.length) {
+    // No Tavily key configured — fall back to a free, no-key public search
+    // rather than giving up on the turn. Lower reliability (see
+    // duckDuckGoSearchTool.ts), so callers must label it distinctly.
+    const results = await searchDuckDuckGo(query, maxResults);
+    return { results, provider: 'duckduckgo-basic' };
+  }
 
   const data: any = await withKeyFailover(
     apiKeys,
@@ -114,5 +119,6 @@ export async function searchWeb(
   return {
     answer: typeof data?.answer === 'string' && data.answer.trim() ? data.answer : undefined,
     results,
+    provider: 'tavily',
   };
 }

@@ -96,7 +96,7 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.AGENT_SHIP:
         this.analyticsService.trackEvent('agent_ship_triggered');
-        await this.chatService?.shipTurn(data.sessionId, data.requestId);
+        await this.chatService?.shipTurn(data.sessionId, data.requestId, data.shipInput);
         return true;
       case MESSAGE_TYPES.SEARCH_MENTION_TARGETS:
         await this.handleSearchMentionTargets(data);

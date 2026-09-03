@@ -502,7 +502,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             />
           </div>
           {turnSummary && turnSummary.filesChanged.length > 0 && (
-            <FilesChangedBar summary={turnSummary} />
+            <FilesChangedBar summary={turnSummary} report={content} />
           )}
           {!isError && (
             <div className="message-feedback">

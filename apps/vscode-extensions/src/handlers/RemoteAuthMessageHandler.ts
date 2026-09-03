@@ -3,6 +3,7 @@ import { MESSAGE_TYPES } from '../../constants';
 import { AnalyticsService } from '../services/analyticsService';
 import {
   describeRemoteAuthError,
+  RemoteProfile,
   RemoteSignInService,
   webviewFieldsFromProfile,
 } from '../services/remote/remoteSignInService';
@@ -31,12 +32,24 @@ export class RemoteAuthMessageHandler {
     this.service = new RemoteSignInService(context);
   }
 
+  /** Attach email/plan/login to this install's PostHog person once we know them. */
+  private identifyFromProfile(profile: RemoteProfile | null): void {
+    if (!profile) return;
+    this.analyticsService.identifyUser({
+      email: profile.email ?? undefined,
+      github_login: profile.github_login,
+      plan: profile.plan,
+      status: profile.status,
+    });
+  }
+
   public async handleMessage(data: any): Promise<boolean> {
     switch (data.type) {
       case MESSAGE_TYPES.CHECK_REMOTE_SESSION: {
         const result = await this.service.verifySession();
         const signedIn = result.state !== 'signed_out';
         const profile = result.state === 'signed_in' ? result.profile : null;
+        this.identifyFromProfile(profile);
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.REMOTE_SESSION_STATUS,
           signedIn,
@@ -50,6 +63,7 @@ export class RemoteAuthMessageHandler {
           await this.service.signIn();
           const result = await this.service.verifySession();
           const profile = result.state === 'signed_in' ? result.profile : null;
+          this.identifyFromProfile(profile);
           this.webviewView.webview.postMessage({
             type: MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS,
             ...webviewFieldsFromProfile(profile),

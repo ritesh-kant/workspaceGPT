@@ -49,10 +49,13 @@ import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { recordOriginalContent } from './agent/agentDiffProvider';
 import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs } from './agent/verifyTools';
 import { shipChanges, ShipInput } from './agent/shipService';
+import { deriveShipTitle } from './agent/shipHelpers';
 import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
 import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
 import { fetchWorkItem, TicketDetail } from './ado/adoWorkItemService';
+import { fetchConfluencePage, ConfluencePageDetail } from './confluence/confluencePageService';
 import { detectTicketId } from 'src/utils/ticketDetection';
+import { detectConfluenceUrl } from 'src/utils/confluenceUrlDetection';
 import { TicketPromptContext } from 'src/utils/promptTemplates';
 import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE } from 'src/workers/model/answerGates';
 import { randomUUID } from 'crypto';
@@ -981,6 +984,39 @@ export class ChatService {
         }
       }
 
+      // ── Confluence page grounding (FETCH stage) ──
+      // Same rationale as ticket grounding above: a pasted Confluence link is
+      // fetched NOW, before the model runs. Unlike a ticket, a doc isn't a
+      // "definition of done" that drives ship workflow — it's just reference
+      // material, so it's threaded in as an eagerly-resolved mention (below)
+      // rather than a bespoke prompt-context field. Failure degrades silently:
+      // the model can still call get_confluence_page itself mid-loop.
+      let confluencePageContext: ConfluencePageDetail | null = null;
+      const confluenceAuthenticated = !!settings?.state?.config?.confluence?.isAuthenticated;
+      const confluencePageId =
+        useCodebaseTools && confluenceAuthenticated ? detectConfluenceUrl(message) : null;
+      if (confluencePageId) {
+        const stepId = randomUUID();
+        this.postStatus(run, `Reading Confluence page ${confluencePageId}...`);
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          id: stepId,
+          step: { kind: 'read', title: 'Read Confluence page', detail: `#${confluencePageId}`, status: 'running' },
+        });
+        try {
+          confluencePageContext = await fetchConfluencePage(this.context, confluencePageId);
+          this.post(run, {
+            type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+            id: stepId,
+            status: 'done',
+            summary: confluencePageContext.title,
+          });
+        } catch (e) {
+          console.warn(`Confluence page ${confluencePageId} pre-fetch failed (continuing without):`, e);
+          this.post(run, { type: MESSAGE_TYPES.AGENT_STEP_UPDATE, id: stepId, status: 'error', summary: 'failed' });
+        }
+      }
+
       // What the user actually asked for, and whether retrieval could serve it.
       // Derived signals only — no prompt text or document content is sent.
       // `zeroResults` is the important one: a non-codebase turn that retrieved
@@ -1036,7 +1072,15 @@ export class ChatService {
       const effApiKeys = finalLlm?.apiKeys.length ? finalLlm.apiKeys : failoverKeys;
       const effBaseUrl = finalLlm?.baseUrl ?? baseUrl;
 
-      const resolvedMentions = await mentionsPromise;
+      const resolvedMentions = [
+        ...(await mentionsPromise),
+        // The eagerly pre-fetched Confluence page (if any) rides the same
+        // channel as @-mentioned files — it's inline reference material, not
+        // prompt-scaffolding the model has to ask for.
+        ...(confluencePageContext
+          ? [{ name: confluencePageContext.title || confluencePageContext.url, content: confluencePageContext.text }]
+          : []),
+      ];
 
       this.postStatus(run, 'Thinking...');
       let modelResponse = await this.generateModelResponse(
@@ -1105,7 +1149,8 @@ export class ChatService {
         run.turnFilesChanged.size > 0
           ? {
               ticketId: ticketContext?.id,
-              title: ticketContext?.title || modelResponse.split('\n').find((l) => /^##\s/.test(l))?.replace(/^##\s*/, '').replace(/^[^\w`]+/, '') || 'Agent changes',
+              ticketType: ticketContext?.type,
+              title: deriveShipTitle(ticketContext?.title, modelResponse),
               report: modelResponse,
               files: [...run.turnFilesChanged.keys()],
             }
@@ -1195,6 +1240,8 @@ export class ChatService {
         return this.searchKnowledge('ADO', args);
       case 'get_ticket':
         return fetchWorkItem(this.context, args);
+      case 'get_confluence_page':
+        return fetchConfluencePage(this.context, args?.pageId ?? '');
       case 'search_web':
         return searchWeb(this.context, args, (message) => this.postStatus(run, message));
       default:
@@ -1500,32 +1547,40 @@ export class ChatService {
    * push, open the PR page, post the report on the ticket. Progress rides the
    * status line; the outcome goes back correlated by requestId.
    */
-  public async shipTurn(sessionId: string, requestId?: string): Promise<void> {
+  public async shipTurn(sessionId: string, requestId?: string, clientShipInput?: ShipInput): Promise<void> {
     const run = this.runs.get(sessionId);
     const reply = (payload: Record<string, unknown>) =>
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_SHIP_DONE, sessionId, requestId, ...payload });
-    if (!run?.lastShip) {
+    // Prefer the host's own in-memory record when this is the same live run;
+    // fall back to what the webview sent (from its persisted transcript) when
+    // it isn't — e.g. after an extension host restart wiped `run.lastShip`.
+    const shipInput = run?.lastShip ?? (clientShipInput?.files?.length ? clientShipInput : null);
+    if (!shipInput) {
       reply({ ok: false, error: 'Nothing to ship — no agent changes are recorded for this chat.' });
       return;
     }
     const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
     try {
-      const result = await shipChanges(this.context, roots, run.lastShip, (text) => this.postStatus(run, text));
-      this.postStatus(run, '');
+      const result = await shipChanges(this.context, roots, shipInput, (text) => (run ? this.postStatus(run, text) : undefined));
+      if (run) this.postStatus(run, '');
       const summary =
         `Branch ${result.branch} pushed` +
         (result.prUrl ? ' — pull-request page opened' : '') +
-        (result.ticketCommented ? ` — report posted on #${run.lastShip.ticketId}` : '');
-      this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: summary, status: 'done' } });
-      for (const w of result.warnings) {
-        this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: w, status: 'error' } });
+        (result.ticketCommented ? ` — report posted on #${shipInput.ticketId}` : '');
+      if (run) {
+        this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: summary, status: 'done' } });
+        for (const w of result.warnings) {
+          this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: w, status: 'error' } });
+        }
+        run.lastShip = null;
       }
-      run.lastShip = null;
       reply({ ok: true, branch: result.branch, prUrl: result.prUrl, ticketCommented: result.ticketCommented, warnings: result.warnings });
     } catch (e) {
-      this.postStatus(run, '');
       const message = e instanceof Error ? e.message : String(e);
-      this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: `Create PR failed: ${message}`, status: 'error' } });
+      if (run) {
+        this.postStatus(run, '');
+        this.post(run, { type: MESSAGE_TYPES.AGENT_STEP, step: { kind: 'notice', title: `Create PR failed: ${message}`, status: 'error' } });
+      }
       reply({ ok: false, error: message });
     }
   }
@@ -1576,6 +1631,8 @@ export class ChatService {
         return { kind: 'search', title: 'Searched Azure DevOps', detail: args?.query ?? '' };
       case 'get_ticket':
         return { kind: 'read', title: 'Read ticket', detail: String(args?.id ?? '') };
+      case 'get_confluence_page':
+        return { kind: 'read', title: 'Read Confluence page', detail: String(args?.pageId ?? '') };
       case 'search_web':
         return { kind: 'search', title: 'Searched the web', detail: args?.query ?? '' };
       case 'read_file': {
@@ -1669,11 +1726,16 @@ export class ChatService {
         return result?.applied ? { summary: `+${result.added ?? 0} −${result.removed ?? 0}` } : {};
       case 'search_docs':
       case 'search_tickets':
-      case 'search_web':
         return { summary: plural(result?.results?.length ?? 0, 'result') };
+      case 'search_web': {
+        const count = plural(result?.results?.length ?? 0, 'result');
+        return { summary: result?.provider === 'duckduckgo-basic' ? `(basic search) ${count}` : count };
+      }
       case 'get_ticket':
         // The state is the useful at-a-glance fact ("Active", "Resolved").
         return result?.state ? { summary: String(result.state) } : {};
+      case 'get_confluence_page':
+        return result?.title ? { summary: String(result.title) } : {};
       default:
         return {};
     }
@@ -1706,6 +1768,8 @@ export class ChatService {
         return `Searching Azure DevOps for "${args?.query ?? ''}"...`;
       case 'get_ticket':
         return `Reading ticket ${args?.id ?? ''}...`;
+      case 'get_confluence_page':
+        return `Reading Confluence page ${args?.pageId ?? ''}...`;
       case 'search_web':
         return `Searching the web for "${args?.query ?? ''}"...`;
       case 'get_diagnostics':
@@ -2037,13 +2101,20 @@ Query: "${query}"`;
             // Agent turns get an end-of-run rollup (duration + files changed)
             // before DONE, so the webview can attach it to the final answer.
             if (codebaseRoots?.length) {
+              const shippable = run.turnFilesChanged.size > 0;
               this.post(run, {
                 type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
                 durationMs: Date.now() - run.turnStartMs,
                 filesChanged: [...run.turnFilesChanged.values()],
-                checkpointSha: run.turnFilesChanged.size > 0 ? run.turnFirstCheckpointSha ?? undefined : undefined,
+                checkpointSha: shippable ? run.turnFirstCheckpointSha ?? undefined : undefined,
                 ticketId: ticketContext?.id,
-                shippable: run.turnFilesChanged.size > 0,
+                shippable,
+                // Carried so "Create PR" can re-arm itself from the persisted
+                // transcript alone — the host's own run.lastShip is in-memory
+                // only and does not survive an extension host restart.
+                ...(shippable
+                  ? { ticketType: ticketContext?.type, title: deriveShipTitle(ticketContext?.title, fullContent || streamedContent) }
+                  : {}),
               });
             }
             this.post(run, {

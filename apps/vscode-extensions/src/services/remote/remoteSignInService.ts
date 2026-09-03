@@ -5,6 +5,7 @@ import { setCachedRemoteSessionToken } from './remoteSessionCache';
 
 export interface RemoteProfile {
   github_login: string;
+  email?: string | null;
   plan?: string;
   status?: string;
   requests_used_this_week?: number;

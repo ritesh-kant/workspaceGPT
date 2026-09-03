@@ -3,6 +3,27 @@
  * eval harness can unit-test them without bundling the Azure auth stack.
  */
 
+/** Commit/PR title: the ticket's own title, else the answer's first heading, else a fallback. */
+export function deriveShipTitle(ticketTitle: string | undefined, report: string): string {
+  return (
+    ticketTitle ||
+    report
+      .split('\n')
+      .find((l) => /^##\s/.test(l))
+      ?.replace(/^##\s*/, '')
+      .replace(/^[^\w`]+/, '') ||
+    'Agent changes'
+  );
+}
+
+/** ADO work item type (e.g. "Bug", "User Story", "Feature", "Task") → Conventional Commits branch type. */
+export function conventionalCommitType(ticketType?: string): 'fix' | 'feat' | 'chore' {
+  const t = (ticketType || '').toLowerCase();
+  if (/bug|defect/.test(t)) return 'fix';
+  if (/feature|story|epic|enhancement/.test(t)) return 'feat';
+  return 'chore';
+}
+
 export function slugify(text: string, max = 40): string {
   return text
     .toLowerCase()

@@ -6,6 +6,7 @@ import type {
   Environment,
 } from '@workspace-gpt/release-core';
 import { ConfluenceAuthService } from '../confluence/confluenceAuthService';
+import { pageIdFromUrl } from '../confluence/confluencePageService';
 
 /**
  * Org-specific knowledge the engine must NOT hold (design §4.2): which columns
@@ -31,18 +32,6 @@ export interface ConfluenceReleaseSourceOptions {
    * fuzzy auto-detect, so an unset mapping behaves exactly as before.
    */
   columns?: { date?: string; version?: string; env?: string; pilot?: string };
-}
-
-/** Resolve a Confluence page id out of a page URL or a bare id. */
-export function pageIdFromUrl(urlOrId: string): string | null {
-  const trimmed = (urlOrId || '').trim();
-  if (/^\d+$/.test(trimmed)) return trimmed;
-  // .../wiki/spaces/KEY/pages/<id>/Title  or  .../pages/viewpage.action?pageId=<id>
-  const fromPath = trimmed.match(/\/pages\/(\d+)/);
-  if (fromPath) return fromPath[1];
-  const fromQuery = trimmed.match(/[?&]pageId=(\d+)/);
-  if (fromQuery) return fromQuery[1];
-  return null;
 }
 
 /**

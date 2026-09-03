@@ -161,8 +161,8 @@ export default {
         if (!isAccountOldEnough(ghUser.created_at)) {
           return backToClient({ error: 'account_too_new' });
         }
-        await upsertUser(env, ghUser.id, ghUser.login, ghUser.created_at);
-        const sessionToken = await createSession(env, String(ghUser.id), ghUser.login);
+        await upsertUser(env, ghUser.id, ghUser.login, ghUser.created_at, ghUser.email);
+        const sessionToken = await createSession(env, String(ghUser.id), ghUser.login, ghUser.email);
         return backToClient({ sessionToken });
       } catch (error) {
         return backToClient({ error: oauthErrorCode(error) });
@@ -187,6 +187,7 @@ export default {
       const { user, config } = await loadAccount(env, session.userId);
       return json({
         github_login: session.login,
+        email: session.email ?? null,
         plan: user?.plan ?? 'free',
         status: user?.status ?? 'active',
         requests_used_this_week: await readWeeklyUsage(env, session.userId),
