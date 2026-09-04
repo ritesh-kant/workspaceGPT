@@ -137,3 +137,70 @@ export async function shipChanges(
 
   return { branch, baseBranch, commitSha, prUrl, ticketCommented, warnings };
 }
+
+export interface ShipAllResult {
+  branch: string;
+  baseBranch: string;
+  commitSha: string;
+  prUrl?: string;
+  warnings: string[];
+}
+
+/**
+ * "Create PR" from the always-on git status bar: branch off HEAD, stage and
+ * commit EVERYTHING dirty in the working tree — tracked changes, new files,
+ * deletions — push, and open the hosting provider's new-PR page. Unlike
+ * `shipChanges`, this isn't scoped to one agent turn or a set of files; it
+ * ships whatever is currently uncommitted, agent- or user-made alike.
+ */
+export async function shipAllChanges(roots: NamedRoot[], onStatus: (text: string) => void): Promise<ShipAllResult> {
+  if (!roots.length) throw new Error('No workspace folder is open.');
+  const cwd = roots[0].uri.fsPath;
+  const warnings: string[] = [];
+
+  onStatus('Checking repository state…');
+  const gitCwd = await git(cwd, ['rev-parse', '--show-toplevel']).catch(() => {
+    throw new Error(`${roots[0].name} is not a git repository.`);
+  });
+  const baseBranch = (await git(gitCwd, ['rev-parse', '--abbrev-ref', 'HEAD'])) || 'main';
+  if (baseBranch === 'HEAD') throw new Error('HEAD is detached — check out a branch first.');
+
+  const dirty = await git(gitCwd, ['status', '--porcelain']);
+  if (!dirty) throw new Error('Nothing to ship — the working tree is clean.');
+
+  const branch = `chore/workspace-changes-${Date.now().toString(36)}`;
+  onStatus(`Creating branch ${branch}…`);
+  await git(gitCwd, ['checkout', '-b', branch]);
+  try {
+    onStatus('Staging changes…');
+    await git(gitCwd, ['add', '-A']);
+    await git(gitCwd, ['commit', '--quiet', '-m', 'Workspace changes']);
+  } catch (e) {
+    await git(gitCwd, ['checkout', '--quiet', baseBranch]).catch(() => undefined);
+    await git(gitCwd, ['branch', '-D', branch]).catch(() => undefined);
+    throw e;
+  }
+  const commitSha = await git(gitCwd, ['rev-parse', 'HEAD']);
+
+  let prUrl: string | undefined;
+  const remote = await git(gitCwd, ['remote', 'get-url', 'origin']).catch(() => '');
+  if (remote) {
+    onStatus(`Pushing ${branch} to origin…`);
+    try {
+      await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch]);
+      prUrl = pullRequestUrl(remote, baseBranch, branch, 'Workspace changes', '');
+      if (prUrl) {
+        onStatus('Opening the pull-request page…');
+        await vscode.env.openExternal(vscode.Uri.parse(prUrl));
+      } else {
+        warnings.push(`Pushed, but no pull-request URL is known for remote ${remote}; open one manually.`);
+      }
+    } catch (e) {
+      warnings.push(`Committed locally but push failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else {
+    warnings.push('No "origin" remote — committed locally only.');
+  }
+
+  return { branch, baseBranch, commitSha, prUrl, warnings };
+}

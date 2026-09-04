@@ -86,6 +86,16 @@ export const MESSAGE_TYPES = {
   AGENT_SHIP: 'agent-ship',
   AGENT_SHIP_DONE: 'agent-ship-done',
 
+  // Always-on composer git status bar (branch + working-tree diff stats).
+  // Webview → host: refresh request. Host → webview: the snapshot.
+  GET_GIT_STATUS: 'get-git-status',
+  GIT_STATUS: 'git-status',
+  // Webview → host: branch, stage and commit EVERYTHING dirty in the working
+  // tree (not scoped to one agent turn), push, open the PR page. Host →
+  // webview: outcome (correlated by requestId).
+  AGENT_SHIP_ALL: 'agent-ship-all',
+  AGENT_SHIP_ALL_DONE: 'agent-ship-all-done',
+
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',
   GET_CHAT_HISTORY_LIST: 'get-chat-history-list',

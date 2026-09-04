@@ -33,19 +33,27 @@ export async function activate(context: vscode.ExtensionContext) {
   adoSyncScheduler = new AdoSyncScheduler(context);
   adoSyncScheduler.start();
 
-  // Load the remote-mode session token into its sync cache before any webview
-  // can request a completion — remote-mode inference uses it as the bearer for
-  // the managed endpoint (see remoteSessionCache.ts).
-  await RemoteSignInService.primeCache(context);
+  // These three are independent of each other (session token cache, settings
+  // migration, context-key sync) but all must finish before the webview below
+  // can rely on them — run concurrently instead of stacking their latency
+  // sequentially (each previously awaited one at a time, inflating activation
+  // time; primeCache's context.secrets.get() in particular round-trips the OS
+  // keychain).
+  await Promise.all([
+    // Load the remote-mode session token into its sync cache before any webview
+    // can request a completion — remote-mode inference uses it as the bearer for
+    // the managed endpoint (see remoteSessionCache.ts).
+    RemoteSignInService.primeCache(context),
 
-  // One-time upgrade: stamp `mode` onto pre-existing settings blobs so
-  // upgrading installs infer local/remote from their current config instead
-  // of being sent through onboarding.
-  await migrateModeSettings(context);
+    // One-time upgrade: stamp `mode` onto pre-existing settings blobs so
+    // upgrading installs infer local/remote from their current config instead
+    // of being sent through onboarding.
+    migrateModeSettings(context),
 
-  // Reflect persisted toggles into `when`-clause context keys so title-bar
-  // icons (Releases, Share to Chrome) hide themselves declaratively.
-  await syncContextKeys(context);
+    // Reflect persisted toggles into `when`-clause context keys so title-bar
+    // icons (Releases, Share to Chrome) hide themselves declaratively.
+    syncContextKeys(context),
+  ]);
 
   // Search workers are warmed by the chat webview itself (WebviewMessageHandler → ChatService.prewarm),
   // so the warmup lands on the exact service instances the chat queries.

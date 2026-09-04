@@ -8,6 +8,8 @@ import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
 import { getNamedRoots, resolveAgainstRoots } from '../services/codebase/codebaseTools';
 import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
+import { getGitStatus } from '../services/agent/gitStatusService';
+import { shipAllChanges } from '../services/agent/shipService';
 
 const fileExists = async (absPath: string): Promise<boolean> => {
   try {
@@ -97,6 +99,13 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.AGENT_SHIP:
         this.analyticsService.trackEvent('agent_ship_triggered');
         await this.chatService?.shipTurn(data.sessionId, data.requestId, data.shipInput);
+        return true;
+      case MESSAGE_TYPES.GET_GIT_STATUS:
+        await this.handleGetGitStatus();
+        return true;
+      case MESSAGE_TYPES.AGENT_SHIP_ALL:
+        this.analyticsService.trackEvent('agent_ship_all_triggered');
+        await this.handleShipAll(data.requestId);
         return true;
       case MESSAGE_TYPES.SEARCH_MENTION_TARGETS:
         await this.handleSearchMentionTargets(data);
@@ -238,6 +247,30 @@ export class ChatMessageHandler {
       await openAgentDiff(this.context, absPath);
     } catch (error) {
       this.handleError('Error opening diff:', error);
+    }
+  }
+
+  /** Refresh for the composer's always-on git status bar (branch + working-tree diff stats). */
+  private async handleGetGitStatus(): Promise<void> {
+    try {
+      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const status = await getGitStatus(roots);
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.GIT_STATUS, ...status });
+    } catch (error) {
+      this.handleError('Error getting git status:', error);
+    }
+  }
+
+  /** "Create PR" from the git status bar — ships the whole working tree, not just this turn's files. */
+  private async handleShipAll(requestId?: string): Promise<void> {
+    const reply = (payload: Record<string, unknown>) =>
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_SHIP_ALL_DONE, requestId, ...payload });
+    try {
+      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const result = await shipAllChanges(roots, () => undefined);
+      reply({ ok: true, branch: result.branch, prUrl: result.prUrl, warnings: result.warnings });
+    } catch (error) {
+      reply({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
 

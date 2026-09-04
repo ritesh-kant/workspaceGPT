@@ -15,6 +15,8 @@ import MentionPicker from './components/MentionPicker';
 import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
 import HomeGreeting from './components/HomeGreeting';
 import QuickTipsSection from './components/QuickTipsSection';
+import GitStatusBar from './components/GitStatusBar';
+import UsageLimitBar from './components/UsageLimitBar';
 import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
@@ -496,6 +498,9 @@ const App: React.FC = () => {
   // RemoteAccountSettings.tsx), not a client-side API key — inference and
   // embeddings for remote mode run on the WorkspaceGPT server.
   const [remoteSignedIn, setRemoteSignedIn] = useState(false);
+  // Weekly remote-mode quota, so the composer can warn before the user hits
+  // a wall mid-chat instead of only surfacing this in Settings > Account.
+  const [remoteUsage, setRemoteUsage] = useState<{ used: number; limit: number } | null>(null);
 
   const modelProviders = useModelProviders();
 
@@ -971,9 +976,15 @@ const App: React.FC = () => {
           setRemoteSignedIn(
             message.type === MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS ? true : !!message.signedIn
           );
+          setRemoteUsage(
+            typeof message.requestsLimitWeekly === 'number'
+              ? { used: message.requestsUsedThisWeek ?? 0, limit: message.requestsLimitWeekly }
+              : null
+          );
           break;
         case MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS:
           setRemoteSignedIn(false);
+          setRemoteUsage(null);
           break;
         case MESSAGE_TYPES.NEW_CHAT:
           handleNewChatRef.current();
@@ -2275,6 +2286,12 @@ const App: React.FC = () => {
             )}
           </div>
         )}
+        <div className='composer-status-bars'>
+          {mode === 'remote' && remoteSignedIn && remoteUsage && (
+            <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
+          )}
+          {hasWorkspaceFolder && <GitStatusBar />}
+        </div>
         <div
           className={`input-container${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}
           onDragOver={(e) => {

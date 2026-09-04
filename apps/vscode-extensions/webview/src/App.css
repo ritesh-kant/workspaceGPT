@@ -2231,6 +2231,246 @@ button:disabled {
   flex-shrink: 0;
 }
 
+/* ── Composer status bars: git status + usage limit ───────────────────── */
+.composer-status-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px 0.5rem 0;
+  flex-shrink: 0;
+}
+
+.composer-status-bars:empty {
+  display: none;
+}
+
+.git-status-bar {
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  border-radius: var(--wgpt-radius-md, 6px);
+  background: var(--wgpt-surface, var(--vscode-editorWidget-background));
+  font-size: 0.75rem;
+  overflow: hidden;
+}
+
+.git-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 10px;
+}
+
+.git-status-branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.git-status-branch svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.git-status-stats {
+  display: flex;
+  gap: 6px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.git-status-stats .stat-added { color: var(--vscode-charts-green, #3fb950); }
+.git-status-stats .stat-removed { color: var(--vscode-charts-red, #f85149); }
+
+.git-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.git-status-ship-group {
+  display: flex;
+  position: relative;
+}
+
+.git-status-ship {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: var(--wgpt-radius-sm, 4px) 0 0 var(--wgpt-radius-sm, 4px);
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.git-status-ship:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.git-status-ship:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.git-status-ship-menu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--vscode-button-foreground) 25%, transparent);
+  border-radius: 0 var(--wgpt-radius-sm, 4px) var(--wgpt-radius-sm, 4px) 0;
+  cursor: pointer;
+}
+
+.git-status-ship-menu-toggle:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.git-status-ship-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 150px;
+  background: var(--vscode-menu-background, var(--wgpt-surface));
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  border-radius: var(--wgpt-radius-sm, 4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  padding: 3px;
+}
+
+.git-status-ship-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 5px 8px;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  cursor: pointer;
+}
+
+.git-status-ship-menu button:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+}
+
+.git-status-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.git-status-dismiss:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.git-status-ship-result {
+  padding: 4px 10px 7px;
+  border-top: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.25));
+  font-size: 0.72rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+.git-status-ship-result code {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.git-status-ship-warning {
+  color: var(--wgpt-warning);
+  margin-top: 2px;
+}
+
+/* ── Usage-limit bar ("You've used 75% of your weekly limit") ─────────── */
+.usage-limit-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid rgba(var(--wgpt-warning-rgb), 0.3);
+  border-radius: var(--wgpt-radius-md, 6px);
+  background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--wgpt-warning));
+  font-size: 0.75rem;
+}
+
+.usage-limit-bar--critical {
+  border-color: rgba(var(--wgpt-danger-rgb), 0.35);
+  background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--wgpt-danger));
+}
+
+.usage-limit-icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--wgpt-warning);
+}
+
+.usage-limit-bar--critical .usage-limit-icon {
+  color: var(--wgpt-danger);
+}
+
+.usage-limit-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-limit-reset {
+  flex-shrink: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.7rem;
+}
+
+.usage-limit-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.usage-limit-dismiss:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
 .review-pin-bar {
   display: flex;
   align-items: center;
