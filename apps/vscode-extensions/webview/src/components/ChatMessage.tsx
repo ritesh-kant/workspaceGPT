@@ -264,6 +264,14 @@ interface ChatMessageProps {
   /** Present when the turn this message triggered errored out — resends it. */
   onRetry?: () => void;
   /**
+   * Error bubbles only: the interrupted run the host is still holding. Its
+   * presence is what turns the card from a dead end into something the user
+   * can act on.
+   */
+  resumable?: { steps: number; writesApplied?: number };
+  /** Picks the interrupted run back up instead of starting the task over. */
+  onResume?: () => void;
+  /**
    * Rewrite this user message and re-ask from here. Absent while a run is in
    * flight (forking a live conversation would race the answer being streamed).
    */
@@ -292,6 +300,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   isReverting,
   onUndo,
   onRetry,
+  resumable,
+  onResume,
   onEdit,
   onEditingChange,
   onFeedback,
@@ -502,6 +512,25 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
           {turnSummary && turnSummary.filesChanged.length > 0 && (
             <FilesChangedBar summary={turnSummary} report={content} />
           )}
+          {isError && resumable && onResume && (
+            <div className="error-resume">
+              <span className="error-resume-text">
+                The interrupted run is still held, including everything it had already read
+                {resumable.writesApplied
+                  ? ` and ${resumable.writesApplied} file change${resumable.writesApplied === 1 ? '' : 's'} already applied`
+                  : ''}
+                .
+              </span>
+              <button
+                type="button"
+                className="error-resume-button"
+                onClick={onResume}
+                title={`Continue from where it stopped — ${resumable.steps} model message(s) of context carried over, instead of investigating from scratch`}
+              >
+                Resume
+              </button>
+            </div>
+          )}
           {!isError && (
             <div className="message-feedback">
               <button
@@ -570,5 +599,8 @@ export default React.memo(ChatMessage, (prev, next) => (
   prev.isLive === next.isLive &&
   !!prev.onUndo === !!next.onUndo &&
   !!prev.onRetry === !!next.onRetry &&
+  prev.resumable?.steps === next.resumable?.steps &&
+  prev.resumable?.writesApplied === next.resumable?.writesApplied &&
+  !!prev.onResume === !!next.onResume &&
   !!prev.onEdit === !!next.onEdit
 ));

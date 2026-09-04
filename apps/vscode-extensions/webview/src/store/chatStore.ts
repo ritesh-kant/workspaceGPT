@@ -82,6 +82,17 @@ interface Message {
   turnSummary?: TurnSummary;
   /** When this message was added — shown on hover for user messages. */
   timestamp?: number;
+  /**
+   * Error bubbles only: the interrupted run the host is still holding, so the
+   * card can offer to resume it rather than leaving the user to guess that
+   * typing "continue" would recover the work.
+   *
+   * Persisted with the message, because the host parks the transcript on disk
+   * — a run interrupted last night is still resumable this morning. A record
+   * that has since been pruned or already resumed degrades harmlessly: the
+   * click becomes an ordinary continuation turn.
+   */
+  resumable?: { steps: number; writesApplied?: number };
 }
 
 interface ChatSessionPreview {

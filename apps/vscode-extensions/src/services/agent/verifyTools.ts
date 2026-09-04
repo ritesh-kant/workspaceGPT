@@ -206,25 +206,49 @@ export function planVerification(roots: NamedRoot[], args: RunChecksArgs): Verif
   const base = { cwd, displayCwd, pkgName: pkg.name };
 
   if (kind === 'test') {
-    const testFile = fs.existsSync(absPath) && !fs.statSync(absPath).isDirectory() ? locateTestFile(absPath) : null;
-    const target = testFile ? path.relative(cwd, testFile) : undefined;
-    const scope = target ? `tests for ${path.basename(absPath)} (${target})` : `the whole package (no sibling test file found for ${path.basename(absPath)})`;
-    if (pkg.deps.has('vitest')) {
+    // No runner at all is the first thing to say — "no test file for X" would
+    // be true but beside the point in a package that cannot run tests anyway.
+    const runner = pkg.deps.has('vitest') ? 'vitest' : pkg.deps.has('jest') ? 'jest' : pkg.scripts.test ? 'script' : null;
+    if (!runner) {
+      throw new Error(
+        `${pkg.name} (${displayCwd}) has no jest/vitest dependency and no "test" script — nothing to run. ` +
+          'If tests live in another package, call run_checks with a path inside that package.'
+      );
+    }
+    const exists = fs.existsSync(absPath);
+    const isDir = exists && fs.statSync(absPath).isDirectory();
+    const testFile = exists && !isDir ? locateTestFile(absPath) : null;
+    // A file runs its own test file; a sub-directory scopes the run to itself
+    // (jest and vitest both take a path pattern). Nothing ever widens to the
+    // package: the earlier "no sibling test → run the whole suite" fallback
+    // ran `pnpm exec jest` over a 500-file Next.js app — eleven jsdom workers,
+    // 20GB, the machine swapping, the run dead on the stall timer. A missing
+    // test is a fact to report, not a reason to run everything.
+    const target = testFile
+      ? path.relative(cwd, testFile)
+      : isDir && absPath !== cwd
+        ? path.relative(cwd, absPath)
+        : undefined;
+    if (!target) {
+      throw new Error(
+        isDir
+          ? `${args.path} is ${pkg.name}'s package directory — running it means the whole suite. Call run_checks with a changed file or a sub-directory instead.`
+          : `No test file found for ${path.basename(absPath)} (looked for a .test/.spec sibling and under __tests__/). ` +
+            `Not running ${pkg.name}'s whole suite in its place. If this file's tests live elsewhere, call run_checks with that test file's path; ` +
+            `if none exist, say so in the report ("no tests cover ${path.basename(absPath)}") and rely on lint + typecheck.`
+      );
+    }
+    const scope = `tests for ${path.basename(absPath)} (${target})`;
+    if (runner === 'vitest') {
       const template = `${exec} vitest run {target}`;
-      return { kind, ...base, target, command: target ? template.replace('{target}', shellQuote(target)) : `${exec} vitest run`, rationale: `vitest is a dependency of ${pkg.name} (${pm}); running ${scope}`, template };
+      return { kind, ...base, target, command: template.replace('{target}', shellQuote(target)), rationale: `vitest is a dependency of ${pkg.name} (${pm}); running ${scope}`, template };
     }
-    if (pkg.deps.has('jest')) {
+    if (runner === 'jest') {
       const template = `${exec} jest {target}`;
-      return { kind, ...base, target, command: target ? template.replace('{target}', shellQuote(target)) : `${exec} jest`, rationale: `jest is a dependency of ${pkg.name} (${pm}); running ${scope}`, template };
+      return { kind, ...base, target, command: template.replace('{target}', shellQuote(target)), rationale: `jest is a dependency of ${pkg.name} (${pm}); running ${scope}`, template };
     }
-    if (pkg.scripts.test) {
-      const template = runScript(pm, 'test', '{target}');
-      return { kind, ...base, target, command: target ? template.replace('{target}', shellQuote(target)) : runScript(pm, 'test'), rationale: `"${pkg.scripts.test}" is ${pkg.name}'s test script (${pm}); running ${scope}`, template };
-    }
-    throw new Error(
-      `${pkg.name} (${displayCwd}) has no jest/vitest dependency and no "test" script — nothing to run. ` +
-        'If tests live in another package, call run_checks with a path inside that package.'
-    );
+    const template = runScript(pm, 'test', '{target}');
+    return { kind, ...base, target, command: template.replace('{target}', shellQuote(target)), rationale: `"${pkg.scripts.test}" is ${pkg.name}'s test script (${pm}); running ${scope}`, template };
   }
 
   if (kind === 'lint') {

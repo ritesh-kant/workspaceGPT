@@ -1,6 +1,78 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { execFile } from 'child_process';
+import { numberLines } from './lineNumbers';
+
+/**
+ * Directories whose contents are build output, dependency trees or caches —
+ * never the answer to a question about the source, and voluminous enough to
+ * bury it.
+ *
+ * Measured, not assumed. ripgrep skips dot-directories on its own (`.turbo`,
+ * `.next`) and honours .gitignore, but it happily searches `dist/`, `build/`,
+ * `out/` and `coverage/` when those are not gitignored — verified against the
+ * bundled rg binary. The VS Code `findFiles` paths were worse: both call sites
+ * passed `undefined` for the exclude parameter, which applies only the user's
+ * own `files.exclude`/`search.exclude` settings, and those do not mention
+ * `.turbo` at all. That is where ticket #1534774's early searches went — its
+ * own note at the fifth tool call reads "Search results are mostly
+ * `.turbo/cache` files", and five calls were spent discovering it.
+ */
+const SEARCH_EXCLUDED_DIRS = [
+  'node_modules', '.git', 'dist', 'build', 'out', '.next', 'coverage',
+  'venv', '.venv', '__pycache__', '.turbo', '.idea', '.vscode-test',
+  '.cache', '.parcel-cache', '.nuxt', '.svelte-kit', 'target',
+];
+
+/**
+ * ONE ripgrep negative glob covering every excluded directory. Measured
+ * against 18 separate flags and against no excludes at all: all three are
+ * within noise of each other on this repo, so this is chosen for being one
+ * argument rather than for speed.
+ */
+const rgExcludeArgs = (userGlob?: string): string[] => {
+  // A user glob that deliberately points INTO an excluded directory wins:
+  // "show me what dist/ contains" must not silently return nothing.
+  const dirs = SEARCH_EXCLUDED_DIRS.filter((d) => !(userGlob && userGlob.includes(d)));
+  return dirs.length ? ['-g', `!**/{${dirs.join(',')}}/**`] : [];
+};
+
+/**
+ * Exclusion for `findFiles`, as ONE brace pattern plus a post-filter.
+ *
+ * Why the glob and not just the filter: `findFiles` is capped at
+ * MAX_CANDIDATE_FILES results, and in a monorepo `node_modules` outnumbers
+ * source by orders of magnitude — so filtering AFTERWARDS spends the whole
+ * 500-result budget on dependencies and hands back almost nothing useful. The
+ * exclusion has to happen during the walk.
+ *
+ * The tradeoff, which the API forces: per @types/vscode, a string `exclude`
+ * REPLACES the default file-excludes rather than adding to them (and
+ * `search.exclude` is never applied by this API at all). So these calls stop
+ * honouring a user's own `files.exclude` entries. That default set is tiny
+ * (`.git`, `.DS_Store`, `Thumbs.db` …) and this pattern already covers `.git`,
+ * so the loss is small — and much smaller than a file list made entirely of
+ * `node_modules`, which is what the alternative produces.
+ *
+ * The post-filter then catches anything the glob misses, at one string
+ * comparison per returned path.
+ *
+ * Same deliberate-target exception as the ripgrep side: a pattern that points
+ * INTO an excluded directory keeps it.
+ */
+const activeExcludedDirs = (pattern?: string): string[] =>
+  SEARCH_EXCLUDED_DIRS.filter((d) => !(pattern && pattern.includes(d)));
+
+const findFilesExcludeGlob = (pattern?: string): string | undefined => {
+  const dirs = activeExcludedDirs(pattern);
+  return dirs.length ? `**/{${dirs.join(',')}}/**` : undefined;
+};
+
+const excludeBuiltPaths = <T>(items: T[], toPath: (item: T) => string, pattern?: string): T[] => {
+  const segments = new Set(activeExcludedDirs(pattern));
+  if (!segments.size) return items;
+  return items.filter((item) => !toPath(item).split('/').some((seg) => segments.has(seg)));
+};
 
 // ── Tool argument/result shapes (mirrored in modelWorker.ts's TOOL_DEFS) ──
 
@@ -68,9 +140,13 @@ export interface ReadFileArgs {
   endLine?: number;
 }
 export interface ReadFileResult {
+  /** Line-numbered ("  12→code") — see lineNumbers.ts for why, and for the stripper. */
   content: string;
   totalLines: number;
   truncated: boolean;
+  /** 1-based range actually returned, so a follow-up read can name the next slice. */
+  startLine?: number;
+  endLine?: number;
 }
 
 export interface ListDirectoryArgs {
@@ -94,8 +170,15 @@ export interface FindFilesResult {
 const MAX_CANDIDATE_FILES = 500;
 const MAX_MATCHES = 50;
 const MAX_FILE_SIZE_BYTES = 512 * 1024;
-const MAX_READ_LINES = 400;
-const MAX_READ_BYTES = 20 * 1024;
+// One read per file for all but the largest sources. At 400 lines / 20 KB the
+// two files at the centre of ticket #1534774 (749 and 981 lines) each needed
+// two calls with hand-computed offsets, and both ended up read three times —
+// roughly a third of that run's 29 reads were re-reads of something already
+// in its context. The worker caps a read_file result separately
+// (MAX_READ_RESULT_CHARS), and microcompaction collapses old reads under
+// budget pressure, so a larger ceiling here costs nothing on small files.
+const MAX_READ_LINES = 2000;
+const MAX_READ_BYTES = 64 * 1024;
 const CONTEXT_LINES = 2;
 const MAX_CONTEXT_CHARS = 500;
 const RIPGREP_TIMEOUT_MS = 10_000;
@@ -227,9 +310,29 @@ function rankTokenFiles(files: string[], tokens: string[]): string[] {
  * silently matches zero files regardless of the search term. Anchor such
  * globs with `**` so they match at any depth under the search roots.
  */
+/**
+ * Models write globs with REGEX alternation — an extension group spelled
+ * `(ts|tsx|js|jsx)` — because that is what alternation looks like nearly
+ * everywhere else. Glob syntax wants `{ts,tsx,js,jsx}`, and ripgrep silently
+ * matches NOTHING for the regex form: not an error, just zero files.
+ *
+ * That cost a whole run on ticket #1324128. Three searches came back with 0
+ * results, the model concluded "the terminology in the ticket does not map to
+ * the code", abandoned search entirely, and hand-walked the monorepo one
+ * `list_directory`/`read_file` at a time until the worker timed out. Nothing
+ * in the transcript said the glob was at fault, because from the model's side
+ * the searches simply found nothing.
+ *
+ * Parentheses have no meaning in glob syntax, so a `(a|b)` group is always
+ * this mistake and never a deliberate pattern.
+ */
+const repairGlobAlternation = (g: string): string =>
+  g.replace(/\(([^()]*\|[^()]*)\)/g, (_m, inner: string) => `{${inner.split('|').map((p) => p.trim()).filter(Boolean).join(',')}}`);
+
 function normalizeGlob(glob: string): string {
   const negated = glob.startsWith('!');
   let g = (negated ? glob.slice(1) : glob).replace(/^\.?\//, '');
+  g = repairGlobAlternation(g);
   if (g.includes('/') && !g.startsWith('**')) g = `**/${g}`;
   return negated ? `!${g}` : g;
 }
@@ -300,6 +403,7 @@ function runRipgrepRaw(
 ): Promise<string | null> {
   const args = ['--json', '--context', String(CONTEXT_LINES), '--max-count', '200', '--max-filesize', String(MAX_FILE_SIZE_BYTES)];
   if (!opts.caseSensitive) args.push('--ignore-case');
+  args.push(...rgExcludeArgs(opts.glob));
   if (opts.glob) args.push('-g', normalizeGlob(opts.glob));
   args.push('--', pattern, ...roots.map((r) => r.uri.fsPath));
 
@@ -375,6 +479,7 @@ function runRipgrepFilesOnly(
 ): Promise<string[] | null> {
   const args = ['-l', '--max-filesize', String(MAX_FILE_SIZE_BYTES)];
   if (!opts.caseSensitive) args.push('--ignore-case');
+  args.push(...rgExcludeArgs(opts.glob));
   if (opts.glob) args.push('-g', normalizeGlob(opts.glob));
   args.push('--', pattern, ...roots.map((r) => r.uri.fsPath));
 
@@ -492,10 +597,10 @@ async function searchCodebaseViaJsScan(
   let phraseTruncated = false;
   let tokenTruncated = false;
 
-  const files = await vscode.workspace.findFiles(
-    args.glob ?? '**/*',
-    undefined,
-    MAX_CANDIDATE_FILES
+  const files = excludeBuiltPaths(
+    await vscode.workspace.findFiles(args.glob ?? '**/*', findFilesExcludeGlob(args.glob), MAX_CANDIDATE_FILES),
+    (uri) => uri.path,
+    args.glob
   );
 
   for (const uri of files) {
@@ -580,15 +685,37 @@ export async function searchCodebase(
 ): Promise<SearchCodebaseResult> {
   if (!roots.length) throw new WorkspaceRootRequiredError();
 
-  const viaRipgrep = await searchCodebaseViaRipgrep(args, roots);
-  if (viaRipgrep) return viaRipgrep;
+  const run = async (a: SearchCodebaseArgs): Promise<SearchCodebaseResult> => {
+    const viaRipgrep = await searchCodebaseViaRipgrep(a, roots);
+    if (viaRipgrep) return viaRipgrep;
 
-  const jsResult = await searchCodebaseViaJsScan(args, roots);
-  if (args.outputMode === 'files_with_matches') {
-    const files = [...new Set(jsResult.matches.map((m) => m.file))];
-    return { matches: [], files, truncated: jsResult.truncated, totalMatches: files.length, note: jsResult.note };
-  }
-  return jsResult;
+    const jsResult = await searchCodebaseViaJsScan(a, roots);
+    if (a.outputMode === 'files_with_matches') {
+      const files = [...new Set(jsResult.matches.map((m) => m.file))];
+      return { matches: [], files, truncated: jsResult.truncated, totalMatches: files.length, note: jsResult.note };
+    }
+    return jsResult;
+  };
+
+  const first = await run(args);
+  const empty = (r: SearchCodebaseResult) => (r.totalMatches ?? 0) === 0;
+  if (!args.glob || !empty(first)) return first;
+
+  // A glob that matches no files returns zero hits and looks exactly like "the
+  // term is not in this codebase" — the failure that ended the run on ticket
+  // #1324128, where three zero-result searches convinced the model its
+  // vocabulary was wrong and sent it hand-walking the monorepo instead.
+  // zeroHitNote already TELLS the model to retry without the glob; it did not.
+  // So retry here, once, deterministically, and say which result the caller is
+  // looking at — an instruction the model can ignore is not a safety net.
+  const retried = await run({ ...args, glob: undefined });
+  if (empty(retried)) return first;
+  return {
+    ...retried,
+    note:
+      `The glob "${args.glob}" matched no files, so this searched the whole workspace instead` +
+      `${retried.note ? ` — ${retried.note}` : '.'} Drop the glob (or check the path exists) on your next call.`,
+  };
 }
 
 export async function readFile(args: ReadFileArgs, roots: NamedRoot[]): Promise<ReadFileResult> {
@@ -630,8 +757,20 @@ export async function readFile(args: ReadFileArgs, roots: NamedRoot[]): Promise<
     content = content.slice(0, MAX_READ_BYTES);
     truncated = true;
   }
+  // Byte-capping can leave a partial final line; drop it so every numbered
+  // line the model sees is a whole line it can copy.
+  const lastNewline = truncated ? content.lastIndexOf('\n') : -1;
+  if (lastNewline > 0 && content.length >= MAX_READ_BYTES) content = content.slice(0, lastNewline);
 
-  return { content, totalLines: allLines.length, truncated };
+  const firstLine = start + 1;
+  const lastLine = firstLine + content.split('\n').length - 1;
+  return {
+    content: numberLines(content, firstLine),
+    totalLines: allLines.length,
+    truncated,
+    startLine: firstLine,
+    endLine: lastLine,
+  };
 }
 
 export async function listDirectory(
@@ -670,7 +809,11 @@ export async function listDirectory(
 export async function findFiles(args: FindFilesArgs, roots: NamedRoot[]): Promise<FindFilesResult> {
   if (!roots.length) throw new WorkspaceRootRequiredError();
 
-  const uris = await vscode.workspace.findFiles(args.pattern, undefined, MAX_CANDIDATE_FILES);
+  const uris = excludeBuiltPaths(
+    await vscode.workspace.findFiles(args.pattern, findFilesExcludeGlob(args.pattern), MAX_CANDIDATE_FILES),
+    (uri) => uri.path,
+    args.pattern
+  );
 
   // Sort by modification time, newest first — recently-touched files are the
   // likeliest to be relevant to what the user is asking about right now.
@@ -823,10 +966,9 @@ export function findReferences(args: SymbolLocationArgs, roots: NamedRoot[]): Pr
 // giving the model the same orientation up front saves it 2–4 discovery
 // round trips per question.
 
-const ORIENTATION_EXCLUDED_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'out', '.next', 'coverage',
-  'venv', '.venv', '__pycache__', '.turbo', '.idea', '.vscode-test',
-]);
+// Same list as the search paths use — two copies would drift, and the
+// orientation tree and the search results should agree about what is noise.
+const ORIENTATION_EXCLUDED_DIRS = new Set(SEARCH_EXCLUDED_DIRS);
 const ORIENTATION_MAX_LINES = 150;
 const ORIENTATION_README_CHARS = 1500;
 

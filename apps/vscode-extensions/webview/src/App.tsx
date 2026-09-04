@@ -34,6 +34,9 @@ import {
   useUiStore,
 } from './store';
 import { modelDefaultConfig } from './store/modelStore';
+// The word the Resume button sends, defined next to the patterns the host
+// parses it with — see continuationIntent's header for why it must be bare.
+import { RESUME_MESSAGE } from '../../src/utils/continuationIntent';
 import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS } from './constants';
 import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
@@ -811,6 +814,7 @@ const App: React.FC = () => {
             content: formatChatError(message.message || 'An unknown error occurred.'),
             isUser: false,
             isError: true,
+            ...(message.resumable ? { resumable: message.resumable } : {}),
           });
           store.bgPatch(sessionId, { isLoading: false, isStreaming: false, statusText: '' });
           saveBg();
@@ -942,6 +946,9 @@ const App: React.FC = () => {
             content: formatChatError(message.message || 'An unknown error occurred.'),
             isUser: false,
             isError: true,
+            // Present when the host is still holding the interrupted run —
+            // drives the Resume button on the card (see ChatMessage).
+            ...(message.resumable ? { resumable: message.resumable } : {}),
           });
           setStatusText('');
           setIsLoading(false);
@@ -1915,6 +1922,37 @@ const App: React.FC = () => {
     });
   };
 
+  /**
+   * Picks the interrupted run back up. Sent through the ordinary send path, so
+   * every host code path this touches is the already-tested one that a typed
+   * "continue" takes — the button is a shortcut, not a second mechanism.
+   *
+   * The error bubble is kept rather than removed (unlike handleRetry): it is
+   * the record of what interrupted the run, and the resumed turn is an
+   * addition to the conversation, not a replacement for it.
+   */
+  const handleResume = () => {
+    if (isLoading || isStreaming) return;
+    if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
+    resetStreamBuffer();
+    addMessage({ content: RESUME_MESSAGE, isUser: true, timestamp: Date.now() });
+    setIsLoading(true);
+    setIsStreaming(false);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId: currentSessionId,
+      message: RESUME_MESSAGE,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+      // The mode dial as it stands now, matching what typing "continue" would
+      // do — a resume must not silently re-grant autonomy the user has since
+      // switched off.
+      ...modeFlags(),
+    });
+  };
+
   // Rewrite an earlier user message and re-ask from that point: the edited turn
   // and everything after it are dropped, then the new wording is sent as a
   // fresh turn. `historyOverride` carries the surviving prefix so the host's
@@ -2125,6 +2163,15 @@ const App: React.FC = () => {
                   onRetry={
                     message.isUser && messages[index + 1]?.isError
                       ? () => handleRetry(message.content, index + 1, message.attachments, message.mentions)
+                      : undefined
+                  }
+                  resumable={message.isError ? message.resumable : undefined}
+                  onResume={
+                    // Only the LAST message may be resumed: an error further
+                    // up was already answered by whatever follows it, and its
+                    // transcript is long gone.
+                    message.isError && message.resumable && index === messages.length - 1 && !isLoading && !isStreaming
+                      ? handleResume
                       : undefined
                   }
                   onEdit={

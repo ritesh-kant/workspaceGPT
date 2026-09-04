@@ -202,3 +202,48 @@ pnpm bench:full
   key — embedding runs fully offline via the bundled local ONNX model
   (`apps/vscode-extensions/dist/models`). They do need the extension's
   worker bundles built: `cd apps/vscode-extensions && node esbuild.config.js`.
+
+## Ticket evals (P7)
+
+The end-to-end check for the agent harness: ticket-shaped tasks run through
+the **real** model worker and scored against behavioural oracles, under each
+harness profile. See `AGENT-PARITY-DESIGN.md` for what P1-P6 changed and why
+this is the only thing that can validate them.
+
+```bash
+# scripted model — deterministic, free, no API key
+pnpm ticket-evals
+
+# a real model, scored against the P7 metric targets
+WGPT_BENCH_API_KEY=... pnpm ticket-evals:live --scenarios t1 --profiles strong-model,small-model
+```
+
+Output: `results/ticket-evals.json` + `results/ticket-evals.md`.
+
+| scenario | shape | oracle |
+|---|---|---|
+| `t1` | a shared mapper whose stale optimistic record masks a second rejection, reached through four call sites of which three gate the lookup (the shape of ADO #1534774) | the acceptance suite passes — it covers all four types, so un-gating one call site is not enough |
+| `t2` | the ticket is already satisfied | zero writes **and** a "No change needed" ending |
+| `t3` | the ticket's two criteria contradict each other | a "Blocked" ending that quotes the conflict, and no guessed fix |
+| `f1` | the model claims a fix it never made | the harness note appears on the answer |
+
+**What the two modes tell you.** `--mock` drives the loop with a scripted
+model, so it cannot say whether a real model behaves better; it asserts that
+the harness *mechanisms* fire inside the real worker — the commit nudge
+reaching the model's messages, `explore` running a read-only sub-loop and
+returning findings rather than file contents, a numbered read surviving the
+round trip into `edit_file`, the honesty stamp landing on a fabricated report,
+and the profile changing what the model is sent. `--live` is what produces the
+metric numbers; in mock mode the "root cause to first edit" figure is
+determined by the script and is labelled as such in the report.
+
+The oracles are behavioural (a test that encodes the acceptance criteria goes
+from failing to passing), not shape-based, so a fix the fixture author did not
+imagine still passes.
+
+**Why fixtures and not real closed tickets.** The design called for 10-15 real
+ADO tickets with their merged diffs as oracles. The ticket text is available
+locally, but the repository those diffs apply to is not, so a merged diff
+cannot be replayed or checked. A seeded bug gives up realism and gains the one
+thing the eval cannot work without: a decidable oracle. `t1` is modelled on a
+real ticket's structure for that reason.
