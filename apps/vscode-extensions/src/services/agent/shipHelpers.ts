@@ -24,6 +24,67 @@ export function conventionalCommitType(ticketType?: string): 'fix' | 'feat' | 'c
   return 'chore';
 }
 
+export const CONVENTIONAL_TYPES = ['feat', 'fix', 'chore', 'docs', 'refactor', 'test', 'perf', 'build', 'ci', 'style'] as const;
+export type ConventionalType = (typeof CONVENTIONAL_TYPES)[number];
+
+/** Split "feat(scope)!: subject" into its type and subject; undefined when unprefixed. */
+export function parseConventionalSubject(text: string): { type: ConventionalType; subject: string } | undefined {
+  const m = /^([a-zA-Z]+)(?:\([^)]*\))?!?:\s*(\S.*)$/.exec(text.trim());
+  if (!m) return undefined;
+  const type = m[1].toLowerCase() as ConventionalType;
+  return CONVENTIONAL_TYPES.includes(type) ? { type, subject: m[2].trim() } : undefined;
+}
+
+/**
+ * Conventional Commits type inferred from what actually changed, used as the
+ * default when shipping a working tree that has no ticket to take a type from.
+ */
+export function inferConventionalType(paths: string[], hasNewFiles: boolean): ConventionalType {
+  if (!paths.length) return 'chore';
+  const every = (re: RegExp) => paths.every((p) => re.test(p));
+  if (every(/\.(md|mdx|txt)$|^docs\//i)) return 'docs';
+  if (every(/(^|\/)(__tests__|tests?)\/|\.(test|spec)\.[a-z]+$/i)) return 'test';
+  return hasNewFiles ? 'feat' : 'chore';
+}
+
+/**
+ * Default commit subject offered for a working tree with no ticket behind it:
+ * the verb reflects whether anything is new, the scope names the one file or
+ * the directory the changes share.
+ */
+export function suggestShipSubject(paths: string[], hasNewFiles: boolean): string {
+  const verb = hasNewFiles ? 'add' : 'update';
+  // A path can arrive as "dir/" (a collapsed untracked directory), whose naive
+  // basename is the empty string.
+  const basename = (p: string) => p.replace(/\/+$/, '').split('/').pop() || 'workspace files';
+  if (!paths.length) return `${verb} workspace files`;
+  if (paths.length === 1) return `${verb} ${basename(paths[0])}`;
+  const segments = paths[0].replace(/\/+$/, '').split('/');
+  let shared = '';
+  for (let i = 0; i < segments.length - 1; i++) {
+    const candidate = segments.slice(0, i + 1).join('/');
+    if (!paths.every((p) => p.startsWith(`${candidate}/`))) break;
+    shared = candidate;
+  }
+  return shared ? `${verb} ${basename(shared)}` : `${verb} ${paths.length} files`;
+}
+
+/** Paths (and whether any are new) out of `git status --porcelain` output. */
+export function parsePorcelain(porcelain: string): { paths: string[]; hasNewFiles: boolean } {
+  const paths: string[] = [];
+  let hasNewFiles = false;
+  for (const line of porcelain.split('\n')) {
+    if (!line.trim()) continue;
+    const status = line.slice(0, 2);
+    // Renames read "R  old -> new"; the new path is the one that matters.
+    const raw = line.slice(3).trim();
+    const path = raw.includes(' -> ') ? raw.split(' -> ')[1] : raw;
+    paths.push(path.replace(/^"|"$/g, ''));
+    if (status.includes('A') || status === '??') hasNewFiles = true;
+  }
+  return { paths, hasNewFiles };
+}
+
 export function slugify(text: string, max = 40): string {
   return text
     .toLowerCase()

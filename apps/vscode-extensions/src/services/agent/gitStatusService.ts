@@ -43,9 +43,14 @@ export async function getGitStatus(roots: NamedRoot[]): Promise<GitStatusSnapsho
   }
 
   const [branch, shortstat, porcelain, remote] = await Promise.all([
-    git(gitCwd, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => ''),
+    // NOT `rev-parse --abbrev-ref HEAD`: that reports the disambiguated form
+    // ("heads/main") when the short name could match more than one ref.
+    // `--show-current` gives the plain name, and '' on a detached HEAD.
+    git(gitCwd, ['branch', '--show-current']).catch(() => ''),
     git(gitCwd, ['diff', '--shortstat', 'HEAD']).catch(() => ''),
-    git(gitCwd, ['status', '--porcelain']).catch(() => ''),
+    // -uall expands untracked directories into their files; the default
+    // collapses them to one "dir/" entry and undercounts what would be shipped.
+    git(gitCwd, ['status', '--porcelain', '-uall']).catch(() => ''),
     git(gitCwd, ['remote', 'get-url', 'origin']).catch(() => ''),
   ]);
 
@@ -58,7 +63,7 @@ export async function getGitStatus(roots: NamedRoot[]): Promise<GitStatusSnapsho
 
   return {
     isRepo: true,
-    branch: branch && branch !== 'HEAD' ? branch : undefined,
+    branch: branch || undefined,
     added: addedMatch ? parseInt(addedMatch[1], 10) : 0,
     removed: removedMatch ? parseInt(removedMatch[1], 10) : 0,
     filesChanged: (trackedMatch ? parseInt(trackedMatch[1], 10) : 0) + untrackedCount,

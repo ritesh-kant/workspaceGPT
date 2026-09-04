@@ -51,6 +51,7 @@ const GitStatusBar: React.FC = () => {
       } else if (m?.type === MESSAGE_TYPES.AGENT_SHIP_ALL_DONE) {
         setShip((prev) => {
           if (prev.phase !== 'running' || m.requestId !== prev.requestId) return prev;
+          if (m.cancelled) return { phase: 'idle' }; // dismissed the title prompt
           return m.ok
             ? { phase: 'done', branch: m.branch, prUrl: m.prUrl, warnings: m.warnings ?? [] }
             : { phase: 'error', error: m.error || 'Create PR failed.' };

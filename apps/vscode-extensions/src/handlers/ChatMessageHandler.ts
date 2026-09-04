@@ -267,7 +267,24 @@ export class ChatMessageHandler {
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_SHIP_ALL_DONE, requestId, ...payload });
     try {
       const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
-      const result = await shipAllChanges(roots, () => undefined);
+      const result = await shipAllChanges(roots, () => undefined, (suggestion) =>
+        Promise.resolve(
+          vscode.window.showInputBox({
+            title: 'Create pull request',
+            prompt: 'Commit subject, Conventional Commits style — it names the branch too.',
+            value: suggestion,
+            // Preselect just the subject, so Enter accepts and typing replaces
+            // the wording without clobbering the inferred type prefix.
+            valueSelection: [suggestion.indexOf(': ') + 2, suggestion.length],
+            ignoreFocusOut: true,
+            validateInput: (v) => (v.trim() ? undefined : 'Enter a short description of the change.'),
+          })
+        )
+      );
+      if (!result) {
+        reply({ ok: false, cancelled: true });
+        return;
+      }
       reply({ ok: true, branch: result.branch, prUrl: result.prUrl, warnings: result.warnings });
     } catch (error) {
       reply({ ok: false, error: error instanceof Error ? error.message : String(error) });

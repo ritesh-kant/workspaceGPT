@@ -3,7 +3,16 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import { NamedRoot, resolveAgainstRoots } from '../codebase/codebaseTools';
 import { addWorkItemComment } from '../ado/adoWorkItemService';
-import { conventionalCommitType, pullRequestUrl, reportToHtml, slugify } from './shipHelpers';
+import {
+  conventionalCommitType,
+  inferConventionalType,
+  parseConventionalSubject,
+  parsePorcelain,
+  pullRequestUrl,
+  reportToHtml,
+  slugify,
+  suggestShipSubject,
+} from './shipHelpers';
 
 /**
  * "Create PR" after an agent turn: branch, commit ONLY the files the agent
@@ -50,6 +59,18 @@ function git(cwd: string, args: string[]): Promise<string> {
   });
 }
 
+/**
+ * The plain current branch name, or '' on a detached HEAD.
+ *
+ * Deliberately NOT `rev-parse --abbrev-ref HEAD`: that returns the
+ * *disambiguated* form ("heads/main") whenever the short name could resolve to
+ * more than one ref — e.g. a tag sharing the branch's name — and that form
+ * then leaks into the status bar, the new branch's name and the PR compare URL.
+ */
+async function currentBranch(gitCwd: string): Promise<string> {
+  return git(gitCwd, ['branch', '--show-current']).catch(() => '');
+}
+
 export async function shipChanges(
   context: vscode.ExtensionContext,
   roots: NamedRoot[],
@@ -76,8 +97,8 @@ export async function shipChanges(
   });
   const gitCwd = repoTop;
   const filesFromTop = relFiles.map((f) => path.relative(gitCwd, path.join(cwd, f)));
-  const baseBranch = (await git(gitCwd, ['rev-parse', '--abbrev-ref', 'HEAD'])) || 'main';
-  if (baseBranch === 'HEAD') throw new Error('HEAD is detached — check out a branch first.');
+  const baseBranch = await currentBranch(gitCwd);
+  if (!baseBranch) throw new Error('HEAD is detached — check out a branch first.');
   if (/^(feat|fix|chore)\//.test(baseBranch)) warnings.push(`Branching from an existing agent branch (${baseBranch}).`);
 
   const shortTitle = input.title.replace(/\s+/g, ' ').trim().slice(0, 72);
@@ -152,8 +173,17 @@ export interface ShipAllResult {
  * deletions — push, and open the hosting provider's new-PR page. Unlike
  * `shipChanges`, this isn't scoped to one agent turn or a set of files; it
  * ships whatever is currently uncommitted, agent- or user-made alike.
+ *
+ * With no ticket to take a title and type from, `askTitle` collects a
+ * Conventional Commits subject (pre-filled with one inferred from the changed
+ * paths); that subject drives both the commit message and the `<type>/<slug>`
+ * branch name. Returns null when the user cancels the prompt.
  */
-export async function shipAllChanges(roots: NamedRoot[], onStatus: (text: string) => void): Promise<ShipAllResult> {
+export async function shipAllChanges(
+  roots: NamedRoot[],
+  onStatus: (text: string) => void,
+  askTitle: (suggestion: string) => Promise<string | undefined>
+): Promise<ShipAllResult | null> {
   if (!roots.length) throw new Error('No workspace folder is open.');
   const cwd = roots[0].uri.fsPath;
   const warnings: string[] = [];
@@ -162,19 +192,31 @@ export async function shipAllChanges(roots: NamedRoot[], onStatus: (text: string
   const gitCwd = await git(cwd, ['rev-parse', '--show-toplevel']).catch(() => {
     throw new Error(`${roots[0].name} is not a git repository.`);
   });
-  const baseBranch = (await git(gitCwd, ['rev-parse', '--abbrev-ref', 'HEAD'])) || 'main';
-  if (baseBranch === 'HEAD') throw new Error('HEAD is detached — check out a branch first.');
+  const baseBranch = await currentBranch(gitCwd);
+  if (!baseBranch) throw new Error('HEAD is detached — check out a branch first.');
 
-  const dirty = await git(gitCwd, ['status', '--porcelain']);
+  // -uall so an untracked directory lands as its files, not one "dir/" entry —
+  // the inferred type and subject read the individual paths.
+  const dirty = await git(gitCwd, ['status', '--porcelain', '-uall']);
   if (!dirty) throw new Error('Nothing to ship — the working tree is clean.');
 
-  const branch = `chore/workspace-changes-${Date.now().toString(36)}`;
+  const { paths, hasNewFiles } = parsePorcelain(dirty);
+  const inferredType = inferConventionalType(paths, hasNewFiles);
+  const answer = await askTitle(`${inferredType}: ${suggestShipSubject(paths, hasNewFiles)}`);
+  if (answer === undefined) return null; // cancelled
+  const parsed = parseConventionalSubject(answer) ?? { type: inferredType, subject: answer.trim() };
+  const commitSubject = `${parsed.type}: ${parsed.subject}`;
+
+  let branch = `${parsed.type}/${slugify(parsed.subject)}`;
+  const existing = await git(gitCwd, ['branch', '--list', branch]);
+  if (existing) branch = `${branch}-${Date.now().toString(36).slice(-4)}`;
+
   onStatus(`Creating branch ${branch}…`);
   await git(gitCwd, ['checkout', '-b', branch]);
   try {
     onStatus('Staging changes…');
     await git(gitCwd, ['add', '-A']);
-    await git(gitCwd, ['commit', '--quiet', '-m', 'Workspace changes']);
+    await git(gitCwd, ['commit', '--quiet', '-m', commitSubject]);
   } catch (e) {
     await git(gitCwd, ['checkout', '--quiet', baseBranch]).catch(() => undefined);
     await git(gitCwd, ['branch', '-D', branch]).catch(() => undefined);
@@ -188,7 +230,7 @@ export async function shipAllChanges(roots: NamedRoot[], onStatus: (text: string
     onStatus(`Pushing ${branch} to origin…`);
     try {
       await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch]);
-      prUrl = pullRequestUrl(remote, baseBranch, branch, 'Workspace changes', '');
+      prUrl = pullRequestUrl(remote, baseBranch, branch, commitSubject, '');
       if (prUrl) {
         onStatus('Opening the pull-request page…');
         await vscode.env.openExternal(vscode.Uri.parse(prUrl));
