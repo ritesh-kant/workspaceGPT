@@ -12,7 +12,8 @@
             ],
             "name": "workspacegpt-extension",
             "outFiles": [
-                "${workspaceFolder}/apps/vscode-extensions/**/*.js"
+                "${workspaceFolder}/apps/vscode-extensions/**/*.js",
+                "!${workspaceFolder}/apps/vscode-extensions/**/node_modules/**"
             ],
             "request": "launch",
             "preLaunchTask": "npm: build - apps/vscode-extensions",

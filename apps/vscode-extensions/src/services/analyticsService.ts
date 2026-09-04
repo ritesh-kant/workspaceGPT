@@ -15,9 +15,14 @@ export class AnalyticsService {
     const POSTHOG_API_KEY = "phc_fu4MBqAfmFqDFLaaxRhsU718AtAxzYbyqdN4vtMk4ED"
     const POSTHOG_URL = "https://eu.i.posthog.com"
 
-    // Initialize PostHog with your project API key
+    // Initialize PostHog with your project API key.
+    // disableGeoip defaults to true for server-side SDKs (a shared server's IP
+    // usually isn't the end user's) — but this SDK runs on each user's own
+    // machine, so their IP is the real signal. Enable it to get $geoip_country_name
+    // etc. on every event.
     this.posthog = new PostHog(POSTHOG_API_KEY, {
       host: POSTHOG_URL,
+      disableGeoip: false,
     });
 
     // Get or create a unique user ID

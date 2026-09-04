@@ -61,6 +61,9 @@ function makeDocument(uri, content) {
   };
 }
 
+/** Mirrors vscode.FileType. */
+export const FileType = { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 };
+
 export const workspace = {
   async openTextDocument(uri) {
     const p = typeof uri === 'string' ? uri : uri.fsPath;
@@ -70,7 +73,15 @@ export const workspace = {
   fs: {
     async stat(uri) {
       const st = await fsp.stat(uri.fsPath);
-      return { size: st.size };
+      // `type` and `readFile` are what codebaseTools' readFile needs — it
+      // stats for the size cap, checks FileType.File, then reads bytes.
+      return {
+        size: st.size,
+        type: st.isDirectory() ? FileType.Directory : FileType.File,
+      };
+    },
+    async readFile(uri) {
+      return new Uint8Array(await fsp.readFile(uri.fsPath));
     },
   },
   async applyEdit() {

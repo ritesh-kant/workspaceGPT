@@ -101,6 +101,9 @@ export const MESSAGE_TYPES = {
   // Host → Sessions webview.
   SESSIONS_LIST: 'sessions-list',
   SESSIONS_TOGGLE_SEARCH: 'sessions-toggle-search',
+  // Chat webview → host: which sessions currently have a run in flight or
+  // just finished with an error (Sessions panel status dot).
+  SESSIONS_RUNNING_STATE: 'sessions-running-state',
 
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',

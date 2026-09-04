@@ -16,7 +16,17 @@ import { AdoEmbeddingService } from './ado/adoEmbeddingService';
 import { AnalyticsService } from './analyticsService';
 import { getLlmSettings } from 'src/utils/getLlmSettings';
 import { getMode } from 'src/utils/getModeSettings';
-import { withKeyFailover } from 'src/utils/apiKeyFailover';
+import { withKeyFailover, isTransientServerError } from 'src/utils/apiKeyFailover';
+// Shared with the webview's Resume button — see continuationIntent's header.
+import { CONTINUATION_RE, APPROVAL_RE, isContinuationIntent } from 'src/utils/continuationIntent';
+import {
+  saveResumeRecord,
+  loadResumeRecord,
+  clearResumeRecord,
+  pruneResumeRecords,
+  isAutoResumableFailure,
+  describeAge,
+} from './agent/resumeStore';
 import { normalizeModelId } from 'src/utils/normalizeModelId';
 import { classifyQuery } from 'src/utils/queryClassifier';
 import { buildPlan, expandQuery } from 'src/utils/queryPlanner';
@@ -63,6 +73,9 @@ import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/in
 import {
   agentOutputChannel,
   assertCommandAllowed,
+  checkUnscopedVerification,
+  REPO_WIDE_REQUEST_RE,
+  MAX_TIMEOUT_SEC,
   executeCommand,
   recordAgentAudit,
   resolveCommandCwd,
@@ -145,36 +158,34 @@ interface TurnFileChange {
 type SearchResult = EmbeddingSearchResult;
 
 /**
- * Bare continuation/confirmation replies ("go ahead", "continue", "yes") have
- * no topical content of their own — classifying them in isolation from the
- * ongoing conversation is effectively a coin flip that can silently abandon
- * an in-progress codebase investigation for a generic chat answer (observed
- * live: mid-investigation "go ahead" got reclassified away from CODEBASE).
+ * How long to let a saturated provider recover before spending a fresh worker
+ * on it. By the time an error reaches the host, withKeyFailover has already
+ * spent ~45s retrying inside the worker, so this is a second, longer pause on
+ * top of that — long enough for a capacity blip to clear, short enough that a
+ * real outage is reported rather than hidden behind minutes of waiting.
  */
-const CONTINUATION_RE =
-  /^(go ahead|go on|continue|keep going|please continue|please proceed|proceed|do it|yes|yep|yeah|sure|ok|okay|sounds good)[\s.!?]*$/i;
+const PROVIDER_RECOVERY_WAIT_MS = 30_000;
 
 /**
- * Replies that approve a proposal and ask for it to be carried out. Broader
- * than CONTINUATION_RE on purpose — that one only decides *routing* for a bare
- * "go ahead", while this decides whether the turn is an EXECUTION turn. The
- * replies that actually show up here ("fix it", "implement 1-3", "apply it")
- * match none of CONTINUATION_RE's alternatives.
+ * What to tell the model when it is picking up a run that infrastructure cut
+ * short.
+ *
+ * Different from the stall resume, and the difference matters. A stalled
+ * segment ran out of steps and needs to be told that is not a blocker. This
+ * one was interrupted mid-thought while doing fine, so the risk is the
+ * opposite: re-reading files whose contents are already in the transcript, or
+ * redoing an edit that is already on disk. Naming the real cause also stops
+ * the model from theorising that its own last tool call broke something.
  */
-const APPROVAL_RE =
-  /^(?:please\s+)?(?:yes[\s,.!]*)?(?:go ahead|go on|go for it|continue|keep going|proceed|do it|do that|ship it|lgtm|fix(?:\s+(?:it|that|this))?|implement(?:\s+(?:it|that|this|them|all|\d[\d\s,and–—-]*))?|apply(?:\s+(?:it|them|that|the\s+\w+))?|make the (?:change|changes|edit|edits|fix|fixes)|start|begin)[\s.!]*$/i;
-
-/**
- * Replies that ask the agent to pick up a run that was cut short — the words
- * people actually reach for after a provider error, a crash or a stop ("try
- * again", "resume", "finish the test file"). Wider than CONTINUATION_RE (bare
- * confirmations) and APPROVAL_RE (approving a proposal) because it decides only
- * one thing: whether the stranded tool transcript of the interrupted run is
- * worth carrying into this turn. A false positive costs a longer prompt; a
- * false negative throws away every step the previous attempt took.
- */
-const RESUME_RE =
-  /^(?:please\s+|now\s+|ok(?:ay)?[\s,]+)?(?:continue|carry on|resume|retry|try again|keep going|pick up|finish|complete)\b[^.!?]{0,60}[\s.!?]*$/i;
+function resumeAfterFailurePrompt(reason: string): string {
+  return (
+    `The previous attempt was cut off by an infrastructure failure, not by anything you did: ${reason} ` +
+    'Everything above is work already completed — the searches, the file contents you read, and any edits already applied to disk. ' +
+    'Continue from exactly where it stopped. Do not re-read a file whose contents are already above, and do not redo an edit the transcript shows as applied; ' +
+    'if the transcript shows the fix applied AND verified, go straight to the final report. ' +
+    'Otherwise finish the task now and deliver it.'
+  );
+}
 
 /**
  * Markers that the previous assistant turn PROPOSED work rather than doing it.
@@ -239,6 +250,19 @@ interface SessionRun {
   turnStartMs: number;
   /** File-change rollup for the current agent turn (path → cumulative counts). */
   turnFilesChanged: Map<string, TurnFileChange>;
+  /**
+   * The user's own message asked for a repo-wide check ("run the full test
+   * suite"). Set per turn: it lifts the unscoped-verification refusal, since a
+   * wide run the user asked for is not the harness's call to override.
+   */
+  userAskedRepoWide: boolean;
+  /**
+   * Writes applied across the WHOLE session, never cleared per turn. Passed to
+   * the worker as `priorWrites` so the delivery-time honesty stamp can tell a
+   * fabricated completion report ("## Done", invented Changes list, zero
+   * writes ever) apart from a truthful recap of a previous turn's real edits.
+   */
+  sessionWritesApplied: number;
   /** What "Create PR" ships: the last turn that changed files, with its report and ticket. */
   lastShip: ShipInput | null;
   /** First checkpoint of the turn — the "undo this turn" target. */
@@ -293,6 +317,12 @@ interface SessionRun {
    * exhausted its budget and skipped the honesty gates.
    */
   lastAnswerStallShaped: boolean;
+  /**
+   * The work item the most recent turn was grounded in, kept so a resume
+   * record parked on disk can name what it was working on when the user comes
+   * back to it in a new window.
+   */
+  lastTicketId: string | null;
 }
 
 export class ChatService {
@@ -328,6 +358,10 @@ export class ChatService {
     this.adoEmbeddingService = new AdoEmbeddingService(webviewView, context);
     this.codebaseService = new CodebaseService(webviewView, context);
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
+    // Housekeeping, once per activation: an interrupted run the user never
+    // came back to would otherwise keep its transcript in global storage
+    // forever. Anything past MAX_RESUME_AGE_MS could not be resumed anyway.
+    void pruneResumeRecords(this.resumeDir);
   }
 
   /**
@@ -460,6 +494,128 @@ export class ChatService {
     }
   }
 
+  /**
+   * Where interrupted runs are parked so they survive a window reload — its
+   * own folder, never `chats/`, because HistoryService JSON-parses every file
+   * in there to render the history list (see resumeStore's header).
+   */
+  private get resumeDir(): string {
+    return path.join(this.context.globalStorageUri.fsPath, 'agent-resume');
+  }
+
+  /**
+   * Trailing-edge persistence of a session's transcript.
+   *
+   * The worker mirrors its conversation up at every round boundary, and a
+   * ticket run's transcript is hundreds of KB, so writing on each of those
+   * would be a lot of disk for a file that is usually thrown away. Throttled
+   * instead, with the terminal paths (error, stall, stop) flushing
+   * immediately — those are the ones that matter, and by then no further
+   * rounds are coming. The delay is what covers the case no terminal path
+   * can: the extension host itself going down.
+   */
+  private resumeSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private static readonly RESUME_SAVE_DEBOUNCE_MS = 4_000;
+
+  /**
+   * Serializes a session's resume writes and deletes against each other.
+   *
+   * Without this they are independent floating promises, and the losing order
+   * is real: `forgetResume` fires a delete when a turn delivers, the next turn
+   * starts and schedules a save, and a slow delete landing after that save
+   * would remove a record for a run that is currently interrupted. One chain
+   * per session makes the last call the last effect.
+   */
+  private resumeIO = new Map<string, Promise<void>>();
+
+  private queueResumeIO(sessionId: string, op: () => Promise<void>): Promise<void> {
+    const next = (this.resumeIO.get(sessionId) ?? Promise.resolve()).then(op, op);
+    this.resumeIO.set(sessionId, next);
+    return next;
+  }
+
+  private scheduleResumeSave(run: SessionRun, reason: string): void {
+    if (this.resumeSaveTimers.has(run.sessionId)) return;
+    this.resumeSaveTimers.set(
+      run.sessionId,
+      setTimeout(() => {
+        this.resumeSaveTimers.delete(run.sessionId);
+        void this.flushResumeSave(run, reason);
+      }, ChatService.RESUME_SAVE_DEBOUNCE_MS)
+    );
+  }
+
+  private async flushResumeSave(run: SessionRun, reason: string): Promise<void> {
+    const timer = this.resumeSaveTimers.get(run.sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.resumeSaveTimers.delete(run.sessionId);
+    }
+    if (!run.agentTranscript?.length) return;
+    // Snapshot the array: the worker keeps appending to it, and the write is
+    // serialized behind whatever else is queued for this session.
+    const transcript = run.agentTranscript.slice();
+    await this.queueResumeIO(run.sessionId, async () => {
+      await saveResumeRecord(this.resumeDir, {
+        sessionId: run.sessionId,
+        savedAt: Date.now(),
+        transcript,
+        reason,
+        writesApplied: run.sessionWritesApplied,
+        ticketId: run.lastTicketId ?? undefined,
+      });
+    });
+  }
+
+  /**
+   * Stops carrying an interrupted run in THIS process, without discarding it.
+   *
+   * For "the user moved on": their next message wasn't a continuation, so the
+   * stranded transcript must not be prefixed onto an unrelated question (its
+   * raw tool results are tens of thousands of tokens). The disk record stays,
+   * because a message that isn't a continuation is not the same thing as a
+   * decision to throw the work away — a later "continue" can still recover
+   * it, announced with its age, and it prunes itself after MAX_RESUME_AGE_MS
+   * regardless.
+   */
+  private dropResumeFromMemory(run: SessionRun): void {
+    const timer = this.resumeSaveTimers.get(run.sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.resumeSaveTimers.delete(run.sessionId);
+    }
+    run.agentTranscript = null;
+  }
+
+  /**
+   * Drops both copies — for a run that actually FINISHED. A record left behind
+   * here would offer to resume a completed run.
+   */
+  private forgetResume(run: SessionRun): void {
+    const timer = this.resumeSaveTimers.get(run.sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.resumeSaveTimers.delete(run.sessionId);
+    }
+    run.agentTranscript = null;
+    void this.queueResumeIO(run.sessionId, () => clearResumeRecord(this.resumeDir, run.sessionId));
+  }
+
+  /**
+   * Brings a stranded run back from disk when this process has no memory of
+   * it — a reloaded window, or a session reopened from history. Returns the
+   * record so the caller can tell the user how old the work is.
+   */
+  private async hydrateResume(run: SessionRun): Promise<{ steps: number; age: string } | null> {
+    if (run.agentTranscript?.length) return null;
+    // Behind the same chain, so a read never overtakes a pending write.
+    await this.queueResumeIO(run.sessionId, async () => {});
+    const record = await loadResumeRecord(this.resumeDir, run.sessionId);
+    if (!record) return null;
+    run.agentTranscript = record.transcript;
+    return { steps: record.transcript.length, age: describeAge(record.savedAt) };
+  }
+
   /** Gets (or lazily creates) the run state for one chat session. */
   private runFor(sessionId: string): SessionRun {
     let run = this.runs.get(sessionId);
@@ -473,6 +629,8 @@ export class ChatService {
         cancelled: false,
         turnStartMs: 0,
         turnFilesChanged: new Map(),
+        userAskedRepoWide: false,
+        sessionWritesApplied: 0,
         lastShip: null,
         turnFirstCheckpointSha: null,
         writeSeq: 0,
@@ -481,6 +639,7 @@ export class ChatService {
         autonomous: false,
         agentTranscript: null,
         lastAnswerStallShaped: false,
+        lastTicketId: null,
       };
       this.runs.set(sessionId, run);
     }
@@ -546,9 +705,12 @@ export class ChatService {
     if (run.worker) return;
     run.chatHistory = toModelHistory(messages);
     // The stored transcript is the rendered conversation, not the model-facing
-    // tool trace — there is nothing here to resume an interrupted agent run
-    // from, so make sure a stale one from an earlier session isn't reused.
-    run.agentTranscript = null;
+    // tool trace, so there is nothing here to resume from. Drop the in-memory
+    // copy so another session's stranded run can't be reused — but leave this
+    // session's record on DISK alone: reopening a chat whose run died is
+    // exactly when it should still be resumable, and sendMessage reloads it
+    // when the user asks to continue.
+    this.dropResumeFromMemory(run);
   }
 
   public async newChat(): Promise<void> {
@@ -623,6 +785,7 @@ export class ChatService {
       // turn-scoped (see resolvedMentions below).
       run.chatHistory.push({ role: 'user', content: historyContent });
       run.turnStartMs = Date.now();
+      run.userAskedRepoWide = REPO_WIDE_REQUEST_RE.test(message);
       run.turnFilesChanged.clear();
       run.turnFirstCheckpointSha = null;
       run.writeSeq = 0;
@@ -691,19 +854,67 @@ export class ChatService {
         ...(isCodebaseAvailable ? ['CODEBASE' as DataSource] : []),
       ];
 
+      const trimmedMessage = message.trim();
+
+      // An interrupted agent turn is only resumed by a reply that asks to carry
+      // on ("continue", "try again", "fix it") — exactly when a fresh run would
+      // re-derive everything the last attempt already did. Any other message
+      // means the user moved on, so the stranded transcript is dropped rather
+      // than re-billed (its raw tool results are tens of thousands of tokens)
+      // and prefixed onto an unrelated question.
+      //
+      // Settled BEFORE classification, because whether a resume is waiting is
+      // an input to the routing decision below.
+      const isContinuationReply = isContinuationIntent(trimmedMessage);
+      if (!isContinuationReply) {
+        this.dropResumeFromMemory(run);
+      } else {
+        // Nothing in memory does not mean nothing to resume: this may be a
+        // reloaded window, or a session just reopened from history, and the
+        // interrupted run is parked on disk. Tell the user what is being
+        // carried and how old it is — resuming yesterday's reads silently
+        // would be worse than not resuming at all.
+        const revived = await this.hydrateResume(run);
+        if (revived) {
+          this.postStatus(run, `Recovering the interrupted run (saved ${revived.age})...`);
+          this.post(run, {
+            type: MESSAGE_TYPES.AGENT_STEP,
+            step: {
+              kind: 'info',
+              title: `Recovered the interrupted run from ${revived.age}`,
+              detail: `${revived.steps} model message(s) carried over`,
+            },
+          });
+        }
+        if (run.agentTranscript?.length) {
+          console.log(
+            `Resuming the interrupted agent run for this session (${run.agentTranscript.length} model messages carried over).`
+          );
+        }
+      }
+
       // ── Step 1: Rule-based classification (synchronous, zero latency) ──
       let classification: QueryClassification = classifyQuery(message, availableSources);
 
       // A bare continuation reply inherits the previous turn's routing instead
       // of being reclassified from scratch — see CONTINUATION_RE.
+      //
+      // A held transcript forces CODEBASE regardless of `lastUseCodebaseTools`,
+      // and that case is not hypothetical: after a window reload the run object
+      // is brand new, so `lastUseCodebaseTools` is false while the interrupted
+      // run sits on disk. Without this, "continue" would be classified as
+      // ordinary chat, generateModelResponse would pass no roots, and the
+      // resume transcript — the whole reason the record was persisted — would
+      // be silently dropped.
+      const resumeWaiting = isContinuationReply && !!run.agentTranscript?.length && isCodebaseAvailable;
       if (
         contextSelection === 'Auto' &&
         run.chatHistory.length > 0 &&
-        CONTINUATION_RE.test(message.trim())
+        (CONTINUATION_RE.test(trimmedMessage) || resumeWaiting)
       ) {
         classification = {
           intent: classification.intent,
-          sources: run.lastUseCodebaseTools ? ['CODEBASE'] : classification.sources,
+          sources: resumeWaiting || run.lastUseCodebaseTools ? ['CODEBASE'] : classification.sources,
           confidence: 'high',
         };
       }
@@ -718,7 +929,6 @@ export class ChatService {
       // anything" and nothing ever revokes that.
       const priorAssistant =
         [...run.chatHistory].reverse().find((m) => m.role === 'assistant')?.content ?? '';
-      const trimmedMessage = message.trim();
       const executeMandate =
         trimmedMessage.length <= 80 &&
         (APPROVAL_RE.test(trimmedMessage) || CONTINUATION_RE.test(trimmedMessage)) &&
@@ -727,21 +937,6 @@ export class ChatService {
         console.log('User approved a proposed plan — this turn executes it.');
       }
 
-      // An interrupted agent turn is only resumed by a reply that asks to carry
-      // on ("continue", "try again", "fix it") — exactly when a fresh run would
-      // re-derive everything the last attempt already did. Any other message
-      // means the user moved on, so the stranded transcript is dropped rather
-      // than re-billed (its raw tool results are tens of thousands of tokens)
-      // and prefixed onto an unrelated question.
-      const isContinuationReply =
-        RESUME_RE.test(trimmedMessage) || APPROVAL_RE.test(trimmedMessage) || CONTINUATION_RE.test(trimmedMessage);
-      if (!isContinuationReply) {
-        run.agentTranscript = null;
-      } else if (run.agentTranscript?.length) {
-        console.log(
-          `Resuming the interrupted agent run for this session (${run.agentTranscript.length} model messages carried over).`
-        );
-      }
 
       // Override sources when the user has explicitly chosen a context.
       //
@@ -944,6 +1139,9 @@ export class ChatService {
       let ticketContext: TicketDetail | null = null;
       const adoAuthenticated = !!settings?.state?.config?.ado?.isAuthenticated;
       const ticketId = useCodebaseTools && adoAuthenticated ? detectTicketId(message) : null;
+      // Sticky across the session, so a resume record written by a later
+      // continuation turn still names the ticket the run is about.
+      if (ticketId) run.lastTicketId = ticketId;
       if (ticketId) {
         const stepId = randomUUID();
         this.postStatus(run, `Reading ticket ${ticketId}...`);
@@ -1083,24 +1281,75 @@ export class ChatService {
       ];
 
       this.postStatus(run, 'Thinking...');
-      let modelResponse = await this.generateModelResponse(
-        run,
-        message,
-        finalResults,
-        effModelId,
-        effProvider,
-        effApiKeys,
-        userDisplayName,
-        currentSprint,
-        useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined,
-        effBaseUrl,
-        attachments,
-        resolvedMentions,
-        executeMandate,
-        ticketContext,
-        autonomous,
-        planMode
-      );
+      // Every model call this turn makes differs only in what it asks for —
+      // the first attempt, the failure resume below, and the stall resume
+      // after it all share the same routing, keys, roots and mandate.
+      const callModel = (prompt: string) =>
+        this.generateModelResponse(
+          run,
+          prompt,
+          finalResults,
+          effModelId,
+          effProvider,
+          effApiKeys,
+          userDisplayName,
+          currentSprint,
+          useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined,
+          effBaseUrl,
+          attachments,
+          resolvedMentions,
+          executeMandate,
+          ticketContext,
+          autonomous,
+          planMode
+        );
+
+      let modelResponse: string;
+      try {
+        modelResponse = await callModel(message);
+      } catch (error) {
+        // The run died on infrastructure, not on a decision: a provider
+        // outage, a dead socket, the stall net firing. The transcript
+        // survived (settle() only clears it for a delivered answer), so a
+        // fresh worker can pick up every read and edit already made instead
+        // of the user losing the investigation — which is exactly what
+        // happened on #1324128, eighteen steps in.
+        //
+        // One attempt, and only for failures a retry could plausibly beat
+        // (see isAutoResumableFailure). If it fails again the error falls
+        // through to the handler below, which offers the manual resume.
+        // `useCodebaseTools` is part of the condition because only an agent
+        // run has a transcript to resume: a plain chat turn that failed while
+        // an older agent transcript happened to still be in memory would
+        // otherwise be handed a "continue from above" prompt with no above.
+        if (!useCodebaseTools || !run.agentTranscript?.length || run.cancelled || !isAutoResumableFailure(error)) {
+          throw error;
+        }
+
+        const why = error instanceof Error ? error.message : String(error);
+        await this.flushResumeSave(run, why);
+
+        // A provider that just told us every endpoint is saturated will say
+        // it again a second later. Wait before spending a fresh worker on
+        // it; a dead socket or a hung turn needs no such pause.
+        const settleWaitMs = isTransientServerError(error) ? PROVIDER_RECOVERY_WAIT_MS : 0;
+        if (settleWaitMs) {
+          this.postStatus(run, `Provider unavailable — waiting ${Math.round(settleWaitMs / 1000)}s, then resuming where it stopped...`);
+          await new Promise((resolve) => setTimeout(resolve, settleWaitMs));
+          if (run.cancelled) throw error;
+        }
+
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          step: {
+            kind: 'info',
+            title: 'Run interrupted — resuming automatically',
+            detail: `${why} · ${run.agentTranscript.length} model message(s) carried over`,
+          },
+        });
+        this.postStatus(run, 'Resuming the interrupted run...');
+        modelResponse = await callModel(resumeAfterFailurePrompt(why));
+      }
 
       // Autonomous stall auto-resume (one-shot): a click-to-run ticket turn
       // that ended stall-shaped with zero writes usually means the worker's
@@ -1120,25 +1369,16 @@ export class ChatService {
       ) {
         run.chatHistory.push({ role: 'assistant', content: modelResponse });
         this.postStatus(run, 'Run ended without finishing — resuming with a fresh tool budget...');
-        modelResponse = await this.generateModelResponse(
-          run,
+        modelResponse = await callModel(
           'Continue the ticket run from where the previous turn stopped — the investigation so far is carried over above. ' +
             'Finish it now: apply the fix with your edit tools, or end with a "## Blocked" / "## No change needed" section. Do not re-investigate what is already read. ' +
-            'If the transcript above shows the fix already applied AND verified, do not redo or re-verify it — deliver the final report.',
-          finalResults,
-          effModelId,
-          effProvider,
-          effApiKeys,
-          userDisplayName,
-          currentSprint,
-          useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined,
-          effBaseUrl,
-          attachments,
-          resolvedMentions,
-          executeMandate,
-          ticketContext,
-          autonomous,
-          planMode
+            'If the transcript above shows the fix already applied AND verified, do not redo or re-verify it — deliver the final report. ' +
+            // This resume exists BECAUSE the previous segment ended without
+            // writing, and on #1534774 it did that by calling a step-limit
+            // stop a blocker. Say plainly what that answer got wrong, or the
+            // second segment reproduces it with a fresh budget.
+            'The previous segment ran out of steps rather than out of options: that is not a blocker, and neither is a decision you could settle with a reasonable default. ' +
+            'Reserve "## Blocked" for a conflict you can QUOTE from the ticket. Anything else means: pick the default, apply the edit, and record the default under Assumptions.'
         );
       }
 
@@ -1156,14 +1396,28 @@ export class ChatService {
             }
           : null;
     } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
       if (error instanceof Error && error.message === 'Generation cancelled by user.') {
         console.log('Chat generation cancelled by user.');
+        // A stopped run is the one users are most likely to continue, so park
+        // it on disk too rather than leaving it only in this process.
+        void this.flushResumeSave(run, 'You stopped the run.');
         return;
       }
       console.error('Error in chat:', error);
+      // The transcript outlives a failed turn (settle() clears it only for a
+      // delivered answer), and the whole point of keeping it is that the next
+      // message can resume from it. That was invisible: the user saw
+      // "Service temporarily unavailable" and had no reason to think eighteen
+      // steps of work were still being held. Report it as DATA rather than as
+      // a sentence in the error prose, so the card can carry a Resume button
+      // instead of asking the user to guess the right words.
+      const held = run.agentTranscript?.length ?? 0;
+      if (held) void this.flushResumeSave(run, why);
       this.post(run, {
         type: MESSAGE_TYPES.ERROR_CHAT,
-        message: error instanceof Error ? error.message : String(error),
+        message: why,
+        ...(held ? { resumable: { steps: held, writesApplied: run.sessionWritesApplied } } : {}),
       });
     }
   }
@@ -1340,6 +1594,21 @@ export class ChatService {
     if (!command) throw new Error('command must be non-empty.');
     assertCommandAllowed(command);
     const { cwd, displayCwd } = resolveCommandCwd(roots, args.cwd);
+    // A repo-wide `pnpm lint`/`pnpm test` at the workspace root checks every
+    // package to verify a change that touched a few files — minutes of wall
+    // clock in a monorepo, and auto-approved (so invisible) in an autonomous
+    // run. run_checks already derives the scoped command; this is what makes
+    // a run actually use it. Lifted when the user asked for a wide run.
+    const unscoped = checkUnscopedVerification({
+      command,
+      cwd,
+      rootPaths: roots.map((r) => r.uri.fsPath),
+      userAskedRepoWide: run.userAskedRepoWide,
+    });
+    if (unscoped) {
+      await this.audit('command', command, 'rejected', 'skipped', unscoped.reason);
+      throw new Error(unscoped.reason);
+    }
     const summary = `Run: ${command}`;
 
     let decisionKind: 'auto' | 'approved' | 'approved-session' = 'auto';
@@ -1503,6 +1772,7 @@ export class ChatService {
     await this.audit(write.kind, write.summary, decisionKind, 'applied');
     if (write.kind !== 'delete') await this.formatIfConfigured(write.uri);
     run.writeSeq++;
+    run.sessionWritesApplied++;
     const prior = run.turnFilesChanged.get(write.displayPath);
     run.turnFilesChanged.set(write.displayPath, {
       path: write.displayPath,
@@ -1635,6 +1905,8 @@ export class ChatService {
         return { kind: 'read', title: 'Read Confluence page', detail: String(args?.pageId ?? '') };
       case 'search_web':
         return { kind: 'search', title: 'Searched the web', detail: args?.query ?? '' };
+      case 'explore':
+        return { kind: 'search', title: 'Investigated', detail: String(args?.question ?? '').slice(0, 90) };
       case 'read_file': {
         const range = args?.startLine
           ? `#L${args.startLine}${args?.endLine ? `-${args.endLine}` : ''}`
@@ -1746,6 +2018,8 @@ export class ChatService {
     switch (name) {
       case 'search_codebase':
         return `Searching codebase for "${args?.query ?? ''}"...`;
+      case 'explore':
+        return `Investigating: ${String(args?.question ?? '').slice(0, 60)}...`;
       case 'read_file':
         return `Reading ${args?.path ?? 'file'}...`;
       case 'list_directory':
@@ -2037,6 +2311,9 @@ Query: "${query}"`;
           ticketContext: ticketContext ? toTicketPromptContext(ticketContext) : undefined,
           autonomous,
           planMode,
+          // Read BEFORE this turn's own writes land, so it counts only earlier
+          // turns — exactly what the honesty stamp needs to spare a recap.
+          priorWrites: run.sessionWritesApplied,
         },
       });
 
@@ -2061,12 +2338,22 @@ Query: "${query}"`;
         // worker sends (see armStallTimer calls below) — this only fires on
         // total silence, not on a merely slow turn.
         const STALL_TIMEOUT_MS = 5 * 60 * 1000;
+        // While a tool runs on THIS thread the worker is silent because it is
+        // waiting on us, not because it is stuck. Observed live: a jest run
+        // passed the five-minute mark and the run was declared stalled
+        // mid-command. A command's own ceiling (MAX_TIMEOUT_SEC) bounds that
+        // wait, so the net stays up just above it — still catching a
+        // host-side tool with no timeout of its own.
+        const TOOL_STALL_TIMEOUT_MS = (MAX_TIMEOUT_SEC + 60) * 1000;
+        let toolsInFlight = 0;
         let stallTimer: ReturnType<typeof setTimeout> | null = null;
         const armStallTimer = () => {
           if (stallTimer) clearTimeout(stallTimer);
+          if (settled) return;
+          const ms = toolsInFlight > 0 ? TOOL_STALL_TIMEOUT_MS : STALL_TIMEOUT_MS;
           stallTimer = setTimeout(() => {
-            settle(new Error('Model worker stopped responding — no activity for 5 minutes.'));
-          }, STALL_TIMEOUT_MS);
+            settle(new Error(`Model worker stopped responding — no activity for ${Math.round(ms / 60_000)} minutes.`));
+          }, ms);
         };
         armStallTimer();
 
@@ -2098,10 +2385,12 @@ Query: "${query}"`;
                 error.message
               );
             }
-            // Agent turns get an end-of-run rollup (duration + files changed)
-            // before DONE, so the webview can attach it to the final answer.
-            if (codebaseRoots?.length) {
-              const shippable = run.turnFilesChanged.size > 0;
+            // Every turn gets an end-of-run rollup (at minimum, how long it
+            // took) before DONE, so the webview can attach it to the final
+            // answer — codebase-specific fields (files changed, checkpoint,
+            // ticket) are simply empty for a turn that ran no codebase tools.
+            {
+              const shippable = codebaseRoots?.length ? run.turnFilesChanged.size > 0 : false;
               this.post(run, {
                 type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
                 durationMs: Date.now() - run.turnStartMs,
@@ -2146,7 +2435,9 @@ Query: "${query}"`;
                   (PREMATURE_AMBIGUITY_RE.test(answerText) || PERMISSION_SEEKING_RE.test(answerText))));
             run.lastAnswerStallShaped = stallShaped;
             if (answerText && !stallShaped) {
-              run.agentTranscript = null;
+              // Delivered. Retire both copies — a stale record would offer to
+              // "resume" a run that already finished.
+              this.forgetResume(run);
             }
             resolve(fullContent || streamedContent);
           } else {
@@ -2177,6 +2468,9 @@ Query: "${query}"`;
             writesApplied?: number;
             /** 'done' only: zero-write stall-shaped answer per the worker's own gates. */
             stallShaped?: boolean;
+            /** 'tool_step_update' only: new status + one-line summary for an existing step. */
+            stepStatus?: 'running' | 'done' | 'error';
+            summary?: string;
           }) => {
             armStallTimer();
             switch (result.type) {
@@ -2233,12 +2527,32 @@ Query: "${query}"`;
                 });
                 break;
 
+              // A step the WORKER owns end-to-end. Every other step is closed by
+              // the tool_request handler below, keyed on the request id — but
+              // `explore` runs entirely inside the worker (no host-side tool of
+              // that name), so without this its step would sit at "running"
+              // for the rest of the session.
+              case 'tool_step_update':
+                this.post(run, {
+                  type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+                  id: result.id,
+                  status: result.stepStatus ?? 'running',
+                  summary: result.summary,
+                });
+                break;
+
               case 'tool_request':
                 // Codebase tools need the `vscode` workspace APIs, which this
                 // worker thread cannot reach — execute on the main thread and
                 // send the result back so the worker's tool loop can continue.
                 console.log(`[codebase-tool] → ${result.name}(${JSON.stringify(result.arguments)})`);
+                toolsInFlight++;
+                armStallTimer(); // switch to the in-flight window for the duration
                 this.executeCodebaseTool(run, result.name!, result.arguments, codebaseRoots ?? [], result.id)
+                  .finally(() => {
+                    toolsInFlight = Math.max(0, toolsInFlight - 1);
+                    armStallTimer();
+                  })
                   .then((toolResult) => {
                     const summary = JSON.stringify(toolResult);
                     console.log(`[codebase-tool] ← ${result.name}: ${summary.length} chars${summary.length <= 300 ? ` — ${summary}` : ''}`);
@@ -2282,14 +2596,18 @@ Query: "${query}"`;
                 break;
 
               case 'key_failover':
-                // A configured key hit a 429 and we rotated to the next one —
-                // previously only a console.warn in the extension host log.
-                // Surface it as a transient status label and a persistent
-                // transcript step so the user knows why the response is slower.
-                this.postStatus(run, result.message || 'Rate limited — switching API key…');
+                // A provider request was retried instead of failing: either a
+                // configured key hit a 429 and we rotated to the next one, or
+                // the provider itself is overloaded and withKeyFailover is
+                // waiting it out. Both were previously only a console.warn in
+                // the extension host log. Surface it as a transient status
+                // label and a persistent transcript step so the user knows why
+                // the response is slower — an unexplained 20-second pause is
+                // indistinguishable from a hang.
+                this.postStatus(run, result.message || 'Provider retry in progress…');
                 this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,
-                  step: { kind: 'info', title: result.message || 'Rate limited — switching API key' },
+                  step: { kind: 'info', title: result.message || 'Provider retry in progress' },
                 });
                 break;
 
@@ -2340,6 +2658,10 @@ Query: "${query}"`;
                   if (run.agentTranscript) run.agentTranscript.push(...next);
                   else run.agentTranscript = next;
                 }
+                // Park it on disk too, throttled. The terminal paths flush
+                // immediately; this trailing save is the only thing that
+                // survives the extension host itself going down mid-run.
+                this.scheduleResumeSave(run, 'The run did not finish.');
                 break;
 
               case 'resumed': {

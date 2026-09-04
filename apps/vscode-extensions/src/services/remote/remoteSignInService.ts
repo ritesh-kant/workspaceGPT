@@ -21,6 +21,7 @@ export type SessionVerifyResult =
 export function webviewFieldsFromProfile(profile: RemoteProfile | null) {
   return {
     githubLogin: profile?.github_login,
+    email: profile?.email ?? undefined,
     plan: profile?.plan,
     requestsUsedThisWeek: profile?.requests_used_this_week,
     requestsLimitWeekly: profile?.requests_limit_weekly,

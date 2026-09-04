@@ -66,8 +66,15 @@ export interface AutoVerifyConfig {
   perRound?: number;
 }
 
-/** What one finished check means for the run. */
-export type CheckVerdict = 'passed' | 'failed' | 'unavailable';
+/**
+ * What one finished check means for the run. 'skipped' is "nothing to run for
+ * THIS file" (no test file exists for it) — not a failure, and not a broken
+ * runner either, so it neither blocks the answer nor retires the kind.
+ */
+export type CheckVerdict = 'passed' | 'failed' | 'unavailable' | 'skipped';
+
+/** run_checks declined to derive a target — the planner's own wording (verifyTools.ts). */
+const NOTHING_TO_RUN_RE = /no test file found for|is .*package directory/i;
 
 /** The shape of a `run_checks` result, as far as this needs to read it. */
 export interface CheckResultLike {
@@ -140,6 +147,11 @@ export class AutoVerifyTracker {
   noteOutcome(kind: CheckKindName, result: CheckResultLike | null | undefined): CheckVerdict {
     if (result?.cached) this.executed--;
     if (result?.error) {
+      // A file with no test of its own is a fact about the file, not the
+      // runner: the next changed file may well have one. Counting it toward
+      // DERIVATION_FAILURE_LIMIT retired tests for the whole run after two
+      // untested helpers.
+      if (NOTHING_TO_RUN_RE.test(String(result.error))) return 'skipped';
       const seen = (this.derivationFailures.get(kind) ?? 0) + 1;
       this.derivationFailures.set(kind, seen);
       if (seen >= DERIVATION_FAILURE_LIMIT) this.unavailable.add(kind);

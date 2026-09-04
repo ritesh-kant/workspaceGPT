@@ -135,6 +135,25 @@ export class SessionsHtmlTemplate {
       background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
       color: var(--vscode-list-activeSelectionForeground, inherit);
     }
+    .row-delete {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+    }
+    .row:hover .row-delete { display: flex; }
+    .row-delete:hover {
+      background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+      color: var(--vscode-errorForeground, inherit);
+    }
     /* Empty leading column keeps titles aligned with the nav item labels. */
     .dot {
       width: 14px;
@@ -149,7 +168,20 @@ export class SessionsHtmlTemplate {
       border-radius: 50%;
       background: transparent;
     }
-    .row.active .dot::before { background: var(--vscode-charts-green, #89d185); }
+    /* Run-status dot: pulsing green while a session's turn is in flight,
+       solid blue if it finished in the background and hasn't been opened
+       yet, solid red if it failed and hasn't been opened yet. Independent
+       of selection, which the row background already conveys. */
+    .row.running .dot::before {
+      background: var(--vscode-charts-green, #89d185);
+      animation: dot-pulse 1.2s ease-in-out infinite;
+    }
+    .row.completed .dot::before { background: var(--vscode-charts-blue, #3794ff); }
+    .row.errored .dot::before { background: var(--vscode-charts-red, #f85149); }
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
     .title {
       flex: 1;
       min-width: 0;
@@ -208,10 +240,14 @@ export class SessionsHtmlTemplate {
       LOAD_CHAT_SESSION: MESSAGE_TYPES.LOAD_CHAT_SESSION,
       SESSIONS_LIST: MESSAGE_TYPES.SESSIONS_LIST,
       SESSIONS_TOGGLE_SEARCH: MESSAGE_TYPES.SESSIONS_TOGGLE_SEARCH,
+      DELETE_CHAT_HISTORY: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
     })};
     let sessions = [];
     let activeId = null;
     let query = '';
+    let runningIds = new Set();
+    let completedIds = new Set();
+    let erroredIds = new Set();
 
     const listEl = document.getElementById('list');
     const searchWrap = document.getElementById('searchWrap');
@@ -249,6 +285,9 @@ export class SessionsHtmlTemplate {
       if (msg.type === MESSAGE_TYPES.SESSIONS_LIST) {
         sessions = Array.isArray(msg.sessions) ? msg.sessions : [];
         if (msg.activeSessionId !== undefined) activeId = msg.activeSessionId || null;
+        runningIds = new Set(Array.isArray(msg.runningSessionIds) ? msg.runningSessionIds : []);
+        completedIds = new Set(Array.isArray(msg.completedSessionIds) ? msg.completedSessionIds : []);
+        erroredIds = new Set(Array.isArray(msg.erroredSessionIds) ? msg.erroredSessionIds : []);
         render();
       }
       if (msg.type === MESSAGE_TYPES.SESSIONS_TOGGLE_SEARCH) {
@@ -328,6 +367,10 @@ export class SessionsHtmlTemplate {
         html += '<div class="group-header">' + label + '</div>';
         for (const session of items) {
           const active = session.id === activeId ? ' active' : '';
+          const running = runningIds.has(session.id) ? ' running' : '';
+          const errored = !running && erroredIds.has(session.id) ? ' errored' : '';
+          const completed = !running && !errored && completedIds.has(session.id) ? ' completed' : '';
+          const statusLabel = running ? ' - running' : errored ? ' - failed' : completed ? ' - done' : '';
           const added = Number(session.added) || 0;
           const removed = Number(session.removed) || 0;
           let diffs = '';
@@ -339,11 +382,16 @@ export class SessionsHtmlTemplate {
           }
           const title = escapeHtml(session.title || 'New Chat');
           const age = escapeHtml(formatAge(session.updatedAt || 0, now));
-          html += '<button class="row' + active + '" type="button" title="' + title + '" data-id="' +
+          html += '<button class="row' + active + running + errored + completed + '" type="button" title="' +
+            title + escapeHtml(statusLabel) + '" data-id="' +
             escapeHtml(session.id) + '">' +
             '<span class="dot"></span>' +
             '<span class="title">' + title + '</span>' +
             '<span class="meta">' + diffs + '<span class="age">' + age + '</span></span>' +
+            '<span class="row-delete" data-delete-id="' + escapeHtml(session.id) + '" title="Delete chat" role="button" aria-label="Delete chat">' +
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+            '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '</svg></span>' +
             '</button>';
         }
       }
@@ -351,6 +399,13 @@ export class SessionsHtmlTemplate {
     }
 
     listEl.addEventListener('click', (event) => {
+      const deleteBtn = event.target.closest('.row-delete');
+      if (deleteBtn) {
+        event.stopPropagation();
+        const id = deleteBtn.getAttribute('data-delete-id');
+        if (id) vscode.postMessage({ type: MESSAGE_TYPES.DELETE_CHAT_HISTORY, sessionId: id });
+        return;
+      }
       const row = event.target.closest('.row');
       if (!row) return;
       const id = row.getAttribute('data-id');

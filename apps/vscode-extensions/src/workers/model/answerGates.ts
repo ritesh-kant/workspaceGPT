@@ -9,6 +9,73 @@
  */
 
 /**
+ * Which harness the run gets.
+ *
+ * Every phrase gate in this file was added in response to one observed
+ * failure of a 14B-class local model — the comments say so, individually.
+ * They earned their place there, and they are the wrong instrument on a
+ * capable model: each one that fires spends a whole iteration re-answering,
+ * and the prompt scaffolding they need is a tax on every single turn. On
+ * ticket #1534774 the arithmetic was stark — a 33-turn cap, and a run that
+ * never produced an in-loop answer at all, so not one phrase gate ever ran
+ * while the turns drained away.
+ *
+ * The split is by KIND, not by strictness:
+ *
+ * - `strong-model` runs the STRUCTURAL gates only — the ones that check
+ *   state, which no phrasing can talk its way out of: zero writes on an
+ *   implement mandate, a last write that failed, claimed changes with nothing
+ *   on disk, zero successful tool results, an empty answer, unverified
+ *   writes, and the P2 pacing signal.
+ * - `small-model` adds the phrase gates on top: premature ambiguity,
+ *   permission-seeking, plan-instead-of-execute, narrated tool plans,
+ *   incomplete-answer, the false "no write tool" claim, force-read, and the
+ *   blanket completeness reflection.
+ *
+ * Note what is NOT gated: honesty. A fabricated completion report is caught
+ * in both profiles, because "the model is good enough to be trusted" is
+ * exactly the assumption that failure violates.
+ */
+export type HarnessProfile = 'small-model' | 'strong-model';
+
+/**
+ * Model families that are commonly run at 7B-32B, where the phrase gates were
+ * earned. Matched on the model ID because the PROVIDER is not enough on its
+ * own: `isLocalProvider` only detects Ollama, so a qwen-14B served through
+ * OpenRouter would otherwise be handed the strong-model harness and lose the
+ * gates that exist for exactly it.
+ *
+ * Deliberately generous, because the two errors are not symmetric: calling a
+ * capable model "small" costs some turns and prompt weight (today's
+ * behaviour, which shipped for months), while calling a weak model "strong"
+ * removes the guardrails holding its run together.
+ */
+export const SMALL_MODEL_HINT_RE =
+  /\b(qwen|qwq|llama|codellama|mistral|mixtral|gemma|phi-?[0-9]|starcoder|stablelm|tinyllama|openhermes|nous-?hermes|dolphin|granite|deepseek-coder|codestral)\b/i;
+
+/**
+ * Local (Ollama) runs and small-model IDs get the small-model harness;
+ * anything else — the managed provider included — gets the structural one.
+ * An explicit override wins over both, which is what lets the eval harness
+ * run one ticket under each profile.
+ */
+export function resolveHarnessProfile(opts: {
+  isLocalProvider: boolean;
+  modelId?: string | null;
+  override?: string | null;
+}): HarnessProfile {
+  if (opts.override === 'small-model' || opts.override === 'strong-model') return opts.override;
+  if (opts.isLocalProvider) return 'small-model';
+  if (opts.modelId && SMALL_MODEL_HINT_RE.test(opts.modelId)) return 'small-model';
+  return 'strong-model';
+}
+
+/** Do the phrasing-based answer gates run in this profile? */
+export function phraseGatesEnabled(profile: HarnessProfile): boolean {
+  return profile === 'small-model';
+}
+
+/**
  * A partial answer that ANNOUNCES remaining work instead of doing it ("the
  * cloudwatch.tf file needs to be examined to see the schedule") — observed
  * live with gemini-2.5-flash, forcing the user to type "continue".
@@ -155,6 +222,143 @@ export const IMPLEMENT_MANDATE_RE =
   /\b(implement (the|this|a) (fix|change|ticket|solution)|work on (the |this )?ticket|apply the (fix|change)|fix (the|this) (bug|issue|ticket)|resolve (the|this) (bug|issue|ticket))\b/i;
 
 /**
+ * The assistant NARRATING that it has found the cause — the moment a run
+ * should stop reading and start editing.
+ *
+ * Pinned to the observed #1534774 transcript, where the model's own prose
+ * between tool calls read "This is the key insight!" (step 50) and "Now I
+ * have a complete understanding. The fix needs to clear the storage data…"
+ * (step 74), and it then spent the rest of a 33-turn cap reading. Feeds the
+ * commit nudge, nothing else: a false positive costs one reminder turn, so
+ * this can afford to be generous where the honesty gates cannot.
+ */
+export const ROOT_CAUSE_NARRATION_RE =
+  /\b(root cause (is|was|lies|sits|turns out)|the fix (needs to|is to|would be|should|must)|key insight|complete understanding|now i (fully |finally )?understand (the )?(root cause|bug|problem|issue|why)|now i (can )?see the (full|whole|complete|entire) (picture|flow|chain)|the (bug|problem|issue) is (that|in|the)|that explains (the|why)|this is the (root cause|bug|problem|key insight))\b/i;
+
+/*
+ * Calibrated against all 24 prose notes of the #1534774 transcript. Two
+ * earlier drafts were too loose to be useful: a bare "this is the" matched
+ * "(this is the key flag for the rejection section)" at turn ~5, and a bare
+ * "now i understand" matched "Now I understand the architecture. The flow
+ * is:" at turn ~10 — both mid-investigation, and either one would have spent
+ * the nudge long before the model had anything to commit. Understanding of
+ * the CAUSE is the trigger; understanding of the architecture is not.
+ */
+
+/**
+ * Does this message ask for the workspace to be CHANGED?
+ *
+ * Separate from IMPLEMENT_MANDATE_RE on purpose. That one is deliberately
+ * narrow and gates the ticket-completion nudge, where a false positive would
+ * tell "summarize ticket 1234" to start editing; widening it would put that
+ * at risk. But narrow also means it misses the most ordinary request there
+ * is: "fix the crash in foo.ts" matches none of its alternatives, because
+ * "crash" is not in its (bug|issue|ticket) list — so without this, the P2
+ * pacing signal and the unfinished-run exit would cover ticket runs and
+ * approved plans while leaving hand-typed fix requests exactly as they were.
+ *
+ * The asymmetry that makes a wider net safe here: a false positive costs one
+ * reminder message on a run that was not going to edit anything, while a
+ * false negative costs the whole failure mode this exists to catch.
+ */
+export const WRITE_INTENT_RE =
+  /\b(fix|fixing|implement|apply|add|remove|delete|drop|rename|update|refactor|migrate|replace|extract|revert|correct|resolve|patch|wire|hook up|clean up|handle|support|enable|disable|bump|upgrade)\b/i;
+
+/**
+ * Interrogatives that make a message a QUESTION about the code rather than an
+ * instruction to change it — "how do I fix the crash", "why is the mapper
+ * updating the status". Note that polite imperatives are NOT questions
+ * whatever their punctuation: "can you fix the crash?" is an instruction, so
+ * neither a leading "can" nor a trailing question mark disqualifies a message.
+ */
+const LEADING_INTERROGATIVE_RE = /^\s*\W*(how|what|why|where|which|when|who|whose|is|are|was|were|does|do|did)\b/i;
+
+export function hasWriteIntent(prompt: string): boolean {
+  const p = String(prompt ?? '').trim();
+  if (!p) return false;
+  if (LEADING_INTERROGATIVE_RE.test(p)) return false;
+  return WRITE_INTENT_RE.test(p);
+}
+
+/**
+ * Should the commit nudge fire on this round, and on which trigger?
+ *
+ * A pure function so the arithmetic is testable — it decides whether a run
+ * gets its one chance to be told "stop reading, start editing", and a silent
+ * off-by-one here would be invisible in production. The worker owns the two
+ * one-shot flags and passes them back in.
+ *
+ * `narration` fires the round the model says it found the cause; `budget`
+ * fires once the run is deep enough into its turns that reading can no longer
+ * pay for itself. They are independent: spending one must not disarm the
+ * other (see the flags in runAgentLoop).
+ */
+export function commitNudgeTriggers(ctx: {
+  /** The assistant's prose on this round, alongside its tool calls. */
+  assistantProse: string;
+  /** Zero-based index of the round just executed. */
+  turnIndex: number;
+  iterationCap: number;
+  writesApplied: number;
+  writeIntent: boolean;
+  planMode?: boolean;
+  budgetExhausted?: boolean;
+  narrationUsed: boolean;
+  budgetUsed: boolean;
+}): { fire: boolean; narration: boolean; budget: boolean; turnsLeft: number } {
+  const turnsLeft = ctx.iterationCap - ctx.turnIndex - 1;
+  const none = { fire: false, narration: false, budget: false, turnsLeft };
+  // Nothing to commit to, nothing left to commit with, or committing is not
+  // this turn's job.
+  if (ctx.planMode || ctx.budgetExhausted) return none;
+  if (!ctx.writeIntent) return none;
+  if (ctx.writesApplied > 0) return none;
+  if (turnsLeft <= 0) return none;
+  // Third round at the earliest: an opening "the problem is probably X" is a
+  // hypothesis, and a run pushed to edit on it would skip the investigation
+  // that makes the edit correct.
+  if (ctx.turnIndex < 2) return none;
+  const narration = !ctx.narrationUsed && ROOT_CAUSE_NARRATION_RE.test(ctx.assistantProse || '');
+  const budget = !ctx.budgetUsed && ctx.turnIndex >= Math.floor(ctx.iterationCap * 0.6);
+  return { fire: narration || budget, narration, budget, turnsLeft };
+}
+
+/**
+ * A run that was supposed to CHANGE something, ran out of steps or output
+ * budget, and changed nothing.
+ *
+ * Structural on purpose. Every phrase gate in this file missed the #1534774
+ * cap-hit answer — premature-ambiguity, permission-seeking, change-plan,
+ * incomplete-answer and claims-changes all returned false, and its "## 🚫
+ * Blocked" heading additionally satisfied TICKET_TERMINAL_RE, so the harness
+ * recorded a legitimate ending and the host's one-shot auto-resume never
+ * fired. Matching better phrasing is whack-a-mole; the fact that survives any
+ * rephrasing is that the turns ran out with an untouched tree.
+ *
+ * Only the two zero-write endings that are genuinely FINISHED are spared: a
+ * "## No change needed" report is a real answer, so re-running it would just
+ * spend a second budget confirming it. A "## Blocked" at the cap is NOT
+ * spared — blocked-because-out-of-steps is exactly the failure this catches,
+ * and a resumed run is free to conclude Blocked again on its own merits.
+ */
+export function isUnfinishedWriteRun(
+  answer: string,
+  ctx: { writesApplied: number; writeIntent: boolean; planMode?: boolean }
+): boolean {
+  if (ctx.planMode) return false;
+  if (ctx.writesApplied > 0) return false;
+  if (!ctx.writeIntent) return false;
+  return !NO_CHANGE_TERMINAL_RE.test(String(answer ?? ''));
+}
+
+/**
+ * The one zero-write ending that is finished rather than interrupted — a
+ * subset of TICKET_TERMINAL_RE, which also admits "## Blocked".
+ */
+export const NO_CHANGE_TERMINAL_RE =
+  /^\s*(#{1,4}|\*\*)\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(no change (is )?needed|nothing to change|already (fixed|implemented|resolved))\b/imu;
+
+/**
  * Is this final answer stall-shaped — any of the four failure signatures?
  * Single source of truth shared by the worker (tags its 'done' message, since
  * only it knows writesApplied) and the host (transcript retention + the
@@ -185,7 +389,7 @@ export function isStallShapedAnswer(answer: string): boolean {
  * model cannot phrase its way around.
  */
 export const CLAIMS_CHANGES_RE =
-  /\b(changes made|implemented fix|fix (implemented|applied|landed)|i (have )?(successfully )?(changed|renamed|updated|modified|created|fixed|implemented|applied|removed|replaced|edited)|(has|have) been (\w+ly )?(changed|renamed|updated|modified|created|fixed|implemented|applied|removed|replaced)|(was|were) (\w+ly )?(changed|renamed|updated|replaced|removed)|successfully (changed|renamed|updated|modified|created|fixed|implemented|applied)|is (now )?(removed|replaced)|now passes)\b|^\s*#{1,4}\s*implemented\b/im;
+  /\b(changes made|implemented fix|fix (implemented|applied|landed)|i (have )?(successfully )?(changed|renamed|updated|modified|created|fixed|implemented|applied|removed|replaced|edited|added|introduced|extracted|wired|rewired|refactored|moved)|(has|have) been (\w+ly )?(changed|renamed|updated|modified|created|fixed|implemented|applied|removed|replaced)|(was|were) (\w+ly )?(changed|renamed|updated|replaced|removed)|successfully (changed|renamed|updated|modified|created|fixed|implemented|applied)|is (now )?(removed|replaced)|now passes)\b|^\s*#{1,4}\s*implemented\b/im;
 
 /**
  * The answer claims a WRITE tool is missing from its tool list ("the
@@ -199,3 +403,72 @@ export const CLAIMS_CHANGES_RE =
  */
 export const MISSING_TOOL_CLAIM_RE =
   /\b(edit_file|create_file|delete_file|write tool|file[- ]write tool|edit tool)\b[^.\n]{0,120}\b(not (been )?(exposed|available|provided|granted)|unavailable|missing|absent|not in (my|the|this) tool)|\b(no|without an?|lacks? an?) (write|edit) tool\b|\bwrite tools? (is|are) not (available|exposed|provided)\b/i;
+
+/**
+ * A FINAL-REPORT status heading that asserts the work is DONE. Deliberately
+ * excludes the two headings a zero-write run may legitimately end on
+ * ("## Blocked", "## No change needed") — those are in REPORT_STATUS_HEADING_RE
+ * and TICKET_TERMINAL_RE instead.
+ */
+export const REPORT_CLAIMS_DONE_RE =
+  /^##\s+(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(done|partially done|partial|complete|completed|fixed|implemented)\b/imu;
+
+/**
+ * The report's "### Changes" section. FINAL_REPORT_FORMAT says to OMIT it when
+ * nothing changed, so its presence is a first-person claim that files were
+ * edited — and a cleaner signal than any verb list, since a fabricated report
+ * lists its invented files exactly here.
+ */
+export const REPORT_CHANGES_SECTION_RE =
+  /^\s*#{2,4}\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?changes\b/imu;
+
+/** Does this answer claim that files were changed — by prose or by report section? */
+export function claimsFileChanges(answer: string): boolean {
+  const a = String(answer ?? '');
+  return CLAIMS_CHANGES_RE.test(a) || REPORT_CHANGES_SECTION_RE.test(a);
+}
+
+/**
+ * Is this answer claiming work that no write in this session backs up?
+ *
+ * The delivery-time honesty stamp used to fire only on runs where writing was
+ * already on the table (a ticket implement mandate, an approved plan, or an
+ * attempted write). Observed live right after ticket #1534774 stalled: the
+ * user asked the plain question "give me all the steps you did to find the
+ * root cause and fix it", and the answer was a full "## ✅ Done — fixed"
+ * report — invented files, an invented regression test, "12 passed" — on a
+ * turn that called no write tool at all. None of the three scope conditions
+ * held, so nothing was stamped and a fabricated completion report shipped.
+ *
+ * So the scope conditions become one of two ways in, not the only way: a
+ * report that HEADS ITSELF "Done" while claiming file changes is checkable on
+ * its own, whatever kind of turn produced it.
+ *
+ * The guards are what keep it honest in the other direction:
+ * - `planMode` — proposing edits in prose is that mode's whole deliverable.
+ * - `priorWritesInSession` — turn 1 applies the fix, turn 2 recaps it truthfully.
+ *   That recap has zero writes of its own and must not be called a lie.
+ * - `claimsFileChanges` — an answer with no change claim is not stamped even
+ *   when it is headed "Done" (a "run the tests" task legitimately ends that
+ *   way with an untouched tree).
+ */
+export function isUnbackedCompletionClaim(
+  answer: string,
+  ctx: {
+    /** Writes applied by THIS worker run. */
+    writesApplied: number;
+    /** Writes applied by EARLIER turns of this chat session (host-tracked). */
+    priorWritesInSession?: number;
+    /** Writing was already expected: ticket implement mandate, approved plan, or a write was attempted. */
+    writeExpected?: boolean;
+    planMode?: boolean;
+  }
+): boolean {
+  const a = String(answer ?? '');
+  if (!a.trim()) return false;
+  if (ctx.planMode) return false;
+  if (ctx.writesApplied > 0) return false;
+  if ((ctx.priorWritesInSession ?? 0) > 0) return false;
+  if (!claimsFileChanges(a)) return false;
+  return !!ctx.writeExpected || REPORT_CLAIMS_DONE_RE.test(a);
+}

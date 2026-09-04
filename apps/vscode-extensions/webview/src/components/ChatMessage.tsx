@@ -3,7 +3,7 @@ import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import CodeBlock from './CodeBlock';
-import AgentTimeline from './AgentTimeline';
+import AgentTimeline, { formatDuration } from './AgentTimeline';
 import FilesChangedBar from './FilesChangedBar';
 import InlineFileRef from './InlineFileRef';
 import { parseFileRef } from '../utils/fileRefs';
@@ -264,6 +264,14 @@ interface ChatMessageProps {
   /** Present when the turn this message triggered errored out — resends it. */
   onRetry?: () => void;
   /**
+   * Error bubbles only: the interrupted run the host is still holding. Its
+   * presence is what turns the card from a dead end into something the user
+   * can act on.
+   */
+  resumable?: { steps: number; writesApplied?: number };
+  /** Picks the interrupted run back up instead of starting the task over. */
+  onResume?: () => void;
+  /**
    * Rewrite this user message and re-ask from here. Absent while a run is in
    * flight (forking a live conversation would race the answer being streamed).
    */
@@ -292,6 +300,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   isReverting,
   onUndo,
   onRetry,
+  resumable,
+  onResume,
   onEdit,
   onEditingChange,
   onFeedback,
@@ -490,9 +500,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         )
       ) : (
         <>
-          {agentSteps && agentSteps.length > 0 && (
-            <AgentTimeline steps={agentSteps} durationMs={turnSummary?.durationMs} />
-          )}
+          {agentSteps && agentSteps.length > 0 && <AgentTimeline steps={agentSteps} />}
           <div className="message-content markdown-content">
             <MarkdownBody
               content={content}
@@ -503,6 +511,25 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
           </div>
           {turnSummary && turnSummary.filesChanged.length > 0 && (
             <FilesChangedBar summary={turnSummary} report={content} />
+          )}
+          {isError && resumable && onResume && (
+            <div className="error-resume">
+              <span className="error-resume-text">
+                The interrupted run is still held, including everything it had already read
+                {resumable.writesApplied
+                  ? ` and ${resumable.writesApplied} file change${resumable.writesApplied === 1 ? '' : 's'} already applied`
+                  : ''}
+                .
+              </span>
+              <button
+                type="button"
+                className="error-resume-button"
+                onClick={onResume}
+                title={`Continue from where it stopped — ${resumable.steps} model message(s) of context carried over, instead of investigating from scratch`}
+              >
+                Resume
+              </button>
+            </div>
           )}
           {!isError && (
             <div className="message-feedback">
@@ -548,6 +575,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                   <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
                 </svg>
               </button>
+              {turnSummary?.durationMs != null && (
+                <span className="message-duration">{formatDuration(turnSummary.durationMs)}</span>
+              )}
             </div>
           )}
         </>
@@ -569,5 +599,8 @@ export default React.memo(ChatMessage, (prev, next) => (
   prev.isLive === next.isLive &&
   !!prev.onUndo === !!next.onUndo &&
   !!prev.onRetry === !!next.onRetry &&
+  prev.resumable?.steps === next.resumable?.steps &&
+  prev.resumable?.writesApplied === next.resumable?.writesApplied &&
+  !!prev.onResume === !!next.onResume &&
   !!prev.onEdit === !!next.onEdit
 ));

@@ -5,6 +5,7 @@ import {
   WorkspaceRootRequiredError,
   resolveAgainstRoots,
 } from '../codebase/codebaseTools';
+import { stripLineNumbers } from '../codebase/lineNumbers';
 
 /**
  * Agent WRITE tools (edit_file / create_file / delete_file) — the first tools
@@ -284,7 +285,30 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
 
 /** One search/replace against `before`; throws model-actionable errors on miss/ambiguity. */
 function applyOneEdit(before: string, args: EditReplacement, displayPath: string): { after: string; n: number; note?: string } {
-  const occurrences = countOccurrences(before, args.oldString);
+  let occurrences = countOccurrences(before, args.oldString);
+  let denumberedPrefixes = false;
+  // read_file output is line-numbered ("  12→code"), and the instruction to
+  // drop the prefix when copying into oldString is exactly the kind a model
+  // forgets on turn 25. Undo it in code instead: digits are not whitespace,
+  // so the whitespace-tolerant rescue below could never recover this, and the
+  // edit would fail with a confusing "not found verbatim" on text the model
+  // copied faithfully. stripLineNumbers only acts when EVERY non-blank line
+  // carries the prefix, so code containing a stray arrow is untouched.
+  if (occurrences === 0) {
+    const denumbered = stripLineNumbers(args.oldString);
+    if (denumbered !== args.oldString && countOccurrences(before, denumbered) > 0) {
+      denumberedPrefixes = true;
+      args = {
+        ...args,
+        oldString: denumbered,
+        // The replacement was copied from the same numbered output, so it
+        // carries the same prefixes — and writing those into the file would
+        // corrupt it.
+        newString: stripLineNumbers(args.newString),
+      };
+      occurrences = countOccurrences(before, args.oldString);
+    }
+  }
   if (occurrences === 0) {
     // Whitespace-tolerant rescue before erroring: if the file contains exactly
     // ONE region whose non-whitespace content equals oldString's, the model
@@ -392,7 +416,13 @@ function applyOneEdit(before: string, args: EditReplacement, displayPath: string
   }
 
   const after = args.replaceAll ? before.split(args.oldString).join(args.newString) : before.replace(args.oldString, args.newString);
-  return { after, n: args.replaceAll ? occurrences : 1 };
+  return {
+    after,
+    n: args.replaceAll ? occurrences : 1,
+    ...(denumberedPrefixes
+      ? { note: "oldString carried read_file's line-number prefixes; they were stripped before matching (copy the code without the \"12→\" prefix next time)" }
+      : {}),
+  };
 }
 
 export async function prepareCreateFile(args: CreateFileArgs, roots: NamedRoot[]): Promise<PreparedWrite> {

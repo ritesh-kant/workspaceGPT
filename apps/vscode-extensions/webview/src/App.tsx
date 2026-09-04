@@ -34,6 +34,9 @@ import {
   useUiStore,
 } from './store';
 import { modelDefaultConfig } from './store/modelStore';
+// The word the Resume button sends, defined next to the patterns the host
+// parses it with — see continuationIntent's header for why it must be bare.
+import { RESUME_MESSAGE } from '../../src/utils/continuationIntent';
 import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS } from './constants';
 import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
@@ -515,6 +518,35 @@ const App: React.FC = () => {
       .map(([id]) => id)
   );
 
+  // Same running signal, but including the visible session (whose turn state
+  // lives at the top level of the store, not in liveSessions) — fed to the
+  // native Sessions sidebar below so it can color-code each row's status dot
+  // for sessions running in parallel.
+  const allRunningSessionIds = new Set(runningSessionIds);
+  if (currentSessionId && (isLoading || isStreaming)) {
+    allRunningSessionIds.add(currentSessionId);
+  }
+  // Backgrounded sessions whose turn just finished while off-screen — kept
+  // marked as "done, not yet seen" / "failed, not yet seen" until the user
+  // actually opens them: activateLiveSession() (see handleSelectSession)
+  // consumes the liveSessions entry on open, which drops it out of both sets
+  // on its own. The visible session is excluded on purpose — it's on screen,
+  // so it's already "read" the moment its turn finishes.
+  const erroredSessionIds = new Set<string>();
+  const completedSessionIds = new Set<string>();
+  for (const [id, entry] of Object.entries(liveSessions)) {
+    if (entry.isLoading || entry.isStreaming) continue;
+    const lastMessage = entry.messages[entry.messages.length - 1];
+    if (lastMessage?.isError) {
+      erroredSessionIds.add(id);
+    } else if (lastMessage && !lastMessage.isUser) {
+      completedSessionIds.add(id);
+    }
+  }
+  const runningIdsKey = [...allRunningSessionIds].sort().join(',');
+  const erroredIdsKey = [...erroredSessionIds].sort().join(',');
+  const completedIdsKey = [...completedSessionIds].sort().join(',');
+
   // Sha currently being reverted to — disables the triggering message's undo
   // button until the host confirms (AGENT_REVERT_DONE).
   const [revertingSha, setRevertingSha] = useState<string | null>(null);
@@ -782,6 +814,7 @@ const App: React.FC = () => {
             content: formatChatError(message.message || 'An unknown error occurred.'),
             isUser: false,
             isError: true,
+            ...(message.resumable ? { resumable: message.resumable } : {}),
           });
           store.bgPatch(sessionId, { isLoading: false, isStreaming: false, statusText: '' });
           saveBg();
@@ -913,6 +946,9 @@ const App: React.FC = () => {
             content: formatChatError(message.message || 'An unknown error occurred.'),
             isUser: false,
             isError: true,
+            // Present when the host is still holding the interrupted run —
+            // drives the Resume button on the card (see ChatMessage).
+            ...(message.resumable ? { resumable: message.resumable } : {}),
           });
           setStatusText('');
           setIsLoading(false);
@@ -1122,6 +1158,19 @@ const App: React.FC = () => {
       sessionId: currentSessionId,
     });
   }, [currentSessionId]);
+
+  // Report which sessions are running/completed/errored whenever one of
+  // those sets actually changes (keyed on the sorted id lists, not the Sets
+  // themselves, since those are rebuilt fresh every render) — the Sessions
+  // sidebar webview uses this to color its per-row status dot.
+  useEffect(() => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SESSIONS_RUNNING_STATE,
+      runningSessionIds: runningIdsKey ? runningIdsKey.split(',') : [],
+      completedSessionIds: completedIdsKey ? completedIdsKey.split(',') : [],
+      erroredSessionIds: erroredIdsKey ? erroredIdsKey.split(',') : [],
+    });
+  }, [runningIdsKey, completedIdsKey, erroredIdsKey]);
 
   // Auto-save whenever messages change (debounced)
   useEffect(() => {
@@ -1873,6 +1922,37 @@ const App: React.FC = () => {
     });
   };
 
+  /**
+   * Picks the interrupted run back up. Sent through the ordinary send path, so
+   * every host code path this touches is the already-tested one that a typed
+   * "continue" takes — the button is a shortcut, not a second mechanism.
+   *
+   * The error bubble is kept rather than removed (unlike handleRetry): it is
+   * the record of what interrupted the run, and the resumed turn is an
+   * addition to the conversation, not a replacement for it.
+   */
+  const handleResume = () => {
+    if (isLoading || isStreaming) return;
+    if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
+    resetStreamBuffer();
+    addMessage({ content: RESUME_MESSAGE, isUser: true, timestamp: Date.now() });
+    setIsLoading(true);
+    setIsStreaming(false);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId: currentSessionId,
+      message: RESUME_MESSAGE,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+      // The mode dial as it stands now, matching what typing "continue" would
+      // do — a resume must not silently re-grant autonomy the user has since
+      // switched off.
+      ...modeFlags(),
+    });
+  };
+
   // Rewrite an earlier user message and re-ask from that point: the edited turn
   // and everything after it are dropped, then the new wording is sent as a
   // fresh turn. `historyOverride` carries the surviving prefix so the host's
@@ -2083,6 +2163,15 @@ const App: React.FC = () => {
                   onRetry={
                     message.isUser && messages[index + 1]?.isError
                       ? () => handleRetry(message.content, index + 1, message.attachments, message.mentions)
+                      : undefined
+                  }
+                  resumable={message.isError ? message.resumable : undefined}
+                  onResume={
+                    // Only the LAST message may be resumed: an error further
+                    // up was already answered by whatever follows it, and its
+                    // transcript is long gone.
+                    message.isError && message.resumable && index === messages.length - 1 && !isLoading && !isStreaming
+                      ? handleResume
                       : undefined
                   }
                   onEdit={

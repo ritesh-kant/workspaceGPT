@@ -7,12 +7,14 @@ import { EmbeddingSearchResult } from 'src/types/types';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
 import { extractBalancedJsonObjects } from './jsonExtract';
 import { runExplorationPhase, defaultExplorationConfig } from './explorationPhase';
+import { runExploreSubagent, defaultExploreConfig, EXPLORE_TOOL_NAMES } from './exploreSubagent';
 import {
   INCOMPLETE_ANSWER_RE,
   PERMISSION_SEEKING_RE,
   CHANGE_PLAN_RE,
   PREMATURE_AMBIGUITY_RE,
   TICKET_TERMINAL_RE,
+  isUnbackedCompletionClaim,
   REPORT_SHAPED_RE,
   stripReportPreamble,
   IMPLEMENT_MANDATE_RE,
@@ -20,9 +22,15 @@ import {
   MISSING_TOOL_CLAIM_RE,
   extractAnswerFilePaths,
   isStallShapedAnswer,
+  resolveHarnessProfile,
+  phraseGatesEnabled,
+  commitNudgeTriggers,
+  hasWriteIntent,
+  isUnfinishedWriteRun,
 } from './answerGates';
 import { normalizeModelId } from '../../utils/normalizeModelId';
 import { AutoVerifyTracker, CheckResultLike } from './autoVerify';
+import { stripLineNumbers } from '../../services/codebase/lineNumbers';
 
 interface WorkerData {
   prompt: string;
@@ -77,6 +85,19 @@ interface WorkerData {
    */
   autonomous?: boolean;
   /**
+   * Overrides the harness profile this run would otherwise get from its
+   * provider (see resolveHarnessProfile). Exists so the eval harness can run
+   * the same task under both.
+   */
+  harnessProfile?: 'small-model' | 'strong-model';
+  /**
+   * Files changed by EARLIER turns of this chat session, host-tracked. Lets
+   * the delivery-time honesty stamp tell a fabricated completion report apart
+   * from a truthful recap of a previous turn's real edits — both have zero
+   * writes of their own.
+   */
+  priorWrites?: number;
+  /**
    * Plan mode: this turn's deliverable IS a plan — investigate with read
    * tools, propose exact edits, do not write. Disarms the anti-plan gates
    * (plan-instead-of-execute, ticket-completion, permission-seeking, force-
@@ -107,10 +128,20 @@ const {
   ticketContext,
   autonomous,
   planMode,
+  priorWrites,
+  harnessProfile,
 } = workerData as WorkerData;
 
 // Prefer the full key list; fall back to the single legacy key.
 const failoverKeys = apiKeys && apiKeys.length ? apiKeys : apiKey ? [apiKey] : [];
+
+/**
+ * Per-request retry budget for the OpenAI SDK clients this worker builds.
+ * The SDK retries 408/409/429/5xx itself; its default of 2 gives about 1.5
+ * seconds of backoff, which is not enough to survive a provider hiccup
+ * mid-run. Sustained outages are handled by withKeyFailover.
+ */
+const MODEL_CLIENT_MAX_RETRIES = 4;
 
 /**
  * The user turn's `content` value: a plain string normally, or OpenAI
@@ -127,6 +158,37 @@ function imagesToContentParts(
 function buildUserContent(text: string): string | OpenAI.Chat.Completions.ChatCompletionContentPart[] {
   if (!imageAttachments?.length) return text;
   return [{ type: 'text' as const, text }, ...imagesToContentParts(imageAttachments)];
+}
+
+/**
+ * Every image dataUrl already somewhere in the conversation, so no screenshot
+ * is sent to the model twice.
+ *
+ * Seeded from `imageAttachments`, which on a ticket run ALREADY carries the
+ * ticket's first two screenshots (chatService prefetches them alongside the
+ * user's own attachments). When the model then calls `get_ticket`, the same
+ * images come back in the tool result and used to be pushed again as a
+ * follow-up user turn — so the request carried both screenshots twice, on
+ * every turn of the loop. Base64 screenshots are the largest single thing in
+ * that payload; the duplicate was pure cost, and it grew the request in
+ * exactly the direction that makes a provider more likely to reject it.
+ *
+ * Membership is by dataUrl rather than by name because names are not unique
+ * across work items, and the dataUrl is what actually gets billed.
+ */
+const sentImageDataUrls = new Set<string>((imageAttachments ?? []).map((img) => img.dataUrl));
+
+/**
+ * Filters `images` down to the ones not yet in the conversation, recording
+ * them as sent. Filtering rather than skipping the whole batch matters: only
+ * the first two ticket images are prefetched, so a ticket with four still
+ * needs the other two — and a second `get_ticket` call for the same ticket
+ * now adds nothing instead of resending everything.
+ */
+function unsentImages<T extends { dataUrl: string }>(images: T[]): T[] {
+  const fresh = images.filter((img) => img?.dataUrl && !sentImageDataUrls.has(img.dataUrl));
+  for (const img of fresh) sentImageDataUrls.add(img.dataUrl);
+  return fresh;
 }
 
 /** True when the provider rejected the request specifically over image/vision content, not a generic 400. */
@@ -206,6 +268,30 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'explore',
+      description:
+        'Delegate a QUESTION about the codebase to a read-only investigator that searches and reads on its own budget, and returns a short list of findings with file:line citations. Its file contents never enter your context — you get the conclusions, not the files.\n' +
+        'Reach for it when answering something would mean opening more than about three files you have not read: "where is the rejection status decided and who writes it", "which of these four hooks writes to storage", "what does this mapper actually receive on first render". One call replaces that whole survey.\n' +
+        'Do NOT use it for a file you already know you need — read_file that directly. It cannot change anything, and its findings are leads: open the exact range it cites before you edit against it. If it reports nothing citable, investigate yourself.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: {
+            type: 'string',
+            description: 'One specific question, phrased so a short factual answer settles it. Not a task ("fix the mapper") and not a topic ("the mapper") — a question ("which mapper overwrites the rejected status, and where is it called from?").',
+          },
+          scope: {
+            type: 'string',
+            description: 'Optional hint about where to start — a directory, a package, or a symbol name.',
+          },
+        },
+        required: ['question'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'find_symbol',
       description:
         'Look up a named symbol (function, class, method, variable, interface...) across the workspace using the editor\'s language index. Returns exact definitions with file and line — far more precise than text search for "where is X defined". Prefer this over search_codebase when you know the symbol name.',
@@ -256,7 +342,10 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file in the workspace, optionally restricted to a line range.',
+      description:
+        'Read a file in the workspace, optionally restricted to a line range. Returns up to 2000 lines (64 KB) per call, so most files come back whole in ONE call — do not page through a file in 400-line slices. ' +
+        'Every line is prefixed with its number as `  12→code`; cite those numbers directly as `path/to/file.ts:L12-L20` in your answer. When you copy code into `edit_file`\'s oldString, copy the code only, WITHOUT the `12→` prefix (if you leave it on, the harness strips it for you and says so). ' +
+        'Reading several files is one turn, not several: issue all the read_file calls you need together and they run in parallel. The result also reports `startLine`/`endLine` and `totalLines`, so a follow-up call can name the exact next range instead of re-reading from the top.',
       parameters: {
         type: 'object',
         properties: {
@@ -482,7 +571,7 @@ const TOOL_DEFS = [
     function: {
       name: 'edit_file',
       description:
-        'Replace text in a workspace file. Make ONE call per file: put every change to that file in `edits` (applied in order, all-or-nothing) instead of one call per change. Each oldString must be copied character-for-character from the read_file output — KEEP the original line breaks and indentation, NEVER collapse multiple lines onto one line or retype code from memory — and must appear exactly once. A short line like "return a + b;" often occurs in SEVERAL functions: make oldString the WHOLE enclosing block from its header line down (e.g. the full function), so the match is unique on the first try. Set replaceAll only to change every occurrence. For a single change you may pass oldString/newString at the top level instead of edits. The user reviews and approves each edit before it is applied; a rejection comes back as an error with their feedback.',
+        'Replace text in a workspace file. Make ONE call per file: put every change to that file in `edits` (applied in order, all-or-nothing) instead of one call per change. Each oldString must be copied character-for-character from the read_file output MINUS its `12→` line-number prefixes — KEEP the original line breaks and indentation, NEVER collapse multiple lines onto one line or retype code from memory — and must appear exactly once. A short line like "return a + b;" often occurs in SEVERAL functions: make oldString the WHOLE enclosing block from its header line down (e.g. the full function), so the match is unique on the first try. Set replaceAll only to change every occurrence. For a single change you may pass oldString/newString at the top level instead of edits. The user reviews and approves each edit before it is applied; a rejection comes back as an error with their feedback.',
       parameters: {
         type: 'object',
         properties: {
@@ -565,6 +654,10 @@ const TOOL_DEFS = [
 // read calls, then spent the rest of MAX_TOOL_ITERATIONS calling tools that
 // came back with nothing but "[budget exhausted]".
 const isLocalProvider = (provider ?? '').toLowerCase() === 'ollama';
+// Which harness this run gets — structural gates only, or those plus the
+// phrase gates a 14B-class model needs. See resolveHarnessProfile.
+const HARNESS_PROFILE = resolveHarnessProfile({ isLocalProvider, modelId, override: harnessProfile });
+const PHRASE_GATES = phraseGatesEnabled(HARNESS_PROFILE);
 // 20 for local (was 10): edit-heavy tasks need recovery headroom — a weak
 // model spends turns redundantly (5 get_diagnostics + 3 test runs observed in
 // one 4-edit rename) yet productively, and agent-evals s2 runs kept ending AT
@@ -578,6 +671,13 @@ const isLocalProvider = (provider ?? '').toLowerCase() === 'ollama';
 // single write, which skips every honesty gate by design. Give those runs
 // double the char budget and extra iterations instead of nudging harder.
 const TICKET_IMPLEMENT_RUN = !!ticketContext && IMPLEMENT_MANDATE_RE.test(prompt);
+// Is CHANGING the workspace this turn's job? Broader than TICKET_IMPLEMENT_RUN
+// on purpose: "fix the crash in foo.ts" typed into the panel carries no ticket
+// and no approved plan, yet a run that ends it with zero edits has failed just
+// as plainly as a ticket run would. Gates the commit nudge and the
+// unfinished-run exit — both are nonsense on a question ("how is X
+// triggered"), which is why neither is armed by tool availability alone.
+const WRITE_INTENT_RUN = TICKET_IMPLEMENT_RUN || !!executeMandate || hasWriteIntent(prompt);
 const MAX_TOOL_ITERATIONS = (isLocalProvider ? 20 : 25) + (TICKET_IMPLEMENT_RUN ? 8 : 0);
 
 const isOpenRouter = (provider ?? '').toLowerCase() === 'openrouter';
@@ -761,6 +861,9 @@ async function generateResponse(): Promise<void> {
       currentSprint,
       {
         codebaseToolsEnabled: !!codebaseTools?.enabled,
+        // Drops the weak-model scaffolding from every turn of a strong-model
+        // run, paired with the phrase gates PHRASE_GATES disables.
+        harnessProfile: HARNESS_PROFILE,
         repoOrientation,
         workspaceRules,
         textAttachments,
@@ -1127,14 +1230,23 @@ async function runToolTurn(
   apiKeys: string[],
   withTools: boolean,
   maxTokens: number = 8192,
-  allowLengthRetry: boolean = true
+  allowLengthRetry: boolean = true,
+  /** Tool defs for this turn. Defaults to the full set; the `explore`
+   *  sub-agent passes a read-only subset. */
+  tools: unknown[] = TOOL_DEFS
 ): Promise<ToolTurnOutcome> {
   const call = (apiKey: string) => {
-    const openai = new OpenAI({ apiKey, baseURL });
+    // maxRetries above the SDK's default of 2 (0.5s then 1s of backoff, sized
+    // for a network blip). A tool turn is the most expensive thing to lose:
+    // failing one discards the whole run's message array, so the extra two
+    // attempts are cheap insurance. Sustained outages are handled a layer up,
+    // in withKeyFailover's TRANSIENT_RETRY_DELAYS_MS schedule; this only
+    // absorbs the short blips so that schedule is rarely reached.
+    const openai = new OpenAI({ apiKey, baseURL, maxRetries: MODEL_CLIENT_MAX_RETRIES });
     return openai.chat.completions.create({
       model,
       messages: withPromptCache(messages, model),
-      ...(withTools ? { tools: TOOL_DEFS as any, tool_choice: 'auto' as const } : {}),
+      ...(withTools ? { tools: tools as any, tool_choice: 'auto' as const } : {}),
       // Cap thinking on reasoning models: tool turns need a quick decision,
       // not a minute of deliberation, and unconstrained reasoning is the main
       // latency + token cost on models like Nemotron. OpenRouter normalizes
@@ -1241,6 +1353,22 @@ async function runToolTurn(
 // context window (especially on local models) before the model ever answers.
 const MAX_TOOL_RESULT_CHARS = isLocalProvider ? 12_000 : 20_000;
 const MAX_TOTAL_TOOL_CHARS = (isLocalProvider ? 48_000 : 200_000) * (TICKET_IMPLEMENT_RUN ? 2 : 1);
+// A read_file result is a deliberate, targeted fetch of one known file, so it
+// earns a larger cap than a survey does: truncating it at the search budget
+// is what turned single files into two-call reads (and then re-reads) on
+// ticket #1534774. Searches keep the tighter cap — a wide grep is exactly the
+// thing that should be narrowed rather than enlarged.
+//
+// Expressed as a FRACTION of the run's total budget, not a flat number. The
+// first version of this was a flat 72k, which measured out at 18% of a ticket
+// run's whole 400k tool-output budget in a single call — five or six reads of
+// large files and the run was out of tools. A per-call cap has to be
+// proportionate to the pot it draws from, and it must never sit below a
+// search result's cap.
+const MAX_READ_RESULT_CHARS = Math.max(
+  MAX_TOOL_RESULT_CHARS,
+  Math.min(48_000, Math.floor(MAX_TOTAL_TOOL_CHARS * 0.12))
+);
 
 /** One message of a resumed transcript, as the host streamed it up from the previous run. */
 type ResumeMessage = Record<string, any>;
@@ -1569,20 +1697,33 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   const lastWriteOutcome = new Map<string, boolean>();
   let failedWritesNudgeUsed = false;
   let anyWriteAttempted = false;
-  // Delivery-time honesty stamp: when a zero-write turn NARRATES completed
-  // changes ("## Implemented fix", "the block is removed") on a run that was
-  // supposed to write, append a harness correction to the answer itself. The
-  // confrontation gates above are bounded and budget-guarded, so a persistent
-  // (or budget-exhausted) model can still deliver the lie — this line cannot
-  // be phrased around, because the model never sees it. Scoped to runs where
-  // writing was on the table, so a Q&A answer mentioning "X has been updated
-  // in PR #123" is never stamped.
+  // Delivery-time honesty stamp: when a turn NARRATES completed changes
+  // ("## Implemented fix", "### Changes", "the block is removed") that no
+  // write in this session backs up, append a harness correction to the answer
+  // itself. The confrontation gates above are bounded and budget-guarded, so
+  // a persistent (or budget-exhausted) model can still deliver the lie — this
+  // line cannot be phrased around, because the model never sees it.
+  //
+  // Scope lives in isUnbackedCompletionClaim (answerGates): it fires on ANY
+  // turn whose answer heads itself "Done" while claiming file changes, not
+  // just the ticket/approved-plan runs it used to be limited to — a follow-up
+  // question produced exactly that fabricated report unstamped. A truthful
+  // recap of an earlier turn's real edits is protected by priorWrites, and a
+  // plan-mode proposal by planMode.
   const finalizeDeliverable = (text: string): string => {
     // The FINAL REPORT FORMAT says "no preamble"; models still narrate one
     // sentence before the status heading. Removing it here keeps the banner
     // first in the panel and in saved history alike.
     let out = stripReportPreamble(text);
-    if (out && writesApplied === 0 && (TICKET_IMPLEMENT_RUN || executeMandate || anyWriteAttempted) && CLAIMS_CHANGES_RE.test(out)) {
+    if (
+      out &&
+      isUnbackedCompletionClaim(out, {
+        writesApplied,
+        priorWritesInSession: priorWrites,
+        writeExpected: TICKET_IMPLEMENT_RUN || executeMandate || anyWriteAttempted,
+        planMode,
+      })
+    ) {
       out +=
         '\n\n---\n⚠️ **Harness note:** zero file edits were actually applied in this run — the working tree is unchanged, so any "implemented fix" above is a proposal only. Reply "go ahead" to have it applied.';
     }
@@ -1596,13 +1737,16 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         planInsteadOfExecuteNudgeUsed ? 'plan' : '',
         incompleteAnswerNudgesUsed > 0 ? `incomplete×${incompleteAnswerNudgesUsed}` : '',
         prematureAmbiguityNudgeUsed ? 'ambiguity' : '',
+        commitNudgeNarrationUsed || commitNudgeBudgetUsed
+          ? `commit(${[commitNudgeNarrationUsed ? 'cause' : '', commitNudgeBudgetUsed ? 'budget' : ''].filter(Boolean).join('+')})`
+          : '',
         ticketCompletionNudgeUsed ? 'ticket' : '',
         missingToolClaimNudgeUsed ? 'missingTool' : '',
         phantomChangesNudgesUsed > 0 ? `phantom×${phantomChangesNudgesUsed}` : '',
         forceReadUsed ? 'forceRead' : '',
       ].filter(Boolean);
       out +=
-        `\n\n<sub>Run diagnostics: ${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · 0 edits applied` +
+        `\n\n<sub>Run diagnostics: ${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · ${HARNESS_PROFILE} harness · 0 edits applied` +
         `${anyWriteAttempted ? ' (writes attempted but none landed)' : ' (no write ever attempted)'}` +
         ` · tool budget ${pct}% used${budgetExhausted ? ' — EXHAUSTED, honesty gates skipped' : ''}` +
         ` · nudges fired: ${nudgesFired.length ? nudgesFired.join(', ') : 'none'}</sub>`;
@@ -1645,6 +1789,29 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // One-shot: an answer that declares the task unclear while naming
   // investigation it could still do itself (see PREMATURE_AMBIGUITY_RE).
   let prematureAmbiguityNudgeUsed = false;
+  // P2 commit nudge: fired once, when a write-intent run is deep into its
+  // turns (or has just said out loud that it found the cause) with nothing
+  // written. Every other gate in this file inspects the FINAL ANSWER, which
+  // is too late — #1534774 never produced an in-loop answer at all, so not one
+  // of them ran ("nudges fired: none" in its own diagnostics) while the run
+  // read its way through the cap. This one watches PROGRESS instead, which is
+  // why it generalises past the phrasing of any single failure.
+  //
+  // Two independent one-shots rather than a single flag: the narration
+  // trigger can legitimately fire early (the model says it found the cause on
+  // turn 8), and if a single flag were spent there, the deep-into-the-budget
+  // backstop — the one that actually catches a run reading its way to the cap
+  // — could never fire at all. Each fires at most once, so a run sees two
+  // reminders maximum.
+  // Delegated investigations this run. Capped because each one is a whole
+  // sub-loop of API calls: the context saving is real but the wall-clock and
+  // token cost is not free, and a model that delegates instead of deciding is
+  // just stalling by proxy. Past the cap the tool reports that it is spent and
+  // tells the model to read directly.
+  const MAX_EXPLORE_CALLS = isLocalProvider ? 2 : 3;
+  let exploreCallsUsed = 0;
+  let commitNudgeNarrationUsed = false;
+  let commitNudgeBudgetUsed = false;
   // One-shot: the harness force-reads the files a stall answer names as
   // unread instead of ending the run to ask for another turn.
   let forceReadUsed = false;
@@ -1680,10 +1847,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     return { ...rest, imageCount: (images as { name: string }[]).length, imageNames: (images as { name: string }[]).map((im) => im.name) };
   };
 
-  const serializeToolResult = (result: unknown): string => {
+  const serializeToolResult = (result: unknown, toolName?: string): string => {
     let s = JSON.stringify(result);
-    if (s.length > MAX_TOOL_RESULT_CHARS) {
-      s = s.slice(0, MAX_TOOL_RESULT_CHARS) + '\n…[result truncated — narrow the query or read a specific line range]';
+    const perResultCap = toolName === 'read_file' ? MAX_READ_RESULT_CHARS : MAX_TOOL_RESULT_CHARS;
+    if (s.length > perResultCap) {
+      s = s.slice(0, perResultCap) + '\n…[result truncated — narrow the query or read a specific line range]';
     }
     const remaining = MAX_TOTAL_TOOL_CHARS - toolCharsUsed;
     if (s.length > remaining) {
@@ -1830,7 +1998,18 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         missingToolClaim: missingToolClaimNudgeUsed ? 1 : 0,
         completenessReflectionUsed,
         autoDiagnosticsRuns,
+        forceRead: forceReadUsed ? 1 : 0,
+        // P2's pacing signal, split by which trigger fired — the eval's
+        // "turns from root cause to first edit" metric is meaningless without
+        // knowing whether the model was prompted or got there itself.
+        commitCause: commitNudgeNarrationUsed ? 1 : 0,
+        commitBudget: commitNudgeBudgetUsed ? 1 : 0,
       },
+      // Which harness ran (P5) and how much was delegated (P3). Both change
+      // the meaning of every other number here, so a result row without them
+      // cannot be compared against another.
+      harnessProfile: HARNESS_PROFILE,
+      exploreCalls: exploreCallsUsed,
       slowModelMode,
       iterationCap,
       perTurn,
@@ -2102,6 +2281,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // which would make the structural ticket gate stand down — so this
       // confrontation runs first and states the fact the model got wrong.
       if (
+        PHRASE_GATES &&
         !budgetExhausted &&
         !missingToolClaimNudgeUsed &&
         writesApplied === 0 &&
@@ -2129,6 +2309,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // investigative ("shall I read the Price element next?"), and a turn that
       // carried that out and answered properly must not be told to start editing.
       if (
+        PHRASE_GATES &&
         !planMode &&
         !budgetExhausted &&
         !planInsteadOfExecuteNudgeUsed &&
@@ -2160,7 +2341,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // for, instead of the run ending so a human can type "continue".
       // One-shot and capped at 3 files; only fires on a stall-shaped answer,
       // and only for paths never read this run.
-      if (!planMode && !budgetExhausted && !forceReadUsed &&
+      if (PHRASE_GATES && !planMode && !budgetExhausted && !forceReadUsed &&
           (PREMATURE_AMBIGUITY_RE.test(outcome.content) ||
             INCOMPLETE_ANSWER_RE.test(outcome.content) ||
             PERMISSION_SEEKING_RE.test(outcome.content))) {
@@ -2195,7 +2376,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
             } catch (e) {
               result = { error: e instanceof Error ? e.message : String(e) };
             }
-            messages.push({ role: 'tool', tool_call_id: `auto_force_read_${idx}`, content: serializeToolResult(result) });
+            messages.push({ role: 'tool', tool_call_id: `auto_force_read_${idx}`, content: serializeToolResult(result, 'read_file') });
             recordToolResult('read_file', i, messages[messages.length - 1].content);
           }
           messages.push({
@@ -2218,6 +2399,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // relapse. Runs before the other answer gates so the specific
       // confrontation wins over the generic one.
       if (
+        PHRASE_GATES &&
         !budgetExhausted &&
         !prematureAmbiguityNudgeUsed &&
         writesApplied === 0 &&
@@ -2267,7 +2449,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // A "final answer" that names tools is almost always a narrated plan,
       // not an answer ("I will use find_files to locate..."). Same for an
       // empty response before any tool has run. Push back and let it retry.
-      const mentionsTool = [...KNOWN_TOOL_NAMES].some((n) => outcome.content.includes(n));
+      // Split by kind: an EMPTY answer before any tool ran is a state fact and
+      // is checked in both profiles; "the answer happens to name a tool" is
+      // phrasing, and on a capable model it is usually a legitimate mention
+      // ("read_file returns numbered lines") rather than a narrated plan.
+      const mentionsTool = PHRASE_GATES && [...KNOWN_TOOL_NAMES].some((n) => outcome.content.includes(n));
       const emptyBeforeAnyTool = !outcome.content.trim() && toolCallsExecuted === 0;
       if ((mentionsTool || emptyBeforeAnyTool) && planNudgesUsed < MAX_PLAN_NUDGES) {
         planNudgesUsed++;
@@ -2301,6 +2487,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         // listing, and none of the other arming conditions were true yet).
         (executeMandate || anyWriteAttempted || !!ticketContext || CHANGE_PLAN_RE.test(outcome.content));
       if (
+        PHRASE_GATES &&
         !budgetExhausted &&
         (announcesWork || seeksPermission) &&
         incompleteAnswerNudgesUsed < MAX_PLAN_NUDGES
@@ -2322,6 +2509,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // back through every gate here, so a reflection that surfaces new work
       // still gets diagnostics/honesty checks before the run can end.
       if (
+        PHRASE_GATES &&
         !completenessReflectionUsed &&
         // Optional polish, not an honesty gate — on a slow model this extra
         // round trip costs another minute and is the first thing to drop.
@@ -2475,7 +2663,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         if (target && !readPaths.has(target)) {
           try {
             const readResult = (await requestTool('read_file', { path: target }, randomUUID())) as { content?: string } | null;
-            let content = String(readResult?.content ?? '');
+            // This hand-back exists to hand over copy-ready text, so the
+            // line-number prefixes read_file adds come straight back off
+            // again — telling the model to copy "character-for-character"
+            // from numbered content would be a trap.
+            let content = stripLineNumbers(String(readResult?.content ?? ''));
             if (content.length > EDIT_UNREAD_CONTENT_CAP) {
               content = content.slice(0, EDIT_UNREAD_CONTENT_CAP) + '\n…[truncated — read_file the specific line range you need]';
             }
@@ -2492,6 +2684,66 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
             // Unreadable target — let edit_file produce its own error below.
           }
         }
+      }
+      // `explore` runs INSIDE the worker — there is no host-side tool of that
+      // name (chatService's dispatch would throw "Unknown tool"). Its whole
+      // purpose is that its reads never reach `messages`: only the returned
+      // claim list is serialized into the caller's context, and its tool
+      // output is charged to its own budget, not this run's.
+      if (tc.name === 'explore') {
+        if (exploreCallsUsed >= MAX_EXPLORE_CALLS) {
+          return {
+            error:
+              `The explore budget for this run is spent (${MAX_EXPLORE_CALLS} delegated investigation(s) used). ` +
+              'Investigate directly with search_codebase and read_file, or act on what you already know.',
+          };
+        }
+        exploreCallsUsed++;
+        const { question, scope } = (parsedArgs ?? {}) as { question?: unknown; scope?: unknown };
+        const sub = await runExploreSubagent(
+          String(question ?? ''),
+          typeof scope === 'string' ? scope : undefined,
+          {
+            runTurn: async (subMessages, toolNames, withTools) => {
+              const defs = TOOL_DEFS.filter((d) => toolNames.includes((d as { function: { name: string } }).function.name));
+              const o = await runToolTurn(subMessages as any[], model, baseURL, apiKeys, withTools, 4096, true, defs);
+              return {
+                content: o.content,
+                toolCalls: o.toolCalls.map((c) => ({ id: c.id, name: c.name, args: c.args })),
+                apiCalls: o.apiCalls,
+                promptTokens: o.usage.promptTokens,
+                completionTokens: o.usage.completionTokens,
+              };
+            },
+            requestTool: (name, args) => requestTool(name, args, randomUUID()),
+            onProgress: (label) =>
+              parentPort?.postMessage({ type: 'tool_step_update', id: transportId, stepStatus: 'running', summary: label }),
+          },
+          defaultExploreConfig(isLocalProvider)
+        );
+        // Its API calls are real spend and belong in this run's metrics even
+        // though its tool output does not belong in this run's context.
+        apiCallsTotal += sub.apiCalls;
+        promptTokensTotal += sub.promptTokens;
+        completionTokensTotal += sub.completionTokens;
+        // Deliberately NOT added to readPaths: the sub-agent read these files,
+        // this model did not. An edit built from a citation alone is still an
+        // oldString from memory, so the read-before-edit guard must still fire
+        // and hand over the real text.
+        parentPort?.postMessage({
+          type: 'tool_step_update',
+          id: transportId,
+          stepStatus: 'done',
+          summary: `${sub.claimsKept} finding(s) from ${sub.filesRead.length} file(s), ${sub.toolCalls} lookup(s)`,
+        });
+        return {
+          findings: sub.report,
+          filesRead: sub.filesRead,
+          lookups: sub.toolCalls,
+          ...(sub.claimsDropped ? { claimsDropped: sub.claimsDropped } : {}),
+          ...(sub.budgetExhausted ? { note: 'The investigation hit its own budget — findings may be partial.' } : {}),
+          reminder: 'These are leads, not verified truth. read_file the exact range before editing against it.',
+        };
       }
       try {
         const result = await requestTool(tc.name, parsedArgs, transportId);
@@ -2525,18 +2777,22 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
-        content: serializeToolResult(stripImagesForToolText(tc.name, rawResult)),
+        content: serializeToolResult(stripImagesForToolText(tc.name, rawResult), tc.name),
       });
       recordToolResult(tc.name, i, messages[messages.length - 1].content);
 
       const ticketImages = (rawResult as { images?: { dataUrl: string }[] } | null)?.images;
-      if (tc.name === 'get_ticket' && ticketImages?.length) {
+      // Only the ones the model has not already been shown — see
+      // sentImageDataUrls. The tool text still reports imageCount/imageNames
+      // for all of them (stripImagesForToolText), so nothing is hidden.
+      const freshTicketImages = tc.name === 'get_ticket' && ticketImages?.length ? unsentImages(ticketImages) : [];
+      if (freshTicketImages.length) {
         const ticketId = (rawResult as { id?: unknown } | null)?.id ?? '';
         pendingImageTurns.push({
           role: 'user',
           content: [
             { type: 'text', text: `Image(s) attached to ticket #${ticketId}:` },
-            ...imagesToContentParts(ticketImages),
+            ...imagesToContentParts(freshTicketImages),
           ],
         });
       }
@@ -2578,6 +2834,38 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     });
     messages.push(...pendingImageTurns);
     toolCallsExecuted += toolCalls.length;
+
+    // ── Commit nudge ──
+    // The narration trigger is the precise moment observed on #1534774: the
+    // model wrote "Now I have a complete understanding. The fix needs to
+    // clear the storage data" with ten turns still in hand, and spent them
+    // all reading. The budget trigger is the backstop for a run that never
+    // says it out loud. See commitNudgeTriggers (answerGates) for the full
+    // set of conditions and why each is there.
+    const commit = commitNudgeTriggers({
+      assistantProse: outcome.content || '',
+      turnIndex: i,
+      iterationCap,
+      writesApplied,
+      writeIntent: WRITE_INTENT_RUN,
+      planMode,
+      budgetExhausted,
+      narrationUsed: commitNudgeNarrationUsed,
+      budgetUsed: commitNudgeBudgetUsed,
+    });
+    if (commit.fire) {
+      if (commit.narration) commitNudgeNarrationUsed = true;
+      if (commit.budget) commitNudgeBudgetUsed = true;
+      messages.push({
+        role: 'user',
+        content:
+          `Checkpoint from the harness: ${commit.turnsLeft} tool turn(s) left in this run, and zero file edits so far. ` +
+          'Reading is not progress once you can name the cause. State the root cause in ONE line with its file:line, then make your NEXT tool call an edit — re-read only the exact lines you need to copy for oldString. ' +
+          'If you genuinely cannot edit yet, say in one line what single fact is missing and get it in your next call. ' +
+          'Running out of turns is not a blocker and never a reason to report one: an applied fix with a stated assumption beats a perfect investigation nobody can ship.',
+      });
+    }
+
     if (budgetExhausted) {
       // Before treating exhaustion as terminal, try compacting older results —
       // if that frees enough room for at least one more full-size result, the
@@ -2625,7 +2913,16 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       'Only if the task is unfinished, be exact about why you stopped — say "' +
       (budgetExhausted ? 'tool-output budget exhausted' : 'step limit reached') +
       '"; do NOT claim tool access was revoked, cut off, or broken. ' +
-      'If the investigation is unfinished, list the specific files still unread — the run can be resumed with everything gathered so far carried over.',
+      // Running out of steps is a HARNESS limit, not a fact about the ticket.
+      // Observed live on #1534774: the model relabelled the cap hit as
+      // "## 🚫 Blocked — storage entry lacks a signal…" and offered the user
+      // four candidate fixes to choose between, which reads to everyone
+      // downstream as a product question the ticket failed to answer. It also
+      // took this prompt's own "list the files still unread" instruction and
+      // rendered it as a paragraph of homework for the next run.
+      'Do NOT use the "## Blocked" heading for this: a step or budget limit is a harness limit, not a missing product decision, and "## Blocked" claims the second. ' +
+      'If you had already identified the fix, say so plainly under "## ⚠️ Partially done" and state what the edit would be, in one or two lines. ' +
+      'Then list only the specific files still unread — the run resumes with everything gathered so far carried over, so keep it to file paths, not instructions.',
   });
   let finalStarted = Date.now();
   syncTranscript();
@@ -2675,7 +2972,20 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // This exit is the budget/iteration-forced final answer — the one path
   // where the honesty gates were deliberately skipped, so the stall tag is
   // how the host learns a resume is worth it (a fresh worker = fresh budget).
-  parentPort?.postMessage({ type: 'done', content: finalDeliverable, writesApplied, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(finalDeliverable)) });
+  // This answer exists only because the run ran out of steps or budget, so
+  // the phrasing gates are the wrong instrument here — all five of them
+  // missed #1534774's cap-hit answer, whose "## Blocked" heading then read as
+  // a legitimate ending and cost the host its one-shot auto-resume. A
+  // write-intent run that ends here having written nothing is unfinished as a
+  // matter of arithmetic (see isUnfinishedWriteRun), whatever it says about
+  // itself; the host resumes it once with a fresh budget and the reads it
+  // already paid for.
+  const forcedExitStalled =
+    isUnfinishedWriteRun(finalDeliverable, { writesApplied, writeIntent: WRITE_INTENT_RUN, planMode }) ||
+    (!planMode &&
+      writesApplied === 0 &&
+      (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(finalDeliverable)));
+  parentPort?.postMessage({ type: 'done', content: finalDeliverable, writesApplied, stallShaped: forcedExitStalled });
 }
 
 // Start processing

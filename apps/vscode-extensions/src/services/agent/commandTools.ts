@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
+import * as fs from 'fs';
 import { appendFile, mkdir } from 'fs/promises';
 import * as path from 'path';
 import { NamedRoot, WorkspaceRootRequiredError } from '../codebase/codebaseTools';
@@ -42,8 +43,143 @@ const MAX_OUTPUT_CHARS = 20_000;
 const DEFAULT_TIMEOUT_SEC = 60;
 /** Tests and builds in a monorepo routinely need more than a minute just to cold-start. */
 const VERIFY_TIMEOUT_SEC = 180;
-const MAX_TIMEOUT_SEC = 600;
+export const MAX_TIMEOUT_SEC = 600;
 const VERIFY_COMMAND_RE = /\b(test|tests|jest|vitest|pytest|mocha|build|compile|tsc|typecheck|type-check|lint|eslint|cargo|go)\b/i;
+
+/**
+ * A repo-wide verification command in a monorepo, refused so the run uses a
+ * scoped one instead.
+ *
+ * `run_checks` already derives the narrow command — nearest package.json,
+ * eslint on the single changed file, the sibling test file rather than the
+ * suite — but nothing stopped a run from bypassing it with `pnpm lint` at the
+ * workspace root. In an autonomous run that is auto-approved and invisible:
+ * `lint`/`test`/`build` get a 180s default and a 600s ceiling, so one such
+ * call can eat minutes of wall clock, and on a large monorepo it will do that
+ * repeatedly for a change that touched three files.
+ *
+ * Deliberately narrow — it fires only when ALL of these hold:
+ *   - the command is a verification verb (lint / test / build / typecheck),
+ *   - it runs at a workspace ROOT rather than inside a package,
+ *   - it names no path target and no workspace selector (`--filter`, `-F`,
+ *     `--workspace`, `--scope`, a `./path` argument),
+ *   - and the user did not ask for a repo-wide run.
+ *
+ * Everything else is untouched: `npx eslint src/foo.ts` at the root has a
+ * target, `pnpm --filter @app/web test` has a selector, and a command with an
+ * explicit package `cwd` is not at a root.
+ */
+const VERIFY_VERB_RE = /\b(lint|test|tests|typecheck|type-check|build|compile)\b/i;
+/**
+ * Only whole-project RUNNERS are candidates. Without this the guard fires on
+ * anything whose text happens to contain a verify verb — `node test.js` runs
+ * exactly one file and was refused by the first version of this check.
+ */
+const PROJECT_RUNNER_RE =
+  /^\s*(pnpm|npm|yarn|bun|turbo|nx|lerna|make|eslint|jest|vitest|tsc|prettier|pytest|cargo|go)\b/i;
+/**
+ * A verification tool invoked directly. Needed because VERIFY_VERB_RE cannot
+ * see the verb inside the tool's own name — "lint" in `eslint` has no word
+ * boundary, so `eslint .` at a monorepo root (which lints everything) read as
+ * a non-verification command.
+ */
+const STANDALONE_VERIFY_RE =
+  /^\s*(?:npx\s+|pnpm\s+(?:exec|dlx)\s+|yarn\s+|bunx\s+)?(eslint|jest|vitest|tsc|prettier|pytest)\b/i;
+/** A path-ish argument, a file argument, or a workspace selector — all of which scope the run. */
+const SCOPED_ARG_RE =
+  /(--filter\b|(?:^|\s)-F(?:\s|=)|--workspace\b|--scope\b|--project\b|(?:^|\s)-p\s|(?:^|\s)\.?\/[\w.@-]|(?:^|\s)[\w.@-]+\/[\w./@*-]+|(?:^|\s)[\w.@-]+\.(?:[cm]?[jt]sx?|py|go|rs|java|rb|php|json)\b)/i;
+
+/** Did the USER ask for a whole-repo run? Then it is not the harness's call to refuse. */
+export const REPO_WIDE_REQUEST_RE =
+  /\b(all|whole|entire|full|every|each)\s+(the\s+)?(tests?|test suite|suites?|packages?|apps?|repo|monorepo|workspace|codebase|projects?)\b|\bfull (test )?(suite|run|build)\b|\brepo[- ]wide\b|\bacross (the )?(whole|entire) (repo|monorepo|workspace)\b/i;
+
+/**
+ * Is this root a monorepo — i.e. does a narrower, per-package command even
+ * exist?
+ *
+ * Without this the guard is wrong for the common case: in a single-package
+ * repo `pnpm test` at the root IS the correct scoped command, and refusing it
+ * would break every non-monorepo workspace to save time in monorepos.
+ */
+export function isMonorepoRoot(rootPath: string): boolean {
+  try {
+    if (
+      fs.existsSync(path.join(rootPath, 'pnpm-workspace.yaml')) ||
+      fs.existsSync(path.join(rootPath, 'lerna.json')) ||
+      fs.existsSync(path.join(rootPath, 'nx.json'))
+    ) {
+      return true;
+    }
+    const pkgPath = path.join(rootPath, 'package.json');
+    if (!fs.existsSync(pkgPath)) return false;
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { workspaces?: unknown };
+    const w = pkg.workspaces;
+    return Array.isArray(w) ? w.length > 0 : !!w && typeof w === 'object';
+  } catch {
+    // Unreadable or malformed manifest — assume single-package and let the
+    // command through. The guard must never be the reason a run cannot verify.
+    return false;
+  }
+}
+
+export interface UnscopedCheck {
+  /** Human-readable reason, handed back to the model as a tool error. */
+  reason: string;
+}
+
+/**
+ * Returns a refusal when `command` is an unscoped repo-wide verification run.
+ * Pure so the decision is testable on its own — the timeouts it protects are
+ * measured in minutes, and a wrong answer here is either a wasted run or a
+ * blocked legitimate one.
+ */
+export function checkUnscopedVerification(opts: {
+  command: string;
+  /** Absolute cwd the command resolved to (from resolveCommandCwd). */
+  cwd: string;
+  /** Absolute paths of the workspace roots. */
+  rootPaths: string[];
+  /** True when the user's own message asked for a repo-wide run. */
+  userAskedRepoWide?: boolean;
+}): UnscopedCheck | null {
+  const command = String(opts.command ?? '').trim();
+  if (!command) return null;
+  if (opts.userAskedRepoWide) return null;
+  if (!PROJECT_RUNNER_RE.test(command) && !STANDALONE_VERIFY_RE.test(command)) return null;
+  if (!VERIFY_VERB_RE.test(command) && !STANDALONE_VERIFY_RE.test(command)) return null;
+  if (SCOPED_ARG_RE.test(command)) return null;
+  const atRoot = opts.rootPaths.some((r) => r === opts.cwd);
+  if (atRoot) {
+    // Only meaningful where a narrower command exists at all.
+    if (!isMonorepoRoot(opts.cwd)) return null;
+    return {
+      reason:
+        `Refused: "${command}" is a repo-wide ${VERIFY_VERB_RE.exec(command)?.[0] ?? STANDALONE_VERIFY_RE.exec(command)?.[1] ?? 'verification'} run at the workspace root, ` +
+        'which in a monorepo checks every package to verify a change that touched a few files. ' +
+        'Use `run_checks` with the path of a file you changed instead — it derives the package, the runner and the single ' +
+        'test/lint target itself, and runs from that package\'s directory. ' +
+        'If you genuinely need a wider run, scope it: pass a package `cwd`, add a path argument, or use the workspace ' +
+        'selector (e.g. `--filter <package>`).',
+    };
+  }
+  // Inside a package of a monorepo an unscoped TEST run is still the whole
+  // package's suite. Observed live as `pnpm exec jest` in a 500-test-file
+  // Next.js app: jest forked a jsdom worker per core, the machine hit 20GB
+  // and swapped, and the run died on the stall timer. Lint and typecheck stay
+  // allowed at package level — they are package-scoped by nature and do not
+  // fork a worker per core.
+  const insideMonorepo = opts.rootPaths.some((r) => opts.cwd.startsWith(r + path.sep) && isMonorepoRoot(r));
+  if (!insideMonorepo || !TEST_RUN_RE.test(command)) return null;
+  return {
+    reason:
+      `Refused: "${command}" runs every test in this package to verify a change that touched a few files. ` +
+      'Use `run_checks` with the path of a file you changed — it runs that file\'s own test file, nothing else. ' +
+      `To run one test file directly, name it: e.g. \`${command} <path/to/file.test.ts>\`.`,
+  };
+}
+
+/** A test run specifically — the check kind that forks a worker per core. */
+const TEST_RUN_RE = /\b(test|tests|jest|vitest|pytest|mocha)\b/i;
 
 /** Default timeout for a command the model gave no timeout for — verification commands get the long one. */
 export function defaultTimeoutSec(command: string): number {
@@ -194,10 +330,13 @@ export function executeCommand(
     let combined = '';
     let timedOut = false;
     let settled = false;
+    // Declared before finish() so the spawn-failure path below can call it
+    // (a `const` here would be in its temporal dead zone at that point).
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (exitCode: number | null) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       const truncated = combined.length > MAX_OUTPUT_CHARS;
       resolve({
         exitCode,
@@ -209,16 +348,56 @@ export function executeCommand(
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(file, args as string[], { cwd, env: { ...process.env, CI: '1', FORCE_COLOR: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      // `detached` gives the shell its OWN process group so the timeout can
+      // kill the whole tree, not just bash. Observed live without it: a
+      // `pnpm exec jest` suite was "killed after 180s" — bash died, pnpm →
+      // node → eleven jest workers did not, the machine sat at 20GB for
+      // another seven minutes, and because those orphans still held our
+      // stdout pipe, 'close' (and so this promise) waited for them too.
+      child = spawn(file, args as string[], {
+        cwd,
+        env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: !isWin,
+      });
     } catch (e) {
       combined = e instanceof Error ? e.message : String(e);
       finish(null);
       return;
     }
-    const timer = setTimeout(() => {
+    const killTree = () => {
+      if (isWin) {
+        // /T walks the child tree; /F because test workers ignore a polite close.
+        try {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        } catch {
+          /* fall through to the direct kill */
+        }
+      } else if (child.pid) {
+        try {
+          process.kill(-child.pid, 'SIGKILL'); // negative pid = the whole group
+        } catch {
+          /* group already gone */
+        }
+      }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already exited */
+      }
+    };
+    timer = setTimeout(() => {
       timedOut = true;
       combined += `\n… killed after ${Math.round(timeout / 1000)}s timeout`;
-      child.kill('SIGKILL');
+      killTree();
+      // A survivor that left the group (its own setsid) can still hold the
+      // pipes open. The verdict is "timed out" either way — hand it back now
+      // instead of waiting on a process we no longer control.
+      setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(null);
+      }, 2_000);
     }, timeout);
     // Streams are interleaved in arrival order; the first stderr chunk after
     // stdout gets a label so the model can tell warnings from results.

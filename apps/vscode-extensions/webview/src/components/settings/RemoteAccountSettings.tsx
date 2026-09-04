@@ -18,6 +18,7 @@ import StatusDot from './StatusDot';
 interface RemoteSessionStatus {
   signedIn: boolean;
   githubLogin?: string;
+  email?: string;
   plan?: string;
   requestsUsedThisWeek?: number;
   requestsLimitWeekly?: number;
@@ -89,6 +90,7 @@ const RemoteAccountSettings: React.FC = () => {
           setStatus({
             signedIn: !!message.signedIn,
             githubLogin: message.githubLogin,
+            email: message.email,
             plan: message.plan,
             requestsUsedThisWeek: message.requestsUsedThisWeek,
             requestsLimitWeekly: message.requestsLimitWeekly,
@@ -100,6 +102,7 @@ const RemoteAccountSettings: React.FC = () => {
           setStatus({
             signedIn: true,
             githubLogin: message.githubLogin,
+            email: message.email,
             plan: message.plan,
             requestsUsedThisWeek: message.requestsUsedThisWeek,
             requestsLimitWeekly: message.requestsLimitWeekly,
@@ -171,6 +174,7 @@ const RemoteAccountSettings: React.FC = () => {
               </span>
               <span className='account-identity'>
                 <span className='account-name'>{status.githubLogin || 'GitHub account'}</span>
+                {status.email && <span className='account-email'>{status.email}</span>}
                 {planLabel && <span className='account-plan'>{planLabel} plan</span>}
               </span>
               <button

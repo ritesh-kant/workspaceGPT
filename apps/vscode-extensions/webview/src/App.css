@@ -332,6 +332,47 @@
   overflow-wrap: anywhere;
 }
 
+/* The Resume affordance on an error card. Separated from the error prose by a
+   rule so the actionable half is visually distinct from the failure text — the
+   whole problem it solves is that the recovery was invisible. */
+.error-resume {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--vscode-inputValidation-errorBorder, rgba(128, 128, 128, 0.35));
+}
+
+.error-resume-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: 0.78rem;
+  opacity: 0.85;
+  line-height: 1.35;
+}
+
+.error-resume-button {
+  flex-shrink: 0;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 12px;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.error-resume-button:hover {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
+.error-resume-button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
 /* The extra bottom margin reserves the strip the footer row occupies, so the
    footer never overlaps the next message and hovering never reflows anything. */
 .user-message {
@@ -570,6 +611,14 @@
 .message-feedback-button--copied {
   color: var(--vscode-testing-iconPassed, #4ec9b0);
   opacity: 1;
+}
+
+/* Total turn time, trailing the feedback icons on the same row. */
+.message-duration {
+  margin-left: 0.25rem;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
 }
 
 /* Input container styles */

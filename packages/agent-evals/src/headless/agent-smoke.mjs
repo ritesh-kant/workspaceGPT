@@ -69,6 +69,8 @@ const outDir = await buildUnits();
 const writeTools = await import(path.join(outDir, 'agentWriteTools.mjs'));
 const commandTools = await import(path.join(outDir, 'commandTools.mjs'));
 const { CheckpointService } = await import(path.join(outDir, 'checkpointService.mjs'));
+// The production numbering helper, not a copy of it — see the read_file stub.
+const { numberLines } = await import(path.join(outDir, 'lineNumbers.mjs'));
 
 // ── fixture workspace ──────────────────────────────────────────────────
 
@@ -112,14 +114,24 @@ function makeWorkspace() {
   return ws;
 }
 
-const orientationFor = (ws) =>
-  `Workspace root: ${path.basename(ws)}\n` +
-  `README.md\nsrc/math.js\nsrc/app.js\ntest.js\n\n` +
-  `README head: calc-demo — src/math.js holds arithmetic helpers, test.js is the test suite (node test.js).`;
+// Derived from the workspace rather than hardcoded, so a scenario can bring
+// its own fixture (the ticket evals do) and still get a real orientation.
+export const orientationFor = (ws) => {
+  const files = walk(ws).sort();
+  const readme = files.find((f) => /^readme\.md$/i.test(f));
+  const head = readme
+    ? fs.readFileSync(path.join(ws, readme), 'utf8').split('\n').slice(0, 6).join(' ').slice(0, 300)
+    : '';
+  return (
+    `Workspace root: ${path.basename(ws)}\n` +
+    files.slice(0, 60).join('\n') +
+    (head ? `\n\nREADME head: ${head}` : '')
+  );
+};
 
 // ── host-side tool implementations ─────────────────────────────────────
 
-function walk(dir, base = dir, acc = []) {
+export function walk(dir, base = dir, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.name === 'node_modules' || e.name === '.git') continue;
     const abs = path.join(dir, e.name);
@@ -142,7 +154,7 @@ const globToRegex = (glob) =>
     'i',
   );
 
-function makeToolHost(ws, log) {
+export function makeToolHost(ws, log) {
   const roots = [{ name: path.basename(ws), uri: { fsPath: ws } }];
 
   /** Declaration scan backing find_symbol/go_to_definition (shape mirrors codebaseTools.SymbolHit). */
@@ -204,13 +216,30 @@ function makeToolHost(ws, log) {
       if (!abs.startsWith(ws)) throw new Error('path outside workspace');
       const lines = fs.readFileSync(abs, 'utf8').split('\n');
       const s = startLine ? startLine - 1 : 0;
-      const e = endLine ?? lines.length;
-      // Shape mirrors the REAL codebaseTools.readFile: raw content, no
-      // line-number prefixes. The harness used to prefix every line with
-      // "N: ", which production never does — it made "copy oldString
-      // verbatim from read_file output" literally impossible and skewed the
-      // edit-failure rate the benchmark exists to measure.
-      return { content: lines.slice(s, e).join('\n'), totalLines: lines.length, truncated: e < lines.length };
+      const requestedEnd = endLine ?? lines.length;
+      // Mirrors the REAL codebaseTools.readFile, caps and all. This stub used
+      // to return raw text with a comment asserting production never numbers
+      // lines — true when it was written, false since P4 added the "  12→"
+      // prefixes. A harness whose read contract has drifted from production
+      // measures the wrong thing twice over: it hides prefix-copy failures in
+      // edit_file, which is the risk numbering introduced in the first place.
+      const cappedEnd = Math.min(requestedEnd, s + 2000, lines.length);
+      let content = lines.slice(s, cappedEnd).join('\n');
+      let truncated = cappedEnd < requestedEnd || cappedEnd < lines.length;
+      if (content.length > 64 * 1024) {
+        content = content.slice(0, 64 * 1024);
+        const lastNewline = content.lastIndexOf('\n');
+        if (lastNewline > 0) content = content.slice(0, lastNewline);
+        truncated = true;
+      }
+      const firstLine = s + 1;
+      return {
+        content: numberLines(content, firstLine),
+        totalLines: lines.length,
+        truncated,
+        startLine: firstLine,
+        endLine: firstLine + content.split('\n').length - 1,
+      };
     },
     list_directory: async ({ path: rel } = {}) => {
       const abs = path.join(ws, (rel ?? '.').replace(/^\.?\//, ''));
@@ -309,15 +338,31 @@ function makeToolHost(ws, log) {
 
 // ── worker driver ──────────────────────────────────────────────────────
 
-function runAgent(ws, prompt, log) {
-  const { tools, audit, checkpoints } = makeToolHost(ws, log);
+/**
+ * @param extraTools host-side tool implementations to add to (or override in)
+ *   the standard set. The worker offers every tool in TOOL_DEFS regardless of
+ *   what the host implements, so integration-shaped tools that need no real
+ *   backend — `get_ticket` above all — are injected per test rather than
+ *   stubbed globally.
+ */
+export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {}) {
+  const { tools: baseTools, audit, checkpoints } = makeToolHost(ws, log);
+  const tools = { ...baseTools, ...extraTools };
   const toolCalls = [];
   const toolTimings = [];
   const thoughtMs = [];
   let metrics = null;
   let notes = 0;
+  // Assistant prose per turn, tagged with how many tool calls had run when it
+  // was written, so a narration can be located relative to the first edit.
+  const noteLog = [];
   let chunks = 0;
   let failovers = 0;
+  // The worker's mirrored model-facing conversation, assembled exactly the way
+  // chatService assembles it (reset replaces, append extends). This is what a
+  // resume is fed, so a test can capture a run's transcript and hand it back.
+  let transcript = null;
+  let resumed = null;
 
   return new Promise((resolve) => {
     const worker = new Worker(WORKER_PATH, {
@@ -331,13 +376,14 @@ function runAgent(ws, prompt, log) {
         chatHistory: '',
         codebaseTools: { enabled: true },
         repoOrientation: orientationFor(ws),
+        ...extraWorkerData,
       },
     });
 
     const finish = (outcome) => {
       clearTimeout(timer);
       worker.terminate();
-      resolve({ ...outcome, toolCalls, toolTimings, thoughtMs, metrics, notes, chunks, failovers, audit, checkpoints });
+      resolve({ ...outcome, toolCalls, toolTimings, thoughtMs, metrics, notes, noteLog, chunks, failovers, transcript, resumed, audit, checkpoints });
     };
     const timer = setTimeout(() => finish({ ok: false, error: 'scenario timeout' }), SCENARIO_TIMEOUT_MS);
 
@@ -365,10 +411,16 @@ function runAgent(ws, prompt, log) {
         thoughtMs.push(msg.ms);
       } else if (msg.type === 'agent_note') {
         notes++;
+        noteLog.push({ at: toolCalls.length, content: String(msg.content ?? '') });
       } else if (msg.type === 'chunk') {
         chunks++;
       } else if (msg.type === 'key_failover') {
         failovers++;
+      } else if (msg.type === 'agent_transcript') {
+        if (Array.isArray(msg.reset)) transcript = msg.reset;
+        else if (Array.isArray(msg.append) && msg.append.length) transcript = [...(transcript ?? []), ...msg.append];
+      } else if (msg.type === 'resumed') {
+        resumed = { steps: msg.steps ?? 0, writesApplied: msg.writesApplied ?? 0 };
       } else if (msg.type === 'metrics') {
         const { type, ...rest } = msg;
         metrics = rest;
@@ -463,9 +515,15 @@ const log = (s) => console.log(s);
 log(`model: ${MODEL} · provider: ${PROVIDER}${BASE_URL ? ` · baseUrl: ${BASE_URL}` : ''} · runs: ${RUNS} · scenarios: ${ONLY.join(',')}`);
 log(`agent-smoke: model=${MODEL} worker=${path.relative(repoRoot, WORKER_PATH)} runs=${RUNS}`);
 
+// Importable: the ticket evals (ticket-evals.mjs) reuse this file's host
+// emulation and worker driver, and must not trigger a smoke run by importing
+// it. Everything above is definitions; everything below is the run.
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+
 const selected = SCENARIOS.filter((s) => ONLY.includes(s.id));
 const runRecords = [];
 
+if (isMain) {
 for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
   for (const sc of selected) {
     log(`\n━━ [run ${runIndex}/${RUNS}] ${sc.id}: ${sc.title}`);
@@ -584,3 +642,4 @@ for (const r of merged.filter((r) => !r.pass)) {
 fs.writeFileSync(path.join(resultsDir, 'agent-smoke.md'), md);
 log(`\nreport → results/agent-smoke.json, results/agent-smoke.md`);
 process.exit(runRecords.every((r) => r.pass) ? 0 : 1);
+} // end isMain

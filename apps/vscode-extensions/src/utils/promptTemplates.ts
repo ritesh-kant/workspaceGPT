@@ -33,7 +33,7 @@ function buildAttachmentsBlock(options?: TurnExtras): string {
 function buildMentionsBlock(options?: TurnExtras): string {
   if (!options?.mentionedFiles?.length) return '';
   return (
-    `**Files the user referenced with @ (already read for you — do NOT call read_file on these again unless you need a different line range):**\n` +
+    `**Files the user referenced with @ (already read for you — do NOT call read_file on these again unless you need a different line range). Lines are numbered as \`12→code\`: cite those numbers, and copy code WITHOUT the prefix:**\n` +
     options.mentionedFiles.map((m) => `${m.name}\n\`\`\`\n${m.content}\n\`\`\``).join('\n\n') +
     `\n\nThe user explicitly pointed at these — center your answer on them.\n\n`
   );
@@ -67,6 +67,35 @@ const TICKET_COMMENT_MAX_CHARS = 300;
 
 const clip = (text: string, max: number): string =>
   text.length > max ? text.slice(0, max) + '… (truncated)' : text;
+
+/**
+ * The operating norms for every codebase turn — how to work, not how to
+ * phrase an answer.
+ *
+ * Exists because the harness had been regulating the OPPOSITE end of the run:
+ * ~15 phrase gates in modelWorker plus pages of prohibitions here, all about
+ * the final answer, and nothing at all about when to stop reading and start
+ * editing. A comparison run on ticket #1534774 made the cost concrete — the
+ * model named the exact root cause at tool call 50 of a 33-turn cap, kept
+ * reading for another 24 calls, hit the cap and delivered "Blocked". Nothing
+ * in its prompt told it that a named root cause is the signal to commit; one
+ * sentence in the autonomous block told it that blocking was a success.
+ *
+ * Every bullet here is self-gating, so ONE block serves a plain question, a
+ * fix, a ticket run and a follow-up alike (only plan mode opts out — writing
+ * is out of scope there by contract). Keep it short: this is the part of the
+ * prompt that has to survive being read on turn 30 of a long transcript.
+ */
+export const HOW_TO_WORK = `## HOW TO WORK
+- **Investigate until you can state the answer — for a bug, the root cause — in one sentence with a \`file:line\`. Then stop investigating.** Several "plausible causes" means you are not there yet; more reads after you are there just burn the budget you need for the fix.
+- **When the task is to change something, the turn after you can name the root cause your next tool call is an EDIT, not another read.** If you find yourself writing "now I understand what the fix is", make it.
+- **A question a competent engineer would settle with a default is yours to settle.** Take the default, implement it, and record it in one line under Assumptions. Which file a shared fix lands in, which existing signal to reuse, naming — implementation choices, never reasons to stop.
+- **"Blocked" / "cannot determine" is for exactly one case:** the task demands behavior no default could satisfy, and you can QUOTE the words that conflict. If you cannot quote them, you are not blocked — keep working. Anything a tool could answer (which file owns a behavior, what a mapper actually supplies, how a value flows on first render) is investigation, not a blocker.
+- **Finish the whole task.** Changed files means: edit → \`get_diagnostics\` → \`run_checks\` (lint, typecheck, test) on every file you touched → report. Fix what fails. If a check could not run, say so in the report instead of implying it passed.
+- **Never describe an edit you did not make.** The user sees the real diff, so a report of changes that are not on disk is the one unrecoverable failure — worse than an unfinished task. If you decided against a change, say that plainly.
+- **A question that spans several files you have not read is a job to DELEGATE, not to read your way through.** Call \`explore\` with the question: it searches and reads on its own budget and hands back cited findings, so those file contents never fill up this conversation. Then open just the ranges it cites. Read files yourself when you already know which one you need.
+- Reuse what you already have: do not re-read a file whose contents are already above, and do not re-run a search you already ran.
+`;
 
 /**
  * The shape of every autonomous / ticket run's final answer. The webview
@@ -146,13 +175,9 @@ function buildTicketBlock(t?: TicketPromptContext): string {
       `Your final answer MUST follow the FINAL REPORT FORMAT given below: one status heading, then an **"Acceptance criteria"** table with a verdict per criterion — met, not met, or could not verify — and ONE item of evidence each (file:line, diagnostic, or test output). ` +
       `Those three are the ONLY verdicts: "met after the fix is applied" is not a verdict, it is an unapplied fix — apply it first, then verify against the changed code. ` +
       `Never invent a criterion that is not in the ticket. ` +
-      `"Too ambiguous to implement" means a required product or behavior DECISION is missing from the ticket even after you have read the ticket, searched the design docs, and read the code — it never means your investigation is unfinished. ` +
-      `A minor IMPLEMENTATION choice (which existing signal to reuse, whether a flag is per-variant or tile-level, naming) is never that missing decision: when you can name a reasonable default, take it, implement it, and record it under an **"Assumptions"** line in your final answer. ` +
-      `Assumptions record defaults you already ACTED ON — an assumption describing a fix you did not implement is the same failure as asking permission. ` +
-      `When the task is to implement, the run has exactly THREE valid endings: (1) you applied the fix with your edit tools and report per-criterion verdicts; (2) the code already satisfies the acceptance criteria — end with a **"## No change needed"** section citing file:line evidence; (3) a required product or behavior decision is genuinely missing — end with a **"## Blocked"** section quoting the exact gap in the ticket. ` +
-      `An investigation report, hypothesis, or proposed fix without edits is NOT a valid ending. ` +
-      `A valid "## Blocked" quotes the ticket wording that conflicts, or names the decision wording that is absent. Questions answerable by reading more code — which file owns a behavior, what data a connector or mapper actually supplies, how a value flows on first render — are INVESTIGATION, never blockers: trace them with your tools before declaring anything blocked. Listing multiple "plausible causes" means the investigation is unfinished — read the code until one is proven. Where a fix should land is an implementation choice, not a blocker: default to the file where the root cause lives, even when it is shared code consumed by several apps. ` +
-      `Finish the investigation with your tools first; ending your answer by asking the user which file to read or which step to take next is a failure, not caution — and so is presenting a finished diff in prose while asking to confirm before applying it (every write is already shown to the user as a diff they approve or reject).`
+      `When the task is to implement, the run has exactly THREE valid endings: (1) you applied the fix with your edit tools and report per-criterion verdicts; (2) the code already satisfies the acceptance criteria — end with a **"## No change needed"** section citing file:line evidence; (3) the ticket demands behavior no default could satisfy — end with a **"## Blocked"** section QUOTING the words that conflict (HOW TO WORK above defines that bar; a missing decision you could settle with a default is not it). ` +
+      `An investigation report, hypothesis, or proposed fix without edits is NOT a valid ending, and neither is a finished diff presented in prose with a request to confirm it — every write is already shown to the user as a diff they approve or reject. ` +
+      `Record every default you acted on under an **"Assumptions"** line: an assumption describing a fix you did NOT implement is the same failure as asking permission.`
   );
   return lines.join('\n') + '\n' + FINAL_REPORT_FORMAT;
 }
@@ -163,7 +188,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; autonomous?: boolean; planMode?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; autonomous?: boolean; planMode?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -189,6 +214,15 @@ export function createStructuredPrompt(
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   const toolsEnabled = !!options?.codebaseToolsEnabled;
+  // Prompt weight is per-TURN cost: this text is re-sent on every request of a
+  // 30-turn run. The clauses gated on this flag exist to counter specific
+  // 14B-class failure modes — a narrated tool plan instead of a call, giving
+  // up after one search wording, claiming the write tools were withheld — and
+  // each is paired with the phrase gate that catches the same failure in the
+  // answer (see resolveHarnessProfile in answerGates). Turning both off
+  // together is the point: a gate with no matching instruction would punish a
+  // model that was never told.
+  const smallModelHarness = options?.harnessProfile !== 'strong-model';
 
   // Two very different grounding regimes: RAG turns must stay inside the
   // pre-fetched Context, but tool turns have NO pre-fetched context — telling
@@ -241,15 +275,22 @@ export function createStructuredPrompt(
     ? 'The user greeted you. Respond with a warm, friendly greeting. **Do NOT use any context.**'
     : codebaseToolsEnabled
       ? 'Answer the user\'s question about this codebase. You have live tools to explore the open workspace; use them to find and verify facts before answering rather than guessing. Only state things you have actually confirmed via a tool call. ' +
-        'NEVER reply with a plan or an announcement of which tools you intend to use — invoke the tools immediately, in this same turn, via the function-calling mechanism. A reply like "I will use find_files to locate the file" without an actual tool invocation is a failure. Do not write JSON tool calls into your text either. ' +
-        'Pick the right tool for the job: `find_symbol` for "where is X defined" when you know a symbol name (exact language-index answers, better than text search); `find_references`/`go_to_definition` to trace how a symbol is used once you\'ve located one occurrence; `search_codebase` for text/regex content search (use `outputMode: "files_with_matches"` first to cheaply survey which files matter, then read the interesting ones); `find_files` to locate files by NAME pattern; `list_directory` and `read_file` to inspect structure and content directly. You may request several independent tool calls in a single turn — they run in parallel. ' +
-        'A single search rarely settles a question — `search_codebase` only matches the literal text you pass it, so a query worded differently than the source (e.g. asking about "filters" when the doc says "criteria" or "options") can come back empty even when the answer is right there. It also cannot find a feature whose *implementation* never uses the words used to *describe* it — a design doc talking about "leads and funnel" may be implemented in a component named `LeadsView.tsx` that never contains that phrase. ' +
-        'Before concluding something isn\'t in the codebase: retry `search_codebase` with different keywords (individual words, synonyms, related terms); try `find_symbol` and `find_files` with the feature/entity name; `read_file` plausibly-relevant files directly. Only say the information isn\'t there after content search, symbol search, AND name search have all failed. ' +
+        (smallModelHarness
+          ? 'NEVER reply with a plan or an announcement of which tools you intend to use — invoke the tools immediately, in this same turn, via the function-calling mechanism. A reply like "I will use find_files to locate the file" without an actual tool invocation is a failure. Do not write JSON tool calls into your text either. '
+          : '') +
+        'Pick the right tool for the job: `explore` delegates a QUESTION spanning several files you have not read to a read-only investigator and returns cited findings without those files entering this conversation (use it before a multi-file survey; not for a file you already know you need); `find_symbol` for "where is X defined" when you know a symbol name (exact language-index answers, better than text search); `find_references`/`go_to_definition` to trace how a symbol is used once you\'ve located one occurrence; `search_codebase` for text/regex content search (use `outputMode: "files_with_matches"` first to cheaply survey which files matter, then read the interesting ones); `find_files` to locate files by NAME pattern; `list_directory` and `read_file` to inspect structure and content directly. You may request several independent tool calls in a single turn — they run in parallel. ' +
+        (smallModelHarness
+          ? 'A single search rarely settles a question — `search_codebase` only matches the literal text you pass it, so a query worded differently than the source (e.g. asking about "filters" when the doc says "criteria" or "options") can come back empty even when the answer is right there. It also cannot find a feature whose *implementation* never uses the words used to *describe* it — a design doc talking about "leads and funnel" may be implemented in a component named `LeadsView.tsx` that never contains that phrase. ' +
+            'Before concluding something isn\'t in the codebase: retry `search_codebase` with different keywords (individual words, synonyms, related terms); try `find_symbol` and `find_files` with the feature/entity name; `read_file` plausibly-relevant files directly. Only say the information isn\'t there after content search, symbol search, AND name search have all failed. '
+          : 'A search only matches the literal text you pass it, so vary the wording before concluding something is absent — and remember an implementation need not use the words that describe it. ') +
         'The FIRST plausible search hit is not necessarily the right one. When the question names a specific service/app/module, verify the files you cite actually belong to it — the directory or package name should match the asked-about name (asked about "product enricher" but reading files under "product-feeds" means you have the WRONG app; keep looking). In a monorepo several apps can match one keyword — run `find_files` with the asked-about name (e.g. "**/*enricher*") to enumerate the candidates and pick by name, and say so if the name is genuinely ambiguous. ' +
         'Answer the WHOLE question, not just the first fact you find. "How is X triggered/invoked/deployed/configured" questions usually have several answers at once — event subscriptions, schedules/cron, queue consumers, HTTP endpoints, manual/CLI invocations. Read the app\'s full configuration (serverless.yml, terraform/*.tf, package.json scripts) and enumerate EVERY mechanism defined there before answering. ' +
         'Answer from BOTH documentation and implementation when both exist — docs describe intent, code is the ground truth for what actually exists. ' +
         'IMPORTANT: chat history may contain earlier claims about what was or was not found in the codebase — do NOT rely on them as facts. The workspace may have changed and earlier searches may have been weaker. Re-verify with fresh tool calls any claim you are about to repeat or act on. This applies to FACTUAL claims, not to decisions the user has already agreed to: an approved plan stays approved. Re-read the specific files you are about to edit (you need their exact current text for `oldString` anyway) rather than re-running the whole investigation that produced the plan. ' +
-        'You can also CHANGE the workspace when the user asks for it: `edit_file` replaces exact text in a file — read_file the file first, then copy oldString character-for-character from that output, keeping its line breaks and indentation (never collapse a multi-line function onto one line, never retype code from memory); the match must be exact and unique unless replaceAll. `create_file` makes new files, `delete_file` removes them. Every write is shown to the user as a diff for approval before it is applied; a rejection returns their feedback — adjust and try again rather than repeating the same edit. Batch every change to ONE file into a single edit_file call via its `edits` array (each entry an exact oldString/newString pair, applied in order) — one call per file, never one call per change; prefer focused replacements over a full-file rewrite. When renaming or replacing something, update EVERY reference — the definition, export/module.exports lines, imports/requires, and every call site — then prove completeness by running `search_codebase` on the OLD name and updating any match that remains. After edits are applied, call `get_diagnostics` to verify you introduced no compile/type errors, and fix any you did. Never edit files the user did not ask you to change. These write tools are ALWAYS in your tools array alongside the read tools on codebase turns — never claim edit_file/create_file is "unavailable" or "not exposed"; if a write call fails, report its literal error instead. ' +
+        'You can also CHANGE the workspace when the user asks for it: `edit_file` replaces exact text in a file — read_file the file first, then copy oldString character-for-character from that output, keeping its line breaks and indentation (never collapse a multi-line function onto one line, never retype code from memory); the match must be exact and unique unless replaceAll. `create_file` makes new files, `delete_file` removes them. Every write is shown to the user as a diff for approval before it is applied; a rejection returns their feedback — adjust and try again rather than repeating the same edit. Batch every change to ONE file into a single edit_file call via its `edits` array (each entry an exact oldString/newString pair, applied in order) — one call per file, never one call per change; prefer focused replacements over a full-file rewrite. When renaming or replacing something, update EVERY reference — the definition, export/module.exports lines, imports/requires, and every call site — then prove completeness by running `search_codebase` on the OLD name and updating any match that remains. After edits are applied, call `get_diagnostics` to verify you introduced no compile/type errors, and fix any you did. Never edit files the user did not ask you to change.' +
+        (smallModelHarness
+          ? ' These write tools are ALWAYS in your tools array alongside the read tools on codebase turns — never claim edit_file/create_file is "unavailable" or "not exposed"; if a write call fails, report its literal error instead. '
+          : ' ') +
         'For repo context: `git_status`/`git_diff` show uncommitted work, `git_log` shows recent history, `git_blame` explains who last touched a line range — all read-only. ' +
         '`run_checks` runs the tests / lint / typecheck that cover ONE FILE — it derives the package, package manager, runner, sibling test file and working directory itself, so it never picks the wrong directory or an unapproved command. After your edits, call it with kind "lint", "typecheck" and "test" for every file you changed, and FIX failures before declaring the task done — if you skip it the run runs those checks itself before accepting your answer, so the failures reach you either way. `run_command` executes an arbitrary shell command (with user approval) — use it only when run_checks reports it cannot find a runner. Keep commands non-interactive (no watch modes, no prompts). ' +
         'Org knowledge — this is what you have that a repo-only assistant does not; use it. `get_ticket` reads ONE Azure DevOps work item by ID, live and complete: whenever the user names a ticket ("1234", "TKT-1234", "#1234"), call it FIRST, before touching code. `search_tickets` finds work items by description instead, over a local synced index that may be stale — use it only when you have no ID. `search_docs` searches Confluence design docs/architecture/runbooks. '
@@ -273,6 +314,14 @@ The user's reply approves the plan in your previous message. It is an instructio
 - Finish by reporting what you actually changed, verified with \`get_diagnostics\`.
 `
       : '';
+
+  // The operating norms (HOW_TO_WORK) ride on every codebase turn — a plain
+  // question, a fix, a ticket run, a follow-up — because the failures they
+  // prevent are not ticket-specific: the read-forever stall, the unearned
+  // "Blocked", and the report of edits that were never made all showed up on
+  // ordinary turns too. Plan mode is the one exclusion: "your next call is an
+  // edit" contradicts its contract, which is to propose and not write.
+  const howToWorkBlock = codebaseToolsEnabled && !options?.planMode ? `${HOW_TO_WORK}\n` : '';
 
   // Plan mode inverts the execute pressure: this turn's DELIVERABLE is the
   // plan, so the anti-plan gates in the worker are disarmed (see planMode in
@@ -299,7 +348,7 @@ This run was started with a single click and nobody will answer questions mid-ta
 - NEVER ask for permission, confirmation, or feedback. File writes apply automatically (each one is checkpointed and shown to the user afterwards as a reviewable diff).
 - Work the task to completion: implement, then VERIFY — run get_diagnostics after edits, then run_checks (kind "lint", "typecheck", "test") on every file you changed; it derives the command and runs without a gate. Diagnostics alone are NOT verification: they cannot see a failing assertion, a lint rule the editor does not run, or a type error in a file no editor has opened. run_command is limited to test/build/lint commands in this mode and refuses pipes, redirects and chaining.
 - Finish with the FINAL REPORT FORMAT (below) and nothing else — status heading, acceptance criteria table, changes, verification.
-- If the task is genuinely ambiguous, or requires an action you cannot take safely, STOP and report exactly what decision is needed — a clear "blocked on X" report is a successful outcome; guessing is not.
+- Blocking is the LAST resort here, not a safe default — HOW TO WORK above defines the one case that qualifies, and "nobody is watching" makes taking a sensible default MORE right, not less. Stop early only for an action that would be unsafe to take unattended (a destructive command, a credential, an outward-facing side effect): name it, say why, in one line.
 `
       : '';
 
@@ -329,7 +378,7 @@ This run was started with a single click and nobody will answer questions mid-ta
   return `
 ${personalityPrompt}
 ${adoContextBlock}
-${planModeBlock}${autonomousBlock}${options?.autonomous && !options?.ticketContext ? FINAL_REPORT_FORMAT : ''}${ticketBlock}${contextInstruction}
+${howToWorkBlock}${planModeBlock}${autonomousBlock}${options?.autonomous && !options?.ticketContext ? FINAL_REPORT_FORMAT : ''}${ticketBlock}${contextInstruction}
 
 ${contextBlock}${sourcesMarkdown}
 

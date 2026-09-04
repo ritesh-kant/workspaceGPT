@@ -26,6 +26,9 @@ import { extractBalancedJsonObjects } from './jsonExtract';
 
 // ── Config ──
 
+/** Per-file line slice an explorer reads — see the read_file call in runOneExplorer. */
+const EXPLORER_FILE_MAX_LINES = 400;
+
 export interface ExplorationConfig {
   /** Below this many distinct hit files, inline reads in the main loop are cheaper than any explorer. */
   gateMinFiles: number;
@@ -370,7 +373,13 @@ async function buildPack(
       continue;
     }
     try {
-      const r = (await deps.requestTool('read_file', { path: file })) as
+      // Explicit slice, not read_file's default. P4 raised that default to
+      // 2000 lines / 64 KB so the MAIN loop stops paging through a file in
+      // fragments — but an explorer's job is breadth over a cluster of files
+      // within a fixed char budget, and one 64 KB file would swallow the
+      // whole thing and push the rest onto `skipped`. Explorers keep the
+      // slice size they were tuned with.
+      const r = (await deps.requestTool('read_file', { path: file, endLine: EXPLORER_FILE_MAX_LINES })) as
         | { content?: string; totalLines?: number }
         | null;
       const content = String(r?.content ?? '');
@@ -389,24 +398,32 @@ async function buildPack(
   return { text, packedLines, skipped };
 }
 
-interface Claim {
+export interface Claim {
   fact: string;
   file: string;
   lines?: string;
 }
-interface EntryPoint {
+export interface EntryPoint {
   symbol: string;
   file: string;
   line: number;
 }
-interface ExplorerOutput {
+export interface ExplorerOutput {
   claims: Claim[];
   entryPoints: EntryPoint[];
   unknowns: string[];
 }
 
-/** Parses the explorer's JSON contract, tolerating the same fence/tag noise local models produce elsewhere. */
-function parseExplorerOutput(raw: string): ExplorerOutput {
+/**
+ * Parses the explorer's JSON contract, tolerating the same fence/tag noise
+ * local models produce elsewhere.
+ *
+ * Exported for the callable `explore` sub-agent (exploreSubagent.ts), which
+ * answers on the same claim contract. One parser and one validator for both
+ * means a claim citing a file nobody opened is dropped the same way whether
+ * it came from the pre-loop phase or from a mid-run delegation.
+ */
+export function parseExplorerOutput(raw: string): ExplorerOutput {
   for (const candidate of extractBalancedJsonObjects(raw)) {
     try {
       const obj = JSON.parse(candidate);
@@ -430,7 +447,7 @@ function parseExplorerOutput(raw: string): ExplorerOutput {
 }
 
 /** Drops any claim citing a file or line range the explorer wasn't actually shown. */
-function validateClaims(output: ExplorerOutput, packedLines: Map<string, number>): { kept: Claim[]; dropped: number } {
+export function validateClaims(output: ExplorerOutput, packedLines: Map<string, number>): { kept: Claim[]; dropped: number } {
   const kept: Claim[] = [];
   let dropped = 0;
   for (const c of output.claims) {

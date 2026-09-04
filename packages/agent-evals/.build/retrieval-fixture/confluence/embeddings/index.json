@@ -1,1 +1,0 @@
-{"schemaVersion":1,"embedding":{"provider":"local","model":"Xenova/all-MiniLM-L6-v2","dimensions":384,"normalized":true},"source":"CONFLUENCE","count":28,"builtAt":"2026-08-21T12:30:49.862Z","builtBy":"vscode-extension","shareable":false,"total":28,"dimensions":384,"includesMetadata":true,"metadataFields":["url","frontmatter"]}
