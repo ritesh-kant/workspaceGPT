@@ -29,6 +29,16 @@ import {
   isUnfinishedWriteRun,
 } from './answerGates';
 import { normalizeModelId } from '../../utils/normalizeModelId';
+import { consumeStream, shouldRetryEmptyStream } from './streamOutcome';
+import { scopeToolDefs, ToolAvailability } from './toolScope';
+import {
+  EMPTY_RESPONSE_PLACEHOLDER,
+  HARNESS_CHECKPOINT_PREFIX,
+  HARNESS_LIMIT_PREFIX,
+  HARNESS_PROSE_RETRY_PREFIX,
+  LimitKind,
+  pruneStaleHarnessMessages,
+} from './resumeHygiene';
 import { AutoVerifyTracker, CheckResultLike } from './autoVerify';
 import { stripLineNumbers } from '../../services/codebase/lineNumbers';
 
@@ -47,6 +57,11 @@ interface WorkerData {
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null;
   /** When enabled, the model gets live codebase tools instead of embedding search results. */
   codebaseTools?: { enabled: boolean };
+  /**
+   * Which tool groups this turn may be offered, from facts the host checked
+   * (folder open, source authenticated). Absent on an older host: every tool.
+   */
+  toolAvailability?: ToolAvailability;
   /** Text files the user attached — inlined into the structured prompt. */
   textAttachments?: { name: string; content: string }[];
   /** Image files the user attached — sent as multimodal image_url parts (vision models). */
@@ -118,6 +133,7 @@ const {
   currentUserName,
   currentSprint,
   codebaseTools,
+  toolAvailability,
   textAttachments,
   imageAttachments,
   mentionedFiles,
@@ -657,6 +673,11 @@ const isLocalProvider = (provider ?? '').toLowerCase() === 'ollama';
 // Which harness this run gets — structural gates only, or those plus the
 // phrase gates a 14B-class model needs. See resolveHarnessProfile.
 const HARNESS_PROFILE = resolveHarnessProfile({ isLocalProvider, modelId, override: harnessProfile });
+
+// The tool list this run actually sends. Scoped once from what the host says is
+// connected; every tool turn and the explore sub-agent draw from this, never
+// from TOOL_DEFS directly.
+const SCOPED_TOOL_DEFS = scopeToolDefs(TOOL_DEFS as Array<{ function: { name: string } }>, toolAvailability);
 const PHRASE_GATES = phraseGatesEnabled(HARNESS_PROFILE);
 // 20 for local (was 10): edit-heavy tasks need recovery headroom — a weak
 // model spends turns redundantly (5 get_diagnostics + 3 test runs observed in
@@ -861,6 +882,7 @@ async function generateResponse(): Promise<void> {
       currentSprint,
       {
         codebaseToolsEnabled: !!codebaseTools?.enabled,
+        toolAvailability,
         // Drops the weak-model scaffolding from every turn of a strong-model
         // run, paired with the phrase gates PHRASE_GATES disables.
         harnessProfile: HARNESS_PROFILE,
@@ -939,93 +961,23 @@ interface BufferedToolCall {
   args: string;
 }
 
-interface StreamOutcome {
-  content: string;
-}
-
-/**
- * Consumes a streamed chat completion, forwarding content chunks to the UI
- * with `<think>...</think>` stripping — unchanged from the original one-shot
- * path. Used only for plain (non-codebase) turns; the tool-calling agent loop
- * uses non-streaming turns instead (see runToolTurn) since streaming +
- * tool_calls is unreliable across OpenAI-compat providers.
- */
-async function consumeStream(stream: AsyncIterable<any>): Promise<StreamOutcome> {
-  let fullContent = '';
-  let thinkingDone = false;
-  let isCheckingThink = true;
-
-  try {
-    for await (const chunk of stream) {
-      const choice = chunk.choices?.[0];
-      const delta = choice?.delta;
-
-      const contentDelta = delta?.content;
-      if (!contentDelta) continue;
-
-      fullContent += contentDelta;
-
-      // Check for <think> tag at the very start
-      if (isCheckingThink) {
-        if (fullContent.length >= 7) {
-          isCheckingThink = false;
-          if (!fullContent.startsWith('<think>')) {
-            thinkingDone = true;
-            // Not a thinking model, send everything we buffered so far
-            parentPort?.postMessage({ type: 'chunk', content: fullContent });
-          }
-        }
-        continue;
-      }
-
-      // Strip <think>...</think> blocks - only send content after thinking is done
-      if (!thinkingDone) {
-        const thinkEnd = fullContent.indexOf('</think>');
-        if (thinkEnd !== -1) {
-          thinkingDone = true;
-          const afterThink = fullContent.substring(thinkEnd + 8).trim();
-          if (afterThink) {
-            parentPort?.postMessage({ type: 'chunk', content: afterThink });
-          }
-        }
-        continue;
-      }
-
-      // Send chunk to UI
-      parentPort?.postMessage({ type: 'chunk', content: contentDelta });
-    }
-  } catch (streamError) {
-    // Some OpenAI-compatible providers/proxies close the SSE stream without a
-    // proper terminator, which the SDK surfaces as "Premature close" even after
-    // the full message has already arrived. If we've buffered any content,
-    // treat it as a complete response and fall through rather than failing.
-    const isPrematureClose =
-      streamError instanceof Error && /premature close/i.test(streamError.message);
-    if (!isPrematureClose || fullContent.length === 0) {
-      throw streamError;
-    }
-    console.warn(
-      '[workspaceGPT] LLM stream closed early after content was received — ' +
-        'salvaging buffered response instead of erroring.',
-    );
-  }
-
-  // Handle case where stream ended before 7 chars
-  if (isCheckingThink) {
-    parentPort?.postMessage({ type: 'chunk', content: fullContent });
-  }
-
-  return {
-    content: fullContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim(),
-  };
-}
+// The streamed-turn consumer lives in ./streamOutcome so the headless suite can
+// drive it with a fake stream — see that file for why it needed a test.
 
 /** Surfaces a key-rotation event to the main thread so it can show it in the UI instead of leaving it silent in the extension host console. */
 function notifyKeyFailover(message: string): void {
   parentPort?.postMessage({ type: 'key_failover', message });
 }
 
-async function generateWithOpenAIStream(prompt: string, model: string, baseURL: string, apiKeys: string[]): Promise<void> {
+async function generateWithOpenAIStream(
+  prompt: string,
+  model: string,
+  baseURL: string,
+  apiKeys: string[],
+  maxTokens = 4096,
+  /** False on the retry below, so a model that only ever thinks cannot loop. */
+  allowLengthRetry = true,
+): Promise<void> {
   let userContent = buildUserContent(prompt);
   const call = (apiKey: string) => {
     const openai = new OpenAI({ apiKey, baseURL });
@@ -1038,7 +990,7 @@ async function generateWithOpenAIStream(prompt: string, model: string, baseURL: 
         }
       ],
       temperature: 0.3,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       stream: true,
     });
   };
@@ -1062,7 +1014,31 @@ async function generateWithOpenAIStream(prompt: string, model: string, baseURL: 
     }
   }
 
-  const outcome = await consumeStream(stream);
+  const outcome = await consumeStream(stream, (content) =>
+    parentPort?.postMessage({ type: 'chunk', content })
+  );
+
+  // A reasoning model can spend its whole budget thinking and emit no visible
+  // content: the text arrives as `reasoning_content` deltas, and this path
+  // forwards only `delta.content`. Measured against glm-5.3-flash on 2026-09-05
+  // — 199 of 200 deltas were reasoning and `content` totalled ZERO characters,
+  // so the turn was delivered as an empty answer with no error and no retry.
+  //
+  // runToolTurn already cures exactly this for the agent path (see its own
+  // allowLengthRetry); the streamed path used by Confluence/ADO turns had no
+  // equivalent, which is why a doc turn could silently produce nothing.
+  if (allowLengthRetry && shouldRetryEmptyStream(outcome)) {
+    console.warn(
+      '[workspaceGPT] streamed turn produced no visible content ' +
+        `(finish=${outcome.finishReason}, ${outcome.reasoningChars} reasoning chars) — ` +
+        'retrying once with a larger token budget.'
+    );
+    // The recursive call posts its own 'done'; returning here keeps this turn
+    // to exactly one terminal message.
+    await generateWithOpenAIStream(prompt, model, baseURL, apiKeys, Math.max(maxTokens * 2, 16384), false);
+    return;
+  }
+
   parentPort?.postMessage({ type: 'done', content: outcome.content });
 }
 
@@ -1407,6 +1383,12 @@ interface ResumeState {
   toolResults: { msgIndex: number; name: string; chars: number; roundIndex: number }[];
   /** How many tool rounds the resumed transcript contains. */
   rounds: number;
+  /**
+   * The harness limit that ended the previous segment, if one did. Its
+   * announcement is stripped from the resumed messages (see resumeHygiene.ts);
+   * the continuation prompt tells the model the budget is fresh instead.
+   */
+  endedAtLimit: LimitKind | null;
 }
 
 /** Filler for a declared tool call whose result never arrived — invalid to omit, but not a real result. */
@@ -1438,7 +1420,13 @@ function toolResultFailed(content: unknown): boolean {
  */
 function seedFromTranscript(raw: unknown): ResumeState | null {
   if (!Array.isArray(raw) || raw.length === 0) return null;
-  const entries = raw.filter((m): m is ResumeMessage => !!m && typeof m === 'object' && 'role' in m);
+  const present = raw.filter((m): m is ResumeMessage => !!m && typeof m === 'object' && 'role' in m);
+  // The previous segment's "step limit reached / no further tools / answer
+  // now" messages describe a budget THIS segment does not have. Left in, the
+  // model reads them as current and ends the resumed run after one call
+  // (observed on #1534774 — see resumeHygiene.ts).
+  const pruned = pruneStaleHarnessMessages(present);
+  const entries = pruned.messages;
   if (!entries.length) return null;
 
   const messages: ResumeMessage[] = [];
@@ -1456,6 +1444,7 @@ function seedFromTranscript(raw: unknown): ResumeState | null {
     toolChars: 0,
     toolResults: [],
     rounds: 0,
+    endedAtLimit: pruned.endedAtLimit,
   };
 
   for (let i = 0; i < entries.length; i++) {
@@ -1563,6 +1552,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
               mentionedFiles,
               executeMandate,
               toolResultsAbove: resume.toolCallsExecuted,
+              previousSegmentEndedAt: resume.endedAtLimit,
             })
           ),
         },
@@ -2030,7 +2020,16 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // already in `messages`, and the scout would be run against a continuation
   // reply ("continue", "fix it") that carries no topic of its own.
   const exploreStarted = Date.now();
-  const exploration = resume
+  // Also skipped when the host pre-fetched org context and the request is not
+  // a change request: the scout is a code-investigation optimisation, and on a
+  // documentation question whose answer is already in the prompt it would
+  // spend explorer completions surveying a repo nobody asked about.
+  // Deliberately NOT skipped for write intent ("can you fix it" after a ticket
+  // answer) — there the codebase is the subject, whatever was pre-fetched.
+  // Cost of a wrong skip: the model explores by hand with the same tools —
+  // slower, never less capable.
+  const docPrefetched = searchResults.length > 0;
+  const exploration = resume || (docPrefetched && !WRITE_INTENT_RUN)
     ? null
     : await runExplorationPhase(
         prompt,
@@ -2102,7 +2101,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   for (let i = 0; i < iterationCap; i++) {
     const turnStarted = Date.now();
     syncTranscript();
-    const outcome = await runToolTurn(messages, model, baseURL, apiKeys, true);
+    const outcome = await runToolTurn(messages, model, baseURL, apiKeys, true, undefined, undefined, SCOPED_TOOL_DEFS);
     const thoughtMs = Date.now() - turnStarted;
 
     // Exit on absence of tool calls only — several OpenAI-compat providers
@@ -2705,7 +2704,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           typeof scope === 'string' ? scope : undefined,
           {
             runTurn: async (subMessages, toolNames, withTools) => {
-              const defs = TOOL_DEFS.filter((d) => toolNames.includes((d as { function: { name: string } }).function.name));
+              const defs = SCOPED_TOOL_DEFS.filter((d) => toolNames.includes(d.function.name));
               const o = await runToolTurn(subMessages as any[], model, baseURL, apiKeys, withTools, 4096, true, defs);
               return {
                 content: o.content,
@@ -2859,7 +2858,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       messages.push({
         role: 'user',
         content:
-          `Checkpoint from the harness: ${commit.turnsLeft} tool turn(s) left in this run, and zero file edits so far. ` +
+          `${HARNESS_CHECKPOINT_PREFIX} ${commit.turnsLeft} tool turn(s) left in this run, and zero file edits so far. ` +
           'Reading is not progress once you can name the cause. State the root cause in ONE line with its file:line, then make your NEXT tool call an edit — re-read only the exact lines you need to copy for oldString. ' +
           'If you genuinely cannot edit yet, say in one line what single fact is missing and get it in your next call. ' +
           'Running out of turns is not a blocker and never a reason to report one: an applied fix with a stated assumption beats a perfect investigation nobody can ship.',
@@ -2905,9 +2904,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   messages.push({
     role: 'user',
     content:
+      // Built from the resumeHygiene prefixes: a resumed run strips this
+      // message, because the limit it announces belongs to THIS segment only.
       (budgetExhausted
-        ? `The tool-OUTPUT budget for this run is exhausted after ${toolCallsExecuted} tool call(s).`
-        : `The step limit for this run is reached: ${toolCallsExecuted} tool call(s) over ${perTurn.length} turns (cap ${iterationCap}).`) +
+        ? `${HARNESS_LIMIT_PREFIX.budget} after ${toolCallsExecuted} tool call(s).`
+        : `${HARNESS_LIMIT_PREFIX.steps}: ${toolCallsExecuted} tool call(s) over ${perTurn.length} turns (cap ${iterationCap}).`) +
       ' No further tools can run this turn. Answer now from what you already gathered. ' +
       'If the task itself is complete (fix applied and verified), do NOT mention the limit at all — deliver the final report in the required format as if the run ended normally. ' +
       'Only if the task is unfinished, be exact about why you stopped — say "' +
@@ -2921,7 +2922,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // took this prompt's own "list the files still unread" instruction and
       // rendered it as a paragraph of homework for the next run.
       'Do NOT use the "## Blocked" heading for this: a step or budget limit is a harness limit, not a missing product decision, and "## Blocked" claims the second. ' +
-      'If you had already identified the fix, say so plainly under "## ⚠️ Partially done" and state what the edit would be, in one or two lines. ' +
+      'Put that reason IN the status heading, after what is left — e.g. "## ⚠️ Partially done — run_checks not run · step limit reached after the edits" — a heading that names only what is left ("run_checks not run yet") tells the user nothing they can act on. ' +
+      'If you had already identified the fix, say so plainly under that heading and state what the edit would be, in one or two lines; if the task is a bug, still give the "### Root cause" section — the user wants to know what was wrong even when the fix is unfinished. ' +
       'Then list only the specific files still unread — the run resumes with everything gathered so far carried over, so keep it to file paths, not instructions.',
   });
   let finalStarted = Date.now();
@@ -2938,10 +2940,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // more explicit nudge before giving up, since a forced no-tools turn with
     // a long tool-result history is exactly the shape that starves smaller
     // output budgets.
-    messages.push({ role: 'assistant', content: '(empty response)' });
+    messages.push({ role: 'assistant', content: EMPTY_RESPONSE_PLACEHOLDER });
     messages.push({
       role: 'user',
-      content: `Answer now, in plain prose, using the ${toolCallsExecuted} tool result(s) already gathered above. Do not call any more tools.`,
+      content: `${HARNESS_PROSE_RETRY_PREFIX} ${toolCallsExecuted} tool result(s) already gathered above. Do not call any more tools.`,
     });
     finalStarted = Date.now();
     syncTranscript();

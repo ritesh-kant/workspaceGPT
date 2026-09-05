@@ -2284,6 +2284,19 @@ button:disabled {
   flex-shrink: 0;
 }
 
+.git-status-stats-scope {
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-font-family);
+  font-size: 0.68rem;
+  font-weight: 400;
+  margin-right: 2px;
+}
+
+.git-status-stats-count {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 500;
+}
+
 .git-status-stats .stat-added { color: var(--vscode-charts-green, #3fb950); }
 .git-status-stats .stat-removed { color: var(--vscode-charts-red, #f85149); }
 
@@ -2295,78 +2308,43 @@ button:disabled {
   flex-shrink: 0;
 }
 
-.git-status-ship-group {
-  display: flex;
-  position: relative;
-}
-
-.git-status-ship {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: var(--wgpt-radius-sm, 4px) 0 0 var(--wgpt-radius-sm, 4px);
-  padding: 3px 10px;
+/* "Create PR" as a composer control (CreatePrButton.tsx). Quiet chrome like
+   the neighbouring chips at rest, filled on hover — it is the only writing
+   action in the row, so it earns emphasis on approach but must not sit there
+   shouting next to Send. */
+.create-pr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  margin-left: 2px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  border-radius: var(--wgpt-radius-sm, 4px);
+  font-family: inherit;
   font-size: 0.72rem;
   font-weight: 500;
-  cursor: pointer;
   white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
-.git-status-ship:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+.create-pr-chip:hover:not(:disabled) {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-background);
 }
 
-.git-status-ship:disabled {
+.create-pr-chip:disabled {
   opacity: 0.6;
   cursor: default;
 }
 
-.git-status-ship-menu-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-left: 1px solid color-mix(in srgb, var(--vscode-button-foreground) 25%, transparent);
-  border-radius: 0 var(--wgpt-radius-sm, 4px) var(--wgpt-radius-sm, 4px) 0;
-  cursor: pointer;
-}
-
-.git-status-ship-menu-toggle:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.git-status-ship-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 20;
-  min-width: 150px;
-  background: var(--vscode-menu-background, var(--wgpt-surface));
-  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
-  border-radius: var(--wgpt-radius-sm, 4px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  padding: 3px;
-}
-
-.git-status-ship-menu button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 5px 8px;
-  border-radius: 3px;
-  font-size: 0.72rem;
-  color: var(--vscode-menu-foreground, var(--vscode-foreground));
-  cursor: pointer;
-}
-
-.git-status-ship-menu button:hover {
-  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
-  color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+.create-pr-chip svg {
+  flex-shrink: 0;
+  opacity: 0.8;
 }
 
 .git-status-dismiss {

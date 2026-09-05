@@ -1,9 +1,14 @@
 import React, { useState } from 'react';
-import { nextWeeklyReset, usageTone } from '../utils/usage';
+import { formatDurationApprox, nextWeeklyReset, usageTone } from '../utils/usage';
 
 interface UsageLimitBarProps {
+  /** Credits used / allowed this week. */
   used: number;
   limit: number;
+  /** Credits used / allowed in the rolling window; absent on an older server. */
+  windowUsed?: number;
+  windowLimit?: number;
+  windowSeconds?: number;
 }
 
 const DISMISS_KEY = 'workspacegpt.usageLimitDismissedForReset';
@@ -29,18 +34,34 @@ function formatResetDate(d: Date): string {
  * runs low. Dismissing suppresses it for the rest of the current quota week —
  * it reappears once the quota resets, same as a real limit warning should.
  */
-const UsageLimitBar: React.FC<UsageLimitBarProps> = ({ used, limit }) => {
+const UsageLimitBar: React.FC<UsageLimitBarProps> = ({ used, limit, windowUsed, windowLimit, windowSeconds }) => {
   const resetAt = nextWeeklyReset();
   const [dismissedReset, setDismissedReset] = useState<number | null>(readDismissedReset);
 
   if (limit <= 0) return null;
-  const remaining = Math.max(0, limit - used);
-  const remainingPct = Math.min(100, Math.max(0, Math.round((remaining / limit) * 100)));
+  const pctLeft = (u: number, l: number) => Math.min(100, Math.max(0, Math.round(((l - u) / l) * 100)));
+  const weeklyPct = pctLeft(used, limit);
+  const hasWindow = typeof windowLimit === 'number' && windowLimit > 0;
+  const windowPct = hasWindow ? pctLeft(windowUsed ?? 0, windowLimit) : 100;
+  // Two allowances, one bar: whichever is closer to running out is the one
+  // worth warning about. The 5-hour window frees itself; the week does not.
+  const windowIsTighter = hasWindow && windowPct < weeklyPct;
+  const remainingPct = windowIsTighter ? windowPct : weeklyPct;
   if (remainingPct > SHOW_AT_REMAINING_PCT) return null;
-  if (dismissedReset === resetAt.getTime()) return null;
+  if (!windowIsTighter && dismissedReset === resetAt.getTime()) return null;
 
   const usedPct = 100 - remainingPct;
   const tone = usageTone(remainingPct);
+  const label = windowIsTighter
+    ? remainingPct === 0
+      ? "You've used your 5-hour credit allowance"
+      : `You've used ${usedPct}% of your 5-hour credit allowance`
+    : remainingPct === 0
+      ? "You've used your weekly credits"
+      : `You've used ${usedPct}% of your weekly credits`;
+  const resetText = windowIsTighter
+    ? `Frees up in ${formatDurationApprox(windowSeconds ?? 5 * 3600)}`
+    : `Resets ${formatResetDate(resetAt)}`;
 
   const dismiss = () => {
     const ts = resetAt.getTime();
@@ -65,12 +86,8 @@ const UsageLimitBar: React.FC<UsageLimitBarProps> = ({ used, limit }) => {
           />
         </svg>
       </span>
-      <span className='usage-limit-text'>
-        {remaining === 0
-          ? "You've used your weekly limit"
-          : `You've used ${usedPct}% of your weekly limit`}
-      </span>
-      <span className='usage-limit-reset'>Resets {formatResetDate(resetAt)}</span>
+      <span className='usage-limit-text'>{label}</span>
+      <span className='usage-limit-reset'>{resetText}</span>
       <button type='button' className='usage-limit-dismiss' onClick={dismiss} aria-label='Dismiss'>
         <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
           <path d='M6 6l12 12M18 6L6 18' stroke='currentColor' strokeWidth='2' strokeLinecap='round' />

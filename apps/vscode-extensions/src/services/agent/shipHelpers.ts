@@ -48,6 +48,31 @@ export function inferConventionalType(paths: string[], hasNewFiles: boolean): Co
 }
 
 /**
+ * Branch/commit type for one agent turn. A Bug/Feature-style ticket type
+ * decides outright; otherwise the turn's own evidence does — a title that
+ * talks about fixing, or a report that fills the "Root cause" slot, is a fix,
+ * not a chore. Falls back to what the changed paths suggest.
+ */
+export function turnCommitType(input: {
+  ticketType?: string;
+  title: string;
+  report: string;
+  files: string[];
+  hasNewFiles?: boolean;
+}): ConventionalType {
+  const fromTicket = conventionalCommitType(input.ticketType);
+  if (input.ticketType && fromTicket !== 'chore') return fromTicket;
+  const title = input.title.toLowerCase();
+  if (/\b(fix(es|ed|ing)?|bug(s|fix)?|defect|crash(es|ing)?|regression|broken|hotfix|patch)\b/.test(title)) return 'fix';
+  if (/^#{2,4}\s+root cause\b/im.test(input.report)) return 'fix';
+  if (/\b(refactor(s|ed|ing)?|rename[sd]?|clean ?up|extract(s|ed)?|simplif(y|ies|ied))\b/.test(title)) return 'refactor';
+  if (/\b(docs?|readme|documentation)\b/.test(title)) return 'docs';
+  if (/\b(tests?|spec|coverage)\b/.test(title)) return 'test';
+  if (/\b(add(s|ed)?|implement(s|ed)?|introduce[sd]?|support|feature|new|enable[sd]?)\b/.test(title)) return 'feat';
+  return inferConventionalType(input.files, !!input.hasNewFiles);
+}
+
+/**
  * Default commit subject offered for a working tree with no ticket behind it:
  * the verb reflects whether anything is new, the scope names the one file or
  * the directory the changes share.

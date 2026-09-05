@@ -53,6 +53,11 @@ const API_KEY = argOf('api-key', process.env.WGPT_BENCH_API_KEY ?? 'DUMMY_API_KE
 const BASE_URL = argOf('base-url', process.env.WGPT_BENCH_BASE_URL);
 const TOPK = parseInt(argOf('topk', '5'), 10);
 const RUNS = Math.max(1, parseInt(argOf('runs', '1'), 10) || 1);
+// Pause between queries. Default 0 keeps the original behaviour; set it when
+// the endpoint rate-limits, which is otherwise indistinguishable from an
+// answer-quality failure in the report (a --runs 5 pass is 130 requests, and
+// an unpaced burst of 26 already drew 7 consecutive 429s from one provider).
+const DELAY_MS = Math.max(0, parseInt(argOf('delay-ms', '0'), 10) || 0);
 const ONLY = argOf('queries', null)?.split(',');
 const QUERY_TIMEOUT_MS = Math.round(parseFloat(argOf('timeout-min', '3')) * 60 * 1000);
 
@@ -234,8 +239,11 @@ let queries = JSON.parse(fs.readFileSync(queriesPath, 'utf8'));
 if (ONLY) queries = queries.filter((q) => ONLY.includes(q.id));
 
 const runRecords = [];
+let queriesStarted = 0;
 for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
   for (const q of queries) {
+    // Between queries only — never before the first, and never after the last.
+    if (queriesStarted++ && DELAY_MS) await new Promise((res) => setTimeout(res, DELAY_MS));
     const startedAt = new Date().toISOString();
     const results = await search(q.query, TOPK);
     const injectedFileNames = results.map((r) => r.data.fileName);

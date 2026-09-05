@@ -108,15 +108,24 @@ export const HOW_TO_WORK = `## HOW TO WORK
  * Why so prescriptive: the first live reports were process diaries — "this
  * turn re-ran the same verifications", harness cache caveats, "uncommitted on
  * main and visible as a diff" — none of which the user can act on. The user
- * needs four things: did it work, is each criterion met, what changed, how
- * was it verified. Everything else is noise in a 350px panel.
+ * needs five things: did it work (and if not, exactly why not), what was
+ * actually wrong, is each criterion met, what changed, how was it verified.
+ * Everything else is noise in a 350px panel.
+ *
+ * "Root cause" and the mandatory "why" on Partially done were added after a
+ * live report read "Partially done — fix applied to two files; run_checks not
+ * run yet": it named neither what had been wrong nor why checks were skipped
+ * (the step cap), because the format had no root-cause slot and its
+ * "never say step limit" rule collided with the forced-report prompt's "say
+ * step limit reached" — so the model dropped the reason altogether.
  */
 export const FINAL_REPORT_FORMAT = `## FINAL REPORT FORMAT
 The user reads ONLY your final answer, in a narrow side panel that renders this exact structure as a card. The status heading is the FIRST LINE of your answer — not one sentence before it, not "now let me write the report". Then only the sections below, in this order. No other headings, no sign-off.
 
 ## ✅ Done — <what now works, in the ticket's own terms, ≤ 25 words>
 Use exactly one of these status headings instead when it applies:
-  ## ⚠️ Partially done — <what is left, and why>
+  ## ⚠️ Partially done — <what is left> · <WHY it is left: the exact obstacle>
+      The "why" is mandatory and concrete: "step limit reached before run_checks", "jest fails to start: Cannot find module X", "needs the design's empty-state copy". "not run yet" or "pending" is not a reason — the user cannot act on it.
   ## 🚫 Blocked — <the ONE product/behavior decision the ticket is missing>
   ## ✅ No change needed — <why the code already satisfies the ticket>
 
@@ -124,6 +133,9 @@ Use exactly one of these status headings instead when it applies:
 | Criterion | Verdict | Evidence |
 |---|---|---|
 | <criterion paraphrased in ≤ 12 words> | ✅ Met · ❌ Not met · ⚠️ Could not verify (pick one) | <ONE item — a \`path/from/repo/root.ts:L120-L130\`, a test count, or a diagnostic count; never a sentence> |
+
+### Root cause  (required for a bug/defect; omit for a pure feature or chore)
+<1–2 sentences: the MECHANISM that produced the reported behavior — which value/branch/timing was wrong and why the symptom followed — anchored to \`path/from/repo/root.ts:L18-L32\`. Not a restatement of the symptom, not a description of the fix. If you did NOT establish the mechanism, write "Not established — <what you observed instead>"; never invent one to fill the slot.>
 
 ### Changes
 - \`path/from/repo/root.ts\` — what changed and why, one line each (omit this section when nothing changed)
@@ -138,7 +150,7 @@ Use exactly one of these status headings instead when it applies:
 - Out of scope: <related work you deliberately did not do>
 
 Verdict honesty: a criterion about BEHAVIOR is ✅ Met only when a test or command you actually ran proves it — if the relevant test could not be run, that criterion is ⚠️ Could not verify (reading the code is not verification; say so in the evidence cell). A criterion about code SHAPE (a test was added, a call was removed) may cite \`file:line\` as proof.
-Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they become clickable. Write a work-item reference as a bare \`#<id>\` (e.g. #1516750) OUTSIDE backticks — it becomes a link to the ticket. Never narrate the process: no "this turn" / "previous turn" / "step limit" / "cache artifact" / "I re-ran", no restating the ticket, no "uncommitted on main" or "visible as a diff" boilerplate (the panel already shows changed files and their diffs). Everything outside the table stays under ~150 words. Never invent a criterion the ticket does not contain.
+Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they become clickable. Write a work-item reference as a bare \`#<id>\` (e.g. #1516750) OUTSIDE backticks — it becomes a link to the ticket. Never narrate the process in the body: no "this turn" / "previous turn" / "cache artifact" / "I re-ran", no restating the ticket, no "uncommitted on main" or "visible as a diff" boilerplate (the panel already shows changed files and their diffs). Everything outside the table stays under ~180 words. Never invent a criterion the ticket does not contain. The ONE place a harness limit belongs is the Partially-done heading's "why" ("step limit reached before run_checks") — never in the body, never as a Blocked reason.
 `;
 
 /**
@@ -188,7 +200,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; autonomous?: boolean; planMode?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; ado: boolean }; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; autonomous?: boolean; planMode?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -214,6 +226,29 @@ export function createStructuredPrompt(
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   const toolsEnabled = !!options?.codebaseToolsEnabled;
+
+  // Only describe the org tools the worker will actually offer (see
+  // scopeToolDefs): telling the model about `get_ticket` when its tool list
+  // has no `get_ticket` invites a failed call and costs prompt tokens on every
+  // turn of the run. An absent availability (older host) keeps the full text.
+  const avail = options?.toolAvailability;
+  const adoTools = !avail || avail.ado;
+  const docTools = !avail || avail.confluence;
+  const orgKnowledgeBlock =
+    adoTools || docTools
+      ? 'Org knowledge — this is what you have that a repo-only assistant does not; use it. ' +
+        (adoTools
+          ? '`get_ticket` reads ONE Azure DevOps work item by ID, live and complete: whenever the user names a ticket ("1234", "TKT-1234", "#1234"), call it FIRST, before touching code. `search_tickets` finds work items by description instead, over a local synced index that may be stale — use it only when you have no ID. '
+          : '') +
+        (docTools ? '`search_docs` searches Confluence design docs/architecture/runbooks. ' : '') +
+        (adoTools
+          ? 'When implementing a ticket: `get_ticket` for the acceptance criteria → ' +
+            (docTools ? '`search_docs` for the design doc behind it → ' : '') +
+            'then explore the code. Treat the acceptance criteria as the definition of done and check your work against each one. Cite the ticket' +
+            (docTools ? ' and the doc' : '') +
+            ' when they drive a decision, and NEVER invent an ID or a requirement that was not in what you actually read. '
+          : '')
+      : '';
   // Prompt weight is per-TURN cost: this text is re-sent on every request of a
   // 30-turn run. The clauses gated on this flag exist to counter specific
   // 14B-class failure modes — a narrated tool plan instead of a call, giving
@@ -228,7 +263,22 @@ export function createStructuredPrompt(
   // pre-fetched Context, but tool turns have NO pre-fetched context — telling
   // the model "only use the Context below" there hands it a ready-made refusal
   // and directly contradicts the explore-with-tools instructions.
-  const groundingRules = toolsEnabled
+  // Third grounding regime: a TOOL turn that also carries pre-fetched org
+  // context. Until 2026-09-05 these were mutually exclusive — retrieval turns
+  // had no tools, tool turns had no retrieval — and "only the Context below"
+  // vs "only tool results from this turn" were the only two stories the prompt
+  // could tell. Now retrieval rides into tool turns, so the model needs the
+  // merged rule: answer from what was fetched when it suffices, verify in the
+  // workspace when it does not, and never lose the ability to do either.
+  const withContext = toolsEnabled && !!formattedContext;
+
+  const groundingRules = withContext
+    ? `## CRITICAL GROUNDING RULES (MUST FOLLOW):
+  1. **Ground every claim in the Context below or in a tool result from THIS turn.** The Context was retrieved from Confluence/Azure DevOps before you started — treat it as evidence you already hold.
+  2. **If the Context answers the question, answer from it directly and cite its Provided Sources.** Do not re-run search_docs/search_tickets for what is already in front of you.
+  3. **If the Context is insufficient, or the request asks for a change to the code, use your tools.** Do not conclude something is absent until you have genuinely searched — several keyword variations, symbol search, and file-name search.
+  4. **NEVER invent links, ticket numbers, IDs, or file paths.** Cite only Provided Sources, tool results from this turn, and files you actually read.`
+    : toolsEnabled
     ? `## CRITICAL GROUNDING RULES (MUST FOLLOW):
   1. **Ground every claim in a tool result from THIS turn.** Only state file paths, symbols, and behavior you actually observed via your tools — never guess or reconstruct them from memory.
   2. **Do not conclude something is absent until you have genuinely searched for it** — content search with several keyword variations, symbol search, and file-name search. An empty search result means "not found by that query", not "does not exist".
@@ -274,7 +324,10 @@ export function createStructuredPrompt(
   const contextInstruction = isGreeting
     ? 'The user greeted you. Respond with a warm, friendly greeting. **Do NOT use any context.**'
     : codebaseToolsEnabled
-      ? 'Answer the user\'s question about this codebase. You have live tools to explore the open workspace; use them to find and verify facts before answering rather than guessing. Only state things you have actually confirmed via a tool call. ' +
+      ? (withContext
+          ? 'Context from Confluence/Azure DevOps was retrieved for this question and appears under **Context** below. If it answers the question, answer from it directly and cite its Provided Sources — do not re-search for what is already there. Reach for your tools when the Context is insufficient, or when the user asks for a change to the code. '
+          : 'Answer the user\'s question about this codebase. ') +
+        'You have live tools to explore the open workspace; use them to find and verify facts before answering rather than guessing. Only state things about the code that you have actually confirmed via a tool call. ' +
         (smallModelHarness
           ? 'NEVER reply with a plan or an announcement of which tools you intend to use — invoke the tools immediately, in this same turn, via the function-calling mechanism. A reply like "I will use find_files to locate the file" without an actual tool invocation is a failure. Do not write JSON tool calls into your text either. '
           : '') +
@@ -293,8 +346,7 @@ export function createStructuredPrompt(
           : ' ') +
         'For repo context: `git_status`/`git_diff` show uncommitted work, `git_log` shows recent history, `git_blame` explains who last touched a line range — all read-only. ' +
         '`run_checks` runs the tests / lint / typecheck that cover ONE FILE — it derives the package, package manager, runner, sibling test file and working directory itself, so it never picks the wrong directory or an unapproved command. After your edits, call it with kind "lint", "typecheck" and "test" for every file you changed, and FIX failures before declaring the task done — if you skip it the run runs those checks itself before accepting your answer, so the failures reach you either way. `run_command` executes an arbitrary shell command (with user approval) — use it only when run_checks reports it cannot find a runner. Keep commands non-interactive (no watch modes, no prompts). ' +
-        'Org knowledge — this is what you have that a repo-only assistant does not; use it. `get_ticket` reads ONE Azure DevOps work item by ID, live and complete: whenever the user names a ticket ("1234", "TKT-1234", "#1234"), call it FIRST, before touching code. `search_tickets` finds work items by description instead, over a local synced index that may be stale — use it only when you have no ID. `search_docs` searches Confluence design docs/architecture/runbooks. '
-        + 'When implementing a ticket: `get_ticket` for the acceptance criteria → `search_docs` for the design doc behind it → then explore the code. Treat the acceptance criteria as the definition of done and check your work against each one. Cite the ticket and the doc when they drive a decision, and NEVER invent an ID or a requirement that was not in what you actually read. ' +
+        orgKnowledgeBlock +
         '`search_web` is a live internet search — use it the moment a task names something you don\'t actually know (an unfamiliar library, API, product, or service — e.g. "add ZenMux as a provider") instead of guessing at its shape from a similar-sounding name. Also reach for it when the answer depends on something that can change after your training (current docs, pricing, version numbers, breaking changes) — the codebase and org docs cannot tell you that. Do NOT use it for anything answerable from THIS workspace or from Confluence/ADO — those are cheaper and authoritative for org-internal facts. It may be unconfigured (no API key) — if so it reports that plainly; fall back to your own knowledge and say so, don\'t stall the task on it. When you do use its results, cite the source URLs.'
       : 'Answer the user\'s question using ONLY the context provided below. If the context does not contain relevant information, clearly state that you don\'t have the data rather than guessing.';
 
@@ -362,8 +414,13 @@ This run was started with a single click and nobody will answer questions mid-ta
       ? `**Project rules (set by the user/team — follow them; they override your defaults):**\n${options.workspaceRules}\n`
       : '';
 
+  // On a tool turn the workspace rules and orientation must ride along whether
+  // or not context was pre-fetched — the earlier shape only emitted them in the
+  // no-context branch, because a tool turn never had context before.
   const contextBlock = formattedContext
-    ? `**Context (ONLY source of truth — do NOT add information not found here):**\n\`\`\`\n${formattedContext}\n\`\`\`\n`
+    ? codebaseToolsEnabled
+      ? `${rulesBlock}${orientationBlock}**Context (retrieved from Confluence/Azure DevOps before this turn — answer from it when it suffices; verify in the workspace with your tools when it does not):**\n\`\`\`\n${formattedContext}\n\`\`\`\n`
+      : `**Context (ONLY source of truth — do NOT add information not found here):**\n\`\`\`\n${formattedContext}\n\`\`\`\n`
     : codebaseToolsEnabled
       ? `${rulesBlock}${orientationBlock}**Context:** No other pre-fetched context — use your tools to look at the workspace before answering.\n`
       : '**Context:** No relevant information was found in the indexed data.\n';
@@ -397,7 +454,9 @@ ${
   codebaseToolsEnabled
     ? options?.executeMandate
       ? 'Make the approved changes now with your write tools, then report what you changed and the result of `get_diagnostics`. Do not ask whether to proceed, and do not restate the plan.'
-      : 'Explore the workspace with your tools first, then respond using ONLY facts you verified via tool results in this turn. Cite the relevant file paths (with line numbers where useful).'
+      : withContext
+        ? 'Answer from the Context above when it suffices, verifying in the workspace with your tools when it does not. Use ONLY facts from the Context or from tool results in this turn. ALWAYS end with a **Sources** section: list the "Provided Sources" links you relied on (ONLY links from that list, never invented ones), and add the workspace file paths (with line numbers where useful) for anything you verified in the code. If you relied on none of the Provided Sources, say so in that section in one line rather than omitting it.'
+        : 'Explore the workspace with your tools first, then respond using ONLY facts you verified via tool results in this turn. Cite the relevant file paths (with line numbers where useful).'
     : 'Respond using ONLY facts from the Context above. At the end, include a **Sources** section with ONLY links from the "Provided Sources" list above. Do NOT fabricate or modify any links.'
 }
 `;
@@ -417,14 +476,31 @@ ${
  */
 export function createContinuationPrompt(
   prompt: string,
-  options?: TurnExtras & { executeMandate?: boolean; toolResultsAbove?: number }
+  options?: TurnExtras & {
+    executeMandate?: boolean;
+    toolResultsAbove?: number;
+    /**
+     * Set when the previous segment ended at the harness's step cap or
+     * tool-output budget rather than by interruption. Its "no further tools"
+     * message has been stripped from the transcript (resumeHygiene.ts); the
+     * model still has to be told the budget is fresh, or it reads its own
+     * "Partially done" answer above as the state of play and stops again.
+     */
+    previousSegmentEndedAt?: 'steps' | 'budget' | null;
+  }
 ): string {
   const gathered = options?.toolResultsAbove
     ? ` You already have ${options.toolResultsAbove} tool result(s) above`
     : ' You already have tool results above';
 
+  const howItEnded = options?.previousSegmentEndedAt
+    ? `That run stopped when it hit the harness's ${
+        options.previousSegmentEndedAt === 'budget' ? 'tool-output budget' : 'step limit'
+      }, and the partial report above is what the user saw. **This segment starts with a fresh step and tool-output budget: your tools are available again.** The limit no longer applies — do not repeat it, do not answer "Partially done" for that reason, and do not list files to read "when the run resumes": read them now.`
+    : 'That run did not finish: it was cut short by a provider error or by the user stopping it, and no final answer was ever delivered.';
+
   const resumeBlock = `## THIS TURN RESUMES AN INTERRUPTED RUN
-Everything above is YOUR OWN work on this same task — the tools you called and what they returned. That run did not finish: it was cut short by a provider error or by the user stopping it, and no final answer was ever delivered.
+Everything above is YOUR OWN work on this same task — the tools you called and what they returned. ${howItEnded}
 
 - **Do not start over.**${gathered} — treat them as current and continue from the exact point you stopped.
 - **Do not re-read a file whose content already appears above**, and do not re-run a search you already ran. Re-check something only if you have a concrete reason to believe it changed since you looked (for example, you edited it after reading it).

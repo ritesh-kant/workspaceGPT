@@ -2,7 +2,17 @@ import type { Env } from './env';
 import { bearerToken, getSession } from './auth';
 import { loadAccount } from './db';
 import { PROVIDERS } from './config';
-import { consumeWeeklyRequest, secondsUntilReset, weeklyLimitFor } from './usage';
+import {
+  WINDOW_SECONDS,
+  creditsForTokens,
+  decideAdmission,
+  describeRefusal,
+  estimateTokensFromChars,
+  extractUsage,
+  weeklyCreditLimitFor,
+  windowCreditLimitFor,
+} from './metering';
+import { chargeCredits, readUsageSnapshot, secondsUntilReset } from './usage';
 
 /**
  * Request fields forwarded upstream verbatim. An allowlist, not a blocklist:
@@ -54,10 +64,24 @@ function errorResponse(
  * every single call (there is no client-side grace period) — an expired or
  * revoked session stops working on its next request.
  *
+ * Usage is metered in TOKENS and presented as credits (see metering.ts). The
+ * flow is admit → proxy → meter:
+ *   · admit  — compare what the account has already spent against its weekly
+ *              and rolling-window allowances; refuse with 429 if either is
+ *              exhausted. Checked before anything is forwarded.
+ *   · proxy  — stream the upstream body straight through to the client,
+ *              untouched, with `stream_options.include_usage` forced on so the
+ *              final SSE chunk carries the token counts.
+ *   · meter  — a `tee()` of that same body is read to completion off the
+ *              response path (`ctx.waitUntil`), the usage extracted, credits
+ *              computed and charged. The request that crosses a limit is
+ *              therefore always served; the next one is refused.
+ *
  * Privacy: prompts pass through Worker memory in flight and are never logged
- * or stored. Nothing in this handler may log the request or response body.
+ * or stored. Nothing in this handler may log the request or response body —
+ * the metering branch reads the body only to find the `usage` object.
  */
-export async function handleChatCompletions(request: Request, env: Env): Promise<Response> {
+export async function handleChatCompletions(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const token = bearerToken(request);
   const session = token ? await getSession(env, token) : null;
   if (!session) {
@@ -77,7 +101,7 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
   }
 
   // Checked before anything is charged or even parsed: a deploy that forgot the
-  // secret must not consume anyone's weekly allowance.
+  // secret must not consume anyone's allowance.
   const provider = PROVIDERS[config.provider];
   const apiKey = env[provider.apiKeyEnv as keyof Env] as string | undefined;
   if (!apiKey) {
@@ -87,9 +111,11 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
     return errorResponse(500, 'Inference is not configured on the server.', 'server_misconfigured');
   }
 
+  let rawBody: string;
   let body: any;
   try {
-    body = await request.json();
+    rawBody = await request.text();
+    body = JSON.parse(rawBody);
   } catch {
     return errorResponse(400, 'Request body must be JSON.', 'invalid_request');
   }
@@ -97,17 +123,41 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
     return errorResponse(400, '`messages` must be a non-empty array.', 'invalid_request');
   }
 
-  // Quota is spent only once the request is known to be well-formed and
-  // serveable — a malformed body shouldn't cost the user part of their week's
-  // allowance.
-  const limit = weeklyLimitFor(user, config);
-  const quota = await consumeWeeklyRequest(env, session.userId, limit);
-  if (!quota.allowed) {
+  // ── Admission ──
+  // Decided on usage already recorded. A malformed request never reaches this
+  // point, so it costs nothing; a refused one is not recorded either — there is
+  // no denominator to protect now that the unit is tokens, not calls.
+  const limitUser = { plan: user.plan, weekly_credit_limit: user.weekly_credit_limit ?? null };
+  const weeklyLimit = weeklyCreditLimitFor(limitUser, config);
+  const windowLimit = windowCreditLimitFor(limitUser, config);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const snapshot = await readUsageSnapshot(env, session.userId, nowSec);
+  const decision = decideAdmission({
+    weeklyUsed: snapshot.weeklyCredits,
+    weeklyLimit,
+    windowUsed: snapshot.windowCredits,
+    windowLimit,
+    windowOldestTs: snapshot.windowOldestTs,
+    nowSec,
+    secondsUntilWeeklyReset: secondsUntilReset(),
+  });
+  // Allowance headers reflect usage BEFORE this request — its own cost is only
+  // known once the body has streamed. Good enough for a progress bar; `/v1/me`
+  // is the precise read. Sent on refusals too, so a 429 shows the full bar.
+  const allowanceHeaders: Record<string, string> = {
+    'X-WorkspaceGPT-Credits-Used': String(snapshot.weeklyCredits),
+    'X-WorkspaceGPT-Credits-Limit': String(weeklyLimit),
+    'X-WorkspaceGPT-Credits-Period': 'week',
+    'X-WorkspaceGPT-Window-Used': String(snapshot.windowCredits),
+    'X-WorkspaceGPT-Window-Limit': String(windowLimit),
+    'X-WorkspaceGPT-Window-Seconds': String(WINDOW_SECONDS),
+  };
+  if (!decision.allowed) {
     return errorResponse(
       429,
-      `Weekly WorkspaceGPT request limit reached (${limit}). It resets Monday at 00:00 UTC.`,
-      'weekly_limit_reached',
-      { 'Retry-After': String(secondsUntilReset()) }
+      describeRefusal(decision),
+      decision.reason === 'weekly' ? 'weekly_limit_reached' : 'window_limit_reached',
+      { 'Retry-After': String(decision.retryAfterSec), ...allowanceHeaders }
     );
   }
 
@@ -116,6 +166,16 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
   const upstreamBody: Record<string, unknown> = { model: config.model };
   for (const field of PASSTHROUGH_FIELDS) {
     if (body[field] !== undefined) upstreamBody[field] = body[field];
+  }
+  // Streamed responses only report token usage when asked. Forced on, so the
+  // metering branch below always has something to read; the extra final chunk
+  // (`choices: []`, `usage: {...}`) is ignored by the extension's stream
+  // consumer, which only reads `choices[0].delta`.
+  const isStream = body.stream === true;
+  if (isStream) {
+    const existing =
+      body.stream_options && typeof body.stream_options === 'object' ? (body.stream_options as object) : {};
+    upstreamBody.stream_options = { ...existing, include_usage: true };
   }
 
   const requestHeaders: Record<string, string> = {
@@ -160,15 +220,61 @@ export async function handleChatCompletions(request: Request, env: Env): Promise
     );
   }
 
-  // Stream the upstream body straight through — SSE deltas must not be
-  // buffered, or the extension's token-by-token rendering dies. Other statuses
-  // (including 429) pass through so the client SDK can back off and retry.
   const headers = new Headers({
     'Content-Type': upstream.headers.get('Content-Type') ?? 'application/json',
     'Cache-Control': 'no-store',
-    'X-WorkspaceGPT-Requests-Used': String(quota.used),
-    'X-WorkspaceGPT-Requests-Limit': String(limit),
-    'X-WorkspaceGPT-Requests-Period': 'week',
+    ...allowanceHeaders,
   });
-  return new Response(upstream.body, { status: upstream.status, headers });
+
+  // Failed upstream calls (429 from the vendor, 5xx) pass through unmetered:
+  // the user got no answer, so they are not charged for one. Other statuses
+  // pass through so the client SDK can back off and retry.
+  if (!upstream.ok || !upstream.body) {
+    return new Response(upstream.body, { status: upstream.status, headers });
+  }
+
+  // Stream the upstream body straight through — SSE deltas must not be
+  // buffered, or the extension's token-by-token rendering dies. The tee gives
+  // the metering branch its own copy to read at its own pace.
+  const [toClient, toMeter] = upstream.body.tee();
+  const contentType = upstream.headers.get('Content-Type');
+  ctx.waitUntil(
+    meterAndCharge(env, session.userId, toMeter, contentType, rawBody.length, config.tokensPerCredit).catch((error) => {
+      console.error('[workspacegpt-api] metering failed; request not charged', {
+        message: error instanceof Error ? error.message : 'unknown',
+      });
+    })
+  );
+  return new Response(toClient, { status: upstream.status, headers });
+}
+
+/**
+ * Read the metering copy of the response to the end, find the vendor's token
+ * counts, convert to credits, record. Runs after the client already has its
+ * stream, so nothing here is on the latency path. The body is read only to
+ * locate `usage` — it is never logged or stored.
+ */
+async function meterAndCharge(
+  env: Env,
+  userId: string,
+  body: ReadableStream<Uint8Array>,
+  contentType: string | null,
+  requestBodyChars: number,
+  tokensPerCredit: number
+): Promise<void> {
+  const text = await new Response(body).text();
+  const usage = extractUsage(text, contentType);
+  let tokens: number;
+  if (usage) {
+    tokens = usage.totalTokens;
+  } else {
+    // The vendor reported nothing. Charge for the prompt we know we sent
+    // rather than nothing at all, and make the gap visible.
+    tokens = estimateTokensFromChars(requestBodyChars);
+    console.warn('[workspacegpt-api] upstream response carried no usage; charging estimated prompt tokens', {
+      estimatedTokens: tokens,
+    });
+  }
+  const credits = creditsForTokens(tokens, tokensPerCredit);
+  await chargeCredits(env, userId, { credits, tokens });
 }

@@ -8,8 +8,8 @@ import type { Env } from './env';
  *   2. a `var` in wrangler.jsonc            — deploy-time default
  *   3. the constants below                  — last-resort fallback
  *
- * (The per-user cap override in `users.daily_request_limit` sits above all
- * three; it is applied in usage.ts, which is the only place that needs it.)
+ * (The per-user cap override in `users.weekly_credit_limit` sits above all
+ * three; it is applied in metering.ts, which is the only place that needs it.)
  *
  * Layer 1 is read on every request, batched with the user lookup, so it costs
  * no extra round trip and an edit takes effect on the very next call — no
@@ -38,24 +38,47 @@ export interface RuntimeConfig {
   provider: ProviderName;
   /** Model id, in the format the chosen provider expects. */
   model: string;
-  /** plan name → requests/week. */
-  planWeeklyLimits: Record<string, number>;
-  /** requests/week for a plan absent from {@link planWeeklyLimits}. */
-  fallbackWeeklyLimit: number;
+  /** plan name → credits per ISO week. */
+  planWeeklyCredits: Record<string, number>;
+  /** credits/week for a plan absent from {@link planWeeklyCredits}. */
+  fallbackWeeklyCredits: number;
+  /** plan name → credits per rolling 5-hour window. Absent plans derive from the weekly cap (metering.ts). */
+  planWindowCredits: Record<string, number>;
+  /** window credits for a plan absent from {@link planWindowCredits}; undefined derives from weekly. */
+  fallbackWindowCredits: number | undefined;
+  /** How many vendor tokens one credit represents. */
+  tokensPerCredit: number;
 }
 
-/** Recognised `app_config.key` values. */
+/**
+ * Recognised `app_config.key` values.
+ *
+ * The request-era keys (`plan_weekly_limits`, `weekly_request_limit`) are
+ * deliberately NOT read any more: a value written for them was a call count,
+ * and reading it as credits would throttle every plan to a fraction of its
+ * intent. New keys, new meaning.
+ */
 export const CONFIG_KEYS = {
   PROVIDER: 'inference_provider',
   MODEL: 'openrouter_model',
-  PLAN_WEEKLY_LIMITS: 'plan_weekly_limits',
-  FALLBACK_WEEKLY_LIMIT: 'weekly_request_limit',
+  PLAN_WEEKLY_CREDITS: 'plan_weekly_credits',
+  FALLBACK_WEEKLY_CREDITS: 'weekly_credit_limit',
+  PLAN_WINDOW_CREDITS: 'plan_window_credits',
+  FALLBACK_WINDOW_CREDITS: 'window_credit_limit',
+  TOKENS_PER_CREDIT: 'tokens_per_credit',
 } as const;
 
 const DEFAULT_PROVIDER: ProviderName = 'openrouter';
 const DEFAULT_MODEL = 'google/gemini-2.5-flash';
-const DEFAULT_PLAN_WEEKLY_LIMITS: Record<string, number> = { free: 200, pro: 5000 };
-const DEFAULT_FALLBACK_WEEKLY_LIMIT = 200;
+/**
+ * Placeholder plan sizes, in credits of 1,000 tokens. Sized from the eval
+ * harness on 2026-09-05: a documentation answer is ~7 credits, an agent run
+ * that edits code ~50. So free ≈ 280 questions or ~40 fixes a week; pro ≈ 25×
+ * that. These are starting points for a pricing decision, not the decision.
+ */
+const DEFAULT_PLAN_WEEKLY_CREDITS: Record<string, number> = { free: 2000, pro: 50000 };
+const DEFAULT_FALLBACK_WEEKLY_CREDITS = 2000;
+const DEFAULT_TOKENS_PER_CREDIT = 1000;
 
 export interface ConfigRow {
   key: string;
@@ -74,9 +97,9 @@ function positiveInt(raw: unknown): number | undefined {
 }
 
 /**
- * Parse a `{"plan": requestsPerWeek}` map, dropping any entry that isn't a
- * positive integer. A malformed blob yields undefined so the next layer down applies —
- * a typo in one config value must never leave requests uncapped.
+ * Parse a `{"plan": credits}` map, dropping any entry that isn't a positive
+ * integer. A malformed blob yields undefined so the next layer down applies —
+ * a typo in one config value must never leave usage uncapped.
  */
 function parsePlanLimits(raw: string | undefined, source: string): Record<string, number> | undefined {
   if (!raw?.trim()) return undefined;
@@ -119,15 +142,39 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
   const model =
     overrides.get(CONFIG_KEYS.MODEL)?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL;
 
-  const planWeeklyLimits =
-    parsePlanLimits(overrides.get(CONFIG_KEYS.PLAN_WEEKLY_LIMITS), 'app_config') ??
-    parsePlanLimits(env.PLAN_WEEKLY_LIMITS, 'wrangler var') ??
-    DEFAULT_PLAN_WEEKLY_LIMITS;
+  const planWeeklyCredits =
+    parsePlanLimits(overrides.get(CONFIG_KEYS.PLAN_WEEKLY_CREDITS), 'app_config') ??
+    parsePlanLimits(env.PLAN_WEEKLY_CREDITS, 'wrangler var') ??
+    DEFAULT_PLAN_WEEKLY_CREDITS;
 
-  const fallbackWeeklyLimit =
-    positiveInt(overrides.get(CONFIG_KEYS.FALLBACK_WEEKLY_LIMIT)) ??
-    positiveInt(env.WEEKLY_REQUEST_LIMIT) ??
-    DEFAULT_FALLBACK_WEEKLY_LIMIT;
+  const fallbackWeeklyCredits =
+    positiveInt(overrides.get(CONFIG_KEYS.FALLBACK_WEEKLY_CREDITS)) ??
+    positiveInt(env.WEEKLY_CREDIT_LIMIT) ??
+    DEFAULT_FALLBACK_WEEKLY_CREDITS;
 
-  return { provider, model, planWeeklyLimits, fallbackWeeklyLimit };
+  // Window caps have no constant fallback on purpose: absent, they derive from
+  // the weekly cap (metering.ts), so one edit to the weekly number keeps both
+  // in proportion.
+  const planWindowCredits =
+    parsePlanLimits(overrides.get(CONFIG_KEYS.PLAN_WINDOW_CREDITS), 'app_config') ??
+    parsePlanLimits(env.PLAN_WINDOW_CREDITS, 'wrangler var') ??
+    {};
+
+  const fallbackWindowCredits =
+    positiveInt(overrides.get(CONFIG_KEYS.FALLBACK_WINDOW_CREDITS)) ?? positiveInt(env.WINDOW_CREDIT_LIMIT);
+
+  const tokensPerCredit =
+    positiveInt(overrides.get(CONFIG_KEYS.TOKENS_PER_CREDIT)) ??
+    positiveInt(env.TOKENS_PER_CREDIT) ??
+    DEFAULT_TOKENS_PER_CREDIT;
+
+  return {
+    provider,
+    model,
+    planWeeklyCredits,
+    fallbackWeeklyCredits,
+    planWindowCredits,
+    fallbackWindowCredits,
+    tokensPerCredit,
+  };
 }

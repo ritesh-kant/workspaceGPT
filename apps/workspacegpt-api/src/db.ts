@@ -9,8 +9,10 @@ export interface UserRow {
   github_created_at: string;
   plan: string;
   status: string;
-  /** Per-user weekly cap override; NULL means "use the plan's limit". */
+  /** Request-era per-user override. Left in the schema, no longer read (see 0006_credits.sql). */
   weekly_request_limit: number | null;
+  /** Per-user weekly CREDIT cap override; NULL means "use the plan's limit". */
+  weekly_credit_limit: number | null;
 }
 
 /** Insert the user on first sign-in (only ever called after the age gate passes); otherwise just refresh `login`/`email` (both can change on GitHub's side). */
@@ -41,6 +43,7 @@ export async function upsertUser(
     // Left NULL on purpose: a new account follows its plan's limit until
     // someone deliberately overrides it.
     weekly_request_limit: null,
+    weekly_credit_limit: null,
   };
   await env.DB.prepare(
     'INSERT INTO users (id, login, email, created_at, github_created_at, plan, status) VALUES (?, ?, ?, ?, ?, ?, ?)'

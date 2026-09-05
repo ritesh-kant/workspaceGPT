@@ -1,72 +1,32 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { TurnSummary, useChatStore } from '../store/chatStore';
-
-type ShipState =
-  | { phase: 'idle' }
-  | { phase: 'running'; requestId: string }
-  | { phase: 'done'; branch: string; prUrl?: string; ticketCommented: boolean; warnings: string[] }
-  | { phase: 'error'; error: string };
+import { TurnSummary } from '../store/chatStore';
 
 /**
  * End-of-turn changed-files bar, Antigravity-style: "1 file changed +2 −2"
  * with an expandable per-file list and a Review button that opens each file's
  * native original ⟷ current diff in the editor.
+ *
+ * Read-only: "Create PR" for this turn is the composer's single Create PR
+ * control (CreatePrButton.tsx), so the same action is not offered from two
+ * places at once. What stays here is the outcome once a turn has shipped,
+ * recorded on the message itself in App.tsx and so surviving a reload.
  */
-
 interface FilesChangedBarProps {
   summary: TurnSummary;
-  /** This turn's answer text — doubles as the PR body/ticket comment. */
-  report: string;
 }
 
 const fileName = (p: string) => p.split('/').pop() || p;
 
-const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary, report }) => {
+const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
   const vscode = VSCodeAPI();
   const [expanded, setExpanded] = useState(false);
-  const [ship, setShip] = useState<ShipState>({ phase: 'idle' });
-
-  // Outcome of "Create PR" arrives as a host message correlated by requestId.
-  useEffect(() => {
-    if (ship.phase !== 'running') return;
-    const onMessage = (event: MessageEvent) => {
-      const m = event.data;
-      if (m?.type !== MESSAGE_TYPES.AGENT_SHIP_DONE || m.requestId !== ship.requestId) return;
-      setShip(
-        m.ok
-          ? { phase: 'done', branch: m.branch, prUrl: m.prUrl, ticketCommented: !!m.ticketCommented, warnings: m.warnings ?? [] }
-          : { phase: 'error', error: m.error || 'Create PR failed.' }
-      );
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [ship]);
 
   const files = summary.filesChanged;
   if (!files.length) return null;
 
-  const createPr = () => {
-    const requestId = `ship-${Date.now().toString(36)}`;
-    setShip({ phase: 'running', requestId });
-    vscode.postMessage({
-      type: MESSAGE_TYPES.AGENT_SHIP,
-      sessionId: useChatStore.getState().currentSessionId,
-      requestId,
-      // Carried here (rather than relying solely on the host's in-memory
-      // record of the last shippable turn) so "Create PR" still works after
-      // an extension host restart — everything needed survives in this
-      // persisted message's own turnSummary + content.
-      shipInput: {
-        ticketId: summary.ticketId,
-        ticketType: summary.ticketType,
-        title: summary.title,
-        report,
-        files: files.map((f) => f.path),
-      },
-    });
-  };
+  const shipped = summary.shipped;
 
   const totalAdded = files.reduce((n, f) => n + f.added, 0);
   const totalRemoved = files.reduce((n, f) => n + f.removed, 0);
@@ -103,42 +63,21 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary, report }) =>
         <button type='button' className='files-changed-review' onClick={reviewAll}>
           Review
         </button>
-        {summary.shippable && ship.phase !== 'done' && (
-          <button
-            type='button'
-            className='files-changed-review files-changed-ship'
-            onClick={createPr}
-            disabled={ship.phase === 'running'}
-            title={
-              summary.ticketId
-                ? `Branch, commit, push, open the pull-request page and post the report on #${summary.ticketId}`
-                : 'Branch, commit, push and open the pull-request page'
-            }
-          >
-            {ship.phase === 'running' ? 'Creating…' : 'Create PR'}
-          </button>
-        )}
       </div>
-      {ship.phase === 'done' && (
+      {shipped && (
         <div className='files-changed-ship-result'>
-          <span className='stat-added'>✓</span> Pushed <code>{ship.branch}</code>
-          {ship.prUrl && (
+          <span className='stat-added'>✓</span> Pushed <code>{shipped.branch}</code>
+          {shipped.prUrl && (
             <>
               {' · '}
-              <a href={ship.prUrl} target='_blank' rel='noreferrer'>
+              <a href={shipped.prUrl} target='_blank' rel='noreferrer'>
                 pull request
               </a>
             </>
           )}
-          {ship.ticketCommented && summary.ticketId ? ` · report posted on #${summary.ticketId}` : ''}
-          {ship.warnings.map((w, i) => (
-            <div key={i} className='files-changed-ship-warning'>
-              {w}
-            </div>
-          ))}
+          {shipped.ticketCommented && summary.ticketId ? ` · report posted on #${summary.ticketId}` : ''}
         </div>
       )}
-      {ship.phase === 'error' && <div className='files-changed-ship-result files-changed-ship-warning'>{ship.error}</div>}
       {expanded && (
         <div className='files-changed-list'>
           {files.map((f) => (

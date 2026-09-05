@@ -1624,7 +1624,7 @@ This is a one-line behavioral fix in three files; I did not apply it because all
 {
   const { planVerification } = await import(path.join(outDir, 'verifyTools.mjs'));
   const { computeHunks } = await import(path.join(outDir, 'agentHunkLens.mjs'));
-  const { pullRequestUrl, slugify, reportToHtml } = await import(path.join(outDir, 'shipHelpers.mjs'));
+  const { pullRequestUrl, slugify, reportToHtml, turnCommitType } = await import(path.join(outDir, 'shipHelpers.mjs'));
   const fs = await import('fs');
   const os = await import('os');
 
@@ -1646,6 +1646,29 @@ This is a one-line behavioral fix in three files; I did not apply it because all
   w('svc/pkg/thing.go', 'package pkg\n');
   const roots = [{ name: 'mono', uri: { fsPath: tmp } }];
 
+  await t('turnCommitType: a no-ticket turn whose title says "fix" branches as fix/, not chore/', () => {
+    // Live: "Partially done: fix applied to two files" shipped as chore/… — the
+    // type came only from the (absent) ticket type.
+    const base = { title: 'Partially done: fix applied to two files', report: '## Summary\nstuff', files: ['a.ts', 'b.ts'] };
+    assert.equal(turnCommitType(base), 'fix');
+    assert.equal(turnCommitType({ ...base, title: 'Stale entry lingers after reupload', report: '## Done\n\n### Root cause\nThe mapper kept the key.' }), 'fix');
+  });
+  await t('turnCommitType: ticket type wins when it is decisive; a Task falls through to the evidence', () => {
+    const base = { title: 'Add export button', report: '## Done', files: ['x.ts'] };
+    assert.equal(turnCommitType({ ...base, ticketType: 'Bug' }), 'fix');
+    assert.equal(turnCommitType({ ...base, ticketType: 'User Story', title: 'Crash on save' }), 'feat');
+    assert.equal(turnCommitType({ ...base, ticketType: 'Task' }), 'feat');
+    assert.equal(turnCommitType({ ...base, ticketType: 'Task', title: 'Crash on save' }), 'fix');
+  });
+  await t('turnCommitType: other verbs and the path fallback', () => {
+    const base = { report: '## Done', files: ['src/a.ts'] };
+    assert.equal(turnCommitType({ ...base, title: 'Refactor the mapper' }), 'refactor');
+    assert.equal(turnCommitType({ ...base, title: 'Update README' }), 'docs');
+    assert.equal(turnCommitType({ ...base, title: 'Cover the mapper with tests' }), 'test');
+    assert.equal(turnCommitType({ ...base, title: 'Tweak the mapper' }), 'chore');
+    assert.equal(turnCommitType({ ...base, title: 'Tweak the mapper', hasNewFiles: true }), 'feat');
+    assert.equal(turnCommitType({ title: 'Tweak', report: '', files: ['docs/guide.md'] }), 'docs');
+  });
   await t('run_checks: jest package runs the sibling test file from the package dir', () => {
     const plan = planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'test' });
     assert.equal(plan.cwd, path.join(tmp, 'apps/web'));
@@ -2370,6 +2393,48 @@ console.log('\nrun resume round trip (real worker: interrupt, feed it back, cont
     assert.ok(record.ok, `run failed: ${record.error}`);
     assert.equal(record.resumed, null, 'a fresh run must not claim to have resumed');
   });
+
+  await t('a segment that ended at the step cap resumes WITHOUT its "no further tools" message (#1534774 "go ahead")', async () => {
+    // Exactly what the first turn on #1534774 left behind: the harness's cap
+    // announcement, an empty forced answer, the retry nudge, and the model's
+    // "Partially done" report the user then replied "go ahead" to.
+    const { HARNESS_LIMIT_PREFIX, HARNESS_PROSE_RETRY_PREFIX, HARNESS_CHECKPOINT_PREFIX, EMPTY_RESPONSE_PLACEHOLDER } =
+      await import(path.join(outDir, 'resumeHygiene.mjs'));
+    const PARTIAL = '## ⚠️ Partially done — root cause identified but no edit applied yet (step limit reached)';
+    const capped = [
+      ...source.record.transcript,
+      { role: 'user', content: `${HARNESS_CHECKPOINT_PREFIX} 3 tool turn(s) left in this run, and zero file edits so far.` },
+      { role: 'assistant', content: 'Reading one more file.' },
+      { role: 'user', content: `${HARNESS_LIMIT_PREFIX.steps}: 25 tool call(s) over 25 turns (cap 25). No further tools can run this turn. Answer now.` },
+      { role: 'assistant', content: EMPTY_RESPONSE_PLACEHOLDER },
+      { role: 'user', content: `${HARNESS_PROSE_RETRY_PREFIX} 25 tool result(s) already gathered above. Do not call any more tools.` },
+      { role: 'assistant', content: PARTIAL },
+    ];
+
+    const ws = tempWorkspace({ [FILE]: FIXED });
+    const { record, mainRequests } = await runOnce(
+      ws,
+      [{ finalContent: '## Changes\nApplied as approved.' }],
+      { prompt: 'go ahead', workerData: { resumeTranscript: capped, executeMandate: true } },
+    );
+    assert.ok(record.ok, `resumed run failed: ${record.error}`);
+    const sent = mainRequests[0].messages;
+    const texts = sent.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')));
+    const stale = [HARNESS_LIMIT_PREFIX.steps, HARNESS_LIMIT_PREFIX.budget, HARNESS_PROSE_RETRY_PREFIX, HARNESS_CHECKPOINT_PREFIX];
+    for (const prefix of stale) {
+      assert.ok(
+        !texts.some((t) => t.startsWith(prefix)),
+        `the previous segment's harness message reached the model on resume: "${prefix}"`,
+      );
+    }
+    assert.ok(!sent.some((m) => m.role === 'assistant' && m.content === EMPTY_RESPONSE_PLACEHOLDER), 'placeholder leaked');
+    assert.ok(texts.some((t) => t === PARTIAL), 'the model\'s own delivered report must stay — the user read it');
+    const continuation = texts[texts.length - 1];
+    assert.match(continuation, /fresh step and tool-output budget/, 'the model must be told the limit is lifted');
+    assert.match(continuation, /step limit/, 'and why the previous segment stopped');
+    assert.ok(!/provider error or by the user stopping it/.test(continuation), 'must not misdescribe a cap hit as an interruption');
+    assert.ok(record.resumed && record.resumed.steps >= 2, 'the earlier tool results are still carried');
+  });
 }
 
 console.log('\ncontinuationIntent (the Resume button and the host must agree)');
@@ -2419,6 +2484,395 @@ console.log('\ncontinuationIntent (the Resume button and the host must agree)');
     assert.ok(APPROVAL_RE.test('implement 1-3'));
     assert.ok(APPROVAL_RE.test('apply it'));
     assert.ok(!APPROVAL_RE.test('do it differently this time'));
+  });
+}
+
+console.log('\nturnOutcome (a turn may only claim work that happened)');
+{
+  const { describeTurnOutcome } = await import(path.join(outDir, 'turnOutcome.mjs'));
+
+  // The #1534774 shape: a doc-only turn, asked "can you fix it", with no tools
+  // to edit with. No prose, no steps, no writes — and the old UI called it
+  // "Done — see the steps above for what was explored and changed".
+  await t('a turn that did nothing is reported as a failure, not as Done', () => {
+    const out = describeTurnOutcome({ answerText: '', writesApplied: 0, stepsPosted: 0 });
+    assert.equal(out.kind, 'empty');
+    assert.match(out.text, /empty response/i);
+    assert.match(out.text, /nothing was done/i);
+    // The three false claims of the old constant must all be absent.
+    assert.ok(!/\bdone\b(?!\.)/i.test(out.text.replace(/nothing was done/i, '')), 'must not read as completion');
+    assert.ok(!/steps above/i.test(out.text), 'must not point at steps that do not exist');
+    assert.ok(!/\bchanged\b(?!\.)/i.test(out.text.replace(/no files were changed/i, '')), 'must not claim changes');
+  });
+
+  await t('a silent turn with real writes says how many, and never zero', () => {
+    const one = describeTurnOutcome({ answerText: '', writesApplied: 1, stepsPosted: 6 });
+    assert.equal(one.kind, 'silent');
+    assert.match(one.text, /change 1 file\b/);
+    const many = describeTurnOutcome({ answerText: '', writesApplied: 3, stepsPosted: 9 });
+    assert.match(many.text, /change 3 files\b/);
+  });
+
+  await t('a silent turn that explored but wrote nothing says so explicitly', () => {
+    const out = describeTurnOutcome({ answerText: '', writesApplied: 0, stepsPosted: 12 });
+    assert.equal(out.kind, 'silent');
+    assert.match(out.text, /no files were changed/i);
+    assert.ok(!/\bfixed\b|\bdone\b/i.test(out.text), 'exploration is not completion');
+  });
+
+  await t('prose from the model is left alone', () => {
+    assert.equal(
+      describeTurnOutcome({ answerText: 'Here is the fix.', writesApplied: 0, stepsPosted: 0 }).kind,
+      'answered'
+    );
+    // Whitespace-only is not prose — that was the live failure.
+    assert.equal(
+      describeTurnOutcome({ answerText: '   \n  ', writesApplied: 0, stepsPosted: 0 }).kind,
+      'empty'
+    );
+  });
+
+  await t('garbage counts cannot produce a claim of work', () => {
+    for (const bad of [NaN, -1, undefined, null]) {
+      const out = describeTurnOutcome({ answerText: '', writesApplied: bad, stepsPosted: bad });
+      assert.equal(out.kind, 'empty', `writes=${bad} must not read as work`);
+    }
+  });
+}
+
+console.log('\nstreamOutcome (a reasoning model that only thinks must not read as an empty answer)');
+{
+  const { consumeStream, shouldRetryEmptyStream } = await import(path.join(outDir, 'streamOutcome.mjs'));
+  const fake = (chunks) => (async function* () { for (const c of chunks) yield c; })();
+  const d = (delta, finish_reason) => ({ choices: [{ delta, ...(finish_reason ? { finish_reason } : {}) }] });
+  const drive = async (chunks) => {
+    const emitted = [];
+    const out = await consumeStream(fake(chunks), (c) => emitted.push(c));
+    return { out, emitted };
+  };
+
+  // Measured live on glm-5.3-flash: 199 of 200 deltas were reasoning_content,
+  // `content` totalled zero characters, finish_reason 'length'. The old
+  // consumer skipped every one of those deltas and returned '' — and the UI
+  // then said "Done".
+  await t('a reasoning-only stream is counted, not silently dropped', async () => {
+    const chunks = Array.from({ length: 199 }, () => d({ reasoning_content: 'think' }));
+    chunks.push(d({ content: '' }, 'length'));
+    const { out, emitted } = await drive(chunks);
+    assert.equal(out.content, '');
+    assert.equal(out.reasoningChars, 199 * 5);
+    assert.equal(out.finishReason, 'length');
+    assert.ok(shouldRetryEmptyStream(out), 'this is exactly the shape that must be retried');
+    assert.deepEqual(emitted.filter(Boolean), [], 'nothing visible was ever streamed');
+  });
+
+  await t('the `reasoning` spelling some providers use counts too', async () => {
+    const { out } = await drive([d({ reasoning: 'abc' }), d({ content: '' }, 'stop')]);
+    assert.equal(out.reasoningChars, 3);
+    assert.ok(shouldRetryEmptyStream(out));
+  });
+
+  await t('a normal content stream is forwarded intact and never retried', async () => {
+    const { out, emitted } = await drive([d({ content: 'Hello, ' }), d({ content: 'world.' }, 'stop')]);
+    assert.equal(out.content, 'Hello, world.');
+    assert.equal(emitted.join(''), 'Hello, world.');
+    assert.equal(out.reasoningChars, 0);
+    assert.ok(!shouldRetryEmptyStream(out));
+  });
+
+  await t('a genuinely empty reply (stop, no reasoning) is not retried', async () => {
+    const { out } = await drive([d({ content: '' }, 'stop')]);
+    assert.equal(out.content, '');
+    assert.ok(!shouldRetryEmptyStream(out), 'retrying an identical request would only cost the same again');
+  });
+
+  await t('<think> blocks are still stripped and only the answer is emitted', async () => {
+    const { out, emitted } = await drive([
+      d({ content: '<think>' }), d({ content: 'pondering…' }), d({ content: '</think>' }), d({ content: 'Answer.' }, 'stop'),
+    ]);
+    assert.equal(out.content, 'Answer.');
+    assert.ok(!emitted.some((e) => /pondering/.test(e)), 'thinking must never reach the UI');
+    assert.ok(emitted.join('').includes('Answer.'));
+  });
+
+  await t('a length cut-off with content already streamed is delivered, not retried', async () => {
+    const { out } = await drive([d({ content: 'Partial answer that got cut' }, 'length')]);
+    assert.equal(out.finishReason, 'length');
+    assert.ok(!shouldRetryEmptyStream(out), 'the user already saw text — do not replace it');
+  });
+}
+
+console.log('\npromptTemplates with-context regime (retrieval rides into a tool turn)');
+{
+  const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
+  const results = [
+    { text: 'Backups are kept for 30 days and restored via the restore-runbook.', score: 0.9, data: { source: 'https://wiki/db-backup', fileName: 'database-backup-policy.md' } },
+  ];
+  const base = {
+    codebaseToolsEnabled: true,
+    repoOrientation: 'ORIENTATION_MARKER src/ README.md',
+    workspaceRules: 'RULES_MARKER always run tests',
+    toolAvailability: { codebase: true, confluence: true, ado: false },
+  };
+
+  await t('a tool turn WITH pre-fetched context carries the context AND the workspace rules/orientation', () => {
+    const p = createStructuredPrompt(results, 'how long are database backups kept', '', undefined, null, base);
+    assert.ok(p.includes('Backups are kept for 30 days'), 'retrieved text must reach the model');
+    assert.ok(p.includes('Provided Sources'), 'sources list must be offered for citation');
+    assert.ok(p.includes('ORIENTATION_MARKER'), 'repo orientation must not be dropped when context is present');
+    assert.ok(p.includes('RULES_MARKER'), 'workspace rules must not be dropped when context is present');
+    assert.ok(!p.includes('ONLY source of truth'), 'the RAG-only framing contradicts having tools');
+    assert.ok(/answer from it directly/i.test(p), 'the merged rule must tell the model it may answer from the context');
+    assert.ok(/use your tools/i.test(p), 'and that the tools are still there');
+  });
+
+  await t('a tool turn WITHOUT context is byte-identical in spirit to before: no context framing, tools-only rule', () => {
+    const p = createStructuredPrompt([], 'what does add() do', '', undefined, null, base);
+    assert.ok(p.includes('No other pre-fetched context'));
+    assert.ok(p.includes('ORIENTATION_MARKER') && p.includes('RULES_MARKER'));
+    assert.ok(/Ground every claim in a tool result from THIS turn/.test(p));
+    assert.ok(!/answer from it directly/i.test(p));
+  });
+
+  await t('a RAG turn (no tools) keeps the strict only-the-context framing', () => {
+    const p = createStructuredPrompt(results, 'how long are database backups kept', '', undefined, null, { codebaseToolsEnabled: false });
+    assert.ok(p.includes('ONLY source of truth'));
+    assert.ok(!/use your tools/i.test(p));
+  });
+
+  await t('org-tool guidance is gated on what is connected', () => {
+    const adoOff = createStructuredPrompt([], 'q', '', undefined, null, base);
+    assert.ok(!/`get_ticket` reads ONE Azure DevOps/.test(adoOff), 'ADO disconnected: do not advertise get_ticket');
+    assert.ok(/`search_docs` searches Confluence/.test(adoOff), 'Confluence connected: search_docs advertised');
+    const none = createStructuredPrompt([], 'q', '', undefined, null, { ...base, toolAvailability: { codebase: true, confluence: false, ado: false } });
+    assert.ok(!/Org knowledge —/.test(none), 'nothing connected: the whole paragraph goes');
+    const legacy = createStructuredPrompt([], 'q', '', undefined, null, { codebaseToolsEnabled: true });
+    assert.ok(/`get_ticket` reads ONE Azure DevOps/.test(legacy) && /`search_docs` searches Confluence/.test(legacy), 'older host (no availability): full text');
+  });
+
+  // First live run of the with-context regime: facts 100%, but 9 of 26 answers
+  // cited nothing at all, where the RAG path always ended with a Sources
+  // section. The instruction said "IF you used the Context, end with Sources"
+  // — and the model took the out. Traceability is not optional.
+  await t('the with-context answer instruction demands a Sources section unconditionally', () => {
+    const p = createStructuredPrompt(results, 'how long are database backups kept', '', undefined, null, base);
+    const tail = p.slice(p.lastIndexOf('**Answer (formatted in Markdown):**'));
+    assert.ok(/ALWAYS end with a \*\*Sources\*\* section/.test(tail), 'must not be conditional on "if you used the Context"');
+    assert.ok(!/If you used the Context, end with/.test(tail));
+    assert.ok(/never invented ones/.test(tail), 'and must still forbid fabricated links');
+  });
+}
+
+console.log('\ntoolScope (a turn is offered only the tools it can actually use)');
+{
+  const { scopeToolDefs, TOOL_REQUIREMENTS } = await import(path.join(outDir, 'toolScope.mjs'));
+  const mk = (...names) => names.map((name) => ({ type: 'function', function: { name } }));
+  const names = (defs) => defs.map((d) => d.function.name);
+  const ALL = mk('read_file', 'edit_file', 'explore', 'search_docs', 'get_confluence_page', 'search_tickets', 'get_ticket', 'search_web');
+
+  await t('no availability (older host, harnesses) keeps every tool, in order', () => {
+    assert.deepEqual(names(scopeToolDefs(ALL)), names(ALL));
+    assert.notStrictEqual(scopeToolDefs(ALL), ALL, 'must not hand back the shared array');
+  });
+
+  await t('codebase only: org tools drop, web stays (it degrades keyless on its own)', () => {
+    const got = names(scopeToolDefs(ALL, { codebase: true, confluence: false, ado: false }));
+    assert.deepEqual(got, ['read_file', 'edit_file', 'explore', 'search_web']);
+  });
+
+  await t('ADO without Confluence: ticket tools stay, doc tools drop', () => {
+    const got = names(scopeToolDefs(ALL, { codebase: true, confluence: false, ado: true }));
+    assert.ok(got.includes('get_ticket') && got.includes('search_tickets'));
+    assert.ok(!got.includes('search_docs') && !got.includes('get_confluence_page'));
+  });
+
+  await t('no folder open: every codebase tool drops, org tools stay', () => {
+    const got = names(scopeToolDefs(ALL, { codebase: false, confluence: true, ado: true }));
+    assert.deepEqual(got, ['search_docs', 'get_confluence_page', 'search_tickets', 'get_ticket', 'search_web']);
+  });
+
+  await t('the requirements map covers every tool the worker defines', () => {
+    // The worker entry cannot be imported headlessly (it reads workerData at
+    // load), so the expected inventory is pinned here. Adding a tool to
+    // TOOL_DEFS without classifying it here is what this test exists to catch.
+    const expected = [
+      'search_codebase', 'explore', 'find_symbol', 'find_references', 'go_to_definition', 'read_file',
+      'list_directory', 'find_files', 'run_command', 'run_checks', 'get_diagnostics', 'git_status', 'git_diff',
+      'git_log', 'git_blame', 'edit_file', 'create_file', 'delete_file', 'search_docs', 'get_confluence_page',
+      'search_tickets', 'get_ticket',
+    ];
+    assert.deepEqual(Object.keys(TOOL_REQUIREMENTS).sort(), expected.sort());
+    assert.equal(TOOL_REQUIREMENTS.search_web, undefined, 'search_web is deliberately unscoped');
+  });
+}
+
+console.log('\nturnRouting (capability from facts — regression for ADO #1534774 "can you fix it" → "Done")');
+{
+  const { decideTurnRouting, explicitSourceFor } = await import(path.join(outDir, 'turnRouting.mjs'));
+  const { classifyQuery } = await import(path.join(outDir, 'queryClassifier.mjs'));
+  const ALL = ['CONFLUENCE', 'ADO', 'CODEBASE'];
+  const route = (message, { folderOpen = true, sources = ALL, pick = 'Auto' } = {}) => {
+    const available = folderOpen ? sources : sources.filter((s) => s !== 'CODEBASE');
+    return decideTurnRouting({
+      isCodebaseAvailable: folderOpen,
+      availableSources: available,
+      classification: classifyQuery(message, available),
+      contextSelection: pick,
+    });
+  };
+
+  await t('the #1534774 turn: "can you fix it" with a folder open gets the tool loop, whatever the classifier says', () => {
+    for (const message of ['can you fix it', 'fix it', 'go ahead', 'yes', 'what does ticket 1534774 say about the lag?']) {
+      const r = route(message);
+      assert.equal(r.useCodebaseTools, true, `"${message}" must be able to edit`);
+    }
+  });
+
+  await t('useCodebaseTools depends on nothing but the folder — not the message, sources, or picker', () => {
+    const messages = ['can you fix it', 'summarise the onboarding doc', 'what is the sprint status', 'hi'];
+    for (const message of messages) {
+      for (const pick of ['Auto', 'Confluence', 'Azure DevOps', 'Codebase']) {
+        assert.equal(route(message, { pick }).useCodebaseTools, true, `${message} / ${pick} / folder`);
+        assert.equal(route(message, { pick, folderOpen: false }).useCodebaseTools, false, `${message} / ${pick} / no folder`);
+      }
+    }
+  });
+
+  await t('CODEBASE never appears in the pre-fetch set (it is not a retrieval source)', () => {
+    for (const message of ['fix the login component bug', 'where is the auth module', 'can you fix it']) {
+      for (const pick of ['Auto', 'Codebase']) {
+        assert.ok(!route(message, { pick }).classification.sources.includes('CODEBASE'), `${message} / ${pick}`);
+      }
+    }
+  });
+
+  await t('an explicit "Codebase" pick means "search no docs" but keeps every doc tool decision to the worker', () => {
+    const r = route('how does the deployment pipeline work', { pick: 'Codebase' });
+    assert.deepEqual(r.classification.sources, []);
+    assert.equal(r.classification.confidence, 'high');
+    assert.equal(r.useCodebaseTools, true);
+    assert.equal(r.unhonoredSource, null);
+  });
+
+  await t('an explicit doc pick narrows pre-fetch to that source and does not touch capability', () => {
+    const conf = route('can you fix it', { pick: 'Confluence' });
+    assert.deepEqual(conf.classification.sources, ['CONFLUENCE']);
+    assert.equal(conf.useCodebaseTools, true);
+    const ado = route('can you fix it', { pick: 'Azure DevOps' });
+    assert.deepEqual(ado.classification.sources, ['ADO']);
+    assert.equal(ado.useCodebaseTools, true);
+  });
+
+  await t('a pick for a source that is not connected is reported, and routing falls back to Auto', () => {
+    const r = route('what is the sprint status', { pick: 'Confluence', sources: ['ADO', 'CODEBASE'] });
+    assert.equal(r.unhonoredSource, 'CONFLUENCE');
+    assert.deepEqual(r.classification, {
+      ...classifyQuery('what is the sprint status', ['ADO', 'CODEBASE']),
+      sources: classifyQuery('what is the sprint status', ['ADO', 'CODEBASE']).sources.filter((s) => s !== 'CODEBASE'),
+    });
+    assert.equal(r.useCodebaseTools, true, 'an unhonored pick changes what is searched, never what the model can do');
+  });
+
+  await t('a "Codebase" pick with no folder open is unhonored and the turn still runs as a doc answer', () => {
+    const r = route('can you fix it', { pick: 'Codebase', folderOpen: false });
+    assert.equal(r.unhonoredSource, 'CODEBASE');
+    assert.equal(r.useCodebaseTools, false);
+    assert.ok(!r.classification.sources.includes('CODEBASE'));
+  });
+
+  await t('no folder open: pre-fetch is the whole answer path and matches the classifier minus CODEBASE', () => {
+    const message = 'what does the onboarding page say about VPN access';
+    const r = route(message, { folderOpen: false });
+    const expected = classifyQuery(message, ['CONFLUENCE', 'ADO']);
+    assert.deepEqual(r.classification, expected);
+    assert.equal(r.useCodebaseTools, false);
+  });
+
+  await t('an unknown picker label pre-fetches from every connected source', () => {
+    const r = route('anything', { pick: 'Everything' });
+    assert.deepEqual(r.classification.sources, ['CONFLUENCE', 'ADO']);
+    assert.equal(r.classification.confidence, 'high');
+    assert.equal(explicitSourceFor('Everything'), null);
+    assert.equal(explicitSourceFor('Azure DevOps'), 'ADO');
+  });
+
+  await t('the input classification is not mutated', () => {
+    const classification = classifyQuery('fix the login bug', ALL);
+    const before = JSON.stringify(classification);
+    decideTurnRouting({ isCodebaseAvailable: true, availableSources: ALL, classification, contextSelection: 'Codebase' });
+    assert.equal(JSON.stringify(classification), before);
+  });
+}
+
+console.log('\nresumeHygiene (a resumed run must not inherit the previous segment\'s "no further tools" message)');
+{
+  const h = await import(path.join(outDir, 'resumeHygiene.mjs'));
+  const user = (content) => ({ role: 'user', content });
+  const assistant = (content, tool_calls) => ({ role: 'assistant', content, ...(tool_calls ? { tool_calls } : {}) });
+
+  await t('recognises both limit announcements and names the limit', () => {
+    assert.equal(h.limitKindOf(user(`${h.HARNESS_LIMIT_PREFIX.steps}: 25 tool call(s) over 25 turns (cap 25).`)), 'steps');
+    assert.equal(h.limitKindOf(user(`${h.HARNESS_LIMIT_PREFIX.budget} after 14 tool call(s).`)), 'budget');
+    assert.equal(h.limitKindOf(user('Fix the badge label.')), null);
+    assert.equal(h.limitKindOf(assistant(h.HARNESS_LIMIT_PREFIX.steps)), null, 'only harness (user-role) messages count');
+  });
+
+  await t('the retry nudge, the checkpoint, and the empty placeholder are stale too', () => {
+    assert.ok(h.isStaleHarnessMessage(user(`${h.HARNESS_PROSE_RETRY_PREFIX} 3 tool result(s) already gathered above.`)));
+    assert.ok(h.isStaleHarnessMessage(user(`${h.HARNESS_CHECKPOINT_PREFIX} 2 tool turn(s) left in this run.`)));
+    assert.ok(h.isStaleHarnessMessage(assistant(h.EMPTY_RESPONSE_PLACEHOLDER)));
+    assert.ok(!h.isStaleHarnessMessage(assistant(h.EMPTY_RESPONSE_PLACEHOLDER, [{ id: 'c1' }])), 'a real tool-call turn is never stale');
+    assert.ok(!h.isStaleHarnessMessage(assistant('## ⚠️ Partially done — step limit reached')), 'the model\'s own report stays');
+    assert.ok(!h.isStaleHarnessMessage({ role: 'tool', tool_call_id: 'c1', content: h.HARNESS_LIMIT_PREFIX.steps }), 'tool results are data');
+  });
+
+  await t('prunes the stale messages, keeps everything else in order, reports how the segment ended', () => {
+    const transcript = [
+      user('Fix the badge label.'),
+      assistant(null, [{ id: 'c1', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } }]),
+      { role: 'tool', tool_call_id: 'c1', content: '{"content":"x"}' },
+      user(`${h.HARNESS_CHECKPOINT_PREFIX} 3 tool turn(s) left in this run, and zero file edits so far.`),
+      assistant('One more read.'),
+      user(`${h.HARNESS_LIMIT_PREFIX.steps}: 25 tool call(s) over 25 turns (cap 25).`),
+      assistant(h.EMPTY_RESPONSE_PLACEHOLDER),
+      user(`${h.HARNESS_PROSE_RETRY_PREFIX} 25 tool result(s) already gathered above.`),
+      assistant('## ⚠️ Partially done — step limit reached'),
+    ];
+    const out = h.pruneStaleHarnessMessages(transcript);
+    assert.equal(out.removed, 4);
+    assert.equal(out.endedAtLimit, 'steps');
+    assert.deepEqual(
+      out.messages.map((m) => m.content ?? '[calls]'),
+      ['Fix the badge label.', '[calls]', '{"content":"x"}', 'One more read.', '## ⚠️ Partially done — step limit reached'],
+    );
+    assert.equal(transcript.length, 9, 'input is not mutated');
+  });
+
+  await t('a transcript with no harness messages passes through untouched', () => {
+    const transcript = [user('hi'), assistant('hello')];
+    const out = h.pruneStaleHarnessMessages(transcript);
+    assert.deepEqual(out.messages, transcript);
+    assert.equal(out.removed, 0);
+    assert.equal(out.endedAtLimit, null);
+  });
+
+  await t('parts-array content (buildUserContent) is recognised by its text part', () => {
+    const msg = { role: 'user', content: [{ type: 'text', text: `${h.HARNESS_LIMIT_PREFIX.budget} after 9 tool call(s).` }] };
+    assert.equal(h.limitKindOf(msg), 'budget');
+    assert.ok(h.isStaleHarnessMessage(msg));
+  });
+
+  await t('the continuation prompt says the budget is fresh when the previous segment hit a limit', async () => {
+    const { createContinuationPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
+    const capped = createContinuationPrompt('go ahead', { toolResultsAbove: 25, previousSegmentEndedAt: 'steps' });
+    assert.match(capped, /step limit/);
+    assert.match(capped, /fresh step and tool-output budget/);
+    assert.ok(!/provider error or by the user stopping it/.test(capped));
+    const budget = createContinuationPrompt('go ahead', { previousSegmentEndedAt: 'budget' });
+    assert.match(budget, /tool-output budget/);
+    const interrupted = createContinuationPrompt('continue', { toolResultsAbove: 3 });
+    assert.match(interrupted, /provider error or by the user stopping it/);
+    assert.ok(!/fresh step and tool-output budget/.test(interrupted), 'an interruption is described as before');
   });
 }
 

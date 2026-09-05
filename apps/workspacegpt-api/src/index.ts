@@ -14,7 +14,8 @@ import {
 import { handleChatCompletions } from './chat';
 import { loadAccount, upsertUser } from './db';
 import { renderErrorPage, renderLoginPage } from './loginPage';
-import { readWeeklyUsage, weeklyLimitFor } from './usage';
+import { WINDOW_SECONDS, weeklyCreditLimitFor, windowCreditLimitFor } from './metering';
+import { readUsageSnapshot } from './usage';
 
 /**
  * WorkspaceGPT remote-mode backend. Two planes:
@@ -97,7 +98,7 @@ function oauthErrorCode(error: unknown): string {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === '/health') {
@@ -172,7 +173,7 @@ export default {
     // POST /v1/chat/completions — the remote-mode data plane (OpenAI-compatible
     // proxy to OpenRouter). Validates the session on every request; see chat.ts.
     if (url.pathname === '/v1/chat/completions' && request.method === 'POST') {
-      return handleChatCompletions(request, env);
+      return handleChatCompletions(request, env, ctx);
     }
 
     // GET /v1/me — Authorization: Bearer <sessionToken>
@@ -180,21 +181,29 @@ export default {
       const token = bearerToken(request);
       const session = token ? await getSession(env, token) : null;
       if (!session) return json({ error: 'not_signed_in' }, { status: 401 });
-      // Plan + today's usage ride along so Settings → Account can show the
-      // remaining allowance without a second round trip. The limit is resolved
-      // exactly as the chat proxy resolves it, so the number shown here is the
-      // number actually enforced.
+      // Plan + usage ride along so Settings → Account can show the remaining
+      // allowance without a second round trip. Limits are resolved exactly as
+      // the chat proxy resolves them, so the numbers shown are the numbers
+      // actually enforced.
       const { user, config } = await loadAccount(env, session.userId);
+      const limitUser = { plan: user?.plan ?? 'free', weekly_credit_limit: user?.weekly_credit_limit ?? null };
+      const snapshot = await readUsageSnapshot(env, session.userId);
+      const creditsLimitWeekly = weeklyCreditLimitFor(limitUser, config);
       return json({
         github_login: session.login,
         email: session.email ?? null,
         plan: user?.plan ?? 'free',
         status: user?.status ?? 'active',
-        requests_used_this_week: await readWeeklyUsage(env, session.userId),
-        requests_limit_weekly: weeklyLimitFor(
-          { plan: user?.plan ?? 'free', weekly_request_limit: user?.weekly_request_limit ?? null },
-          config
-        ),
+        credits_used_this_week: snapshot.weeklyCredits,
+        credits_limit_weekly: creditsLimitWeekly,
+        credits_used_window: snapshot.windowCredits,
+        credits_limit_window: windowCreditLimitFor(limitUser, config),
+        window_seconds: WINDOW_SECONDS,
+        tokens_per_credit: config.tokensPerCredit,
+        // Request-era field names, kept one release so an extension that
+        // predates credits still draws a sensible bar. Same numbers.
+        requests_used_this_week: snapshot.weeklyCredits,
+        requests_limit_weekly: creditsLimitWeekly,
       });
     }
 

@@ -65,6 +65,17 @@ export interface TurnSummary {
   title?: string;
   /** True when the host holds this turn's changes ready to branch/commit/push. */
   shippable?: boolean;
+  /**
+   * Outcome once "Create PR" has shipped this turn. Lives on the persisted
+   * message so a reload shows the pushed branch, not a fresh "Create PR".
+   */
+  shipped?: ShippedTurn;
+}
+
+export interface ShippedTurn {
+  branch: string;
+  prUrl?: string;
+  ticketCommented: boolean;
 }
 
 interface Message {
@@ -179,6 +190,18 @@ const setTurnSummaryIn = (s: TurnSlice, summary: TurnSummary): TurnSlice => {
   return { ...s, pendingTurnSummary: summary };
 };
 
+/** Stamp `shipped` on the last shippable turn in a message list; unchanged list when there is none. */
+const markShippedIn = (messages: Message[], shipped: ShippedTurn): Message[] => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.isUser || !m.turnSummary?.shippable) continue;
+    const msgs = [...messages];
+    msgs[i] = { ...m, turnSummary: { ...m.turnSummary, shippable: false, shipped } };
+    return msgs;
+  }
+  return messages;
+};
+
 /** End-of-turn safety net: returns null when there is nothing unattached to materialize. */
 const finalizeIn = (s: TurnSlice, fallbackContent: string): TurnSlice | null => {
   if (s.agentSteps.length === 0 && !s.pendingTurnSummary) return null;
@@ -240,6 +263,12 @@ interface ChatState {
   addAgentStep: (step: AgentStep) => void;
   updateAgentStep: (id: string, patch: Partial<AgentStep>) => void;
   setTurnSummary: (summary: TurnSummary) => void;
+  /**
+   * Record a successful "Create PR" on the session's latest shippable turn
+   * (visible chat or a backgrounded one) — flips it to shipped so the bar
+   * shows the outcome and no other Create PR button competes for it.
+   */
+  markTurnShipped: (sessionId: string | null, shipped: ShippedTurn) => void;
   /**
    * End-of-turn safety net: if steps/summary are still unattached (the model
    * returned no text), materialize an assistant message so the work done is
@@ -344,6 +373,14 @@ export const useChatStore = create<ChatState>()(
       // Attach directly when the answer message already exists; otherwise park
       // it for adoption by the next assistant message.
       setTurnSummary: (summary) => set((state) => setTurnSummaryIn(state, summary)),
+      markTurnShipped: (sessionId, shipped) => set((state) => {
+        if (!sessionId || sessionId === state.currentSessionId) {
+          return { messages: markShippedIn(state.messages, shipped) };
+        }
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return { liveSessions: { ...state.liveSessions, [sessionId]: { ...entry, messages: markShippedIn(entry.messages, shipped) } } };
+      }),
       finalizeAgentTurn: (fallbackContent) => set((state) => finalizeIn(state, fallbackContent) ?? {}),
       resetTurnState: () => set({ agentSteps: [], pendingTurnSummary: null }),
       stashCurrentSession: () => set((state) => {

@@ -28,6 +28,7 @@ import {
   describeAge,
 } from './agent/resumeStore';
 import { normalizeModelId } from 'src/utils/normalizeModelId';
+import { describeTurnOutcome } from 'src/utils/turnOutcome';
 import { classifyQuery } from 'src/utils/queryClassifier';
 import { buildPlan, expandQuery } from 'src/utils/queryPlanner';
 import { rerank } from 'src/utils/reranker';
@@ -66,6 +67,7 @@ import { fetchWorkItem, TicketDetail } from './ado/adoWorkItemService';
 import { fetchConfluencePage, ConfluencePageDetail } from './confluence/confluencePageService';
 import { detectTicketId } from 'src/utils/ticketDetection';
 import { detectConfluenceUrl } from 'src/utils/confluenceUrlDetection';
+import { decideTurnRouting } from 'src/utils/turnRouting';
 import { TicketPromptContext } from 'src/utils/promptTemplates';
 import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE } from 'src/workers/model/answerGates';
 import { randomUUID } from 'crypto';
@@ -251,6 +253,12 @@ interface SessionRun {
   /** File-change rollup for the current agent turn (path → cumulative counts). */
   turnFilesChanged: Map<string, TurnFileChange>;
   /**
+   * Structured steps posted for the current turn. Counted so a turn that ends
+   * with no prose can be described truthfully — zero steps and zero writes is
+   * a failed turn, not a quiet success (see describeTurnOutcome).
+   */
+  turnStepsPosted: number;
+  /**
    * The user's own message asked for a repo-wide check ("run the full test
    * suite"). Set per turn: it lifts the unscoped-verification refusal, since a
    * wide run the user asked for is not the harness's call to override.
@@ -281,13 +289,6 @@ interface SessionRun {
    * auto-verification pass makes that the common case, not the rare one).
    */
   checkRuns: Map<string, { writeSeq: number; result: unknown }>;
-  /**
-   * Whether the last completed turn routed to live codebase tools. A bare
-   * continuation reply ("go ahead", "continue") carries no topical signal of
-   * its own for the classifier, so it inherits this instead of being
-   * reclassified from scratch (see CONTINUATION_RE in sendMessage).
-   */
-  lastUseCodebaseTools: boolean;
   /**
    * Click-to-run mode for the CURRENT turn: file writes and allowlisted
    * test/build commands apply without a review card (still checkpointed and
@@ -629,13 +630,13 @@ export class ChatService {
         cancelled: false,
         turnStartMs: 0,
         turnFilesChanged: new Map(),
+        turnStepsPosted: 0,
         userAskedRepoWide: false,
         sessionWritesApplied: 0,
         lastShip: null,
         turnFirstCheckpointSha: null,
         writeSeq: 0,
         checkRuns: new Map(),
-        lastUseCodebaseTools: false,
         autonomous: false,
         agentTranscript: null,
         lastAnswerStallShaped: false,
@@ -653,6 +654,9 @@ export class ChatService {
    */
   private post(run: SessionRun, payload: { type: string; [key: string]: unknown }): void {
     if (run.cancelled) return;
+    // The single choke point for everything the webview sees, so it is also
+    // the only honest place to count what this turn actually surfaced.
+    if (payload.type === MESSAGE_TYPES.AGENT_STEP) run.turnStepsPosted++;
     this.webviewView.webview.postMessage({ ...payload, sessionId: run.sessionId });
   }
 
@@ -787,6 +791,7 @@ export class ChatService {
       run.turnStartMs = Date.now();
       run.userAskedRepoWide = REPO_WIDE_REQUEST_RE.test(message);
       run.turnFilesChanged.clear();
+      run.turnStepsPosted = 0;
       run.turnFirstCheckpointSha = null;
       run.writeSeq = 0;
       run.checkRuns.clear();
@@ -836,6 +841,18 @@ export class ChatService {
       // Codebase tools need no auth/indexing — only an open workspace folder.
       const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
       const isCodebaseAvailable = workspaceFolders.length > 0;
+
+      // What the worker may be OFFERED this turn, from facts only. Gated on
+      // authentication rather than index completion: `get_ticket` and
+      // `get_confluence_page` are live API calls that work without an index,
+      // and the search tools already report an unindexed source as a plain
+      // tool error the model can read. Never derived from the message text —
+      // see toolScope.ts for why.
+      const toolAvailability = {
+        codebase: isCodebaseAvailable,
+        confluence: !!settings?.state?.config?.confluence?.isAuthenticated,
+        ado: !!settings?.state?.config?.ado?.isAuthenticated,
+      };
 
       // Read the @-mentioned files/folders while retrieval runs — they are
       // local reads, so overlapping them with the search costs nothing and
@@ -896,28 +913,11 @@ export class ChatService {
       // ── Step 1: Rule-based classification (synchronous, zero latency) ──
       let classification: QueryClassification = classifyQuery(message, availableSources);
 
-      // A bare continuation reply inherits the previous turn's routing instead
-      // of being reclassified from scratch — see CONTINUATION_RE.
-      //
-      // A held transcript forces CODEBASE regardless of `lastUseCodebaseTools`,
-      // and that case is not hypothetical: after a window reload the run object
-      // is brand new, so `lastUseCodebaseTools` is false while the interrupted
-      // run sits on disk. Without this, "continue" would be classified as
-      // ordinary chat, generateModelResponse would pass no roots, and the
-      // resume transcript — the whole reason the record was persisted — would
-      // be silently dropped.
-      const resumeWaiting = isContinuationReply && !!run.agentTranscript?.length && isCodebaseAvailable;
-      if (
-        contextSelection === 'Auto' &&
-        run.chatHistory.length > 0 &&
-        (CONTINUATION_RE.test(trimmedMessage) || resumeWaiting)
-      ) {
-        classification = {
-          intent: classification.intent,
-          sources: resumeWaiting || run.lastUseCodebaseTools ? ['CODEBASE'] : classification.sources,
-          confidence: 'high',
-        };
-      }
+      // (Routing inheritance for bare "continue"/"go ahead" replies used to live
+      // here, so a continuation kept its codebase tools and a parked resume
+      // transcript was not dropped. Tools are now granted from facts below —
+      // whenever a folder is open — so a continuation needs no help to keep
+      // them, and the resume transcript is carried whenever roots are passed.)
 
       // Approval of a plan the previous turn proposed makes THIS turn an
       // execution turn. Deliberately not gated on contextSelection: unlike the
@@ -944,62 +944,34 @@ export class ChatService {
       // the label maps to a real source, but that source isn't in
       // `availableSources` (Confluence/ADO not connected or still unindexed, or
       // Codebase with no folder open). Neither branch below fires in that case,
-      // so `classification` keeps its rule-based sources and routing quietly
-      // continues as if the user had left it on Auto — picking "Azure DevOps"
-      // while ADO is disconnected lands on codebase tools via the zero-source
-      // fallback further down, and picking "Codebase" with no folder open lands
-      // on Confluence/ADO RAG. Both used to be completely silent; the notice
-      // posted after routing settles is what makes them visible.
-      let unhonoredSelection: { label: string; reason: string } | null = null;
-      if (contextSelection !== 'Auto') {
-        const explicitSource: DataSource | null =
-          contextSelection === 'Confluence' ? 'CONFLUENCE' :
-          contextSelection === 'Azure DevOps' ? 'ADO' :
-          contextSelection === 'Codebase' ? 'CODEBASE' : null;
-        if (explicitSource && availableSources.includes(explicitSource)) {
-          classification = { ...classification, sources: [explicitSource], confidence: 'high' };
-        } else if (!explicitSource) {
-          classification = { ...classification, sources: availableSources, confidence: 'high' };
-        } else {
-          unhonoredSelection = {
-            label: SOURCE_LABELS[explicitSource],
-            reason: describeUnavailableSource(explicitSource, settings),
-          };
-        }
-      }
-
-      // Codebase is mutually exclusive with Confluence/ADO for a given turn —
-      // it skips the embedding search pipeline entirely (see Step 3) in favor
-      // of a live tool-calling loop in the model worker. `let` because the
-      // low-confidence LLM classification below may re-route an ambiguous
-      // query to the codebase (keyword rules can't cover natural questions
-      // like "what blogs are there in web").
-      let useCodebaseTools = classification.sources.includes('CODEBASE');
-      if (useCodebaseTools) {
-        classification = { ...classification, sources: ['CODEBASE'] };
-      }
-
-      // No doc/ticket source matched (or none are connected) but a workspace
-      // is open — default to codebase tools rather than answering from nothing.
-      if (
-        !useCodebaseTools &&
-        classification.sources.length === 0 &&
-        classification.intent !== 'chitchat' &&
-        isCodebaseAvailable
-      ) {
-        console.log('No doc/ticket source classified — defaulting to codebase tools.');
-        useCodebaseTools = true;
-        classification = { ...classification, sources: ['CODEBASE'] };
-      }
-
-      // An execution turn needs write tools, so it has to run the agent loop.
-      // A Confluence/ADO RAG turn has no tools at all — approving a plan there
-      // could only ever produce a re-description of it.
-      if (executeMandate && !useCodebaseTools && isCodebaseAvailable) {
-        console.log('Execution turn — forcing codebase tools so the approved plan can be applied.');
-        useCodebaseTools = true;
-        classification = { ...classification, sources: ['CODEBASE'] };
-      }
+      // so `classification` keeps its rule-based sources and the turn proceeds
+      // as if the user had left it on Auto. The picker only ever narrows what
+      // is pre-fetched — tools are decided from facts below, not from it — so
+      // an unhonored pick changes what gets searched, never what the model can
+      // do. It used to be completely silent; the notice posted after routing
+      // settles is what makes it visible.
+      //
+      // ── Capability is a FACT, not a guess ──
+      // The decision itself lives in utils/turnRouting.ts (pure, pinned by the
+      // headless unit tests) — see its docblock for why tools are granted from
+      // "a folder is open" alone and the classifier only decides what is
+      // PRE-FETCHED (Step 3 below). In short: a wrong guess about what to
+      // pre-fetch costs one round-trip, never an ability. With no folder open
+      // the pre-fetch set is the whole answer path, exactly as before.
+      const routing = decideTurnRouting({
+        isCodebaseAvailable,
+        availableSources,
+        classification,
+        contextSelection,
+      });
+      const { useCodebaseTools } = routing;
+      classification = routing.classification;
+      const unhonoredSelection: { label: string; reason: string } | null = routing.unhonoredSource
+        ? {
+            label: SOURCE_LABELS[routing.unhonoredSource],
+            reason: describeUnavailableSource(routing.unhonoredSource, settings),
+          }
+        : null;
 
       // The user's explicit context pick could not be honored. Routing has
       // settled by now, so the notice can name what ran instead — and it can't
@@ -1014,11 +986,12 @@ export class ChatService {
         // `classification.sources`: a chitchat turn plans topKPerPass=0, so it
         // searches nothing even with sources set, and claiming it used
         // Confluence would be a second wrong statement on top of the first.
-        const usedInstead = useCodebaseTools
-          ? 'the codebase'
-          : classification.intent !== 'chitchat' && classification.sources.length
+        const searchedInstead =
+          classification.intent !== 'chitchat' && classification.sources.length
             ? classification.sources.map((s) => SOURCE_LABELS[s]).join(' & ')
             : null;
+        const usedInstead =
+          [useCodebaseTools ? 'the codebase' : null, searchedInstead].filter(Boolean).join(' and ') || null;
         const notice =
           `${unhonoredSelection.label} context isn't available — ${unhonoredSelection.reason}. ` +
           (usedInstead
@@ -1041,7 +1014,10 @@ export class ChatService {
       // worker gets live tools instead (see generateModelResponse below).
       let finalResults: SearchResult[] = [];
 
-      if (!useCodebaseTools && prelimPlan.sources.length > 0 && prelimPlan.topKPerPass > 0) {
+      // Runs whenever there is something to pre-fetch — on a tool turn too. The
+      // results ride into the tool prompt as context the model may answer from
+      // directly (see the with-context regime in promptTemplates).
+      if (prelimPlan.sources.length > 0 && prelimPlan.topKPerPass > 0) {
         const adoQuery = this.rewriteQueryWithUser(message, userDisplayName);
         if (adoQuery !== message) {
           console.log(`ADO query rewritten: "${message}" → "${adoQuery}"`);
@@ -1079,17 +1055,13 @@ export class ChatService {
             : Promise.resolve({ intent: classification.intent, sources: undefined as DataSource[] | undefined }),
         ]);
 
-        // The LLM may re-route an ambiguous query to the codebase — keyword
-        // rules can't recognize questions like "what blogs are there in web"
-        // as code questions. When that happens, discard the embedding results
-        // (they were searched speculatively in parallel) and switch to tools.
-        if (needsLLM && upgraded.sources?.includes('CODEBASE') && isCodebaseAvailable) {
-          console.log('LLM routed query to CODEBASE — switching to live codebase tools.');
-          useCodebaseTools = true;
-          classification = { ...classification, intent: upgraded.intent, sources: ['CODEBASE'] };
-        }
-
-        if (!useCodebaseTools) {
+        // The LLM used to be able to re-route an ambiguous query to the
+        // codebase here, discarding the speculative retrieval. Capability no
+        // longer depends on that verdict: tools are already on whenever a
+        // folder is open, and the retrieved context rides into the tool
+        // prompt, so "this is really a code question" has nothing left to
+        // change. The intent upgrade below (topK, second pass) is all it decides.
+        {
           // Apply upgraded intent and rebuild the final plan
           if (needsLLM && upgraded.intent !== classification.intent) {
             console.log(`Intent upgraded via LLM: ${classification.intent} → ${upgraded.intent}`);
@@ -1127,7 +1099,6 @@ export class ChatService {
         }
       }
 
-      run.lastUseCodebaseTools = useCodebaseTools;
 
       // ── Ticket grounding (FETCH stage) ──
       // When the message names a work item and this is a codebase turn, fetch
@@ -1138,7 +1109,7 @@ export class ChatService {
       // model can still call get_ticket itself mid-loop.
       let ticketContext: TicketDetail | null = null;
       const adoAuthenticated = !!settings?.state?.config?.ado?.isAuthenticated;
-      const ticketId = useCodebaseTools && adoAuthenticated ? detectTicketId(message) : null;
+      const ticketId = adoAuthenticated ? detectTicketId(message) : null;
       // Sticky across the session, so a resume record written by a later
       // continuation turn still names the ticket the run is about.
       if (ticketId) run.lastTicketId = ticketId;
@@ -1192,7 +1163,7 @@ export class ChatService {
       let confluencePageContext: ConfluencePageDetail | null = null;
       const confluenceAuthenticated = !!settings?.state?.config?.confluence?.isAuthenticated;
       const confluencePageId =
-        useCodebaseTools && confluenceAuthenticated ? detectConfluenceUrl(message) : null;
+        confluenceAuthenticated ? detectConfluenceUrl(message) : null;
       if (confluencePageId) {
         const stepId = randomUUID();
         this.postStatus(run, `Reading Confluence page ${confluencePageId}...`);
@@ -1301,7 +1272,8 @@ export class ChatService {
           executeMandate,
           ticketContext,
           autonomous,
-          planMode
+          planMode,
+          toolAvailability
         );
 
       let modelResponse: string;
@@ -1393,6 +1365,7 @@ export class ChatService {
               title: deriveShipTitle(ticketContext?.title, modelResponse),
               report: modelResponse,
               files: [...run.turnFilesChanged.keys()],
+              hasNewFiles: [...run.turnFilesChanged.values()].some((f) => f.kind === 'create'),
             }
           : null;
     } catch (error) {
@@ -2231,7 +2204,9 @@ Query: "${query}"`;
     /** Click-to-run: gates are open, the worker prompt drops permission-seeking. */
     autonomous = false,
     /** Plan mode: deliverable is the plan; writes forbidden, anti-plan gates off. */
-    planMode = false
+    planMode = false,
+    /** Tool groups the worker may offer, from what is connected (see toolScope.ts). */
+    toolAvailability?: { codebase: boolean; confluence: boolean; ado: boolean }
   ): Promise<string> {
     try {
       run.lastAnswerStallShaped = false;
@@ -2284,6 +2259,7 @@ Query: "${query}"`;
           currentUserName: currentUserName || undefined,
           currentSprint: currentSprint || undefined,
           codebaseTools: codebaseRoots ? { enabled: true } : undefined,
+          toolAvailability,
           // Text attachments are inlined into the prompt template; images are
           // sent to the model as multimodal image_url parts (vision models).
           textAttachments: attachments
@@ -2406,8 +2382,47 @@ Query: "${query}"`;
                   : {}),
               });
             }
+            // What this turn is allowed to claim about itself. A turn can end
+            // with no prose at all (empty completion, or a tool loop that
+            // exited without its summary); the webview used to invent "Done —
+            // see the steps above for what was explored and changed" for that
+            // case, which on a turn with no steps and no writes is false in
+            // every clause. The facts live here, so the wording is decided
+            // here and the webview only renders it.
+            const answerText = (fullContent || streamedContent).trim();
+            const outcome = describeTurnOutcome({
+              answerText,
+              writesApplied: workerWritesApplied ?? run.turnFilesChanged.size,
+              stepsPosted: run.turnStepsPosted,
+            });
+            if (outcome.kind !== 'answered') {
+              this.analyticsService?.trackEvent('turn_no_answer', {
+                outcome: outcome.kind,
+                stepsPosted: run.turnStepsPosted,
+                writesApplied: workerWritesApplied ?? run.turnFilesChanged.size,
+                usedCodebaseTools: !!codebaseRoots?.length,
+                autonomous,
+                planMode,
+              });
+            }
+            if (outcome.kind === 'empty') {
+              // Nothing ran and nothing changed: that is a failed turn, and it
+              // has to read as one. Routed through ERROR_CHAT so it renders as
+              // an error card with a Resume affordance when a transcript is
+              // still held, instead of a cheerful assistant bubble.
+              const held = run.agentTranscript?.length ?? 0;
+              this.post(run, {
+                type: MESSAGE_TYPES.ERROR_CHAT,
+                message: outcome.text,
+                ...(held ? { resumable: { steps: held, writesApplied: run.sessionWritesApplied } } : {}),
+              });
+            }
             this.post(run, {
               type: MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
+              // Present only when the model produced no prose of its own. The
+              // webview attaches this turn's steps and rollup to it, so they
+              // survive without the message overstating what happened.
+              ...(outcome.kind === 'silent' ? { fallbackAnswer: outcome.text } : {}),
             });
             // A turn that actually delivered an answer is finished — nothing
             // left to resume, and keeping its raw tool results would re-bill
@@ -2422,7 +2437,8 @@ Query: "${query}"`;
             // investigation from zero (observed live as the triple-plan loop on
             // one ADO bug). Keep it resumable; it's dropped anyway the moment
             // the user sends anything that isn't a continuation reply.
-            const answerText = (fullContent || streamedContent).trim();
+            // (`answerText` is computed above, where the turn's own outcome is
+            // decided.)
             // The regex fallback must never overrule a worker that reports
             // applied writes: a finished report with a polite "let me know if
             // you want…" closing is done, not stalled. Treating it as a stall

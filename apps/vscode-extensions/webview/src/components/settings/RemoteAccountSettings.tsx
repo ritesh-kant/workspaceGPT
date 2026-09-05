@@ -3,7 +3,7 @@ import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES } from '../../constants';
 import SectionShell from './SectionShell';
 import StatusDot from './StatusDot';
-import { formatRefreshIn, usageTone } from '../../utils/usage';
+import { formatDurationApprox, formatRefreshIn, usageTone } from '../../utils/usage';
 
 /**
  * RECONSTRUCTED 2026-08-31 — deleted by mistake earlier in the same session
@@ -21,27 +21,51 @@ interface RemoteSessionStatus {
   githubLogin?: string;
   email?: string;
   plan?: string;
-  requestsUsedThisWeek?: number;
-  requestsLimitWeekly?: number;
+  /** Token-metered credits — one credit ≈ `tokensPerCredit` model tokens. */
+  creditsUsedThisWeek?: number;
+  creditsLimitWeekly?: number;
+  creditsUsedWindow?: number;
+  creditsLimitWindow?: number;
+  windowSeconds?: number;
+  tokensPerCredit?: number;
+}
+
+/** The credit fields, with the request-era names accepted from an older host. */
+function usageFromMessage(message: any): Pick<
+  RemoteSessionStatus,
+  'creditsUsedThisWeek' | 'creditsLimitWeekly' | 'creditsUsedWindow' | 'creditsLimitWindow' | 'windowSeconds' | 'tokensPerCredit'
+> {
+  return {
+    creditsUsedThisWeek: message.creditsUsedThisWeek ?? message.requestsUsedThisWeek,
+    creditsLimitWeekly: message.creditsLimitWeekly ?? message.requestsLimitWeekly,
+    creditsUsedWindow: message.creditsUsedWindow,
+    creditsLimitWindow: message.creditsLimitWindow,
+    windowSeconds: message.windowSeconds,
+    tokensPerCredit: message.tokensPerCredit,
+  };
 }
 
 /**
- * Weekly quota as one line plus a thin bar. The previous 72px ring with the
- * percentage inside took a third of the Settings viewport for a number the
- * user glances at occasionally; the fraction and the reset date say the same
- * thing in a single row.
+ * One allowance as a single line plus a thin bar. The previous 72px ring with
+ * the percentage inside took a third of the Settings viewport for a number the
+ * user glances at occasionally; the fraction and the reset say the same thing
+ * in a row. Rendered twice: the week, and the rolling 5-hour window.
  */
-const WeeklyUsageRow: React.FC<{ used: number; limit: number }> = ({ used, limit }) => {
+const UsageRow: React.FC<{ used: number; limit: number; period: string; resetsIn: string }> = ({
+  used,
+  limit,
+  period,
+  resetsIn,
+}) => {
   const remaining = Math.max(0, limit - used);
   const remainingPct = limit > 0 ? Math.round((remaining / limit) * 100) : 0;
   const clampedPct = Math.min(100, Math.max(0, remainingPct));
   const tone = usageTone(clampedPct);
   const exhausted = remaining === 0;
-  const refreshIn = formatRefreshIn();
 
   const detail = exhausted
-    ? `Weekly limit reached · 0 remaining of ${limit} · resets in ${refreshIn}`
-    : `${remaining} remaining · ${used} used of ${limit} · resets in ${refreshIn}`;
+    ? `${period} credits used up · 0 of ${limit} left · ${resetsIn}`
+    : `${remaining} of ${limit} ${period} credits left · ${resetsIn}`;
 
   return (
     <div className={`usage-row usage-row--${tone}`} role='status' aria-label={detail}>
@@ -72,8 +96,7 @@ const RemoteAccountSettings: React.FC = () => {
             githubLogin: message.githubLogin,
             email: message.email,
             plan: message.plan,
-            requestsUsedThisWeek: message.requestsUsedThisWeek,
-            requestsLimitWeekly: message.requestsLimitWeekly,
+            ...usageFromMessage(message),
           });
           setBusy(false);
           setChecking(false);
@@ -84,8 +107,7 @@ const RemoteAccountSettings: React.FC = () => {
             githubLogin: message.githubLogin,
             email: message.email,
             plan: message.plan,
-            requestsUsedThisWeek: message.requestsUsedThisWeek,
-            requestsLimitWeekly: message.requestsLimitWeekly,
+            ...usageFromMessage(message),
           });
           setBusy(false);
           setChecking(false);
@@ -118,8 +140,8 @@ const RemoteAccountSettings: React.FC = () => {
   };
 
   const remaining =
-    typeof status.requestsLimitWeekly === 'number' && status.requestsLimitWeekly > 0
-      ? Math.max(0, status.requestsLimitWeekly - (status.requestsUsedThisWeek ?? 0))
+    typeof status.creditsLimitWeekly === 'number' && status.creditsLimitWeekly > 0
+      ? Math.max(0, status.creditsLimitWeekly - (status.creditsUsedThisWeek ?? 0))
       : null;
 
   const summary = checking ? (
@@ -128,7 +150,7 @@ const RemoteAccountSettings: React.FC = () => {
     <>
       <StatusDot tone='ok' />
       {status.githubLogin || 'Signed in'}
-      {remaining === null ? '' : ` · ${remaining} left this week`}
+      {remaining === null ? '' : ` · ${remaining} credits left this week`}
     </>
   ) : (
     'Not signed in'
@@ -166,11 +188,27 @@ const RemoteAccountSettings: React.FC = () => {
                 {busy ? 'Signing out…' : 'Sign out'}
               </button>
             </div>
-            {typeof status.requestsLimitWeekly === 'number' && (
-              <WeeklyUsageRow
-                used={status.requestsUsedThisWeek ?? 0}
-                limit={status.requestsLimitWeekly}
+            {typeof status.creditsLimitWeekly === 'number' && (
+              <UsageRow
+                used={status.creditsUsedThisWeek ?? 0}
+                limit={status.creditsLimitWeekly}
+                period='weekly'
+                resetsIn={`resets in ${formatRefreshIn()}`}
               />
+            )}
+            {typeof status.creditsLimitWindow === 'number' && (
+              <UsageRow
+                used={status.creditsUsedWindow ?? 0}
+                limit={status.creditsLimitWindow}
+                period='5-hour'
+                resetsIn={`frees up within ${formatDurationApprox(status.windowSeconds ?? 5 * 3600)}`}
+              />
+            )}
+            {typeof status.tokensPerCredit === 'number' && (
+              <small className='form-text'>
+                1 credit ≈ {status.tokensPerCredit.toLocaleString()} model tokens. A quick question is a
+                few credits; a run that edits code, a few dozen.
+              </small>
             )}
           </div>
         ) : (

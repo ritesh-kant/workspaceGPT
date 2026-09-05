@@ -26,12 +26,18 @@
     // format. Must support tool calling — the agent loop depends on it.
     // "OPENROUTER_MODEL": "google/gemini-2.5-flash",
     "OPENROUTER_MODEL": "MiniMaxAI/MiniMax-M3",
-    // Per-plan request cap, per ISO week (Monday 00:00 UTC reset), keyed on the
-    // `users.plan` column. Every request spends the vendor's OpenRouter key, so
-    // this is the spend control.
-    "PLAN_WEEKLY_LIMITS": "{\"free\":200,\"pro\":5000}",
+    // Usage is metered in vendor tokens and shown as credits (src/metering.ts):
+    // one credit = TOKENS_PER_CREDIT tokens, charged per served request from
+    // the usage the vendor reports. Two allowances, both keyed on `users.plan`:
+    //   · PLAN_WEEKLY_CREDITS — per ISO week (Monday 00:00 UTC reset)
+    //   · PLAN_WINDOW_CREDITS — per rolling 5-hour window (absent: weekly / 5)
+    // Every request spends the vendor's key, so these are the spend control.
+    // The sizes below are placeholders from the 2026-09-05 eval harness (a doc
+    // answer ≈ 7 credits, an agent run ≈ 50) pending a pricing decision.
+    "PLAN_WEEKLY_CREDITS": "{\"free\":2000,\"pro\":50000}",
     // Weekly cap for a plan not named above.
-    "WEEKLY_REQUEST_LIMIT": "200"
+    "WEEKLY_CREDIT_LIMIT": "2000",
+    "TOKENS_PER_CREDIT": "1000"
   },
   "kv_namespaces": [
     {

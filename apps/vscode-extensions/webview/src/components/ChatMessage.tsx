@@ -116,7 +116,7 @@ const ReportH2: React.FC<H2Props> = ({ node, children, ...rest }) => {
   );
 };
 
-const REPORT_SECTION_RE = /^(acceptance criteria|changes|files changed|verification|notes|assumptions|out of scope)\b/i;
+const REPORT_SECTION_RE = /^(acceptance criteria|root cause|cause|changes|files changed|verification|notes|assumptions|out of scope)\b/i;
 type H3Props = React.ComponentPropsWithoutRef<'h3'> & ExtraProps;
 const ReportH3: React.FC<H3Props> = ({ node, children, className, ...rest }) => {
   const isSection = REPORT_SECTION_RE.test(hastText(node).replace(LEADING_EMOJI_RE, '').trim());
@@ -510,7 +510,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             />
           </div>
           {turnSummary && turnSummary.filesChanged.length > 0 && (
-            <FilesChangedBar summary={turnSummary} report={content} />
+            <FilesChangedBar summary={turnSummary} />
           )}
           {isError && resumable && onResume && (
             <div className="error-resume">

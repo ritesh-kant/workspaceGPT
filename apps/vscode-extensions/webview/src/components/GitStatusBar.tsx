@@ -1,99 +1,32 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { VSCodeAPI } from '../vscode';
-import { MESSAGE_TYPES } from '../constants';
-
-interface GitStatus {
-  isRepo: boolean;
-  branch?: string;
-  added: number;
-  removed: number;
-  filesChanged: number;
-  hasRemote: boolean;
-}
-
-type ShipState =
-  | { phase: 'idle' }
-  | { phase: 'running'; requestId: string }
-  | { phase: 'done'; branch: string; prUrl?: string; warnings: string[] }
-  | { phase: 'error'; error: string };
-
-const POLL_MS = 15_000;
+import React from 'react';
+import { hasShippableChanges, statusSignature, useGitStatusStore } from '../store/gitStatusStore';
 
 /**
  * Always-on git status bar above the composer, Claude-Code-desktop-style:
- * current branch, the working tree's uncommitted diff stats, and a
- * "Create PR" split button that ships EVERYTHING dirty (not scoped to one
- * agent turn — see FilesChangedBar.tsx for the per-turn equivalent).
+ * current branch and the working tree's uncommitted diff stats.
+ *
+ * State only — the "Create PR" action that used to live here now sits in the
+ * composer's control row (CreatePrButton.tsx), beside the other controls.
+ * The bar stays mounted while a ship result is worth reading, so the pushed
+ * branch and its pull-request link survive the tree going clean underneath it.
  */
 const GitStatusBar: React.FC = () => {
-  const vscode = VSCodeAPI();
-  const [status, setStatus] = useState<GitStatus | null>(null);
-  const [ship, setShip] = useState<ShipState>({ phase: 'idle' });
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [dismissedSignature, setDismissedSignature] = useState<string | null>(null);
+  const status = useGitStatusStore((s) => s.status);
+  const ship = useGitStatusStore((s) => s.ship);
+  const dismissedSignature = useGitStatusStore((s) => s.dismissedSignature);
+  const dismiss = useGitStatusStore((s) => s.dismiss);
+  const setShip = useGitStatusStore((s) => s.setShip);
 
-  const requestStatus = () => vscode.postMessage({ type: MESSAGE_TYPES.GET_GIT_STATUS });
+  const signature = status ? statusSignature(status) : '';
+  const showChanges = hasShippableChanges(status) && dismissedSignature !== signature;
+  // A turn ship already reports itself on its message card; announcing it here
+  // as well just says the same thing twice, one above the other.
+  const showResult = (ship.phase === 'done' && ship.scope === 'tree') || ship.phase === 'error';
+  if (!showChanges && !showResult) return null;
 
-  useEffect(() => {
-    requestStatus();
-    const interval = setInterval(requestStatus, POLL_MS);
-    const onMessage = (event: MessageEvent) => {
-      const m = event.data;
-      if (m?.type === MESSAGE_TYPES.GIT_STATUS) {
-        setStatus({
-          isRepo: !!m.isRepo,
-          branch: m.branch,
-          added: m.added ?? 0,
-          removed: m.removed ?? 0,
-          filesChanged: m.filesChanged ?? 0,
-          hasRemote: !!m.hasRemote,
-        });
-      } else if (m?.type === MESSAGE_TYPES.AGENT_SHIP_ALL_DONE) {
-        setShip((prev) => {
-          if (prev.phase !== 'running' || m.requestId !== prev.requestId) return prev;
-          if (m.cancelled) return { phase: 'idle' }; // dismissed the title prompt
-          return m.ok
-            ? { phase: 'done', branch: m.branch, prUrl: m.prUrl, warnings: m.warnings ?? [] }
-            : { phase: 'error', error: m.error || 'Create PR failed.' };
-        });
-        // Working tree is (likely) clean now — refresh so the bar can hide.
-        setTimeout(requestStatus, 300);
-      }
-    };
-    window.addEventListener('message', onMessage);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('message', onMessage);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Close the split-button menu on outside click.
-  const menuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [menuOpen]);
-
-  if (!status || !status.isRepo || status.filesChanged === 0) return null;
-
-  const signature = `${status.branch}|${status.added}|${status.removed}|${status.filesChanged}`;
-  if (dismissedSignature === signature) return null;
-
-  const createPr = () => {
-    const requestId = `ship-all-${Date.now().toString(36)}`;
-    setShip({ phase: 'running', requestId });
-    vscode.postMessage({ type: MESSAGE_TYPES.AGENT_SHIP_ALL, requestId });
-  };
-
-  const copyBranchName = () => {
-    if (status.branch) navigator.clipboard?.writeText(status.branch).catch(() => undefined);
-    setMenuOpen(false);
-  };
+  // One X for whichever the bar is currently carrying: an outcome to
+  // acknowledge takes precedence over the diff it came from.
+  const onDismiss = () => (showResult ? setShip({ phase: 'idle' }) : dismiss(signature));
 
   return (
     <div className='git-status-bar'>
@@ -108,59 +41,34 @@ const GitStatusBar: React.FC = () => {
               strokeLinejoin='round'
             />
           </svg>
-          {status.branch || 'detached'}
+          {status?.branch || 'detached'}
         </span>
-        {(status.added > 0 || status.removed > 0) && (
-          <span className='git-status-stats'>
-            {status.added > 0 && <span className='stat-added'>+{status.added}</span>}
-            {status.removed > 0 && <span className='stat-removed'>−{status.removed}</span>}
+        {showChanges && (
+          <span className='git-status-stats' title='Uncommitted changes across the whole working tree, not just the last turn'>
+            <span className='git-status-stats-scope'>working tree</span>
+            {status.added === 0 && status.removed === 0 ? (
+              // New files only: git reports no insertions for a path it has
+              // never seen, so the file count is all there is to say.
+              <span className='git-status-stats-count'>
+                {status.filesChanged} file{status.filesChanged === 1 ? '' : 's'}
+              </span>
+            ) : (
+              <>
+                {status.added > 0 && <span className='stat-added'>+{status.added}</span>}
+                {status.removed > 0 && <span className='stat-removed'>−{status.removed}</span>}
+              </>
+            )}
           </span>
         )}
         <div className='git-status-actions'>
-          {ship.phase !== 'done' && (
-            <div className='git-status-ship-group' ref={menuRef}>
-              <button
-                type='button'
-                className='git-status-ship'
-                onClick={createPr}
-                disabled={ship.phase === 'running' || !status.branch}
-                title='Branch, commit, push and open the pull-request page for everything currently uncommitted'
-              >
-                {ship.phase === 'running' ? 'Creating…' : 'Create PR'}
-              </button>
-              <button
-                type='button'
-                className='git-status-ship-menu-toggle'
-                onClick={() => setMenuOpen((v) => !v)}
-                aria-label='More actions'
-                aria-expanded={menuOpen}
-              >
-                <svg width='10' height='10' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-                  <path d='M6 9l6 6 6-6' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-                </svg>
-              </button>
-              {menuOpen && (
-                <div className='git-status-ship-menu'>
-                  <button type='button' onClick={copyBranchName}>
-                    Copy branch name
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          <button
-            type='button'
-            className='git-status-dismiss'
-            onClick={() => setDismissedSignature(signature)}
-            aria-label='Dismiss'
-          >
+          <button type='button' className='git-status-dismiss' onClick={onDismiss} aria-label='Dismiss'>
             <svg width='11' height='11' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
               <path d='M6 6l12 12M18 6L6 18' stroke='currentColor' strokeWidth='2' strokeLinecap='round' />
             </svg>
           </button>
         </div>
       </div>
-      {ship.phase === 'done' && (
+      {ship.phase === 'done' && ship.scope === 'tree' && (
         <div className='git-status-ship-result'>
           <span className='stat-added'>✓</span> Pushed <code>{ship.branch}</code>
           {ship.prUrl && (
@@ -171,6 +79,7 @@ const GitStatusBar: React.FC = () => {
               </a>
             </>
           )}
+          {ship.ticketCommented && ship.ticketId ? ` · report posted on #${ship.ticketId}` : ''}
           {ship.warnings.map((w, i) => (
             <div key={i} className='git-status-ship-warning'>
               {w}

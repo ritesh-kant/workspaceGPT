@@ -153,41 +153,70 @@ would silently reduce remote mode to plain chat.
 
 ## 6. Usage caps
 
-Every request spends the vendor's single OpenRouter key, so admission control
-is not optional. **200 requests per week** is the default.
-[usage.ts](apps/workspacegpt-api/src/usage.ts):
+Every request spends the vendor's single key, so admission control is not
+optional. Usage is **metered in tokens and presented as credits** — one credit
+is `tokens_per_credit` model tokens (default 1,000) — with two allowances per
+account: a **rolling five-hour window** and an **ISO week**. Defaults are
+placeholders pending a pricing decision: free 2,000 credits/week (window 400),
+pro 50,000/week (window 10,000). Sized from the eval harness (2026-09-05): a
+documentation answer is ~7 credits, an agent run that edits code ~50.
 
-- `usage_weekly(user_id, week, requests)` in D1, bucketed by **ISO-8601 week in
-  UTC** (`2026-W36`) — weeks start Monday, so the cap resets Monday 00:00 UTC
-  for everyone.
-- ISO weeks, not "day-of-year / 7": the boundary is always a Monday midnight and
-  never drifts per year. The key carries the ISO *week-year*, so late December
-  and early January land in the same bucket when they share a week
-  (`2025-12-29` → `2026-W01`).
-- One `INSERT … ON CONFLICT DO UPDATE … RETURNING` per admitted request, so two
-  concurrent calls can't both read the same pre-increment value and slip past
-  the cap together.
+Why not count requests: one user message is one HTTP call for a chat answer and
+20–40 for an agent turn, so "200 requests/week" bought about five bug fixes and
+the number meant nothing a person could plan around. Cursor, Codex and Claude
+Code each launched on call/message counting and each moved to token metering
+with an abstract unit on top; this follows them rather than repeating the
+migration later.
+
+[metering.ts](apps/workspacegpt-api/src/metering.ts) (pure) and
+[usage.ts](apps/workspacegpt-api/src/usage.ts) (D1). `pnpm test` in
+`apps/workspacegpt-api` runs two files with no Cloudflare runtime:
+[test/run.mjs](apps/workspacegpt-api/test/run.mjs) drives the arithmetic
+directly, and [test/proxy.mjs](apps/workspacegpt-api/test/proxy.mjs) drives the
+Worker's real `fetch` export end to end — the migrations applied to an
+in-memory `node:sqlite` standing in for D1, a Map for KV, a scripted upstream —
+and checks the tee'd stream reaches the client byte-identical, the
+`waitUntil` charge lands, the next request's admission sees it, and refusals
+and vendor failures are not charged.
+
+- **Admit → proxy → meter.** Admission compares usage *already recorded*
+  against both limits before anything is forwarded; refusal is a `429` with
+  `Retry-After` and a sentence naming which allowance ran out. The request that
+  crosses a limit is always served (an answer cannot be un-streamed); the next
+  one is refused.
+- **Streamed responses are forced to report usage** (`stream_options.include_usage`
+  is set server-side). The upstream body is `tee()`d: one branch goes to the
+  client untouched, the other is read to completion in `ctx.waitUntil` to find
+  the final `usage` chunk, convert to credits and charge — off the latency
+  path, and the body is never logged or stored.
+- If the vendor returns no `usage` at all, the charge is estimated from the
+  request size (~4 chars/token, prompt only) and a warning is logged. Failed
+  upstream calls (vendor 429/5xx) are not charged.
+- `usage_weekly(user_id, week, requests, credits, tokens)` keeps the weekly
+  aggregate, bucketed by ISO week in UTC (`2026-W36`; Monday reset; the key
+  carries the ISO week-year so late December and early January share a bucket
+  when they share a week). `requests` is now a statistic, not a limit.
+- `usage_events(user_id, ts, credits, tokens)` backs the rolling window as a
+  `SUM` over the last five hours; rows are pruned as they age out.
 - Limits resolve per account, highest precedence first: the
-  `users.weekly_request_limit` override → the configured plan→limit map → the
-  configured fallback for unlisted plans. All three are configurable (§7), so
-  raising one customer's ceiling is a one-column `UPDATE` and raising a whole
-  plan's is a one-row edit.
-- An over-limit request is still counted (it is rejected anyway, and counting it
-  stops a hammering client from resetting its own denominator). A malformed
-  request is *not* counted — validation runs before the quota is spent.
-- `429` carries `Retry-After` (seconds to the next Monday). Note the `openai`
-  client ignores `Retry-After` above 60s, so it surfaces the error rather than
-  sleeping for days.
+  `users.weekly_credit_limit` override → the plan map → the fallback. The
+  window cap is configurable per plan too and otherwise **a fifth of the weekly
+  cap**, so one edit keeps both in proportion. (`users.weekly_request_limit`
+  is left in the schema, unread — its values were call counts.)
+- `Retry-After` above 60s is ignored by the `openai` client, so it surfaces the
+  error rather than sleeping.
 
-`/v1/me` returns `plan`, `requests_used_this_week` and `requests_limit_weekly`
-so Settings → Account can show the remaining allowance without a second call.
-Successful proxy responses also carry `X-WorkspaceGPT-Requests-Used`,
-`-Limit` and `-Period: week`.
+`/v1/me` returns `credits_used_this_week`, `credits_limit_weekly`,
+`credits_used_window`, `credits_limit_window`, `window_seconds` and
+`tokens_per_credit` (plus the request-era names, carrying the same credit
+numbers, for one release). Proxy responses carry `X-WorkspaceGPT-Credits-Used`,
+`-Credits-Limit`, `-Credits-Period: week`, `-Window-Used`, `-Window-Limit`,
+`-Window-Seconds` — reflecting usage *before* that request, since its own cost
+is only known once it has streamed.
 
-**The window itself is fixed at a week**, deliberately not configurable: the
-bucket key encodes the period, so flipping it at runtime would leave existing
-rows keyed by the old window and make every in-flight count ambiguous. Changing
-it is a migration (as `0004_weekly_usage.sql` was), not a config edit.
+Existing `requests` values were **not** reinterpreted as credits
+(`0006_credits.sql`): a call is not a credit, and everyone's credit counters
+start at zero — strictly more generous than any conversion for anyone mid-week.
 
 ---
 
@@ -227,22 +256,40 @@ use whatever id format the currently configured provider expects):
 wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('openrouter_model', 'anthropic/claude-sonnet-4.5', unixepoch())"
 ```
 
-Change every plan's weekly cap:
+Change every plan's weekly credit cap:
 
 ```bash
-wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_weekly_limits', '{\"free\":200,\"pro\":5000}', unixepoch())"
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_weekly_credits', '{\"free\":2000,\"pro\":50000}', unixepoch())"
 ```
 
 Change the weekly cap for plans absent from that map:
 
 ```bash
-wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('weekly_request_limit', '500', unixepoch())"
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('weekly_credit_limit', '2000', unixepoch())"
+```
+
+Change the rolling 5-hour window caps (absent plans get weekly ÷ 5):
+
+```bash
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_window_credits', '{\"free\":400,\"pro\":10000}', unixepoch())"
+```
+
+Change what a credit is worth (tokens per credit):
+
+```bash
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('tokens_per_credit', '1000', unixepoch())"
+```
+
+Raise one account's weekly ceiling without a new plan:
+
+```bash
+wrangler d1 execute workspacegpt-db --remote --command "UPDATE users SET weekly_credit_limit = 9000 WHERE login = 'someone'"
 ```
 
 Raise (or throttle) one account, without inventing a plan for them:
 
 ```bash
-wrangler d1 execute workspacegpt-db --remote --command "UPDATE users SET weekly_request_limit = 2000 WHERE login = 'someone'"
+wrangler d1 execute workspacegpt-db --remote --command "UPDATE users SET weekly_credit_limit = 9000 WHERE login = 'someone'"
 ```
 
 Revert any override by deleting its row (e.g. `DELETE FROM app_config WHERE
@@ -251,7 +298,7 @@ column — the layer below takes over.
 
 ### Rules the parser follows
 
-- A malformed or non-object `plan_weekly_limits` blob is **ignored with a logged
+- A malformed or non-object `plan_weekly_credits` (or `plan_window_credits`) blob is **ignored with a logged
   error**, and the next layer applies. A typo must never leave requests
   uncapped.
 - Individual non-positive-integer entries are dropped, not coerced. `{"free":-5}`

@@ -8,8 +8,8 @@ export interface Env {
    * The vendor's own OpenRouter key — the whole point of remote mode is that
    * users never hold a model key. Set via `wrangler secret put
    * OPENROUTER_API_KEY` (or .dev.vars locally). Every /v1/chat/completions
-   * request spends against it, which is why the weekly cap in usage.ts is not
-   * optional.
+   * request spends against it, which is why the credit caps in metering.ts
+   * are not optional.
    */
   OPENROUTER_API_KEY: string;
   /**
@@ -27,8 +27,14 @@ export interface Env {
   INFERENCE_PROVIDER: string;
   /** The model id remote-mode requests are routed to, in the chosen provider's format. */
   OPENROUTER_MODEL: string;
-  /** JSON `{"plan": requestsPerWeek}` map, e.g. `{"free":200,"pro":5000}`. */
-  PLAN_WEEKLY_LIMITS: string;
-  /** Requests/week for a plan absent from PLAN_WEEKLY_LIMITS. */
-  WEEKLY_REQUEST_LIMIT: string;
+  /** JSON `{"plan": creditsPerWeek}` map, e.g. `{"free":2000,"pro":50000}`. */
+  PLAN_WEEKLY_CREDITS?: string;
+  /** Credits/week for a plan absent from PLAN_WEEKLY_CREDITS. */
+  WEEKLY_CREDIT_LIMIT?: string;
+  /** JSON `{"plan": creditsPer5hWindow}` map. Absent plans get weekly/5 (metering.ts). */
+  PLAN_WINDOW_CREDITS?: string;
+  /** Window credits for a plan absent from PLAN_WINDOW_CREDITS. Absent: weekly/5. */
+  WINDOW_CREDIT_LIMIT?: string;
+  /** Vendor tokens per credit (default 1000). */
+  TOKENS_PER_CREDIT?: string;
 }

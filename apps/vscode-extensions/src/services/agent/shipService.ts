@@ -4,7 +4,9 @@ import * as path from 'path';
 import { NamedRoot, resolveAgainstRoots } from '../codebase/codebaseTools';
 import { addWorkItemComment } from '../ado/adoWorkItemService';
 import {
-  conventionalCommitType,
+  CONVENTIONAL_TYPES,
+  deriveShipTitle,
+  turnCommitType,
   inferConventionalType,
   parseConventionalSubject,
   parsePorcelain,
@@ -31,12 +33,16 @@ export interface ShipInput {
   ticketId?: number;
   /** ADO work item type (e.g. "Bug", "Feature", "Task") — picks the branch's Conventional Commits prefix. */
   ticketType?: string;
-  /** Ticket title (or the first line of the report) — becomes the commit/PR title. */
-  title: string;
+  /** Ticket title (or the first line of the report) — becomes the commit/PR title.
+   *  Optional: a turn shipped from the webview's persisted copy has none, and
+   *  the report's own heading stands in. */
+  title?: string;
   /** The agent's final report, markdown. */
   report: string;
   /** Display paths (possibly root-prefixed) of the files the agent changed. */
   files: string[];
+  /** Whether any of those files were created this turn — steers the branch type when no ticket does. */
+  hasNewFiles?: boolean;
 }
 
 export interface ShipResult {
@@ -99,11 +105,15 @@ export async function shipChanges(
   const filesFromTop = relFiles.map((f) => path.relative(gitCwd, path.join(cwd, f)));
   const baseBranch = await currentBranch(gitCwd);
   if (!baseBranch) throw new Error('HEAD is detached — check out a branch first.');
-  if (/^(feat|fix|chore)\//.test(baseBranch)) warnings.push(`Branching from an existing agent branch (${baseBranch}).`);
+  if (new RegExp(`^(${CONVENTIONAL_TYPES.join('|')})/`).test(baseBranch)) warnings.push(`Branching from an existing agent branch (${baseBranch}).`);
 
-  const shortTitle = input.title.replace(/\s+/g, ' ').trim().slice(0, 72);
-  const commitType = conventionalCommitType(input.ticketType);
-  const slug = slugify(input.ticketId ? `${input.ticketId}-${input.title}` : input.title);
+  // The webview's copy of a turn carries no title (AGENT_TURN_SUMMARY never
+  // sends one), so the client-payload fallback used after a host restart
+  // would otherwise land here as undefined.
+  const title = deriveShipTitle(input.title, input.report);
+  const shortTitle = title.replace(/\s+/g, ' ').trim().slice(0, 72);
+  const commitType = turnCommitType({ ...input, title });
+  const slug = slugify(input.ticketId ? `${input.ticketId}-${title}` : title);
   let branch = `${commitType}/${slug}`;
   const existing = await git(gitCwd, ['branch', '--list', branch]);
   if (existing) branch = `${branch}-${Date.now().toString(36).slice(-4)}`;

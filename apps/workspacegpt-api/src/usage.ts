@@ -1,31 +1,16 @@
-import type { RuntimeConfig } from './config';
-import type { UserRow } from './db';
 import type { Env } from './env';
+import { EVENT_RETENTION_SECONDS, WINDOW_SECONDS } from './metering';
 
 /**
- * The weekly cap for one account, highest precedence first:
- *   1. `users.weekly_request_limit` — a deliberate per-account override
- *   2. the plan's entry in the configured plan→limit map
- *   3. the configured fallback for unlisted plans
- *
- * Layers 2 and 3 are themselves configurable at runtime (config.ts), so raising
- * a whole plan's ceiling is a one-row edit and raising one customer's is a
- * one-column edit — neither needs a deploy.
+ * The D1 half of usage accounting: reading what an account has spent and
+ * recording a charge. All the arithmetic — tokens → credits, limits,
+ * admission — is in metering.ts, which has no runtime dependency and is
+ * tested directly.
  */
-export function weeklyLimitFor(
-  user: Pick<UserRow, 'plan' | 'weekly_request_limit'>,
-  config: RuntimeConfig
-): number {
-  const override = user.weekly_request_limit;
-  if (typeof override === 'number' && Number.isInteger(override) && override > 0) {
-    return override;
-  }
-  return config.planWeeklyLimits[user.plan] ?? config.fallbackWeeklyLimit;
-}
 
 /**
  * ISO-8601 week in UTC, `YYYY-Www` — weeks start Monday, and week 1 is the one
- * containing the year's first Thursday. Used as the usage bucket key.
+ * containing the year's first Thursday. Used as the weekly bucket key.
  *
  * ISO weeks rather than "day-of-year / 7" so the boundary is always a Monday
  * midnight, never drifting per year, and so the last days of December fall in
@@ -43,42 +28,7 @@ export function utcWeek(now = new Date()): string {
   return `${weekYear}-W${String(week).padStart(2, '0')}`;
 }
 
-export interface QuotaDecision {
-  allowed: boolean;
-  used: number;
-  limit: number;
-}
-
-/**
- * Count one request against the caller's weekly allowance and say whether it
- * may proceed. Increments first and compares after, in a single statement, so
- * two concurrent requests can't both read the same pre-increment value and
- * slip past the cap together. An over-limit request is still counted — it is
- * rejected anyway, and counting it keeps a hammering client from resetting
- * its own denominator.
- */
-export async function consumeWeeklyRequest(env: Env, userId: string, limit: number): Promise<QuotaDecision> {
-  const row = await env.DB.prepare(
-    `INSERT INTO usage_weekly (user_id, week, requests) VALUES (?, ?, 1)
-     ON CONFLICT(user_id, week) DO UPDATE SET requests = requests + 1
-     RETURNING requests`
-  )
-    .bind(userId, utcWeek())
-    .first<{ requests: number }>();
-
-  const used = row?.requests ?? 1;
-  return { allowed: used <= limit, used, limit };
-}
-
-/** Read this week's count without spending one — for `/v1/me`. */
-export async function readWeeklyUsage(env: Env, userId: string): Promise<number> {
-  const row = await env.DB.prepare('SELECT requests FROM usage_weekly WHERE user_id = ? AND week = ?')
-    .bind(userId, utcWeek())
-    .first<{ requests: number }>();
-  return row?.requests ?? 0;
-}
-
-/** Seconds until the next Monday 00:00 UTC reset, for a `Retry-After` header. */
+/** Seconds until the next Monday 00:00 UTC reset, for `Retry-After` and refusal copy. */
 export function secondsUntilReset(now = new Date()): number {
   const isoDayNumber = now.getUTCDay() || 7; // Mon=1 … Sun=7
   const daysUntilMonday = 8 - isoDayNumber; // Monday → 7 (this week's has passed)
@@ -88,4 +38,73 @@ export function secondsUntilReset(now = new Date()): number {
     now.getUTCDate() + daysUntilMonday
   );
   return Math.max(1, Math.ceil((nextMonday - now.getTime()) / 1000));
+}
+
+export interface UsageSnapshot {
+  /** Credits charged in the current ISO week. */
+  weeklyCredits: number;
+  /** Credits charged inside the rolling window ending now. */
+  windowCredits: number;
+  /** Unix seconds of the oldest charge inside the window, or null when empty. */
+  windowOldestTs: number | null;
+}
+
+/**
+ * What the account has spent, in one D1 batch. Read before every proxied call
+ * (admission) and by `/v1/me` (display), so the number a user sees is the
+ * number that is enforced.
+ */
+export async function readUsageSnapshot(env: Env, userId: string, nowSec = Math.floor(Date.now() / 1000)): Promise<UsageSnapshot> {
+  const since = nowSec - WINDOW_SECONDS;
+  const [weekly, window] = await env.DB.batch([
+    env.DB.prepare('SELECT credits FROM usage_weekly WHERE user_id = ? AND week = ?').bind(userId, utcWeek()),
+    env.DB.prepare(
+      'SELECT COALESCE(SUM(credits), 0) AS credits, MIN(ts) AS oldest FROM usage_events WHERE user_id = ? AND ts > ?'
+    ).bind(userId, since),
+  ]);
+  const weeklyRow = weekly.results?.[0] as { credits?: number } | undefined;
+  const windowRow = window.results?.[0] as { credits?: number; oldest?: number | null } | undefined;
+  return {
+    weeklyCredits: weeklyRow?.credits ?? 0,
+    windowCredits: windowRow?.credits ?? 0,
+    windowOldestTs: typeof windowRow?.oldest === 'number' ? windowRow.oldest : null,
+  };
+}
+
+/**
+ * Record one served request's cost. Three statements in one batch:
+ *   1. a window event (the rolling allowance is a SUM over these),
+ *   2. the weekly bucket upsert — credits and tokens accumulate, and the
+ *      per-call count is kept as a statistic,
+ *   3. pruning of events that have aged out of the window.
+ * Called AFTER the upstream response has been fully read (tokens are only
+ * known then), off the response path via `ctx.waitUntil`, so a slow D1 write
+ * never delays the user's stream.
+ */
+export async function chargeCredits(
+  env: Env,
+  userId: string,
+  charge: { credits: number; tokens: number },
+  nowSec = Math.floor(Date.now() / 1000)
+): Promise<void> {
+  if (charge.credits <= 0) return;
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO usage_events (user_id, ts, credits, tokens) VALUES (?, ?, ?, ?)').bind(
+      userId,
+      nowSec,
+      charge.credits,
+      charge.tokens
+    ),
+    env.DB.prepare(
+      `INSERT INTO usage_weekly (user_id, week, requests, credits, tokens) VALUES (?, ?, 1, ?, ?)
+       ON CONFLICT(user_id, week) DO UPDATE SET
+         requests = requests + 1,
+         credits  = credits + excluded.credits,
+         tokens   = tokens + excluded.tokens`
+    ).bind(userId, utcWeek(), charge.credits, charge.tokens),
+    env.DB.prepare('DELETE FROM usage_events WHERE user_id = ? AND ts < ?').bind(
+      userId,
+      nowSec - EVENT_RETENTION_SECONDS
+    ),
+  ]);
 }

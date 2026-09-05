@@ -16,7 +16,9 @@ import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
 import HomeGreeting from './components/HomeGreeting';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
+import CreatePrButton from './components/CreatePrButton';
 import UsageLimitBar from './components/UsageLimitBar';
+import { useGitStatusSync } from './hooks/useGitStatusSync';
 import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
@@ -241,8 +243,19 @@ function formatChatError(rawError: string): string {
   return `❌ **Error:** ${rawError}`;
 }
 
-/** Fallback answer when an agent turn ends with steps but no text. */
-const AGENT_FALLBACK_ANSWER = 'Done — see the steps above for what was explored and changed.';
+/**
+ * Last-resort text for a turn that ended with steps but no prose, when the
+ * host said nothing about what happened — only reachable against an extension
+ * host predating `RECEIVE_MESSAGE_DONE.fallbackAnswer`, which now carries the
+ * host's own truthful wording (see describeTurnOutcome).
+ *
+ * It must never claim work. The previous wording — "Done — see the steps above
+ * for what was explored and changed" — reported a completed fix on a turn that
+ * ran no tools and changed nothing (#1534774): the user read "Done", believed
+ * the bug was fixed, and only found out by checking the diff.
+ */
+const AGENT_FALLBACK_ANSWER =
+  'The model stopped without writing a summary — see the steps above for what this turn actually did.';
 
 /** Host messages that belong to one session's in-flight turn (routable by sessionId). */
 const TURN_SCOPED_TYPES = new Set<string>([
@@ -478,9 +491,13 @@ const App: React.FC = () => {
     {
       value: 'Codebase',
       label: 'Codebase',
+      // The picker narrows what is SEARCHED, never what the assistant can do:
+      // with a folder open the tools are on in every mode, and "Codebase"
+      // only means "don't pre-fetch Confluence/ADO for this turn". Say so —
+      // before 2026-09-05 the picker really did switch abilities on and off.
       ...(hasWorkspaceFolder === false
         ? { disabled: true, subtitle: 'No folder open in this window' }
-        : {}),
+        : { subtitle: 'Workspace only — skips the Confluence/ADO search' }),
     },
   ];
 
@@ -500,7 +517,16 @@ const App: React.FC = () => {
   const [remoteSignedIn, setRemoteSignedIn] = useState(false);
   // Weekly remote-mode quota, so the composer can warn before the user hits
   // a wall mid-chat instead of only surfacing this in Settings > Account.
-  const [remoteUsage, setRemoteUsage] = useState<{ used: number; limit: number } | null>(null);
+  const [remoteUsage, setRemoteUsage] = useState<{
+    used: number;
+    limit: number;
+    windowUsed?: number;
+    windowLimit?: number;
+    windowSeconds?: number;
+  } | null>(null);
+
+  // One poll loop behind both the status bar and the composer's Create PR button.
+  useGitStatusSync(!!hasWorkspaceFolder);
 
   const modelProviders = useModelProviders();
 
@@ -763,7 +789,7 @@ const App: React.FC = () => {
           store.bgPatch(sessionId, { isLoading: false, isStreaming: true, statusText: '' });
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
-          store.bgFinalizeTurn(sessionId, AGENT_FALLBACK_ANSWER);
+          store.bgFinalizeTurn(sessionId, message.fallbackAnswer || AGENT_FALLBACK_ANSWER);
           store.bgPatch(sessionId, { isLoading: false, isStreaming: false, statusText: '' });
           saveBg();
           break;
@@ -830,6 +856,16 @@ const App: React.FC = () => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
+      // A shipped turn is recorded on its message (and so persisted) here,
+      // independent of whichever FilesChangedBar is currently mounted.
+      if (message.type === MESSAGE_TYPES.AGENT_SHIP_DONE && message.ok && message.branch) {
+        useChatStore.getState().markTurnShipped(message.sessionId ?? currentSessionIdRef.current, {
+          branch: message.branch,
+          prUrl: message.prUrl,
+          ticketCommented: !!message.ticketCommented,
+        });
+      }
+
       // Route turn-scoped messages by the session they belong to. Messages
       // from an old host build carry no sessionId — treat them as belonging
       // to the visible chat, matching the previous behavior.
@@ -875,13 +911,18 @@ const App: React.FC = () => {
             }
             streamDoneRef.current = false;
             setIsStreaming(false);
-            // The model finished without any text (rare): the steps and
-            // files-changed rollup accumulated this turn must never vanish —
-            // materialize a fallback answer to carry them.
+            // The model finished without any text: the steps and files-changed
+            // rollup accumulated this turn must never vanish — materialize an
+            // answer to carry them, worded by the HOST (which knows how many
+            // writes actually landed) rather than by a constant here.
+            //
+            // A turn that did nothing at all sends no fallbackAnswer: the host
+            // reports that as an ERROR_CHAT card instead, which has already
+            // added a message by now, so the guard below skips it.
             const { messages: currentMsgs } = useChatStore.getState();
             const last = currentMsgs[currentMsgs.length - 1];
             if (!last || last.isUser || last.writeReview) {
-              finalizeAgentTurn(AGENT_FALLBACK_ANSWER);
+              finalizeAgentTurn(message.fallbackAnswer || AGENT_FALLBACK_ANSWER);
             }
           }
           break;
@@ -976,11 +1017,22 @@ const App: React.FC = () => {
           setRemoteSignedIn(
             message.type === MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS ? true : !!message.signedIn
           );
-          setRemoteUsage(
-            typeof message.requestsLimitWeekly === 'number'
-              ? { used: message.requestsUsedThisWeek ?? 0, limit: message.requestsLimitWeekly }
-              : null
-          );
+          {
+            // Credits (token-metered) with the request-era names as fallback
+            // for a host that predates them.
+            const limit = message.creditsLimitWeekly ?? message.requestsLimitWeekly;
+            setRemoteUsage(
+              typeof limit === 'number'
+                ? {
+                    used: message.creditsUsedThisWeek ?? message.requestsUsedThisWeek ?? 0,
+                    limit,
+                    windowUsed: message.creditsUsedWindow,
+                    windowLimit: message.creditsLimitWindow,
+                    windowSeconds: message.windowSeconds,
+                  }
+                : null
+            );
+          }
           break;
         case MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS:
           setRemoteSignedIn(false);
@@ -2288,7 +2340,13 @@ const App: React.FC = () => {
         )}
         <div className='composer-status-bars'>
           {mode === 'remote' && remoteSignedIn && remoteUsage && (
-            <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
+            <UsageLimitBar
+              used={remoteUsage.used}
+              limit={remoteUsage.limit}
+              windowUsed={remoteUsage.windowUsed}
+              windowLimit={remoteUsage.windowLimit}
+              windowSeconds={remoteUsage.windowSeconds}
+            />
           )}
           {hasWorkspaceFolder && <GitStatusBar />}
         </div>
@@ -2469,6 +2527,7 @@ const App: React.FC = () => {
                     />
                   </div>
                 )}
+                {hasWorkspaceFolder && <CreatePrButton />}
               </div>
               {isLoading || isStreaming ? (
                 <button

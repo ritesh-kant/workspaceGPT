@@ -8,6 +8,14 @@ export interface RemoteProfile {
   email?: string | null;
   plan?: string;
   status?: string;
+  /** Token-metered credits (see apps/workspacegpt-api/src/metering.ts). */
+  credits_used_this_week?: number;
+  credits_limit_weekly?: number;
+  credits_used_window?: number;
+  credits_limit_window?: number;
+  window_seconds?: number;
+  tokens_per_credit?: number;
+  /** Request-era fields, still sent by older servers. Same shape, different unit. */
   requests_used_this_week?: number;
   requests_limit_weekly?: number;
 }
@@ -17,14 +25,28 @@ export type SessionVerifyResult =
   | { state: 'signed_in'; profile: RemoteProfile }
   | { state: 'unreachable' };
 
-/** Flatten `/v1/me` for the webview's camelCase fields. */
+/**
+ * Flatten `/v1/me` for the webview's camelCase fields. A server that predates
+ * credits sends only the request-era fields; they fill the credit slots so the
+ * account panel still draws a bar (the number is then a call count — the
+ * server side of this change ships the same day, so the mismatch is brief).
+ */
 export function webviewFieldsFromProfile(profile: RemoteProfile | null) {
+  const creditsUsedThisWeek = profile?.credits_used_this_week ?? profile?.requests_used_this_week;
+  const creditsLimitWeekly = profile?.credits_limit_weekly ?? profile?.requests_limit_weekly;
   return {
     githubLogin: profile?.github_login,
     email: profile?.email ?? undefined,
     plan: profile?.plan,
-    requestsUsedThisWeek: profile?.requests_used_this_week,
-    requestsLimitWeekly: profile?.requests_limit_weekly,
+    creditsUsedThisWeek,
+    creditsLimitWeekly,
+    creditsUsedWindow: profile?.credits_used_window,
+    creditsLimitWindow: profile?.credits_limit_window,
+    windowSeconds: profile?.window_seconds,
+    tokensPerCredit: profile?.tokens_per_credit,
+    // Kept for any webview build still reading the old names.
+    requestsUsedThisWeek: creditsUsedThisWeek,
+    requestsLimitWeekly: creditsLimitWeekly,
   };
 }
 
