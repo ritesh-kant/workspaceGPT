@@ -31,10 +31,6 @@ export interface Env {
   PLAN_WEEKLY_CREDITS?: string;
   /** Credits/week for a plan absent from PLAN_WEEKLY_CREDITS. */
   WEEKLY_CREDIT_LIMIT?: string;
-  /** JSON `{"plan": creditsPer5hWindow}` map. Absent plans get weekly/5 (metering.ts). */
-  PLAN_WINDOW_CREDITS?: string;
-  /** Window credits for a plan absent from PLAN_WINDOW_CREDITS. Absent: weekly/5. */
-  WINDOW_CREDIT_LIMIT?: string;
   /** Vendor tokens per credit (default 1000). */
   TOKENS_PER_CREDIT?: string;
 }

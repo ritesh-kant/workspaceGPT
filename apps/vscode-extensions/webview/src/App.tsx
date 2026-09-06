@@ -517,13 +517,7 @@ const App: React.FC = () => {
   const [remoteSignedIn, setRemoteSignedIn] = useState(false);
   // Weekly remote-mode quota, so the composer can warn before the user hits
   // a wall mid-chat instead of only surfacing this in Settings > Account.
-  const [remoteUsage, setRemoteUsage] = useState<{
-    used: number;
-    limit: number;
-    windowUsed?: number;
-    windowLimit?: number;
-    windowSeconds?: number;
-  } | null>(null);
+  const [remoteUsage, setRemoteUsage] = useState<{ used: number; limit: number } | null>(null);
 
   // One poll loop behind both the status bar and the composer's Create PR button.
   useGitStatusSync(!!hasWorkspaceFolder);
@@ -1026,9 +1020,6 @@ const App: React.FC = () => {
                 ? {
                     used: message.creditsUsedThisWeek ?? message.requestsUsedThisWeek ?? 0,
                     limit,
-                    windowUsed: message.creditsUsedWindow,
-                    windowLimit: message.creditsLimitWindow,
-                    windowSeconds: message.windowSeconds,
                   }
                 : null
             );
@@ -2340,13 +2331,7 @@ const App: React.FC = () => {
         )}
         <div className='composer-status-bars'>
           {mode === 'remote' && remoteSignedIn && remoteUsage && (
-            <UsageLimitBar
-              used={remoteUsage.used}
-              limit={remoteUsage.limit}
-              windowUsed={remoteUsage.windowUsed}
-              windowLimit={remoteUsage.windowLimit}
-              windowSeconds={remoteUsage.windowSeconds}
-            />
+            <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
           )}
           {hasWorkspaceFolder && <GitStatusBar />}
         </div>

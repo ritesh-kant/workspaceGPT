@@ -42,10 +42,6 @@ export interface RuntimeConfig {
   planWeeklyCredits: Record<string, number>;
   /** credits/week for a plan absent from {@link planWeeklyCredits}. */
   fallbackWeeklyCredits: number;
-  /** plan name → credits per rolling 5-hour window. Absent plans derive from the weekly cap (metering.ts). */
-  planWindowCredits: Record<string, number>;
-  /** window credits for a plan absent from {@link planWindowCredits}; undefined derives from weekly. */
-  fallbackWindowCredits: number | undefined;
   /** How many vendor tokens one credit represents. */
   tokensPerCredit: number;
 }
@@ -56,15 +52,15 @@ export interface RuntimeConfig {
  * The request-era keys (`plan_weekly_limits`, `weekly_request_limit`) are
  * deliberately NOT read any more: a value written for them was a call count,
  * and reading it as credits would throttle every plan to a fraction of its
- * intent. New keys, new meaning.
+ * intent. New keys, new meaning. The rolling-window keys (`plan_window_credits`,
+ * `window_credit_limit`) are gone with the window itself — a row left behind
+ * for either is simply ignored.
  */
 export const CONFIG_KEYS = {
   PROVIDER: 'inference_provider',
   MODEL: 'openrouter_model',
   PLAN_WEEKLY_CREDITS: 'plan_weekly_credits',
   FALLBACK_WEEKLY_CREDITS: 'weekly_credit_limit',
-  PLAN_WINDOW_CREDITS: 'plan_window_credits',
-  FALLBACK_WINDOW_CREDITS: 'window_credit_limit',
   TOKENS_PER_CREDIT: 'tokens_per_credit',
 } as const;
 
@@ -152,17 +148,6 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
     positiveInt(env.WEEKLY_CREDIT_LIMIT) ??
     DEFAULT_FALLBACK_WEEKLY_CREDITS;
 
-  // Window caps have no constant fallback on purpose: absent, they derive from
-  // the weekly cap (metering.ts), so one edit to the weekly number keeps both
-  // in proportion.
-  const planWindowCredits =
-    parsePlanLimits(overrides.get(CONFIG_KEYS.PLAN_WINDOW_CREDITS), 'app_config') ??
-    parsePlanLimits(env.PLAN_WINDOW_CREDITS, 'wrangler var') ??
-    {};
-
-  const fallbackWindowCredits =
-    positiveInt(overrides.get(CONFIG_KEYS.FALLBACK_WINDOW_CREDITS)) ?? positiveInt(env.WINDOW_CREDIT_LIMIT);
-
   const tokensPerCredit =
     positiveInt(overrides.get(CONFIG_KEYS.TOKENS_PER_CREDIT)) ??
     positiveInt(env.TOKENS_PER_CREDIT) ??
@@ -173,8 +158,6 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
     model,
     planWeeklyCredits,
     fallbackWeeklyCredits,
-    planWindowCredits,
-    fallbackWindowCredits,
     tokensPerCredit,
   };
 }

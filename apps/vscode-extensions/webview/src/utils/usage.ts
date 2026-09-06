@@ -1,8 +1,11 @@
 /**
- * Weekly remote-mode quota math, shared by the Settings account row
+ * Weekly remote-mode credit math, shared by the Settings account row
  * (RemoteAccountSettings.tsx) and the composer's usage-limit bar
  * (UsageLimitBar.tsx) — extracted so both read the same reset clock and
  * tone thresholds instead of drifting apart.
+ *
+ * The week is the only allowance; `formatDurationApprox` lived here for the
+ * rolling five-hour one and went with it on 2026-09-06.
  */
 
 /** Next Monday 00:00 UTC — same reset the Worker uses in usage.ts. */
@@ -18,14 +21,6 @@ export function formatRefreshIn(now = new Date()): string {
   if (hours < 24) return hours === 1 ? '1 hour' : `${hours} hours`;
   const days = Math.round(hours / 24);
   return days === 1 ? '1 day' : `${days} days`;
-}
-
-/** "about 2 hours" / "about 15 minutes" — for the rolling-window allowance. */
-export function formatDurationApprox(seconds: number): string {
-  const mins = Math.max(1, Math.round(seconds / 60));
-  if (mins < 60) return `about ${mins} minute${mins === 1 ? '' : 's'}`;
-  const hours = Math.round(mins / 60);
-  return `about ${hours} hour${hours === 1 ? '' : 's'}`;
 }
 
 export function usageTone(remainingPct: number): 'ok' | 'warn' | 'critical' {

@@ -113,7 +113,7 @@ Requirement: *every* inference request proves the caller is signed in and valid.
 | KV session for the bearer token | `401 not_signed_in` |
 | D1 user row exists and `status = 'active'` | `403 account_inactive` |
 | Body is JSON with non-empty `messages` | `400 invalid_request` |
-| Weekly quota (increment-then-compare, one statement) | `429 weekly_limit_reached` + `Retry-After` |
+| Weekly credit allowance (compare against usage already recorded) | `429 weekly_limit_reached` + `Retry-After` |
 | Upstream OpenRouter call | `502 upstream_unreachable` / `502 upstream_auth_failed` |
 
 There is **no client-side grace period**. An expired or revoked session stops
@@ -155,11 +155,20 @@ would silently reduce remote mode to plain chat.
 
 Every request spends the vendor's single key, so admission control is not
 optional. Usage is **metered in tokens and presented as credits** — one credit
-is `tokens_per_credit` model tokens (default 1,000) — with two allowances per
-account: a **rolling five-hour window** and an **ISO week**. Defaults are
-placeholders pending a pricing decision: free 2,000 credits/week (window 400),
-pro 50,000/week (window 10,000). Sized from the eval harness (2026-09-05): a
-documentation answer is ~7 credits, an agent run that edits code ~50.
+is `tokens_per_credit` model tokens (default 1,000) — with one allowance per
+account: an **ISO week**. Defaults are placeholders pending a pricing decision:
+free 2,000 credits/week, pro 50,000/week. Sized from the eval harness
+(2026-09-05): a documentation answer is ~7 credits, an agent run that edits
+code ~50.
+
+A second, rolling five-hour allowance shipped alongside credits and was removed
+the next day (`0007_drop_rolling_window.sql`). It fired on ordinary use: an
+afternoon of agent runs spent a fifth of the week inside the window and locked
+the account out for hours while ~78% of its weekly credits sat unspent, and the
+UI had to shout about a wall that was not the one approaching. Two clocks also
+meant two explanations for one refusal. The weekly cap alone still bounds what
+an account can cost, which is the only thing the limit is there to do; a burst
+simply spends the week sooner.
 
 Why not count requests: one user message is one HTTP call for a chat answer and
 20–40 for an agent turn, so "200 requests/week" bought about five bug fixes and
@@ -180,10 +189,10 @@ and checks the tee'd stream reaches the client byte-identical, the
 and vendor failures are not charged.
 
 - **Admit → proxy → meter.** Admission compares usage *already recorded*
-  against both limits before anything is forwarded; refusal is a `429` with
-  `Retry-After` and a sentence naming which allowance ran out. The request that
-  crosses a limit is always served (an answer cannot be un-streamed); the next
-  one is refused.
+  against the weekly limit before anything is forwarded; refusal is a `429
+  weekly_limit_reached` with `Retry-After` and a sentence naming the reset. The
+  request that crosses the limit is always served (an answer cannot be
+  un-streamed); the next one is refused.
 - **Streamed responses are forced to report usage** (`stream_options.include_usage`
   is set server-side). The upstream body is `tee()`d: one branch goes to the
   client untouched, the other is read to completion in `ctx.waitUntil` to find
@@ -196,23 +205,18 @@ and vendor failures are not charged.
   aggregate, bucketed by ISO week in UTC (`2026-W36`; Monday reset; the key
   carries the ISO week-year so late December and early January share a bucket
   when they share a week). `requests` is now a statistic, not a limit.
-- `usage_events(user_id, ts, credits, tokens)` backs the rolling window as a
-  `SUM` over the last five hours; rows are pruned as they age out.
-- Limits resolve per account, highest precedence first: the
-  `users.weekly_credit_limit` override → the plan map → the fallback. The
-  window cap is configurable per plan too and otherwise **a fifth of the weekly
-  cap**, so one edit keeps both in proportion. (`users.weekly_request_limit`
-  is left in the schema, unread — its values were call counts.)
+- The limit resolves per account, highest precedence first: the
+  `users.weekly_credit_limit` override → the plan map → the fallback. A limit
+  of zero or less means uncapped. (`users.weekly_request_limit` is left in the
+  schema, unread — its values were call counts.)
 - `Retry-After` above 60s is ignored by the `openai` client, so it surfaces the
   error rather than sleeping.
 
-`/v1/me` returns `credits_used_this_week`, `credits_limit_weekly`,
-`credits_used_window`, `credits_limit_window`, `window_seconds` and
+`/v1/me` returns `credits_used_this_week`, `credits_limit_weekly` and
 `tokens_per_credit` (plus the request-era names, carrying the same credit
 numbers, for one release). Proxy responses carry `X-WorkspaceGPT-Credits-Used`,
-`-Credits-Limit`, `-Credits-Period: week`, `-Window-Used`, `-Window-Limit`,
-`-Window-Seconds` — reflecting usage *before* that request, since its own cost
-is only known once it has streamed.
+`-Credits-Limit` and `-Credits-Period: week` — reflecting usage *before* that
+request, since its own cost is only known once it has streamed.
 
 Existing `requests` values were **not** reinterpreted as credits
 (`0006_credits.sql`): a call is not a credit, and everyone's credit counters
@@ -268,22 +272,10 @@ Change the weekly cap for plans absent from that map:
 wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('weekly_credit_limit', '2000', unixepoch())"
 ```
 
-Change the rolling 5-hour window caps (absent plans get weekly ÷ 5):
-
-```bash
-wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_window_credits', '{\"free\":400,\"pro\":10000}', unixepoch())"
-```
-
 Change what a credit is worth (tokens per credit):
 
 ```bash
 wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('tokens_per_credit', '1000', unixepoch())"
-```
-
-Raise one account's weekly ceiling without a new plan:
-
-```bash
-wrangler d1 execute workspacegpt-db --remote --command "UPDATE users SET weekly_credit_limit = 9000 WHERE login = 'someone'"
 ```
 
 Raise (or throttle) one account, without inventing a plan for them:
@@ -298,8 +290,8 @@ column — the layer below takes over.
 
 ### Rules the parser follows
 
-- A malformed or non-object `plan_weekly_credits` (or `plan_window_credits`) blob is **ignored with a logged
-  error**, and the next layer applies. A typo must never leave requests
+- A malformed or non-object `plan_weekly_credits` blob is **ignored with a
+  logged error**, and the next layer applies. A typo must never leave usage
   uncapped.
 - Individual non-positive-integer entries are dropped, not coerced. `{"free":-5}`
   falls through to the layer below rather than granting -5 or unlimited.

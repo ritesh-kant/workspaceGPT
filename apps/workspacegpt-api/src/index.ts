@@ -14,7 +14,7 @@ import {
 import { handleChatCompletions } from './chat';
 import { loadAccount, upsertUser } from './db';
 import { renderErrorPage, renderLoginPage } from './loginPage';
-import { WINDOW_SECONDS, weeklyCreditLimitFor, windowCreditLimitFor } from './metering';
+import { weeklyCreditLimitFor } from './metering';
 import { readUsageSnapshot } from './usage';
 
 /**
@@ -196,9 +196,6 @@ export default {
         status: user?.status ?? 'active',
         credits_used_this_week: snapshot.weeklyCredits,
         credits_limit_weekly: creditsLimitWeekly,
-        credits_used_window: snapshot.windowCredits,
-        credits_limit_window: windowCreditLimitFor(limitUser, config),
-        window_seconds: WINDOW_SECONDS,
         tokens_per_credit: config.tokensPerCredit,
         // Request-era field names, kept one release so an extension that
         // predates credits still draws a sensible bar. Same numbers.

@@ -3,14 +3,12 @@ import { bearerToken, getSession } from './auth';
 import { loadAccount } from './db';
 import { PROVIDERS } from './config';
 import {
-  WINDOW_SECONDS,
   creditsForTokens,
   decideAdmission,
   describeRefusal,
   estimateTokensFromChars,
   extractUsage,
   weeklyCreditLimitFor,
-  windowCreditLimitFor,
 } from './metering';
 import { chargeCredits, readUsageSnapshot, secondsUntilReset } from './usage';
 
@@ -66,9 +64,9 @@ function errorResponse(
  *
  * Usage is metered in TOKENS and presented as credits (see metering.ts). The
  * flow is admit → proxy → meter:
- *   · admit  — compare what the account has already spent against its weekly
- *              and rolling-window allowances; refuse with 429 if either is
- *              exhausted. Checked before anything is forwarded.
+ *   · admit  — compare what the account has already spent this week against
+ *              its weekly allowance; refuse with 429 if it is exhausted.
+ *              Checked before anything is forwarded.
  *   · proxy  — stream the upstream body straight through to the client,
  *              untouched, with `stream_options.include_usage` forced on so the
  *              final SSE chunk carries the token counts.
@@ -129,16 +127,10 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
   // no denominator to protect now that the unit is tokens, not calls.
   const limitUser = { plan: user.plan, weekly_credit_limit: user.weekly_credit_limit ?? null };
   const weeklyLimit = weeklyCreditLimitFor(limitUser, config);
-  const windowLimit = windowCreditLimitFor(limitUser, config);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const snapshot = await readUsageSnapshot(env, session.userId, nowSec);
+  const snapshot = await readUsageSnapshot(env, session.userId);
   const decision = decideAdmission({
     weeklyUsed: snapshot.weeklyCredits,
     weeklyLimit,
-    windowUsed: snapshot.windowCredits,
-    windowLimit,
-    windowOldestTs: snapshot.windowOldestTs,
-    nowSec,
     secondsUntilWeeklyReset: secondsUntilReset(),
   });
   // Allowance headers reflect usage BEFORE this request — its own cost is only
@@ -148,17 +140,12 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
     'X-WorkspaceGPT-Credits-Used': String(snapshot.weeklyCredits),
     'X-WorkspaceGPT-Credits-Limit': String(weeklyLimit),
     'X-WorkspaceGPT-Credits-Period': 'week',
-    'X-WorkspaceGPT-Window-Used': String(snapshot.windowCredits),
-    'X-WorkspaceGPT-Window-Limit': String(windowLimit),
-    'X-WorkspaceGPT-Window-Seconds': String(WINDOW_SECONDS),
   };
   if (!decision.allowed) {
-    return errorResponse(
-      429,
-      describeRefusal(decision),
-      decision.reason === 'weekly' ? 'weekly_limit_reached' : 'window_limit_reached',
-      { 'Retry-After': String(decision.retryAfterSec), ...allowanceHeaders }
-    );
+    return errorResponse(429, describeRefusal(decision), 'weekly_limit_reached', {
+      'Retry-After': String(decision.retryAfterSec),
+      ...allowanceHeaders,
+    });
   }
 
   // Model choice is ours, not the client's: whatever id the extension sends is

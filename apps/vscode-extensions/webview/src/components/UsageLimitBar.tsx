@@ -1,14 +1,10 @@
 import React, { useState } from 'react';
-import { formatDurationApprox, nextWeeklyReset, usageTone } from '../utils/usage';
+import { nextWeeklyReset, usageTone } from '../utils/usage';
 
 interface UsageLimitBarProps {
   /** Credits used / allowed this week. */
   used: number;
   limit: number;
-  /** Credits used / allowed in the rolling window; absent on an older server. */
-  windowUsed?: number;
-  windowLimit?: number;
-  windowSeconds?: number;
 }
 
 const DISMISS_KEY = 'workspacegpt.usageLimitDismissedForReset';
@@ -29,39 +25,33 @@ function formatResetDate(d: Date): string {
 }
 
 /**
- * Dismissible warning once the weekly remote-mode quota (RemoteAccountSettings.tsx's
- * WeeklyUsageRow, surfaced here near the composer instead of only in Settings)
- * runs low. Dismissing suppresses it for the rest of the current quota week —
- * it reappears once the quota resets, same as a real limit warning should.
+ * Dismissible warning once the weekly remote-mode credit allowance
+ * (RemoteAccountSettings.tsx's UsageRow, surfaced here near the composer
+ * instead of only in Settings) runs low. Dismissing suppresses it for the rest
+ * of the current quota week — it reappears once the quota resets, same as a
+ * real limit warning should.
+ *
+ * The week is the only allowance there is. A rolling five-hour one briefly
+ * shared this bar and was removed on 2026-09-06: it could not be dismissed
+ * (it came back within the hour) and it shouted about a wall that was not the
+ * one actually approaching.
  */
-const UsageLimitBar: React.FC<UsageLimitBarProps> = ({ used, limit, windowUsed, windowLimit, windowSeconds }) => {
+const UsageLimitBar: React.FC<UsageLimitBarProps> = ({ used, limit }) => {
   const resetAt = nextWeeklyReset();
   const [dismissedReset, setDismissedReset] = useState<number | null>(readDismissedReset);
 
   if (limit <= 0) return null;
-  const pctLeft = (u: number, l: number) => Math.min(100, Math.max(0, Math.round(((l - u) / l) * 100)));
-  const weeklyPct = pctLeft(used, limit);
-  const hasWindow = typeof windowLimit === 'number' && windowLimit > 0;
-  const windowPct = hasWindow ? pctLeft(windowUsed ?? 0, windowLimit) : 100;
-  // Two allowances, one bar: whichever is closer to running out is the one
-  // worth warning about. The 5-hour window frees itself; the week does not.
-  const windowIsTighter = hasWindow && windowPct < weeklyPct;
-  const remainingPct = windowIsTighter ? windowPct : weeklyPct;
+  const remainingPct = Math.min(100, Math.max(0, Math.round(((limit - used) / limit) * 100)));
   if (remainingPct > SHOW_AT_REMAINING_PCT) return null;
-  if (!windowIsTighter && dismissedReset === resetAt.getTime()) return null;
+  if (dismissedReset === resetAt.getTime()) return null;
 
   const usedPct = 100 - remainingPct;
   const tone = usageTone(remainingPct);
-  const label = windowIsTighter
-    ? remainingPct === 0
-      ? "You've used your 5-hour credit allowance"
-      : `You've used ${usedPct}% of your 5-hour credit allowance`
-    : remainingPct === 0
+  const label =
+    remainingPct === 0
       ? "You've used your weekly credits"
       : `You've used ${usedPct}% of your weekly credits`;
-  const resetText = windowIsTighter
-    ? `Frees up in ${formatDurationApprox(windowSeconds ?? 5 * 3600)}`
-    : `Resets ${formatResetDate(resetAt)}`;
+  const resetText = `Resets ${formatResetDate(resetAt)}`;
 
   const dismiss = () => {
     const ts = resetAt.getTime();

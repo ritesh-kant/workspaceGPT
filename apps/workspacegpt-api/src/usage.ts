@@ -1,5 +1,4 @@
 import type { Env } from './env';
-import { EVENT_RETENTION_SECONDS, WINDOW_SECONDS } from './metering';
 
 /**
  * The D1 half of usage accounting: reading what an account has spent and
@@ -43,40 +42,24 @@ export function secondsUntilReset(now = new Date()): number {
 export interface UsageSnapshot {
   /** Credits charged in the current ISO week. */
   weeklyCredits: number;
-  /** Credits charged inside the rolling window ending now. */
-  windowCredits: number;
-  /** Unix seconds of the oldest charge inside the window, or null when empty. */
-  windowOldestTs: number | null;
 }
 
 /**
- * What the account has spent, in one D1 batch. Read before every proxied call
+ * What the account has spent this week. Read before every proxied call
  * (admission) and by `/v1/me` (display), so the number a user sees is the
  * number that is enforced.
  */
-export async function readUsageSnapshot(env: Env, userId: string, nowSec = Math.floor(Date.now() / 1000)): Promise<UsageSnapshot> {
-  const since = nowSec - WINDOW_SECONDS;
-  const [weekly, window] = await env.DB.batch([
-    env.DB.prepare('SELECT credits FROM usage_weekly WHERE user_id = ? AND week = ?').bind(userId, utcWeek()),
-    env.DB.prepare(
-      'SELECT COALESCE(SUM(credits), 0) AS credits, MIN(ts) AS oldest FROM usage_events WHERE user_id = ? AND ts > ?'
-    ).bind(userId, since),
-  ]);
-  const weeklyRow = weekly.results?.[0] as { credits?: number } | undefined;
-  const windowRow = window.results?.[0] as { credits?: number; oldest?: number | null } | undefined;
-  return {
-    weeklyCredits: weeklyRow?.credits ?? 0,
-    windowCredits: windowRow?.credits ?? 0,
-    windowOldestTs: typeof windowRow?.oldest === 'number' ? windowRow.oldest : null,
-  };
+export async function readUsageSnapshot(env: Env, userId: string): Promise<UsageSnapshot> {
+  const row = await env.DB.prepare('SELECT credits FROM usage_weekly WHERE user_id = ? AND week = ?')
+    .bind(userId, utcWeek())
+    .first<{ credits?: number }>();
+  return { weeklyCredits: row?.credits ?? 0 };
 }
 
 /**
- * Record one served request's cost. Three statements in one batch:
- *   1. a window event (the rolling allowance is a SUM over these),
- *   2. the weekly bucket upsert — credits and tokens accumulate, and the
- *      per-call count is kept as a statistic,
- *   3. pruning of events that have aged out of the window.
+ * Record one served request's cost: credits and tokens accumulate into the
+ * week's bucket, and the per-call count is kept alongside as a statistic.
+ *
  * Called AFTER the upstream response has been fully read (tokens are only
  * known then), off the response path via `ctx.waitUntil`, so a slow D1 write
  * never delays the user's stream.
@@ -84,27 +67,16 @@ export async function readUsageSnapshot(env: Env, userId: string, nowSec = Math.
 export async function chargeCredits(
   env: Env,
   userId: string,
-  charge: { credits: number; tokens: number },
-  nowSec = Math.floor(Date.now() / 1000)
+  charge: { credits: number; tokens: number }
 ): Promise<void> {
   if (charge.credits <= 0) return;
-  await env.DB.batch([
-    env.DB.prepare('INSERT INTO usage_events (user_id, ts, credits, tokens) VALUES (?, ?, ?, ?)').bind(
-      userId,
-      nowSec,
-      charge.credits,
-      charge.tokens
-    ),
-    env.DB.prepare(
-      `INSERT INTO usage_weekly (user_id, week, requests, credits, tokens) VALUES (?, ?, 1, ?, ?)
-       ON CONFLICT(user_id, week) DO UPDATE SET
-         requests = requests + 1,
-         credits  = credits + excluded.credits,
-         tokens   = tokens + excluded.tokens`
-    ).bind(userId, utcWeek(), charge.credits, charge.tokens),
-    env.DB.prepare('DELETE FROM usage_events WHERE user_id = ? AND ts < ?').bind(
-      userId,
-      nowSec - EVENT_RETENTION_SECONDS
-    ),
-  ]);
+  await env.DB.prepare(
+    `INSERT INTO usage_weekly (user_id, week, requests, credits, tokens) VALUES (?, ?, 1, ?, ?)
+     ON CONFLICT(user_id, week) DO UPDATE SET
+       requests = requests + 1,
+       credits  = credits + excluded.credits,
+       tokens   = tokens + excluded.tokens`
+  )
+    .bind(userId, utcWeek(), charge.credits, charge.tokens)
+    .run();
 }

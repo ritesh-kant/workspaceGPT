@@ -1,0 +1,22 @@
+-- Removes the rolling five-hour allowance, leaving the ISO-week cap as the
+-- only limit on remote-mode usage.
+--
+-- The window was added with credits in 0006 (as Codex and Claude Code run one)
+-- and removed a day later, on 2026-09-06, because it fired on ordinary use: an
+-- afternoon of agent runs spent a fifth of the week's credits inside the
+-- window and locked the account out for hours while ~78% of its weekly credits
+-- sat unspent. Two clocks also meant two different explanations for one
+-- refusal. The weekly cap alone still bounds what an account can cost — which
+-- is the only thing the limit is there to do — and a burst simply spends the
+-- week sooner.
+--
+-- `usage_events` existed ONLY to back that window: rows were summed over the
+-- last five hours and pruned as they aged out, so nothing here is a record of
+-- anything older than that. The durable accounting — credits, tokens and the
+-- per-call count per ISO week — is in `usage_weekly` and is untouched.
+--
+-- If per-request cost history is wanted later, it wants a deliberate design
+-- (real retention, an index for the queries actually being asked), not the
+-- revival of a table that was pruned every few hours.
+DROP INDEX IF EXISTS usage_events_user_ts;
+DROP TABLE IF EXISTS usage_events;

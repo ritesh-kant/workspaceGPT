@@ -13,19 +13,19 @@
  *     splitting or merging calls.
  *   · DISPLAY credits — `ceil(total_tokens / tokensPerCredit)`, one small
  *     integer per call that a person can reason about.
- *   · TWO windows — a rolling five-hour allowance (smooths bursts, gives
- *     someone who spent Monday morning a reason to come back tonight) and the
- *     existing ISO-week cap.
+ *   · ONE allowance — the ISO-week cap, and nothing else.
+ *
+ * There was briefly a second, rolling five-hour allowance (as Codex and Claude
+ * Code run). It was removed on 2026-09-06: it fired on ordinary use — one
+ * afternoon of agent runs exhausted a fifth of the week's credits inside the
+ * window and locked the account out for hours while ~78% of its weekly credits
+ * sat unspent. Two clocks also meant two explanations for one refusal. The
+ * weekly cap alone still bounds what any account can cost, which is the only
+ * thing the limit exists to do; a burst just spends the week sooner.
  *
  * Everything in this file is side-effect free so it can be tested without a
  * Worker runtime; usage.ts owns the D1 statements, chat.ts the request flow.
  */
-
-/** Length of the rolling window, in seconds. Five hours, as Codex and Claude Code use. */
-export const WINDOW_SECONDS = 5 * 60 * 60;
-
-/** How long a `usage_events` row is kept past the window before pruning. */
-export const EVENT_RETENTION_SECONDS = WINDOW_SECONDS + 60 * 60;
 
 export interface TokenUsage {
   promptTokens: number;
@@ -114,26 +114,21 @@ export function estimateTokensFromChars(requestBodyChars: number): number {
 export interface AdmissionInput {
   weeklyUsed: number;
   weeklyLimit: number;
-  windowUsed: number;
-  windowLimit: number;
-  /** Unix seconds of the oldest charge inside the window, or null if none. */
-  windowOldestTs: number | null;
-  /** Unix seconds now. */
-  nowSec: number;
   /** Seconds until the weekly bucket resets (Monday 00:00 UTC). */
   secondsUntilWeeklyReset: number;
 }
 
 export type AdmissionDecision =
   | { allowed: true }
-  | { allowed: false; reason: 'weekly' | 'window'; retryAfterSec: number; used: number; limit: number };
+  | { allowed: false; reason: 'weekly'; retryAfterSec: number; used: number; limit: number };
 
 /**
  * May this request proceed? Checked BEFORE the upstream call, on usage already
  * recorded — tokens are only known after the response, so the request that
- * crosses a limit is always served (you cannot un-stream an answer) and the
- * next one is refused. Both limits are checked; the weekly one wins the
- * message when both are exhausted, since it is the longer wait.
+ * crosses the cap is always served (you cannot un-stream an answer) and the
+ * next one is refused.
+ *
+ * A limit of zero or less means "uncapped", which is how a plan opts out.
  */
 export function decideAdmission(input: AdmissionInput): AdmissionDecision {
   if (input.weeklyLimit > 0 && input.weeklyUsed >= input.weeklyLimit) {
@@ -145,30 +140,17 @@ export function decideAdmission(input: AdmissionInput): AdmissionDecision {
       limit: input.weeklyLimit,
     };
   }
-  if (input.windowLimit > 0 && input.windowUsed >= input.windowLimit) {
-    // The window frees up as its oldest charge ages out.
-    const oldest = input.windowOldestTs ?? input.nowSec;
-    const retryAfterSec = Math.max(1, Math.ceil(oldest + WINDOW_SECONDS - input.nowSec));
-    return { allowed: false, reason: 'window', retryAfterSec, used: input.windowUsed, limit: input.windowLimit };
-  }
   return { allowed: true };
 }
 
 /** Human wording for a refused request — it is shown verbatim in the extension's error card. */
 export function describeRefusal(d: Exclude<AdmissionDecision, { allowed: true }>): string {
-  if (d.reason === 'weekly') {
-    return `Weekly credit limit reached (${d.used} of ${d.limit} credits used). It resets Monday at 00:00 UTC.`;
-  }
-  const mins = Math.max(1, Math.round(d.retryAfterSec / 60));
-  const when = mins >= 60 ? `${Math.round(mins / 60)} hour${Math.round(mins / 60) === 1 ? '' : 's'}` : `${mins} minute${mins === 1 ? '' : 's'}`;
-  return `You've used your 5-hour credit allowance (${d.used} of ${d.limit} credits). It frees up in about ${when}.`;
+  return `Weekly credit limit reached (${d.used} of ${d.limit} credits used). It resets Monday at 00:00 UTC.`;
 }
 
 export interface LimitConfig {
   planWeeklyCredits: Record<string, number>;
   fallbackWeeklyCredits: number;
-  planWindowCredits: Record<string, number>;
-  fallbackWindowCredits: number | undefined;
 }
 
 export interface LimitUser {
@@ -185,15 +167,4 @@ export function weeklyCreditLimitFor(user: LimitUser, config: LimitConfig): numb
   const override = user.weekly_credit_limit;
   if (typeof override === 'number' && Number.isInteger(override) && override > 0) return override;
   return config.planWeeklyCredits[user.plan] ?? config.fallbackWeeklyCredits;
-}
-
-/**
- * Rolling-window cap. Configurable per plan; when nothing is configured it is
- * a fifth of the weekly cap, which is roughly the ratio Codex and Claude Code
- * run (a week holds ~34 five-hour windows, but nobody codes around the clock).
- */
-export function windowCreditLimitFor(user: LimitUser, config: LimitConfig): number {
-  const configured = config.planWindowCredits[user.plan] ?? config.fallbackWindowCredits;
-  if (typeof configured === 'number' && configured > 0) return configured;
-  return Math.max(1, Math.ceil(weeklyCreditLimitFor(user, config) / 5));
 }

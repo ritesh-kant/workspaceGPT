@@ -3,7 +3,7 @@ import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES } from '../../constants';
 import SectionShell from './SectionShell';
 import StatusDot from './StatusDot';
-import { formatDurationApprox, formatRefreshIn, usageTone } from '../../utils/usage';
+import { formatRefreshIn, usageTone } from '../../utils/usage';
 
 /**
  * RECONSTRUCTED 2026-08-31 — deleted by mistake earlier in the same session
@@ -24,32 +24,31 @@ interface RemoteSessionStatus {
   /** Token-metered credits — one credit ≈ `tokensPerCredit` model tokens. */
   creditsUsedThisWeek?: number;
   creditsLimitWeekly?: number;
-  creditsUsedWindow?: number;
-  creditsLimitWindow?: number;
-  windowSeconds?: number;
   tokensPerCredit?: number;
 }
 
 /** The credit fields, with the request-era names accepted from an older host. */
 function usageFromMessage(message: any): Pick<
   RemoteSessionStatus,
-  'creditsUsedThisWeek' | 'creditsLimitWeekly' | 'creditsUsedWindow' | 'creditsLimitWindow' | 'windowSeconds' | 'tokensPerCredit'
+  'creditsUsedThisWeek' | 'creditsLimitWeekly' | 'tokensPerCredit'
 > {
   return {
     creditsUsedThisWeek: message.creditsUsedThisWeek ?? message.requestsUsedThisWeek,
     creditsLimitWeekly: message.creditsLimitWeekly ?? message.requestsLimitWeekly,
-    creditsUsedWindow: message.creditsUsedWindow,
-    creditsLimitWindow: message.creditsLimitWindow,
-    windowSeconds: message.windowSeconds,
     tokensPerCredit: message.tokensPerCredit,
   };
 }
 
 /**
- * One allowance as a single line plus a thin bar. The previous 72px ring with
- * the percentage inside took a third of the Settings viewport for a number the
- * user glances at occasionally; the fraction and the reset say the same thing
- * in a row. Rendered twice: the week, and the rolling 5-hour window.
+ * The weekly allowance as a single line plus a thin bar. The previous 72px
+ * ring with the percentage inside took a third of the Settings viewport for a
+ * number the user glances at occasionally; the fraction and the reset say the
+ * same thing in a row.
+ *
+ * There was briefly a second row for a rolling five-hour allowance. It was
+ * removed on 2026-09-06 along with the limit itself — it read as red and
+ * alarming ("0 of 400 left") while most of the week's credits were still
+ * available, which is the opposite of what a usage display is for.
  */
 const UsageRow: React.FC<{ used: number; limit: number; period: string; resetsIn: string }> = ({
   used,
@@ -194,14 +193,6 @@ const RemoteAccountSettings: React.FC = () => {
                 limit={status.creditsLimitWeekly}
                 period='weekly'
                 resetsIn={`resets in ${formatRefreshIn()}`}
-              />
-            )}
-            {typeof status.creditsLimitWindow === 'number' && (
-              <UsageRow
-                used={status.creditsUsedWindow ?? 0}
-                limit={status.creditsLimitWindow}
-                period='5-hour'
-                resetsIn={`frees up within ${formatDurationApprox(status.windowSeconds ?? 5 * 3600)}`}
               />
             )}
             {typeof status.tokensPerCredit === 'number' && (

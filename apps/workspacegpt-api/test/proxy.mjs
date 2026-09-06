@@ -185,9 +185,6 @@ const PROMPT = {
 function weeklyRow(db) {
   return db.prepare('SELECT requests, credits, tokens FROM usage_weekly WHERE user_id = ?').get(USER_ID) ?? null;
 }
-function eventRows(db) {
-  return db.prepare('SELECT ts, credits, tokens FROM usage_events WHERE user_id = ? ORDER BY ts').all(USER_ID);
-}
 
 // ── Harness ──────────────────────────────────────────────────────────────────
 
@@ -243,8 +240,6 @@ await t('client receives the upstream SSE bytes unchanged while the tee meters t
   assert.equal(weeklyRow(db), null, 'nothing charged until the metering branch has run');
   await ctx.settle();
   assert.deepEqual(weeklyRow(db), { requests: 1, credits: 3, tokens: 2100 }, 'ceil(2100/1000) = 3 credits');
-  assert.equal(eventRows(db).length, 1);
-  assert.deepEqual(eventRows(db)[0].credits, 3);
 });
 
 await t('metering completes even if the client never reads its copy', async ({ db, env, ctx }) => {
@@ -260,22 +255,23 @@ await t('the second request is admitted against the first request\'s charge and 
   const first = await worker.fetch(chatRequest(PROMPT), env, ctx);
   assert.equal(first.headers.get('X-WorkspaceGPT-Credits-Used'), '0', 'headers reflect usage BEFORE this request');
   assert.equal(first.headers.get('X-WorkspaceGPT-Credits-Limit'), '100');
-  assert.equal(first.headers.get('X-WorkspaceGPT-Window-Limit'), '20', 'window derives as weekly / 5');
-  assert.equal(first.headers.get('X-WorkspaceGPT-Window-Seconds'), String(5 * 3600));
+  assert.equal(first.headers.get('X-WorkspaceGPT-Window-Limit'), null, 'the rolling window is gone');
+  assert.equal(first.headers.get('X-WorkspaceGPT-Window-Seconds'), null);
   await first.text();
   await ctx.settle();
 
   const second = await worker.fetch(chatRequest(PROMPT), env, ctx);
   assert.equal(second.headers.get('X-WorkspaceGPT-Credits-Used'), '5');
-  assert.equal(second.headers.get('X-WorkspaceGPT-Window-Used'), '5');
+  assert.equal(second.headers.get('X-WorkspaceGPT-Window-Used'), null);
   await second.text();
   await ctx.settle();
 
   const me = await (await worker.fetch(meRequest(), env, ctx)).json();
   assert.equal(me.credits_used_this_week, 10);
   assert.equal(me.credits_limit_weekly, 100);
-  assert.equal(me.credits_used_window, 10);
-  assert.equal(me.credits_limit_window, 20);
+  assert.equal(me.credits_used_window, undefined, '/v1/me no longer reports a window allowance');
+  assert.equal(me.credits_limit_window, undefined);
+  assert.equal(me.window_seconds, undefined);
   assert.equal(me.tokens_per_credit, 1000);
   assert.equal(me.requests_used_this_week, 10, 'request-era name carries the credit number for one release');
 });
@@ -318,7 +314,6 @@ await t('a vendor 5xx passes through with its status and is not charged', async 
   assert.equal((await res.json()).error.message, 'overloaded');
   await ctx.settle();
   assert.equal(weeklyRow(db), null);
-  assert.equal(eventRows(db).length, 0);
 });
 
 await t('a vendor 429 passes through unmetered so the client SDK can back off', async ({ db, env, ctx }) => {
@@ -366,33 +361,20 @@ await t('weekly allowance exhausted → 429 weekly_limit_reached, vendor never c
   assert.deepEqual(weeklyRow(db), { requests: 1, credits: 100, tokens: 100_000 }, 'a refusal is not charged');
 });
 
-await t('rolling-window allowance exhausted → 429 window_limit_reached with a short Retry-After', async ({ env, ctx }) => {
-  const calls = scriptUpstream(() => sseResponse(sseBody(['x'], { total_tokens: 1 })));
-  const { chargeCredits } = await bundleUsage();
-  const now = Math.floor(Date.now() / 1000);
-  // 20 window credits (100/5); spend them 4 hours ago → frees in ~1 hour.
-  await chargeCredits(env, USER_ID, { credits: 20, tokens: 20_000 }, now - 4 * 3600);
-  const res = await worker.fetch(chatRequest(PROMPT), env, ctx);
-  assert.equal(res.status, 429);
-  const body = await res.json();
-  assert.equal(body.error.type, 'window_limit_reached');
-  const retry = Number(res.headers.get('Retry-After'));
-  assert.ok(retry > 3000 && retry <= 3660, `Retry-After ≈ 1h, got ${retry}s`);
-  assert.equal(calls.length, 0);
-});
-
-await t('window charges older than five hours no longer count', async ({ env, ctx }) => {
+await t('a burst that would have blown the old 5-hour window is admitted', async ({ db, env, ctx }) => {
+  // The rolling window was removed on 2026-09-06. 20 credits (the old
+  // weekly/5 cap) spent seconds ago used to refuse the next request for
+  // hours; now only the week's 100 matter, and this is request 21 of many.
   const calls = scriptUpstream(() => sseResponse(sseBody(['x'], { total_tokens: 1000 })));
   const { chargeCredits } = await bundleUsage();
-  const now = Math.floor(Date.now() / 1000);
-  await chargeCredits(env, USER_ID, { credits: 20, tokens: 20_000 }, now - 6 * 3600);
+  await chargeCredits(env, USER_ID, { credits: 40, tokens: 40_000 });
   const res = await worker.fetch(chatRequest(PROMPT), env, ctx);
-  assert.equal(res.status, 200, 'window is clear again');
-  assert.equal(res.headers.get('X-WorkspaceGPT-Window-Used'), '0');
-  assert.equal(res.headers.get('X-WorkspaceGPT-Credits-Used'), '20', 'but the week still remembers');
+  assert.equal(res.status, 200, 'no short-term throttle exists any more');
+  assert.equal(res.headers.get('X-WorkspaceGPT-Credits-Used'), '40', 'the week still remembers');
   assert.equal(calls.length, 1);
   await res.text();
   await ctx.settle();
+  assert.equal(weeklyRow(db).credits, 41);
 });
 
 await t('a per-user weekly_credit_limit override beats the plan', async ({ db, env, ctx }) => {

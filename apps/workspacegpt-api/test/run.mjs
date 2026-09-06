@@ -108,54 +108,42 @@ await t('estimateTokensFromChars is ~chars/4 and never negative', () => {
 });
 
 console.log('\ndecideAdmission');
-const base = { weeklyUsed: 0, weeklyLimit: 2000, windowUsed: 0, windowLimit: 400, windowOldestTs: null, nowSec: 1_000_000, secondsUntilWeeklyReset: 86_400 };
-await t('under both limits → allowed', () => {
+const base = { weeklyUsed: 0, weeklyLimit: 2000, secondsUntilWeeklyReset: 86_400 };
+await t('under the weekly limit → allowed', () => {
   assert.deepEqual(m.decideAdmission(base), { allowed: true });
-  assert.deepEqual(m.decideAdmission({ ...base, weeklyUsed: 1999, windowUsed: 399 }), { allowed: true });
+  assert.deepEqual(m.decideAdmission({ ...base, weeklyUsed: 1999 }), { allowed: true });
 });
-await t('the request that CROSSES a limit is not this one; AT the limit refuses', () => {
+await t('the request that CROSSES the limit is not this one; AT the limit refuses', () => {
   const d = m.decideAdmission({ ...base, weeklyUsed: 2000 });
   assert.equal(d.allowed, false);
   assert.equal(d.reason, 'weekly');
   assert.equal(d.retryAfterSec, 86_400);
   assert.match(m.describeRefusal(d), /Weekly credit limit reached \(2000 of 2000 credits used\)/);
 });
-await t('window exhausted → refused until the oldest charge ages out', () => {
-  const oldest = base.nowSec - 3 * 3600; // 3h ago → frees in 2h
-  const d = m.decideAdmission({ ...base, windowUsed: 400, windowOldestTs: oldest });
+await t('over the limit refuses too, and retries at the weekly reset', () => {
+  const d = m.decideAdmission({ ...base, weeklyUsed: 5000, secondsUntilWeeklyReset: 3600 });
   assert.equal(d.allowed, false);
-  assert.equal(d.reason, 'window');
-  assert.equal(d.retryAfterSec, 2 * 3600);
-  assert.match(m.describeRefusal(d), /5-hour credit allowance \(400 of 400 credits\)\. It frees up in about 2 hours/);
+  assert.equal(d.retryAfterSec, 3600);
 });
-await t('window refusal with no recorded oldest still yields a sane retry', () => {
-  const d = m.decideAdmission({ ...base, windowUsed: 400, windowOldestTs: null });
-  assert.equal(d.allowed, false);
-  assert.equal(d.retryAfterSec, m.WINDOW_SECONDS);
+await t('a burst is NOT refused — there is no rolling window any more', () => {
+  // The whole week's credits inside one afternoon is allowed by design: the
+  // weekly cap bounds the cost, and a burst just spends the week sooner.
+  assert.deepEqual(m.decideAdmission({ ...base, weeklyUsed: 1900 }), { allowed: true });
+  assert.equal(m.WINDOW_SECONDS, undefined, 'the window constant is gone, not merely unused');
+  assert.equal(m.windowCreditLimitFor, undefined, 'no window limit is computed anywhere');
 });
-await t('both exhausted → the weekly (longer) wait is the message', () => {
-  const d = m.decideAdmission({ ...base, weeklyUsed: 5000, windowUsed: 999, windowOldestTs: base.nowSec - 60 });
-  assert.equal(d.reason, 'weekly');
-});
-await t('a zero/absent limit means uncapped for that dimension', () => {
+await t('a zero/absent limit means uncapped', () => {
   assert.deepEqual(m.decideAdmission({ ...base, weeklyLimit: 0, weeklyUsed: 10 ** 9 }), { allowed: true });
 });
 
 console.log('\nlimits');
-const cfg = { planWeeklyCredits: { free: 2000, pro: 50000 }, fallbackWeeklyCredits: 2000, planWindowCredits: {}, fallbackWindowCredits: undefined };
+const cfg = { planWeeklyCredits: { free: 2000, pro: 50000 }, fallbackWeeklyCredits: 2000 };
 await t('weekly: override → plan → fallback', () => {
   assert.equal(m.weeklyCreditLimitFor({ plan: 'free', weekly_credit_limit: null }, cfg), 2000);
   assert.equal(m.weeklyCreditLimitFor({ plan: 'pro', weekly_credit_limit: null }, cfg), 50000);
   assert.equal(m.weeklyCreditLimitFor({ plan: 'enterprise', weekly_credit_limit: null }, cfg), 2000, 'unlisted plan → fallback');
   assert.equal(m.weeklyCreditLimitFor({ plan: 'free', weekly_credit_limit: 9000 }, cfg), 9000, 'override wins');
   assert.equal(m.weeklyCreditLimitFor({ plan: 'free', weekly_credit_limit: 0 }, cfg), 2000, 'a zero override is ignored, not "uncapped"');
-});
-await t('window: configured per plan, else a fifth of weekly', () => {
-  assert.equal(m.windowCreditLimitFor({ plan: 'free', weekly_credit_limit: null }, cfg), 400);
-  assert.equal(m.windowCreditLimitFor({ plan: 'pro', weekly_credit_limit: null }, cfg), 10000);
-  assert.equal(m.windowCreditLimitFor({ plan: 'free', weekly_credit_limit: 9000 }, cfg), 1800, 'follows an override');
-  assert.equal(m.windowCreditLimitFor({ plan: 'free', weekly_credit_limit: null }, { ...cfg, planWindowCredits: { free: 123 } }), 123);
-  assert.equal(m.windowCreditLimitFor({ plan: 'free', weekly_credit_limit: null }, { ...cfg, fallbackWindowCredits: 77 }), 77);
 });
 
 console.log(`\n${pass} passed, ${failures.length} failed`);

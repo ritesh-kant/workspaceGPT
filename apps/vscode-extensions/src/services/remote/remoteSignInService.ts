@@ -11,9 +11,6 @@ export interface RemoteProfile {
   /** Token-metered credits (see apps/workspacegpt-api/src/metering.ts). */
   credits_used_this_week?: number;
   credits_limit_weekly?: number;
-  credits_used_window?: number;
-  credits_limit_window?: number;
-  window_seconds?: number;
   tokens_per_credit?: number;
   /** Request-era fields, still sent by older servers. Same shape, different unit. */
   requests_used_this_week?: number;
@@ -30,6 +27,11 @@ export type SessionVerifyResult =
  * credits sends only the request-era fields; they fill the credit slots so the
  * account panel still draws a bar (the number is then a call count — the
  * server side of this change ships the same day, so the mismatch is brief).
+ *
+ * The rolling five-hour allowance was removed on 2026-09-06; a server that
+ * still reports `credits_*_window` is simply not read, so the extra allowance
+ * disappears from the UI as soon as this build ships, ahead of the deploy that
+ * stops enforcing it.
  */
 export function webviewFieldsFromProfile(profile: RemoteProfile | null) {
   const creditsUsedThisWeek = profile?.credits_used_this_week ?? profile?.requests_used_this_week;
@@ -40,9 +42,6 @@ export function webviewFieldsFromProfile(profile: RemoteProfile | null) {
     plan: profile?.plan,
     creditsUsedThisWeek,
     creditsLimitWeekly,
-    creditsUsedWindow: profile?.credits_used_window,
-    creditsLimitWindow: profile?.credits_limit_window,
-    windowSeconds: profile?.window_seconds,
     tokensPerCredit: profile?.tokens_per_credit,
     // Kept for any webview build still reading the old names.
     requestsUsedThisWeek: creditsUsedThisWeek,
