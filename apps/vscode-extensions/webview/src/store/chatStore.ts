@@ -98,10 +98,12 @@ interface Message {
    * card can offer to resume it rather than leaving the user to guess that
    * typing "continue" would recover the work.
    *
-   * Persisted with the message, because the host parks the transcript on disk
-   * — a run interrupted last night is still resumable this morning. A record
-   * that has since been pruned or already resumed degrades harmlessly: the
-   * click becomes an ordinary continuation turn.
+   * Cleared when a new user turn supersedes the error (see
+   * `supersedeTrailingError`). Until then it is persisted with the message,
+   * because the host parks the transcript on disk — a run interrupted last
+   * night is still resumable this morning. A record that has since been
+   * pruned or already resumed degrades harmlessly: the click becomes an
+   * ordinary continuation turn.
    */
   resumable?: { steps: number; writesApplied?: number };
 }
@@ -138,11 +140,40 @@ interface TurnSlice {
 // assistant answer they belong to), shared by the visible session's actions
 // and the background-session variants.
 
+/**
+ * Visible work already on an error card — the timeline / files-changed bar
+ * the user can still learn from. A 404 that never started a turn has neither,
+ * and should vanish the moment they send another message. Host-held resume
+ * state without UI steps is not enough to keep the red banner: continue
+ * already reloads that transcript host-side.
+ */
+const trailingErrorHasVisibleWork = (message: Message): boolean =>
+  (message.agentSteps?.length ?? 0) > 0 || (message.turnSummary?.filesChanged?.length ?? 0) > 0;
+
+/**
+ * A new user turn means the last error is no longer the live failure. Drop a
+ * no-work error entirely; keep a turn that actually ran as a normal timeline
+ * card so the red banner (and Resume) do not sit in the middle of the thread.
+ */
+const supersedeTrailingError = (messages: Message[]): Message[] => {
+  const last = messages[messages.length - 1];
+  if (!last?.isError) return messages;
+  if (!trailingErrorHasVisibleWork(last)) return messages.slice(0, -1);
+  return [
+    ...messages.slice(0, -1),
+    { ...last, isError: undefined, resumable: undefined, content: 'Turn interrupted.' },
+  ];
+};
+
 /** A new user message starts a fresh turn; an assistant answer adopts accumulated steps. */
 const addMessageIn = (s: TurnSlice, message: Message): TurnSlice => {
   if (message.isUser) {
     const stamped = { ...message, timestamp: message.timestamp ?? Date.now() };
-    return { messages: [...s.messages, stamped], agentSteps: [], pendingTurnSummary: null };
+    return {
+      messages: [...supersedeTrailingError(s.messages), stamped],
+      agentSteps: [],
+      pendingTurnSummary: null,
+    };
   }
   const adopt = !message.writeReview && (s.agentSteps.length > 0 || !!s.pendingTurnSummary);
   return {

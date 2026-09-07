@@ -1996,9 +1996,9 @@ const App: React.FC = () => {
    * every host code path this touches is the already-tested one that a typed
    * "continue" takes — the button is a shortcut, not a second mechanism.
    *
-   * The error bubble is kept rather than removed (unlike handleRetry): it is
-   * the record of what interrupted the run, and the resumed turn is an
-   * addition to the conversation, not a replacement for it.
+   * Adding this user message supersedes the trailing error in the store: a
+   * 404-before-any-work card is dropped; a turn that already posted steps is
+   * kept as a non-error timeline so the red banner does not sit under continue.
    */
   const handleResume = () => {
     if (isLoading || isStreaming) return;
