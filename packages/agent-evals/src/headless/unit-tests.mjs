@@ -34,7 +34,7 @@ const resumeStore = await import(path.join(outDir, 'resumeStore.mjs'));
 const continuation = await import(path.join(outDir, 'continuationIntent.mjs'));
 const { startMockModel } = await import('./mock-model.mjs');
 const { withKeyFailover, isRateLimitError, isTransientServerError, TRANSIENT_RETRY_DELAYS_MS } = await import(path.join(outDir, 'apiKeyFailover.mjs'));
-const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, INCOMPLETE_ANSWER_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer, isUnbackedCompletionClaim, claimsFileChanges, REPORT_CLAIMS_DONE_RE, ROOT_CAUSE_NARRATION_RE, isUnfinishedWriteRun, commitNudgeTriggers, hasWriteIntent, resolveHarnessProfile, phraseGatesEnabled, SMALL_MODEL_HINT_RE } = await import(path.join(outDir, 'answerGates.mjs'));
+const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, INCOMPLETE_ANSWER_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer, isUnbackedCompletionClaim, claimsFileChanges, REPORT_CLAIMS_DONE_RE, ROOT_CAUSE_NARRATION_RE, isUnfinishedWriteRun, writeWasExpected: answerGatesWriteWasExpected, commitNudgeTriggers, hasWriteIntent, resolveHarnessProfile, phraseGatesEnabled, SMALL_MODEL_HINT_RE } = await import(path.join(outDir, 'answerGates.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -1492,11 +1492,11 @@ The missing decision the ticket needs to spell out: **what observable signal tel
     assert.ok(!isStallShapedAnswer(CAP_HIT_BLOCKED), 'aggregate stall shape');
     assert.ok(TICKET_TERMINAL_RE.test(CAP_HIT_BLOCKED), 'its heading read as a valid ending');
   });
-  await t('structural exit catches it anyway — no writes on a write-intent run', () => {
-    assert.ok(isUnfinishedWriteRun(CAP_HIT_BLOCKED, { writesApplied: 0, writeIntent: true }));
+  await t('structural exit catches it anyway — no writes on a run that owed one', () => {
+    assert.ok(isUnfinishedWriteRun(CAP_HIT_BLOCKED, { writesApplied: 0, writeExpected: true }));
   });
   await t('a run that applied the fix is finished, not unfinished', () => {
-    assert.ok(!isUnfinishedWriteRun(CAP_HIT_BLOCKED, { writesApplied: 4, writeIntent: true }));
+    assert.ok(!isUnfinishedWriteRun(CAP_HIT_BLOCKED, { writesApplied: 4, writeExpected: true }));
   });
   await t('a question that hits the cap is not resumed as a failed write run', () => {
     // "how is X triggered" has no write intent; running out of steps there is
@@ -1504,14 +1504,14 @@ The missing decision the ticket needs to spell out: **what observable signal tel
     assert.ok(!isUnfinishedWriteRun(CAP_HIT_BLOCKED, { writesApplied: 0, writeIntent: false }));
   });
   await t('plan mode at the cap is not an unfinished write run', () => {
-    assert.ok(!isUnfinishedWriteRun(CAP_HIT_BLOCKED, { writesApplied: 0, writeIntent: true, planMode: true }));
+    assert.ok(!isUnfinishedWriteRun(CAP_HIT_BLOCKED, { writesApplied: 0, writeExpected: true, planMode: true }));
   });
   await t('"No change needed" is a finished ending and is left alone', () => {
     const noChange =
       '## ✅ No change needed — the mapper already clears the entry\n\n### Acceptance criteria\n| c | ✅ Met | `imageReuploadStorage.ts:31` |';
-    assert.ok(!isUnfinishedWriteRun(noChange, { writesApplied: 0, writeIntent: true }));
+    assert.ok(!isUnfinishedWriteRun(noChange, { writesApplied: 0, writeExpected: true }));
     // But a "Blocked" at the cap is NOT spared — that is the whole point.
-    assert.ok(isUnfinishedWriteRun('## 🚫 Blocked — need a decision', { writesApplied: 0, writeIntent: true }));
+    assert.ok(isUnfinishedWriteRun('## 🚫 Blocked — need a decision', { writesApplied: 0, writeExpected: true }));
   });
 
   await t('first-person edit verbs the fabrication used now match', () => {
@@ -2009,10 +2009,66 @@ console.log('\napiKeyFailover (overload retry — regression for the turn-18 run
     assert.deepEqual(waits, []);
   });
 
-  await t('the shipped schedule stays inside the 5-minute stall watchdog', () => {
+  await t('the shipped schedule stays well inside the stall watchdog', () => {
     const total = TRANSIENT_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0);
     assert.ok(total > 5_000, 'sub-second retries are what failed — the wait must be real');
     assert.ok(total < 120_000, `${total}ms of waiting would risk the worker stall watchdog`);
+  });
+
+  await t('a 429 on the LAST key waits instead of throwing the run away', async () => {
+    // The regression: agent-smoke s2, 2026-09-06. Four correct edits, tests
+    // run, then "429 status code (no body)" on the next turn ended the run.
+    // With one key there was nothing to rotate to, so a limit that clears in
+    // seconds destroyed fifteen tool calls of finished work.
+    const waits = [];
+    let attempts = 0;
+    const result = await withKeyFailover(
+      ['only-key'],
+      async () => {
+        attempts++;
+        if (attempts === 1) throw Object.assign(new Error('429 status code (no body)'), { status: 429 });
+        return 'recovered';
+      },
+      undefined,
+      { sleep: async (ms) => void waits.push(ms), retryDelaysMs: [10, 20] },
+    );
+    assert.equal(result, 'recovered');
+    assert.equal(attempts, 2, 'the same key was retried');
+    assert.deepEqual(waits, [10], 'and it waited first, rather than hammering');
+  });
+
+  await t('a genuinely exhausted quota still surfaces after the schedule', async () => {
+    const waits = [];
+    await assert.rejects(
+      withKeyFailover(
+        ['only-key'],
+        async () => {
+          throw Object.assign(new Error('429 insufficient_quota'), { status: 429 });
+        },
+        undefined,
+        { sleep: async (ms) => void waits.push(ms), retryDelaysMs: [10, 20] },
+      ),
+      /429/,
+    );
+    assert.deepEqual(waits, [10, 20], 'bounded — it does not wait forever on real exhaustion');
+  });
+
+  await t('with MORE keys a 429 still rotates immediately rather than waiting', async () => {
+    const waits = [];
+    const tried = [];
+    const result = await withKeyFailover(
+      ['k1', 'k2'],
+      async (key) => {
+        tried.push(key);
+        if (key === 'k1') throw Object.assign(new Error('429'), { status: 429 });
+        return key;
+      },
+      undefined,
+      { sleep: async (ms) => void waits.push(ms), retryDelaysMs: [10, 20] },
+    );
+    assert.equal(result, 'k2');
+    assert.deepEqual(tried, ['k1', 'k2']);
+    assert.deepEqual(waits, [], 'rotation is free — only the last key has to wait');
   });
 }
 
@@ -2442,8 +2498,10 @@ console.log('\ncontinuationIntent (the Resume button and the host must agree)');
   const { CONTINUATION_RE, APPROVAL_RE, RESUME_RE, RESUME_MESSAGE, isContinuationIntent } = continuation;
 
   await t('the Resume button\'s message satisfies BOTH patterns it has to', () => {
-    // RESUME_RE gates whether the stranded transcript is carried at all.
-    assert.ok(RESUME_RE.test(RESUME_MESSAGE), `RESUME_RE must match ${JSON.stringify(RESUME_MESSAGE)} or the transcript is dropped`);
+    // RESUME_RE no longer gates whether the transcript is carried (the host
+    // carries a stranded run because it exists), but the button's message must
+    // still read as an unambiguous resume to the model and to these patterns.
+    assert.ok(RESUME_RE.test(RESUME_MESSAGE), `RESUME_RE must match ${JSON.stringify(RESUME_MESSAGE)}`);
     // CONTINUATION_RE gates routing inheritance — narrower, and the one a
     // natural-sounding button message silently fails.
     assert.ok(
@@ -2873,6 +2931,316 @@ console.log('\nresumeHygiene (a resumed run must not inherit the previous segmen
     const interrupted = createContinuationPrompt('continue', { toolResultsAbove: 3 });
     assert.match(interrupted, /provider error or by the user stopping it/);
     assert.ok(!/fresh step and tool-output budget/.test(interrupted), 'an interruption is described as before');
+  });
+}
+
+console.log('\nno phrase decides a budget or a capability (the #1534774 class of failure)');
+{
+  // These are the messages the old gates got wrong: typos, extra words, other
+  // languages, ordinary politeness. None of them may change what a run is
+  // ALLOWED to do or spend — that is the whole invariant, and every mechanism
+  // below is asserted to be blind to them.
+  const AWKWARD = [
+    'can you fix it',
+    'fix it',
+    'go ahead, apply all four edits',
+    'ok now fix it',
+    'yes do it please',
+    'please apply the fix we discussed',
+    'fx it',                       // typo
+    'haan theek hai, karo',        // not English
+    'alright lets do it',
+    'make it work',
+  ];
+
+  await t('the turn budget is a constant — no message text reaches it', () => {
+    // MAX_TOOL_ITERATIONS / MAX_TOTAL_TOOL_CHARS are computed at worker module
+    // load, so they are pinned by reading the source: the assertion is that
+    // neither expression mentions the prompt or any intent flag.
+    const src = fs.readFileSync(
+      path.join(here, '../../../../apps/vscode-extensions/src/workers/model/modelWorker.ts'),
+      'utf8',
+    );
+    const line = (name) => src.match(new RegExp(`^const ${name} = .*$`, 'm'))?.[0] ?? '';
+    for (const name of ['MAX_TOOL_ITERATIONS', 'MAX_TOTAL_TOOL_CHARS']) {
+      const expr = line(name);
+      assert.ok(expr, `${name} not found`);
+      for (const banned of ['TICKET_IMPLEMENT_RUN', 'WRITE_INTENT_RUN', 'prompt', '_RE']) {
+        assert.ok(!expr.includes(banned), `${name} must not depend on ${banned}: ${expr}`);
+      }
+    }
+  });
+
+  await t('convergence pressure is blind to the message — it reads measured state only', async () => {
+    const wp = await import(path.join(outDir, 'writePressure.mjs'));
+    // The signature itself is the guarantee: there is no field to pass a
+    // prompt, an intent flag or a match into.
+    // Neither the message nor the turn count appears in the signature: the
+    // triggers are measured context pressure and measured stagnation.
+    assert.equal(wp.shouldNarrowToConclude({ contextExhausted: false, stagnant: false, writesApplied: 0 }), false);
+    assert.equal(wp.shouldNarrowToConclude({ contextExhausted: true, stagnant: false, writesApplied: 0 }), true);
+    assert.equal(wp.shouldNarrowToConclude({ contextExhausted: false, stagnant: true, writesApplied: 0 }), true);
+  });
+
+  await t('"did this run owe a change?" is answered by what it DID and SAID, not what was typed', () => {
+    const REPORT = '## ⚠️ Partially done\n\n### Changes\n- mapB2BLogo.ts — remove the guard.\n';
+    // Every awkward phrasing reaches the right verdict with writeIntent OFF —
+    // i.e. even when the regex misses completely.
+    for (const message of AWKWARD) {
+      void message;
+      assert.ok(
+        answerGatesWriteWasExpected({ answer: REPORT, anyWriteAttempted: false, writeIntent: false }),
+        'the answer proposing changes is enough on its own',
+      );
+    }
+    // A run that tried to write is a write run whatever it said.
+    assert.ok(answerGatesWriteWasExpected({ answer: 'hello', anyWriteAttempted: true, writeIntent: false }));
+    // An approved plan is a write run whatever it said.
+    assert.ok(answerGatesWriteWasExpected({ answer: 'hello', anyWriteAttempted: false, executeMandate: true }));
+    // A plain answer to a plain question is not.
+    assert.ok(
+      !answerGatesWriteWasExpected({
+        answer: 'The mapper is triggered from useOrderTracking.ts:42.',
+        anyWriteAttempted: false,
+        writeIntent: false,
+      }),
+    );
+  });
+
+  await t('a stranded run is carried because it exists — no phrase can destroy it', () => {
+    // The host no longer calls isContinuationIntent to decide whether to drop
+    // the transcript. Pinned by source, because the alternative is a full
+    // host harness for one branch.
+    const src = fs.readFileSync(
+      path.join(here, '../../../../apps/vscode-extensions/src/services/chatService.ts'),
+      'utf8',
+    );
+    assert.ok(
+      !/^(?!\s*(?:\/\/|\*)).*isContinuationIntent\s*\(/m.test(src),
+      'chatService must not gate the stranded transcript on a phrase match again',
+    );
+    assert.ok(/await this\.hydrateResume\(run\)/.test(src), 'it must still hydrate the record');
+    // And the phrasings that used to destroy it really were missed.
+    for (const m of ['go ahead, apply all four edits', 'ok now fix it', 'yes do it please', 'fx it']) {
+      assert.equal(continuation.isContinuationIntent(m), false, `${JSON.stringify(m)} was silently dropping runs`);
+    }
+  });
+}
+
+console.log('\nwritePressure (a run that owes an edit may not spend its whole budget reading)');
+{
+  const wp = await import(path.join(outDir, 'writePressure.mjs'));
+  const base = { contextExhausted: false, stagnant: false, writesApplied: 0 };
+
+  await t('narrows on measured facts only: no room left, or nothing new being learned', () => {
+    const at = (over = {}) => wp.shouldNarrowToConclude({ ...base, ...over });
+    assert.equal(at(), false, 'plenty of room and still learning — let it work');
+    assert.equal(at({ contextExhausted: true }), true, 'nowhere left to put results');
+    assert.equal(at({ stagnant: true }), true, 'four turns without new information');
+    assert.equal(at({ contextExhausted: true, writesApplied: 1 }), false, 'a run that has written is verifying');
+    // There is no turn index and no cap in the signature at all — turn count
+    // was only ever a proxy for these two.
+    assert.ok(!('turnIndex' in base) && !('iterationCap' in base));
+  });
+
+  await t('narrowing removes the discovery tools and keeps everything needed to finish', () => {
+    const mk = (...names) => names.map((name) => ({ type: 'function', function: { name } }));
+    const all = mk(
+      'search_codebase', 'explore', 'find_files', 'find_symbol', 'find_references', 'go_to_definition',
+      'list_directory', 'git_log', 'git_blame', 'search_docs', 'get_confluence_page', 'search_tickets',
+      'get_ticket', 'search_web', 'read_file', 'edit_file', 'create_file', 'delete_file', 'run_checks',
+      'run_command', 'get_diagnostics', 'git_status', 'git_diff',
+    );
+    const kept = wp.narrowToCommitTools(all).map((d) => d.function.name);
+    assert.deepEqual(kept, [
+      'read_file', 'edit_file', 'create_file', 'delete_file', 'run_checks',
+      'run_command', 'get_diagnostics', 'git_status', 'git_diff',
+    ]);
+    // read_file is the one that matters: an edit copies oldString from it.
+    assert.ok(kept.includes('read_file') && kept.includes('edit_file'));
+    assert.notStrictEqual(wp.narrowToCommitTools(all), all, 'must not hand back the shared array');
+  });
+
+  await t('the notice tells the model the withdrawal is deliberate, not a broken tool', () => {
+    assert.match(wp.COMMIT_NARROWED_NOTICE, /withdrawn/i);
+    assert.match(wp.COMMIT_NARROWED_NOTICE, /still available and still work/i);
+    assert.match(wp.COMMIT_NARROWED_NOTICE, /edit/i);
+  });
+
+  await t('a late write buys verification turns, once, within the hard cap', () => {
+    const r = (over) => wp.capWithVerificationReserve({ turnIndex: 30, iterationCap: 33, hardCap: 37, writesApplied: 1, reserveUsed: false, ...over });
+    assert.equal(r({}), 35, 'turn 31 of 33 leaves 2 turns; the reserve wants 4 → cap 35');
+    assert.equal(r({ turnIndex: 20 }), 33, '12 turns left is already enough');
+    assert.equal(r({ writesApplied: 0 }), 33, 'nothing written, nothing owed');
+    assert.equal(r({ reserveUsed: true }), 33, 'granted at most once');
+    assert.equal(r({ turnIndex: 36, iterationCap: 37 }), 37, 'never past the hard cap');
+    assert.equal(wp.VERIFICATION_RESERVE_TURNS, 4);
+  });
+
+  await t('slow mode no longer cuts the iteration cap at all', () => {
+    const src = fs.readFileSync(
+      path.join(here, '../../../../apps/vscode-extensions/src/workers/model/modelWorker.ts'),
+      'utf8',
+    );
+    const body = src.slice(src.indexOf('const enterSlowMode'), src.indexOf('const maybeEnterSlowMode'));
+    assert.ok(body.length > 0, 'enterSlowMode not found');
+    assert.ok(!/iterationCap\s*=/.test(body), 'enterSlowMode must not reassign the cap');
+    assert.ok(!/slowFloor/.test(body), 'the two-tier slow floor is gone with the regex that picked the tier');
+  });
+
+  await t('REAL WORKER: a run that keeps searching actually loses the search tools, and is told why', async () => {
+    const FILE = 'src/badge.ts';
+    const ORIGINAL = 'export const label = "pending";\n';
+    // The same search over and over. It produces bytes every turn but no new
+    // information, which is exactly the loop the stagnation backstop exists to
+    // catch now that there is no turn cap to end it.
+    const script = Array.from({ length: 26 }, () => ({
+      content: 'Looking a little further.',
+      toolCalls: [{ name: 'search_codebase', args: { query: 'label', outputMode: 'files_with_matches' } }],
+    }));
+    script.push({ finalContent: '## No change needed\nNothing to do.' });
+
+    const ws = tempWorkspace({ [FILE]: ORIGINAL });
+    const mock = await startMockModel({ main: script });
+    let mainRequests;
+    try {
+      // Deliberately a QUESTION, not a fix request: convergence pressure must
+      // not depend on the phrasing at all.
+      const record = await runAgent(ws, 'how is the badge label decided?', () => {}, {
+        provider: 'Custom',
+        baseUrl: mock.baseUrl,
+        modelId: 'mock-model',
+        apiKey: 'MOCK',
+        apiKeys: ['MOCK'],
+        harnessProfile: 'strong-model',
+      });
+      assert.ok(record.ok, `run failed: ${record.error}`);
+      mainRequests = mock.state.requests.filter((r) => !r.subAgent && !r.preloopExplorer);
+    } finally {
+      await mock.close();
+    }
+
+    const narrowedAt = mainRequests.findIndex((r) => r.toolCount > 0 && !r.toolNames.includes('search_codebase'));
+    assert.ok(narrowedAt > 0, 'the search tools were never withdrawn — the run could read to the cap');
+    assert.ok(
+      narrowedAt >= 3 && narrowedAt <= 12,
+      `narrowed at request ${narrowedAt}; expected soon after ${'STAGNANT_TURNS'} identical results`,
+    );
+    // Before the line: the model had its discovery tools.
+    assert.ok(mainRequests[narrowedAt - 1].toolNames.includes('search_codebase'), 'narrowed before any result repeated');
+    // After it: only tools that can finish the job.
+    const after = mainRequests[narrowedAt].toolNames;
+    for (const gone of ['search_codebase', 'explore', 'find_files', 'search_web']) {
+      assert.ok(!after.includes(gone), `${gone} survived the narrowing`);
+    }
+    for (const kept of ['read_file', 'edit_file']) {
+      assert.ok(after.includes(kept), `${kept} must remain — an edit copies oldString from a read`);
+    }
+    // And the model is told, so it does not report its tools as broken.
+    const texts = mainRequests[narrowedAt].messages.map((m) =>
+      typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''),
+    );
+    assert.ok(texts.some((t) => t.includes('withdrawn')), 'the withdrawal was never announced to the model');
+  });
+}
+
+console.log('\ncontextBudget (the context window bounds a run — not a turn count)');
+{
+  const cb = await import(path.join(outDir, 'contextBudget.mjs'));
+
+  await t('window resolution prefers an override, then the provider, then the model, then a safe default', () => {
+    assert.equal(cb.resolveContextWindow({ modelId: 'glm-5.3-flash', override: 150_000 }), 150_000);
+    assert.equal(cb.resolveContextWindow({ modelId: 'glm-5.3-flash', reported: 160_000 }), 160_000);
+    assert.equal(cb.resolveContextWindow({ modelId: 'glm-5.3-flash' }), 200_000, 'the target model');
+    assert.equal(cb.resolveContextWindow({ modelId: 'qwen2.5-coder:14b' }), 32_000, 'local models are assumed small');
+    assert.equal(cb.resolveContextWindow({ modelId: 'something-nobody-has-heard-of' }), cb.DEFAULT_CONTEXT_WINDOW);
+    assert.equal(cb.resolveContextWindow({}), cb.DEFAULT_CONTEXT_WINDOW, 'a miss costs the default, never a failure');
+    assert.equal(cb.resolveContextWindow({ override: 12 }), cb.DEFAULT_CONTEXT_WINDOW, 'absurd values ignored');
+  });
+
+  await t('nothing is managed beyond the 200k quality ceiling, however big the model is', () => {
+    // glm-5.3-flash really has a 1M window. Filling it is not the goal:
+    // quality falls off long before that and every turn re-sends the whole
+    // conversation. Ritesh's call, 2026-09-05.
+    assert.equal(cb.MAX_MANAGED_WINDOW, 200_000);
+    assert.equal(cb.resolveContextWindow({ modelId: 'gemini-2.5-flash' }), 200_000, 'a 1M model is still capped');
+    assert.equal(cb.resolveContextWindow({ override: 1_000_000 }), 200_000, 'even an explicit override');
+    assert.equal(cb.observedWindowFloor(200_000, 900_000), 200_000, 'observation cannot lift a deliberate ceiling');
+  });
+
+  await t('a prompt the provider ACCEPTED raises a too-small assumption', () => {
+    // The self-correction that stops a pessimistic guess compacting a run
+    // that had plenty of room.
+    assert.equal(cb.observedWindowFloor(32_000, 9_000), 32_000, 'under the assumption: unchanged');
+    assert.ok(cb.observedWindowFloor(32_000, 40_000) >= 50_000, 'over it: the assumption was simply wrong');
+    assert.equal(cb.observedWindowFloor(128_000, 0), 128_000, 'no observation, no change');
+  });
+
+  await t('state is computed from measured prompt tokens, and 75% means compact — not stop', () => {
+    const at = (used, win = 100_000) => cb.contextState({ promptTokens: used, windowTokens: win });
+    assert.equal(at(50_000).usedPct, 50);
+    assert.equal(at(50_000).remainingPct, 50);
+    assert.equal(at(50_000).shouldCompact, false);
+    assert.equal(at(75_000).shouldCompact, true, 'COMPACT_AT_PCT');
+    assert.equal(at(75_000).exhausted, false, 'compacting is not exhaustion — the run continues');
+    assert.equal(at(96_000).exhausted, true, 'too little room left for another useful turn');
+    assert.equal(at(200_000).usedPct, 100, 'clamped for display');
+  });
+
+  await t('stagnation is the runaway backstop that replaced the turn cap', () => {
+    assert.equal(cb.STAGNANT_TURNS, 4);
+    assert.equal(cb.isStagnant(3), false);
+    assert.equal(cb.isStagnant(4), true);
+  });
+
+  await t('every budget is DERIVED from the window — none set beside it', () => {
+    const src = fs.readFileSync(
+      path.join(here, '../../../../apps/vscode-extensions/src/workers/model/modelWorker.ts'),
+      'utf8',
+    );
+    // The regression this pins: a flat 400_000-char tool budget landed at
+    // ~50% of the 200k window and was what actually ended long runs, while
+    // truncation of old results began at ~35% and the meter still read 35%.
+    const expr = src.match(/^const MAX_TOTAL_TOOL_CHARS = [\s\S]*?\);$/m)?.[0] ?? '';
+    assert.ok(expr, 'MAX_TOTAL_TOOL_CHARS not found');
+    assert.ok(/MANAGED_CONTEXT_TOKENS/.test(expr), `must derive from the window, got: ${expr}`);
+    assert.ok(!/\b\d{3},?\d{3}\b/.test(expr), `must not hardcode a char count: ${expr}`);
+    // And lossy truncation must be driven by the MEASURED context, not by the
+    // char count, so it never starts earlier than the real limit demands.
+    assert.ok(
+      /if \(contextNow\.shouldCompact \|\| budgetExhausted\) \{[\s\S]{0,200}?compactOldToolResults\(i\)/.test(src),
+      'truncation must trigger on measured context pressure',
+    );
+  });
+
+  await t('delegating to a sub-agent is not rationed below what the context allows', () => {
+    const src = fs.readFileSync(
+      path.join(here, '../../../../apps/vscode-extensions/src/workers/model/modelWorker.ts'),
+      'utf8',
+    );
+    const cap = Number(src.match(/const MAX_EXPLORE_CALLS = isLocalProvider \? \d+ : (\d+);/)?.[1]);
+    // Sub-agents are the cheap way to keep the main conversation small (their
+    // context is their own). Capping that at 3 made the cheap path run out
+    // first and forced everything back into the main context.
+    assert.ok(cap >= 10, `explore budget ${cap} still rations the strategy`);
+  });
+
+  await t('the loop is bounded by context and the clock, never by a turn budget', () => {
+    const src = fs.readFileSync(
+      path.join(here, '../../../../apps/vscode-extensions/src/workers/model/modelWorker.ts'),
+      'utf8',
+    );
+    // The nominal cap is now a runaway guard an order of magnitude above any
+    // real run, not a budget anyone is expected to reach.
+    const ceiling = Number(src.match(/^const SAFETY_ITERATION_CEILING = (\d+);/m)?.[1]);
+    assert.ok(ceiling >= 100, `safety ceiling ${ceiling} is still small enough to bind real runs`);
+    // The loop's own exits are the context, the clock and the tool budget —
+    // never "we have had enough turns".
+    assert.ok(/if \(contextNow\.exhausted\) \{/.test(src), 'a full context must end the run');
+    assert.ok(/RUN_WALL_CLOCK_MS/.test(src), 'the wall clock must still bound a wedged run');
+    // Automatic summarizing compaction is deliberately not built yet (TODO.md);
+    // this asserts we have not half-built it and left it wired in.
+    assert.ok(!/compactConversation/.test(src), 'the auto-summarizer was removed, not left dangling');
   });
 }
 

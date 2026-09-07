@@ -3029,3 +3029,71 @@ button:disabled {
   color: var(--wgpt-warning);
 }
 
+
+/* ── Context meter (ContextMeter.tsx) ──────────────────────────────────────
+   How full the model's context window is for the running turn. Since the turn
+   cap was removed this is what actually bounds a run, so it shares the
+   composer status strip with the usage bar rather than hiding in Settings.
+   Hidden below 50% — see SHOW_FROM_PCT. */
+.context-meter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 8px;
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editor-background);
+}
+
+.context-meter-bar {
+  flex: 0 0 56px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  overflow: hidden;
+}
+
+.context-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--vscode-descriptionForeground);
+  transition: width 220ms ease;
+}
+
+.context-meter--warn .context-meter-fill {
+  background: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.context-meter--critical .context-meter-fill {
+  background: var(--vscode-editorError-foreground, #f14c4c);
+}
+
+.context-meter--critical .context-meter-label {
+  color: var(--vscode-editorError-foreground, #f14c4c);
+}
+
+.context-meter-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quiet pulse while a turn is in flight, so a stale number never reads live. */
+.context-meter-live {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground);
+  animation: context-meter-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes context-meter-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.9; }
+}

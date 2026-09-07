@@ -48,6 +48,12 @@ export const MESSAGE_TYPES = {
   // ("28 results", "+2 −2", "exit 0"), status done/error, optional meta
   // (command output tail) — turns "Searched city" into "Searched city · 28 results".
   AGENT_STEP_UPDATE: 'agent-step-update',
+  // Live context-window usage for the running turn: how much of the model's
+  // window the conversation currently occupies, measured from the provider's
+  // own usage.prompt_tokens. Drives the composer's context meter, the same
+  // affordance Claude Code shows — and the reason a long run no longer ends at
+  // a turn cap is that crossing this triggers compaction instead.
+  AGENT_CONTEXT: 'agent-context',
   // End-of-turn rollup for agent turns: how long the run took and which files
   // changed (+added/−removed per file). Rendered as the "N files changed" bar.
   AGENT_TURN_SUMMARY: 'agent-turn-summary',

@@ -18,6 +18,7 @@ import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
 import CreatePrButton from './components/CreatePrButton';
 import UsageLimitBar from './components/UsageLimitBar';
+import ContextMeter, { ContextUsage } from './components/ContextMeter';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
 import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
 import SettingsButton from './components/Settings';
@@ -518,6 +519,9 @@ const App: React.FC = () => {
   // Weekly remote-mode quota, so the composer can warn before the user hits
   // a wall mid-chat instead of only surfacing this in Settings > Account.
   const [remoteUsage, setRemoteUsage] = useState<{ used: number; limit: number } | null>(null);
+  // Live context-window occupancy for the foreground run. Cleared when a new
+  // turn starts so the meter never shows the previous turn's number as current.
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
 
   // One poll loop behind both the status bar and the composer's Create PR button.
   useGitStatusSync(!!hasWorkspaceFolder);
@@ -940,6 +944,15 @@ const App: React.FC = () => {
               meta: message.meta,
             });
           }
+          break;
+        case MESSAGE_TYPES.AGENT_CONTEXT:
+          setContextUsage({
+            usedTokens: message.usedTokens ?? 0,
+            windowTokens: message.windowTokens ?? 0,
+            usedPct: message.usedPct ?? 0,
+            remainingPct: message.remainingPct ?? 100,
+            compactions: message.compactions ?? 0,
+          });
           break;
         case MESSAGE_TYPES.AGENT_TURN_SUMMARY:
           setTurnSummary({
@@ -1534,6 +1547,9 @@ const App: React.FC = () => {
     setIsLoading(true);
     setIsStreaming(false);
     setShowTips(false);
+    // The meter is per-run: a new turn starts from an empty conversation, so
+    // showing the previous turn's occupancy would misreport the live number.
+    setContextUsage(null);
 
     // Get the selected model directly from the dropdown
 
@@ -2330,6 +2346,7 @@ const App: React.FC = () => {
           </div>
         )}
         <div className='composer-status-bars'>
+          {contextUsage && <ContextMeter usage={contextUsage} running={isLoading || isStreaming} />}
           {mode === 'remote' && remoteSignedIn && remoteUsage && (
             <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
           )}

@@ -38,6 +38,8 @@ const UNITS = [
   'src/workers/model/streamOutcome.ts',
   'src/workers/model/toolScope.ts',
   'src/workers/model/resumeHygiene.ts',
+  'src/workers/model/writePressure.ts',
+  'src/workers/model/contextBudget.ts',
   'src/workers/model/autoVerify.ts',
   'src/services/agent/verifyTools.ts',
   'src/services/agent/agentHunkLens.ts',

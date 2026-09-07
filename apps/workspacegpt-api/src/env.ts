@@ -18,6 +18,12 @@ export interface Env {
    * locally).
    */
   GMICLOUD_API_KEY?: string;
+  /**
+   * The vendor's TokenRouter key, only required when the resolved provider is
+   * `tokenrouter`. Set via `wrangler secret put TOKENROUTER_API_KEY` (or
+   * .dev.vars locally).
+   */
+  TOKENROUTER_API_KEY?: string;
   // ── Deploy-time defaults ────────────────────────────────────────────────
   // Each of these is overridable at runtime by an `app_config` row, with no
   // deploy at all — see src/config.ts for the precedence rules. They are the

@@ -4,9 +4,23 @@
  * Two distinct failures are handled here, because they call for opposite
  * responses:
  *
- * - **HTTP 429 (rate limit / quota)** is a fact about ONE key, so the fix is
- *   to rotate to the next configured key. Retrying the same key would just be
- *   rate-limited again.
+ * - **HTTP 429 (rate limit / quota)** is usually a fact about ONE key, so the
+ *   first fix is to rotate to the next configured key.
+ *
+ *   But when there is no other key to rotate to, a 429 used to be fatal — and
+ *   that is wrong for the common case. A *quota* 429 (out of credit) does not
+ *   clear on its own; a *rate* 429 (too many requests per minute) clears in
+ *   seconds, and it is exactly what a long agentic run produces, because such
+ *   a run is a burst of requests by nature. Observed live 2026-09-06: an
+ *   agent-smoke s2 run applied four correct edits, ran the tests, and was then
+ *   killed by "429 status code (no body)" on its next turn — fifteen tool
+ *   calls of finished work thrown away over a limit that would have cleared
+ *   before anyone noticed. Removing the turn cap makes this MORE likely, not
+ *   less, since runs now issue more requests.
+ *
+ *   So the last key waits a 429 out on the same schedule as an outage. If it
+ *   really is exhausted quota, the waits cost under a minute and the error
+ *   still surfaces; if it was a per-minute limit, the run survives.
  * - **A 5xx / "overloaded" response** is a fact about the PROVIDER, so the fix
  *   is to wait and retry the SAME key. Rotating keys cannot help when every
  *   endpoint behind the provider is saturated, and it would burn the user's
@@ -158,13 +172,29 @@ export async function withKeyFailover<T>(
         lastErr = err;
 
         if (isRateLimitError(err)) {
-          // Out of keys — nothing left to rotate to.
-          if (i >= list.length - 1) throw err;
-          const message = `API key #${i + 1} rate-limited (429) — failing over to key #${i + 2} of ${list.length}.`;
-          console.warn(`[workspaceGPT] ${message}`);
-          onRetryNotice?.(message);
-          stickyStart.set(cacheKey, i + 1);
-          break; // advance to the next key
+          const isLastKey = i >= list.length - 1;
+          if (!isLastKey) {
+            const message = `API key #${i + 1} rate-limited (429) — failing over to key #${i + 2} of ${list.length}.`;
+            console.warn(`[workspaceGPT] ${message}`);
+            onRetryNotice?.(message);
+            stickyStart.set(cacheKey, i + 1);
+            break; // advance to the next key
+          }
+          // No key left to rotate to. Wait it out rather than throwing away
+          // the run — a per-minute limit clears in seconds. Shares the outage
+          // budget so a genuinely exhausted quota still surfaces promptly.
+          if (outageRetries < delays.length) {
+            const waitMs = delays[outageRetries];
+            outageRetries++;
+            const message =
+              `Rate-limited (429) with no other API key to fail over to — waiting ` +
+              `${Math.round(waitMs / 1000)}s and retrying (attempt ${outageRetries} of ${delays.length}).`;
+            console.warn(`[workspaceGPT] ${message}`);
+            onRetryNotice?.(message);
+            await sleep(waitMs);
+            continue; // same key, after the wait
+          }
+          throw err;
         }
 
         if (isTransientServerError(err) && outageRetries < delays.length) {

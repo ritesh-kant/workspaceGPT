@@ -27,10 +27,24 @@ import {
   commitNudgeTriggers,
   hasWriteIntent,
   isUnfinishedWriteRun,
+  writeWasExpected,
 } from './answerGates';
 import { normalizeModelId } from '../../utils/normalizeModelId';
 import { consumeStream, shouldRetryEmptyStream } from './streamOutcome';
 import { scopeToolDefs, ToolAvailability } from './toolScope';
+import {
+  contextState,
+  isStagnant,
+  observedWindowFloor,
+  resolveContextWindow,
+} from './contextBudget';
+import {
+  COMMIT_NARROWED_NOTICE,
+  VERIFICATION_RESERVE_TURNS,
+  capWithVerificationReserve,
+  narrowToCommitTools,
+  shouldNarrowToConclude,
+} from './writePressure';
 import {
   EMPTY_RESPONSE_PLACEHOLDER,
   HARNESS_CHECKPOINT_PREFIX,
@@ -119,6 +133,12 @@ interface WorkerData {
    * read) whose whole job is to punish exactly that shape of answer.
    */
   planMode?: boolean;
+  /**
+   * Context window in tokens, when the host knows it better than
+   * contextBudget.ts can infer from the model id. Absent: inferred, then
+   * self-corrected from prompts the provider accepts.
+   */
+  contextWindowOverride?: number;
 }
 
 const {
@@ -139,6 +159,7 @@ const {
   mentionedFiles,
   repoOrientation,
   workspaceRules,
+  contextWindowOverride,
   executeMandate,
   resumeTranscript,
   ticketContext,
@@ -686,20 +707,50 @@ const PHRASE_GATES = phraseGatesEnabled(HARNESS_PROFILE);
 // announcing the remaining edit. The tool-output char budget (below) still
 // bounds context growth independently, and the harness/UI wall-clock stays
 // well inside its timeout at this depth.
-// An implement-mandated ticket run has to afford BOTH a full investigation
-// and the edits after it — the fifth observed ticket-1324128 stall was a
-// complete, correct investigation that exhausted the tool budget before a
-// single write, which skips every honesty gate by design. Give those runs
-// double the char budget and extra iterations instead of nudging harder.
-const TICKET_IMPLEMENT_RUN = !!ticketContext && IMPLEMENT_MANDATE_RE.test(prompt);
-// Is CHANGING the workspace this turn's job? Broader than TICKET_IMPLEMENT_RUN
-// on purpose: "fix the crash in foo.ts" typed into the panel carries no ticket
-// and no approved plan, yet a run that ends it with zero edits has failed just
-// as plainly as a ticket run would. Gates the commit nudge and the
-// unfinished-run exit — both are nonsense on a question ("how is X
-// triggered"), which is why neither is armed by tool availability alone.
-const WRITE_INTENT_RUN = TICKET_IMPLEMENT_RUN || !!executeMandate || hasWriteIntent(prompt);
-const MAX_TOOL_ITERATIONS = (isLocalProvider ? 20 : 25) + (TICKET_IMPLEMENT_RUN ? 8 : 0);
+//
+// ── The budget is NOT rationed by what the message looks like ──
+// It used to be: a run whose prompt matched IMPLEMENT_MANDATE_RE got +8 turns
+// and double the char budget, everything else got the smaller tier. That
+// regex matches "implement the fix" and "fix the bug" but NOT "can you fix
+// it", "fix it", "fix this" or "please fix the rejection bug" — i.e. not how
+// anyone actually asks — so real fix requests were silently handed half the
+// resources and died at the cap mid-investigation (ADO #1534774, observed
+// live 2026-09-05 across four mapper files with an untouched tree).
+//
+// Guessing better is not the fix; guessing at all was. A CEILING THAT IS NOT
+// REACHED COSTS NOTHING: a question that needs three turns still ends after
+// three, because the loop exits the moment the model stops calling tools.
+// Only runs that genuinely keep working ever see this number, and those are
+// exactly the runs that should have it. So there is one budget for every
+// agent run, set at what the investigate-then-edit tier used to get, and the
+// prompt text no longer influences it at all. Convergence is enforced
+// structurally instead — see writePressure.ts, which withdraws the discovery
+// tools at 70% of the budget whatever the run turned out to be.
+//
+// ── There is no turn cap ──
+// This number is a runaway guard, not a budget: nothing in a healthy run is
+// expected to approach it. What actually bounds a run is the context window
+// (contextBudget.ts) — and crossing that is a reason to COMPACT AND CONTINUE,
+// not to stop — plus stagnation, the wall clock, and the user's Stop button.
+const SAFETY_ITERATION_CEILING = 200;
+// Wall clock. Not a budget either — a run doing useful work is watched by a
+// human who can stop it, and remote runs are metered in credits. This exists
+// so a wedged run cannot occupy a worker forever.
+const RUN_WALL_CLOCK_MS = 30 * 60 * 1000;
+// Kept only for the arithmetic that still reads a nominal cap (the commit
+// nudge's "turns left" wording and the run diagnostics line).
+const MAX_TOOL_ITERATIONS = SAFETY_ITERATION_CEILING;
+// Kept for the two places that legitimately want "this run has a ticket and
+// changed nothing": the harness note and the self-diagnosing stamp. It no
+// longer decides what the run is ALLOWED to spend.
+const TICKET_IMPLEMENT_RUN = !!ticketContext;
+// Is CHANGING the workspace this turn's job? Now only feeds the commit NUDGE
+// (prose the model may ignore) and the exploration-phase skip — positions
+// where a miss costs a reminder or a little context, never a capability or a
+// budget. Every gate where a miss used to cost something real has been moved
+// off it; see writePressure.ts and isUnfinishedWriteRun.
+const WRITE_INTENT_RUN =
+  !!executeMandate || hasWriteIntent(prompt) || (!!ticketContext && IMPLEMENT_MANDATE_RE.test(prompt));
 
 const isOpenRouter = (provider ?? '').toLowerCase() === 'openrouter';
 
@@ -713,7 +764,6 @@ const isOpenRouter = (provider ?? '').toLowerCase() === 'openrouter';
 const SLOW_TURN_MS = 20_000;
 // A single first turn this slow is enough evidence on its own.
 const SLOW_FIRST_TURN_MS = 45_000;
-const SLOW_MODEL_ITERATION_CAP = 8;
 
 const KNOWN_TOOL_NAMES = new Set(
   TOOL_DEFS.map((d: any) => d.function?.name).filter(Boolean)
@@ -1328,7 +1378,31 @@ async function runToolTurn(
 // iteration, so without a cumulative cap a long exploration can blow the
 // context window (especially on local models) before the model ever answers.
 const MAX_TOOL_RESULT_CHARS = isLocalProvider ? 12_000 : 20_000;
-const MAX_TOTAL_TOOL_CHARS = (isLocalProvider ? 48_000 : 200_000) * (TICKET_IMPLEMENT_RUN ? 2 : 1);
+//
+// ── DERIVED from the context window, not set beside it ──
+// This used to be a flat 400,000 characters. At ~4 chars/token that is about
+// 100k tokens — half of the 200k window the run is supposed to be bounded by —
+// so it, not the context, was what actually ended long runs, and truncation of
+// old results began at ~70k tokens while the context meter still read 35%.
+// The run was quietly forgetting evidence and telling the user it had
+// two-thirds of its notebook left. Exactly the turn-cap mistake one level
+// down: a proxy for the real limit, set independently, biting first.
+//
+// Now it is a fraction of the same window the meter shows, so it lands just
+// BELOW the context bound and acts as a backstop for the case where a provider
+// reports no usage at all — never as the thing that governs.
+const MANAGED_CONTEXT_TOKENS = resolveContextWindow({ modelId, override: contextWindowOverride });
+/** Rough bytes-per-token for OpenAI-family tokenizers on source code. */
+const CHARS_PER_TOKEN = 4;
+/**
+ * Share of the window tool output may occupy. The rest is the system prompt,
+ * chat history, @-mentions and the model's own turns, which are not counted
+ * here but do consume the same window.
+ */
+const TOOL_OUTPUT_WINDOW_SHARE = 0.9;
+const MAX_TOTAL_TOOL_CHARS = Math.round(
+  MANAGED_CONTEXT_TOKENS * CHARS_PER_TOKEN * TOOL_OUTPUT_WINDOW_SHARE
+);
 // A read_file result is a deliberate, targeted fetch of one known file, so it
 // earns a larger cap than a survey does: truncating it at the search budget
 // is what turned single files into two-call reads (and then re-reads) on
@@ -1613,6 +1687,29 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   let turnMsTotal = 0;
   let slowModelMode = false;
   let iterationCap = MAX_TOOL_ITERATIONS;
+  // ── Context accounting (contextBudget.ts) ──
+  // `windowTokens` is the only assumption in the run, and it self-corrects
+  // from prompts the provider actually accepted. Everything else here is the
+  // provider's own `usage.prompt_tokens`.
+  let windowTokens = resolveContextWindow({ modelId: model, override: contextWindowOverride });
+  let contextNow = contextState({ promptTokens: 0, windowTokens });
+  /** Consecutive turns that surfaced nothing new — the runaway-loop backstop. */
+  let turnsWithoutProgress = 0;
+  /**
+   * Signatures of tool results already seen this run. A model looping on the
+   * same search produces bytes on every turn but no information, so counting
+   * characters (or tool calls) would score that loop as progress — which is
+   * precisely the case the stagnation backstop exists to catch. Identity of
+   * the RESULT is the honest signal.
+   */
+  const seenToolResults = new Set<string>();
+  const noteToolResultSeen = (name: string, content: string): void => {
+    seenToolResults.add(`${name}:${content.length}:${content.slice(0, 200)}`);
+  };
+  /** One-shot: the discovery tools have been withdrawn and the model told why. */
+  let commitNarrowingApplied = false;
+  /** One-shot: the cap has been extended once so a late write could be verified. */
+  let verificationReserveUsed = false;
   const enterSlowMode = (observedMs: number, atIteration: number) => {
     if (slowModelMode) return;
     // An autonomous run has no one waiting on latency — degrading it only
@@ -1622,12 +1719,18 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // blaming the harness. Autonomous runs keep their full iteration cap.
     if (autonomous) return;
     slowModelMode = true;
-    // Leave a little room past the current iteration so a run detected late
-    // can still land an answer, but never extend beyond the original cap.
-    // An implement-mandated ticket run gets a higher floor even when a human
-    // IS waiting — 8 turns cannot hold an investigation plus the edits.
-    const slowFloor = TICKET_IMPLEMENT_RUN ? 16 : SLOW_MODEL_ITERATION_CAP;
-    iterationCap = Math.min(MAX_TOOL_ITERATIONS, Math.max(atIteration + 2, slowFloor));
+    // ── Slow mode no longer CUTS the iteration cap ──
+    // It used to drop it to 8 turns (16 for a run whose prompt matched the
+    // implement-mandate regex — the same broken guess that starved the
+    // budget). Cutting turns because the model is slow does not save the
+    // waiting human anything: they get no answer, ask again, and sit through
+    // a second run. It converted latency into failure, and it did so hardest
+    // on exactly the slow, monorepo-scale investigations that needed the
+    // turns most. Convergence is now forced by writePressure.ts at 70% of the
+    // budget, which does the job this cut was reaching for without depending
+    // on any guess about the prompt. Slow mode still does the two things that
+    // genuinely save time: it skips the optional polish reflections and
+    // narrows the exploration phase, and it tells the user the run is slow.
     parentPort?.postMessage({
       type: 'slow_model',
       avgSec: Math.round(observedMs / 1000),
@@ -1721,7 +1824,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // diagnosed from answer prose because the [agent-metrics] console line
     // never made it into the bug report. Stamp the numbers that matter onto
     // the answer itself (plan mode excluded — zero writes is its contract).
-    if (out && TICKET_IMPLEMENT_RUN && !planMode && writesApplied === 0) {
+    if (out && !!ticketContext && !planMode && writesApplied === 0) {
       const pct = Math.min(100, Math.round((toolCharsUsed / MAX_TOTAL_TOOL_CHARS) * 100));
       const nudgesFired = [
         planInsteadOfExecuteNudgeUsed ? 'plan' : '',
@@ -1734,6 +1837,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         missingToolClaimNudgeUsed ? 'missingTool' : '',
         phantomChangesNudgesUsed > 0 ? `phantom×${phantomChangesNudgesUsed}` : '',
         forceReadUsed ? 'forceRead' : '',
+        commitNarrowingApplied ? 'narrowed' : '',
       ].filter(Boolean);
       out +=
         `\n\n<sub>Run diagnostics: ${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · ${HARNESS_PROFILE} harness · 0 edits applied` +
@@ -1798,7 +1902,16 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // token cost is not free, and a model that delegates instead of deciding is
   // just stalling by proxy. Past the cap the tool reports that it is spent and
   // tells the model to read directly.
-  const MAX_EXPLORE_CALLS = isLocalProvider ? 2 : 3;
+  // ── Sub-agent delegation is a strategy, not a rationed favour ──
+  // Was 3. A delegated investigation burns ITS OWN context and returns a short
+  // answer, so it is the cheapest way to keep the main conversation small —
+  // the reason Claude Code leans on sub-agents instead of compacting. Capping
+  // it at 3 made the cheap path run out first and pushed the run back to
+  // reading everything into the main context. Now a high runaway guard, in the
+  // same spirit as SAFETY_ITERATION_CEILING: sub-agent results land in this
+  // conversation as ordinary tool results, so the context bound already prices
+  // them honestly.
+  const MAX_EXPLORE_CALLS = isLocalProvider ? 8 : 25;
   let exploreCallsUsed = 0;
   let commitNudgeNarrationUsed = false;
   let commitNudgeBudgetUsed = false;
@@ -1876,6 +1989,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
 
   const recordToolResult = (name: string, round: number, content: string) => {
     toolResultLog.push({ msgIndex: messages.length - 1, name, round, chars: content.length, compacted: false });
+    noteToolResultSeen(name, content);
   };
 
   const compactOldToolResults = (currentRound: number): void => {
@@ -1890,6 +2004,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       entry.compacted = true;
     }
   };
+
+
 
   // Adopt the interrupted run's state so this segment behaves like a
   // continuation of it rather than a fresh run that happens to have a long
@@ -2099,10 +2215,62 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   }
 
   for (let i = 0; i < iterationCap; i++) {
+    // ── Wall clock: the only thing that ENDS a healthy run early ──
+    if (Date.now() - runStarted > RUN_WALL_CLOCK_MS) {
+      console.log(`[agent] wall clock reached after ${i} turns — concluding`);
+      break;
+    }
+    // Snapshot for the progress check at the end of this round. Nothing
+    // between here and there mutates these except this round's tool calls.
+    const writesBeforeTurn = writesApplied;
+    const readPathsBeforeTurn = readPaths.size;
+    const seenResultsBeforeTurn = seenToolResults.size;
+
+    // ── Convergence pressure (see writePressure.ts) ──
+    // A run with nowhere left to put results, or one that has stopped learning
+    // anything, loses the tools that find somewhere new to look. Structural,
+    // not prose: the commit nudge already ASKS the model to stop reading, and
+    // a model that wants one more search does one more search. Both triggers
+    // are measured — never inferred from what the user typed. Announced the
+    // round it happens, or the model reports its tools as broken.
+    const narrow = shouldNarrowToConclude({
+      contextExhausted: contextNow.exhausted,
+      stagnant: isStagnant(turnsWithoutProgress),
+      writesApplied,
+    });
+    if (narrow && !commitNarrowingApplied) {
+      commitNarrowingApplied = true;
+      messages.push({ role: 'user', content: COMMIT_NARROWED_NOTICE });
+      console.log(
+        `[agent] convergence pressure at turn ${i + 1}: discovery tools withdrawn ` +
+          `(context ${contextNow.usedPct}%, ${turnsWithoutProgress} turns without progress, 0 edits)`
+      );
+    }
+    const turnToolDefs = narrow ? narrowToCommitTools(SCOPED_TOOL_DEFS) : SCOPED_TOOL_DEFS;
+
     const turnStarted = Date.now();
     syncTranscript();
-    const outcome = await runToolTurn(messages, model, baseURL, apiKeys, true, undefined, undefined, SCOPED_TOOL_DEFS);
+    const outcome = await runToolTurn(messages, model, baseURL, apiKeys, true, undefined, undefined, turnToolDefs);
     const thoughtMs = Date.now() - turnStarted;
+
+    // ── What the conversation actually costs, from the provider itself ──
+    // `usage.prompt_tokens` is the ground truth; only the window size is an
+    // assumption, and a prompt the provider ACCEPTED proves the window is at
+    // least that big, so the assumption is corrected upward before use.
+    if (outcome.usage.promptTokens > 0) {
+      windowTokens = observedWindowFloor(windowTokens, outcome.usage.promptTokens);
+      contextNow = contextState({ promptTokens: outcome.usage.promptTokens, windowTokens });
+      parentPort?.postMessage({
+        type: 'context',
+        usedTokens: contextNow.usedTokens,
+        windowTokens: contextNow.windowTokens,
+        usedPct: contextNow.usedPct,
+        remainingPct: contextNow.remainingPct,
+        // Truncated-result count, so the meter can say the context has already
+        // been trimmed once. Not summarizing compaction — see TODO.md.
+        compactions: toolResultLog.filter((e) => e.compacted).length,
+      });
+    }
 
     // Exit on absence of tool calls only — several OpenAI-compat providers
     // (Gemini, Ollama) report finish_reason 'stop' even when tool_calls are
@@ -2834,6 +3002,41 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     messages.push(...pendingImageTurns);
     toolCallsExecuted += toolCalls.length;
 
+    // ── Did this turn learn anything? (contextBudget.ts) ──
+    // The runaway backstop that replaces the turn cap. "Progress" is new
+    // information or a change to the workspace — deliberately NOT "the model
+    // called a tool", because issuing the same failing search forever is
+    // exactly the loop this has to catch. Counted from tool results, so it
+    // cannot be talked around.
+    const advanced =
+      writesApplied > writesBeforeTurn ||
+      readPaths.size > readPathsBeforeTurn ||
+      seenToolResults.size > seenResultsBeforeTurn;
+    turnsWithoutProgress = advanced ? 0 : turnsWithoutProgress + 1;
+    if (!advanced) {
+      console.log(`[agent] turn ${i + 1} surfaced nothing new (${turnsWithoutProgress} in a row)`);
+    }
+
+    // ── Verification reserve (see writePressure.ts) ──
+    // An edit that lands in the last turns would otherwise be delivered
+    // unverified, or trigger the cap between the write and the check —
+    // exactly the ending the commit pressure above is meant to prevent, moved
+    // later. Granted once, bounded, and only after something was written.
+    const reservedCap = capWithVerificationReserve({
+      turnIndex: i,
+      iterationCap,
+      hardCap: MAX_TOOL_ITERATIONS + VERIFICATION_RESERVE_TURNS,
+      writesApplied,
+      reserveUsed: verificationReserveUsed,
+    });
+    if (reservedCap !== iterationCap) {
+      verificationReserveUsed = true;
+      console.log(
+        `[agent] verification reserve: cap ${iterationCap} → ${reservedCap} (write landed at turn ${i + 1})`
+      );
+      iterationCap = reservedCap;
+    }
+
     // ── Commit nudge ──
     // The narration trigger is the precise moment observed on #1534774: the
     // model wrote "Now I have a complete understanding. The fix needs to
@@ -2865,15 +3068,28 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       });
     }
 
-    if (budgetExhausted) {
-      // Before treating exhaustion as terminal, try compacting older results —
-      // if that frees enough room for at least one more full-size result, the
-      // exploration can continue instead of being cut off mid-trace.
+    // ── Running out of room ends the run; running out of TURNS no longer does ──
+    // Automatic summarizing compaction (which would let a run continue past a
+    // full context, the way Claude Code does) is deliberately not built yet —
+    // see TODO.md. Until it is, a genuinely full context is a real stop, and
+    // the honest one: the model cannot be shown any more. Note this is a much
+    // later stop than the old 33-turn cap, and the narrowing above has already
+    // pushed the run to conclude before it gets here.
+    // Relieve pressure when the MEASURED context says to (75% of the window),
+    // or when the char backstop trips because the provider reported no usage.
+    // Truncating old results is lossy, so it must not start earlier than the
+    // real limit demands — which is precisely what the old flat char budget
+    // did, at about 35% of the window.
+    if (contextNow.shouldCompact || budgetExhausted) {
       compactOldToolResults(i);
-      if (MAX_TOTAL_TOOL_CHARS - toolCharsUsed >= MAX_TOOL_RESULT_CHARS) {
-        budgetExhausted = false;
-      }
+      if (MAX_TOTAL_TOOL_CHARS - toolCharsUsed >= MAX_TOOL_RESULT_CHARS) budgetExhausted = false;
     }
+    // The one real stop: no room left to show the model anything more.
+    if (contextNow.exhausted) {
+      console.log(`[agent] context full at turn ${i + 1} (${contextNow.usedPct}%) — concluding`);
+      break;
+    }
+    // Backstop: truncation could not free room for even one more result.
     if (budgetExhausted) break;
   }
 
@@ -2983,7 +3199,19 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // itself; the host resumes it once with a fresh budget and the reads it
   // already paid for.
   const forcedExitStalled =
-    isUnfinishedWriteRun(finalDeliverable, { writesApplied, writeIntent: WRITE_INTENT_RUN, planMode }) ||
+    isUnfinishedWriteRun(finalDeliverable, {
+      writesApplied,
+      // From what the run did and said — see writeWasExpected. WRITE_INTENT_RUN
+      // is the last of four terms there, so a prompt phrasing it misses still
+      // reaches the right verdict through the facts.
+      writeExpected: writeWasExpected({
+        answer: finalDeliverable,
+        anyWriteAttempted,
+        executeMandate,
+        writeIntent: WRITE_INTENT_RUN,
+      }),
+      planMode,
+    }) ||
     (!planMode &&
       writesApplied === 0 &&
       (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(finalDeliverable)));

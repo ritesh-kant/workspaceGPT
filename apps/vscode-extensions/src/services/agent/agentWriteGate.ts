@@ -28,10 +28,17 @@ export interface WriteDecision {
 interface PendingEntry {
   write: GatedAction;
   resolve: (d: WriteDecision) => void;
-  timer: ReturnType<typeof setTimeout>;
+  /** Always null now that approval does not time out; kept so rejectAll stays uniform. */
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
-const DECISION_TIMEOUT_MS = 10 * 60 * 1000;
+// ── No approval timeout ──
+// A pending write used to auto-REJECT after 10 minutes with "Approval timed
+// out with no user decision." A human being slow is not a failure: stepping
+// away mid-run silently threw away the edit the run existed to make, and the
+// model was then told its write had been refused. Nothing is leaked by
+// waiting — `rejectAll` clears every pending entry when the run is cancelled
+// or the worker dies, which is the honest way for a decision to end early.
 
 export class AgentWriteGate {
   private pending = new Map<string, PendingEntry>();
@@ -41,11 +48,7 @@ export class AgentWriteGate {
   await(write: GatedAction): { id: string; decision: Promise<WriteDecision> } {
     const id = `write-${++this.seq}-${Date.now()}`;
     const decision = new Promise<WriteDecision>((resolve) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        resolve({ approved: false, feedback: 'Approval timed out with no user decision.' });
-      }, DECISION_TIMEOUT_MS);
-      this.pending.set(id, { write, resolve, timer });
+      this.pending.set(id, { write, resolve, timer: null });
     });
     return { id, decision };
   }
@@ -54,7 +57,7 @@ export class AgentWriteGate {
   resolve(id: string, approved: boolean, feedback?: string, scope?: 'once' | 'session'): boolean {
     const entry = this.pending.get(id);
     if (!entry) return false;
-    clearTimeout(entry.timer);
+    if (entry.timer) clearTimeout(entry.timer);
     this.pending.delete(id);
     entry.resolve({ approved, feedback, scope });
     return true;
@@ -63,7 +66,7 @@ export class AgentWriteGate {
   /** Reject everything outstanding — used when the run is stopped or the chat is reset. */
   rejectAll(reason: string): void {
     for (const [id, entry] of this.pending) {
-      clearTimeout(entry.timer);
+      if (entry.timer) clearTimeout(entry.timer);
       entry.resolve({ approved: false, feedback: reason });
       this.pending.delete(id);
     }

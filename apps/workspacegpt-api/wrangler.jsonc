@@ -17,15 +17,16 @@
     // key names live in src/config.ts; the wrangler commands to set them are in
     // CLOUDFLARE-REMOTE-MODE-DESIGN.md §"Configuration".
 
-    // Which upstream vendor remote-mode requests are routed to — "openrouter"
-    // or "gmicloud" (see PROVIDERS in src/config.ts). Switching providers also
-    // requires that vendor's API key to be set (`wrangler secret put
-    // GMICLOUD_API_KEY` for gmicloud).
-    "INFERENCE_PROVIDER": "gmicloud",
+    // Which upstream vendor remote-mode requests are routed to — "openrouter",
+    // "gmicloud", or "tokenrouter" (see PROVIDERS in src/config.ts). Switching
+    // providers also requires that vendor's API key to be set (`wrangler
+    // secret put TOKENROUTER_API_KEY` for tokenrouter).
+    "INFERENCE_PROVIDER": "tokenrouter",
     // The model remote-mode requests are routed to, in the chosen provider's
     // format. Must support tool calling — the agent loop depends on it.
     // "OPENROUTER_MODEL": "google/gemini-2.5-flash",
-    "OPENROUTER_MODEL": "MiniMaxAI/MiniMax-M3",
+    // "OPENROUTER_MODEL": "MiniMaxAI/MiniMax-M3",
+    "OPENROUTER_MODEL": "z-ai/glm-5.3-free",
     // Usage is metered in vendor tokens and shown as credits (src/metering.ts):
     // one credit = TOKENS_PER_CREDIT tokens, charged per served request from
     // the usage the vendor reports. One allowance, keyed on `users.plan`:

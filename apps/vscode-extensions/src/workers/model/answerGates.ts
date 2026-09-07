@@ -343,12 +343,45 @@ export function commitNudgeTriggers(ctx: {
  */
 export function isUnfinishedWriteRun(
   answer: string,
-  ctx: { writesApplied: number; writeIntent: boolean; planMode?: boolean }
+  ctx: { writesApplied: number; writeExpected: boolean; planMode?: boolean }
 ): boolean {
   if (ctx.planMode) return false;
   if (ctx.writesApplied > 0) return false;
-  if (!ctx.writeIntent) return false;
+  if (!ctx.writeExpected) return false;
   return !NO_CHANGE_TERMINAL_RE.test(String(answer ?? ''));
+}
+
+/**
+ * Was this run supposed to end with a file change? Answered from what the run
+ * DID and what it SAID, not from what the user typed.
+ *
+ * The three facts come first and carry the real cases:
+ *   · it called a write tool (whether or not the write landed),
+ *   · the user approved a plan the previous turn proposed,
+ *   · its own answer claims or proposes file changes — a "### Changes"
+ *     section, or prose taking credit for edits.
+ * The last of those is what catches the ADO #1534774 shape: a report headed
+ * "Partially done" listing the four files it would have edited.
+ *
+ * `writeIntent` (a regex over the user's message) is accepted as a fourth way
+ * in, and deliberately LAST. Every earlier term already covers the run that
+ * actually tried; a phrasing this regex misses — "kindly fx it", "make it
+ * work", a request in another language — still reaches the same verdict
+ * through the facts. That is the whole point: the pattern may only ever ADD a
+ * detection, never be the thing standing between a run and a correct verdict.
+ */
+export function writeWasExpected(ctx: {
+  answer: string;
+  anyWriteAttempted: boolean;
+  executeMandate?: boolean;
+  writeIntent?: boolean;
+}): boolean {
+  return (
+    ctx.anyWriteAttempted ||
+    !!ctx.executeMandate ||
+    claimsFileChanges(ctx.answer) ||
+    !!ctx.writeIntent
+  );
 }
 
 /**

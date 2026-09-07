@@ -25,6 +25,10 @@ export const PROVIDERS = {
     chatUrl: 'https://api.gmi-serving.com/v1/chat/completions',
     apiKeyEnv: 'GMICLOUD_API_KEY',
   },
+  tokenrouter: {
+    chatUrl: 'https://api.tokenrouter.com/v1/chat/completions',
+    apiKeyEnv: 'TOKENROUTER_API_KEY',
+  },
 } as const;
 
 export type ProviderName = keyof typeof PROVIDERS;

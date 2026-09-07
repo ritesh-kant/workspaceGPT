@@ -18,7 +18,7 @@ import { getLlmSettings } from 'src/utils/getLlmSettings';
 import { getMode } from 'src/utils/getModeSettings';
 import { withKeyFailover, isTransientServerError } from 'src/utils/apiKeyFailover';
 // Shared with the webview's Resume button — see continuationIntent's header.
-import { CONTINUATION_RE, APPROVAL_RE, isContinuationIntent } from 'src/utils/continuationIntent';
+import { CONTINUATION_RE, APPROVAL_RE } from 'src/utils/continuationIntent';
 import {
   saveResumeRecord,
   loadResumeRecord,
@@ -873,41 +873,41 @@ export class ChatService {
 
       const trimmedMessage = message.trim();
 
-      // An interrupted agent turn is only resumed by a reply that asks to carry
-      // on ("continue", "try again", "fix it") — exactly when a fresh run would
-      // re-derive everything the last attempt already did. Any other message
-      // means the user moved on, so the stranded transcript is dropped rather
-      // than re-billed (its raw tool results are tens of thousands of tokens)
-      // and prefixed onto an unrelated question.
+      // ── A stranded run is carried because it EXISTS, not because the reply
+      // was phrased a particular way ──
+      // This used to be gated on isContinuationIntent(message): match, and the
+      // interrupted run was resumed; miss, and its transcript was dropped. The
+      // resume record is one slot per session, and the fresh run overwrites it
+      // as soon as it streams its own transcript — so a miss did not defer the
+      // work, it destroyed it. And the patterns miss most of how people
+      // actually reply: "go ahead, apply all four edits", "ok now fix it",
+      // "yes do it please", "please apply the fix we discussed" and any typo
+      // or non-English phrasing all fell through to the destroying branch.
       //
-      // Settled BEFORE classification, because whether a resume is waiting is
-      // an input to the routing decision below.
-      const isContinuationReply = isContinuationIntent(trimmedMessage);
-      if (!isContinuationReply) {
-        this.dropResumeFromMemory(run);
-      } else {
-        // Nothing in memory does not mean nothing to resume: this may be a
-        // reloaded window, or a session just reopened from history, and the
-        // interrupted run is parked on disk. Tell the user what is being
-        // carried and how old it is — resuming yesterday's reads silently
-        // would be worse than not resuming at all.
-        const revived = await this.hydrateResume(run);
-        if (revived) {
-          this.postStatus(run, `Recovering the interrupted run (saved ${revived.age})...`);
-          this.post(run, {
-            type: MESSAGE_TYPES.AGENT_STEP,
-            step: {
-              kind: 'info',
-              title: `Recovered the interrupted run from ${revived.age}`,
-              detail: `${revived.steps} model message(s) carried over`,
-            },
-          });
-        }
-        if (run.agentTranscript?.length) {
-          console.log(
-            `Resuming the interrupted agent run for this session (${run.agentTranscript.length} model messages carried over).`
-          );
-        }
+      // The costs are wildly asymmetric — carrying a transcript the user did
+      // not want costs some prompt tokens and is visible in the timeline;
+      // dropping one they did want loses an entire investigation and cannot be
+      // undone — so the default is now to carry. A record only exists at all
+      // when a previous run did NOT finish (a delivered answer clears both
+      // copies in forgetResume), which is exactly when the next message is
+      // overwhelmingly likely to be about it. If it is not, the continuation
+      // prompt still quotes the user's new message as the thing to answer.
+      const revived = await this.hydrateResume(run);
+      if (revived) {
+        this.postStatus(run, `Recovering the interrupted run (saved ${revived.age})...`);
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          step: {
+            kind: 'info',
+            title: `Recovered the interrupted run from ${revived.age}`,
+            detail: `${revived.steps} model message(s) carried over`,
+          },
+        });
+      }
+      if (run.agentTranscript?.length) {
+        console.log(
+          `Resuming the interrupted agent run for this session (${run.agentTranscript.length} model messages carried over).`
+        );
       }
 
       // ── Step 1: Rule-based classification (synchronous, zero latency) ──
@@ -2313,7 +2313,14 @@ Query: "${query}"`;
         // ever emitting 'message'/'error'/'exit'. Rearmed on every message the
         // worker sends (see armStallTimer calls below) — this only fires on
         // total silence, not on a merely slow turn.
-        const STALL_TIMEOUT_MS = 5 * 60 * 1000;
+        // Raised from 5 minutes 2026-09-06, with the turn cap. The watchdog
+        // measures SILENCE, and the worker is silent for one whole model
+        // completion at a time (a tool turn does not stream). Five minutes was
+        // tuned when prompts were small; a run allowed to grow toward the
+        // 200k-token window sends a much larger prompt, and a slow provider
+        // can genuinely take minutes to answer it. Killing that run would look
+        // exactly like the failure this whole change set exists to remove.
+        const STALL_TIMEOUT_MS = 12 * 60 * 1000;
         // While a tool runs on THIS thread the worker is silent because it is
         // waiting on us, not because it is stuck. Observed live: a jest run
         // passed the five-minute mark and the run was declared stalled
@@ -2476,6 +2483,12 @@ Query: "${query}"`;
             /** slow_model: observed seconds per completion and the trimmed iteration cap. */
             avgSec?: number;
             cap?: number;
+            /** context: provider-measured window occupancy for the running turn. */
+            usedTokens?: number;
+            windowTokens?: number;
+            usedPct?: number;
+            remainingPct?: number;
+            compactions?: number;
             /** agent_transcript: the worker's model-facing messages — full replacement, or an append. */
             reset?: unknown[];
             append?: unknown[];
@@ -2652,6 +2665,21 @@ Query: "${query}"`;
                 });
                 break;
               }
+
+              case 'context':
+                // Live context-window occupancy, measured by the provider.
+                // Forwarded straight through: the meter in the composer is the
+                // user's view of the thing that now bounds a run, so it has to
+                // track the real number rather than a host-side estimate.
+                this.post(run, {
+                  type: MESSAGE_TYPES.AGENT_CONTEXT,
+                  usedTokens: result.usedTokens,
+                  windowTokens: result.windowTokens,
+                  usedPct: result.usedPct,
+                  remainingPct: result.remainingPct,
+                  compactions: result.compactions,
+                });
+                break;
 
               case 'metrics':
                 // Agent-loop efficiency summary (turns, tokens, budget/compaction
