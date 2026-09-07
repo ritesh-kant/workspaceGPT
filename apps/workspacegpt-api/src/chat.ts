@@ -1,7 +1,6 @@
 import type { Env } from './env';
 import { bearerToken, getSession } from './auth';
 import { loadAccount } from './db';
-import { PROVIDERS } from './config';
 import {
   creditsForTokens,
   decideAdmission,
@@ -100,10 +99,9 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
 
   // Checked before anything is charged or even parsed: a deploy that forgot the
   // secret must not consume anyone's allowance.
-  const provider = PROVIDERS[config.provider];
-  const apiKey = env[provider.apiKeyEnv as keyof Env] as string | undefined;
-  if (!apiKey) {
-    console.error('[workspacegpt-api] missing vendor key for configured provider', {
+  const apiKey = env[config.apiKeyEnv] as string | undefined;
+  if (!apiKey || !config.chatUrl) {
+    console.error('[workspacegpt-api] missing vendor key or base URL for configured provider', {
       provider: config.provider,
     });
     return errorResponse(500, 'Inference is not configured on the server.', 'server_misconfigured');
@@ -177,7 +175,7 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
 
   let upstream: Response;
   try {
-    upstream = await fetch(provider.chatUrl, {
+    upstream = await fetch(config.chatUrl, {
       method: 'POST',
       headers: requestHeaders,
       body: JSON.stringify(upstreamBody),

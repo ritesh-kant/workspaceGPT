@@ -13,24 +13,25 @@ export interface Env {
    */
   OPENROUTER_API_KEY: string;
   /**
-   * The vendor's GMI Cloud key, only required when the resolved provider is
-   * `gmicloud`. Set via `wrangler secret put GMICLOUD_API_KEY` (or .dev.vars
-   * locally).
+   * The key for any non-OpenRouter, OpenAI-compatible vendor — TokenRouter, GMI
+   * Cloud, a self-hosted endpoint, whatever comes next. Only required when the
+   * resolved provider is `custom` (see CUSTOM_API_BASE_URL below). Set via
+   * `wrangler secret put CUSTOM_API_KEY` (or .dev.vars locally).
    */
-  GMICLOUD_API_KEY?: string;
-  /**
-   * The vendor's TokenRouter key, only required when the resolved provider is
-   * `tokenrouter`. Set via `wrangler secret put TOKENROUTER_API_KEY` (or
-   * .dev.vars locally).
-   */
-  TOKENROUTER_API_KEY?: string;
+  CUSTOM_API_KEY?: string;
   // ── Deploy-time defaults ────────────────────────────────────────────────
   // Each of these is overridable at runtime by an `app_config` row, with no
   // deploy at all — see src/config.ts for the precedence rules. They are the
   // committed defaults, not the last word.
 
-  /** Which upstream vendor remote-mode requests are routed to — see PROVIDERS in config.ts. */
+  /** Which upstream vendor remote-mode requests are routed to: "openrouter" or "custom" — see config.ts. */
   INFERENCE_PROVIDER: string;
+  /**
+   * The chat-completions URL for the `custom` provider (e.g.
+   * `https://api.tokenrouter.com/v1/chat/completions`). Ignored unless
+   * INFERENCE_PROVIDER is `custom`; that's the only place this is read.
+   */
+  CUSTOM_API_BASE_URL?: string;
   /** The model id remote-mode requests are routed to, in the chosen provider's format. */
   OPENROUTER_MODEL: string;
   /** JSON `{"plan": creditsPerWeek}` map, e.g. `{"free":2000,"pro":50000}`. */

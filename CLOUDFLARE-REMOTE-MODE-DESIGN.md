@@ -243,14 +243,15 @@ costs no extra round trip and there is no cache to wait out.
 
 ### Turning the knobs
 
-Change the provider (`openrouter` or `gmicloud` — see `PROVIDERS` in
-[config.ts](apps/workspacegpt-api/src/config.ts)). Switching to a provider
-whose key was never set fails closed with `server_misconfigured`, so set the
-key first:
+Change the provider — `openrouter` (hardcoded URL) or `custom` (any
+OpenAI-compatible endpoint, e.g. TokenRouter; see `config.ts`). Switching to a
+provider whose key (and, for `custom`, base URL) was never set fails closed
+with `server_misconfigured`, so set those first:
 
 ```bash
-wrangler secret put GMICLOUD_API_KEY
-wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('inference_provider', 'gmicloud', unixepoch())"
+wrangler secret put CUSTOM_API_KEY
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('custom_api_base_url', 'https://api.tokenrouter.com/v1/chat/completions', unixepoch())"
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('inference_provider', 'custom', unixepoch())"
 ```
 
 Change the model (must support tool calling — the agent loop depends on it;
@@ -324,7 +325,7 @@ OpenRouter key; the `wrangler` CLI already authenticates as the account owner.
 ## 9. Deploy checklist
 
 1. `wrangler secret put GITHUB_CLIENT_SECRET`
-2. `wrangler secret put OPENROUTER_API_KEY` (and `wrangler secret put GMICLOUD_API_KEY` if `inference_provider`/`INFERENCE_PROVIDER` will ever be set to `gmicloud`)
+2. `wrangler secret put OPENROUTER_API_KEY` (and `wrangler secret put CUSTOM_API_KEY` + a `custom_api_base_url` row/`CUSTOM_API_BASE_URL` var if `inference_provider`/`INFERENCE_PROVIDER` will ever be set to `custom`)
 3. `wrangler d1 migrations apply workspacegpt-db --remote` (0001–0004)
 4. KV `SESSIONS` and D1 `workspacegpt-db` ids in `wrangler.jsonc` must exist.
 5. GitHub OAuth App: add the deployed callback

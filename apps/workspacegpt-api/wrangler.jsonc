@@ -17,11 +17,16 @@
     // key names live in src/config.ts; the wrangler commands to set them are in
     // CLOUDFLARE-REMOTE-MODE-DESIGN.md §"Configuration".
 
-    // Which upstream vendor remote-mode requests are routed to — "openrouter",
-    // "gmicloud", or "tokenrouter" (see PROVIDERS in src/config.ts). Switching
-    // providers also requires that vendor's API key to be set (`wrangler
-    // secret put TOKENROUTER_API_KEY` for tokenrouter).
-    "INFERENCE_PROVIDER": "tokenrouter",
+    // Which upstream vendor remote-mode requests are routed to — "openrouter"
+    // (hardcoded URL, OPENROUTER_API_KEY) or "custom" (any OpenAI-compatible
+    // endpoint, URL from CUSTOM_API_BASE_URL below, key from CUSTOM_API_KEY —
+    // see src/config.ts). Using "custom" here for TokenRouter; switching to a
+    // different vendor later is just editing CUSTOM_API_BASE_URL + the secret,
+    // no code change.
+    "INFERENCE_PROVIDER": "custom",
+    // Chat-completions URL for the "custom" provider. Ignored when
+    // INFERENCE_PROVIDER is "openrouter".
+    "CUSTOM_API_BASE_URL": "https://api.tokenrouter.com/v1/chat/completions",
     // The model remote-mode requests are routed to, in the chosen provider's
     // format. Must support tool calling — the agent loop depends on it.
     // "OPENROUTER_MODEL": "google/gemini-2.5-flash",

@@ -15,31 +15,33 @@ import type { Env } from './env';
  * no extra round trip and an edit takes effect on the very next call — no
  * cache to wait out, no isolate to recycle.
  */
-/** Upstream inference vendors the Worker knows how to talk to. */
-export const PROVIDERS = {
-  openrouter: {
-    chatUrl: 'https://openrouter.ai/api/v1/chat/completions',
-    apiKeyEnv: 'OPENROUTER_API_KEY',
-  },
-  gmicloud: {
-    chatUrl: 'https://api.gmi-serving.com/v1/chat/completions',
-    apiKeyEnv: 'GMICLOUD_API_KEY',
-  },
-  tokenrouter: {
-    chatUrl: 'https://api.tokenrouter.com/v1/chat/completions',
-    apiKeyEnv: 'TOKENROUTER_API_KEY',
-  },
+/**
+ * Upstream inference vendors the Worker knows how to talk to.
+ *
+ * `openrouter` is the one vendor with a hardcoded chat URL and secret name.
+ * `custom` is the escape hatch for anything else (TokenRouter, GMI Cloud, a
+ * self-hosted OpenAI-compatible endpoint, ...): its base URL and key come
+ * from env/D1 instead of a name baked into this file, so switching vendors
+ * never needs a code change — see CUSTOM_API_BASE_URL in env.ts.
+ */
+const OPENROUTER = {
+  chatUrl: 'https://openrouter.ai/api/v1/chat/completions',
+  apiKeyEnv: 'OPENROUTER_API_KEY',
 } as const;
 
-export type ProviderName = keyof typeof PROVIDERS;
+export type ProviderName = 'openrouter' | 'custom';
 
 function isProviderName(value: string): value is ProviderName {
-  return value in PROVIDERS;
+  return value === 'openrouter' || value === 'custom';
 }
 
 export interface RuntimeConfig {
   /** Which upstream vendor remote-mode requests are routed to. */
   provider: ProviderName;
+  /** Chat-completions endpoint for the resolved provider. */
+  chatUrl: string;
+  /** Which Env field holds the resolved provider's API key. */
+  apiKeyEnv: 'OPENROUTER_API_KEY' | 'CUSTOM_API_KEY';
   /** Model id, in the format the chosen provider expects. */
   model: string;
   /** plan name → credits per ISO week. */
@@ -63,6 +65,7 @@ export interface RuntimeConfig {
 export const CONFIG_KEYS = {
   PROVIDER: 'inference_provider',
   MODEL: 'openrouter_model',
+  CUSTOM_BASE_URL: 'custom_api_base_url',
   PLAN_WEEKLY_CREDITS: 'plan_weekly_credits',
   FALLBACK_WEEKLY_CREDITS: 'weekly_credit_limit',
   TOKENS_PER_CREDIT: 'tokens_per_credit',
@@ -139,6 +142,17 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
   }
   const provider = isProviderName(rawProvider) ? rawProvider : DEFAULT_PROVIDER;
 
+  // `custom`'s URL is the whole point of the escape hatch, so it comes from
+  // env/D1 rather than a name in OPENROUTER above; an unset one resolves to
+  // '' and chat.ts refuses the request the same way it does a missing key.
+  const chatUrl =
+    provider === 'custom'
+      ? overrides.get(CONFIG_KEYS.CUSTOM_BASE_URL)?.trim() || env.CUSTOM_API_BASE_URL?.trim() || ''
+      : OPENROUTER.chatUrl;
+  const apiKeyEnv = provider === 'custom' ? 'CUSTOM_API_KEY' : OPENROUTER.apiKeyEnv;
+
+  // Model id is provider-agnostic — whichever vendor is resolved above reads
+  // its model from this same value.
   const model =
     overrides.get(CONFIG_KEYS.MODEL)?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL;
 
@@ -159,6 +173,8 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
 
   return {
     provider,
+    chatUrl,
+    apiKeyEnv,
     model,
     planWeeklyCredits,
     fallbackWeeklyCredits,
