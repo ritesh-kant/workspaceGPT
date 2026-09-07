@@ -2345,7 +2345,6 @@ const App: React.FC = () => {
           </div>
         )}
         <div className='composer-status-bars'>
-          {contextUsage && <ContextMeter usage={contextUsage} running={isLoading || isStreaming} />}
           {mode === 'remote' && remoteSignedIn && remoteUsage && (
             <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
           )}
@@ -2529,30 +2528,37 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
-              {isLoading || isStreaming ? (
-                <button
-                  onClick={handleStopMessage}
-                  className='stop-button action-btn'
-                  aria-label='Stop generation'
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--vscode-errorForeground, #f48771)', cursor: 'pointer' }}
-                >
-                  <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-                    <rect x='6' y='6' width='12' height='12' rx='2' fill='currentColor' />
-                  </svg>
-                </button>
-              ) : (
-                <button
-                  onClick={handleSendMessage}
-                  disabled={!inputValue.trim() && pendingAttachments.length === 0}
-                  className='send-button action-btn'
-                  aria-label='Send message'
-                >
-                  <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-                    <path d='M22 2L11 13' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-                    <path d='M22 2L15 22L11 13L2 9L22 2Z' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-                  </svg>
-                </button>
-              )}
+              <div className='input-actions'>
+                <ContextMeter
+                  usage={contextUsage}
+                  modelId={mode === 'local' ? selectedModelProvider?.selectedModel : 'glm-5.3-flash'}
+                  running={isLoading || isStreaming}
+                />
+                {isLoading || isStreaming ? (
+                  <button
+                    onClick={handleStopMessage}
+                    className='stop-button action-btn'
+                    aria-label='Stop generation'
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--vscode-errorForeground, #f48771)', cursor: 'pointer' }}
+                  >
+                    <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                      <rect x='6' y='6' width='12' height='12' rx='2' fill='currentColor' />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={!inputValue.trim() && pendingAttachments.length === 0}
+                    className='send-button action-btn'
+                    aria-label='Send message'
+                  >
+                    <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                      <path d='M22 2L11 13' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                      <path d='M22 2L15 22L11 13L2 9L22 2Z' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

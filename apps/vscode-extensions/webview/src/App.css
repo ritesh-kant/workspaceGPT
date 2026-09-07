@@ -632,6 +632,7 @@
   background-color: var(--vscode-input-background);
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: visible;
 }
 
 .input-container:focus-within {
@@ -654,9 +655,18 @@
 .input-controls {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
+  justify-content: space-between;
+  gap: 6px;
   width: 100%;
+}
+
+.input-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+  overflow: visible;
 }
 
 /* Input field styles */
@@ -3017,69 +3027,199 @@ button:disabled {
 
 
 /* ── Context meter (ContextMeter.tsx) ──────────────────────────────────────
-   How full the model's context window is for the running turn. Since the turn
-   cap was removed this is what actually bounds a run, so it shares the
-   composer status strip with the usage bar rather than hiding in Settings.
-   Hidden below 50% — see SHOW_FROM_PCT. */
-.context-meter {
+   Ghost ring in the composer toolbar, same chrome as attach / mode-chip.
+   Neutral <75%, amber at auto-summarize (>=75%), red near exhaustion (>=90%).
+   Hover/focus popover — no native `title`, which stacked a second tooltip. */
+.context-meter-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.context-meter-btn {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 4px !important;
+  color: var(--vscode-descriptionForeground) !important;
+  cursor: default !important;
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.context-meter-btn:hover,
+.context-meter-container:focus-within .context-meter-btn,
+.context-meter-container.context-meter--open .context-meter-btn {
+  background: var(--vscode-toolbar-hoverBackground) !important;
+  color: var(--vscode-foreground) !important;
+}
+
+.context-meter-svg {
+  display: block;
+  overflow: visible;
+}
+
+.context-meter-circle-fill {
+  transition: stroke-dashoffset 280ms ease, stroke 200ms ease;
+}
+
+.context-meter--running .context-meter-circle-fill {
+  animation: context-meter-ring-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes context-meter-ring-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.context-meter-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  width: 196px;
+  max-width: min(196px, calc(100vw - 24px));
+  padding: 8px 10px;
+  background: var(--vscode-editorHoverWidget-background, #252526);
+  border: 1px solid var(--vscode-editorHoverWidget-border, rgba(255, 255, 255, 0.12));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  color: var(--vscode-editorHoverWidget-foreground, #cccccc);
+  font-size: 11px;
+  line-height: 1.35;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+  white-space: normal;
+  text-align: left;
+}
+
+.context-meter-container:hover .context-meter-popover,
+.context-meter-container:focus-within .context-meter-popover,
+.context-meter-container.context-meter--open .context-meter-popover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.context-meter-popover-header {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 3px 8px;
-  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
-  border-radius: 5px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.context-meter-popover-title {
+  font-weight: 600;
   font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground, #ffffff);
 }
 
-.context-meter-bar {
-  flex: 0 0 56px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--wgpt-border, rgba(128, 128, 128, 0.35));
-  overflow: hidden;
+.context-meter-popover-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
-.context-meter-fill {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--vscode-descriptionForeground);
-  transition: width 220ms ease;
+.context-meter-popover-badge--ok {
+  background: rgba(128, 128, 128, 0.18);
+  color: var(--vscode-descriptionForeground, #9da5b4);
 }
 
-.context-meter--warn .context-meter-fill {
-  background: var(--vscode-editorWarning-foreground, #cca700);
+.context-meter-popover-badge--warn {
+  background: rgba(204, 167, 0, 0.18);
+  color: var(--vscode-editorWarning-foreground, #cca700);
 }
 
-.context-meter--critical .context-meter-fill {
-  background: var(--vscode-editorError-foreground, #f14c4c);
-}
-
-.context-meter--critical .context-meter-label {
+.context-meter-popover-badge--critical {
+  background: rgba(241, 76, 76, 0.18);
   color: var(--vscode-editorError-foreground, #f14c4c);
 }
 
-.context-meter-label {
-  flex: 1 1 auto;
-  min-width: 0;
+.context-meter-popover-bar {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(128, 128, 128, 0.22);
+  margin-bottom: 6px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-/* Quiet pulse while a turn is in flight, so a stale number never reads live. */
-.context-meter-live {
-  flex: 0 0 auto;
-  width: 5px;
-  height: 5px;
+.context-meter-popover-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.context-meter-popover-bar-fill--ok {
+  background: var(--vscode-descriptionForeground, #9da5b4);
+}
+
+.context-meter-popover-bar-fill--warn {
+  background: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.context-meter-popover-bar-fill--critical {
+  background: var(--vscode-editorError-foreground, #f14c4c);
+}
+
+.context-meter-popover-usage {
+  color: var(--vscode-foreground, #cccccc);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.context-meter-popover-sub {
+  color: var(--vscode-descriptionForeground, #888888);
+  font-size: 10px;
+}
+
+.context-meter-popover-footer {
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.context-meter-popover-live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.context-meter-live-dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--vscode-descriptionForeground);
-  animation: context-meter-pulse 1.4s ease-in-out infinite;
+  background: var(--vscode-textLink-foreground, #3794ff);
+  animation: context-meter-ring-pulse 1.4s infinite;
 }
 
-@keyframes context-meter-pulse {
-  0%, 100% { opacity: 0.25; }
-  50% { opacity: 0.9; }
+.context-meter-popover-note {
+  color: var(--vscode-descriptionForeground, #888888);
 }
+
+.context-meter-popover-note--compact {
+  color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.context-meter-popover-note--critical {
+  color: var(--vscode-editorError-foreground, #f14c4c);
+}
+
