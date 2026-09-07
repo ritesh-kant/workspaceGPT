@@ -29,6 +29,27 @@ const OPENROUTER = {
   apiKeyEnv: 'OPENROUTER_API_KEY',
 } as const;
 
+const CHAT_COMPLETIONS_PATH = '/chat/completions';
+
+/**
+ * Turn whatever was configured for `custom` into a chat-completions URL.
+ *
+ * The setting is NAMED a base URL, so `https://api.tokenrouter.com/v1` is the
+ * value a reasonable person sets — and it is exactly what was deployed on
+ * 2026-09-07, while the code below fetched it verbatim. Every remote-mode
+ * request then POSTed to `/v1`, the vendor answered `404 Invalid URL (POST
+ * /v1)`, and the proxy passed that through to the extension, where it sat next
+ * to this Worker's own baseUrl and read as if the Worker's URL were wrong.
+ * Accept both forms instead of relying on whoever sets the var to know which
+ * one this file wants. An empty value stays empty — chat.ts fails closed on
+ * it, the same way it does on a missing key.
+ */
+function toChatCompletionsUrl(raw: string): string {
+  const url = raw.replace(/\/+$/, '');
+  if (!url) return '';
+  return url.endsWith(CHAT_COMPLETIONS_PATH) ? url : `${url}${CHAT_COMPLETIONS_PATH}`;
+}
+
 export type ProviderName = 'openrouter' | 'custom';
 
 function isProviderName(value: string): value is ProviderName {
@@ -148,7 +169,9 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
   // '' and chat.ts refuses the request the same way it does a missing key.
   const chatUrl =
     provider === 'custom'
-      ? overrides.get(CONFIG_KEYS.CUSTOM_BASE_URL)?.trim() || env.CUSTOM_API_BASE_URL?.trim() || ''
+      ? toChatCompletionsUrl(
+          overrides.get(CONFIG_KEYS.CUSTOM_BASE_URL)?.trim() || env.CUSTOM_API_BASE_URL?.trim() || ''
+        )
       : OPENROUTER.chatUrl;
   const apiKeyEnv = provider === 'custom' ? 'CUSTOM_API_KEY' : OPENROUTER.apiKeyEnv;
 

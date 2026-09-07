@@ -26,7 +26,15 @@ import * as http from 'http';
 const EXPLORER_PREAMBLE_RE = /You are a code-reading assistant/;
 const EXPLORER_DEFAULT = '{"claims":[],"entryPoints":[],"unknowns":["scripted run: no preliminary scan"]}';
 
-export function startMockModel({ main = [], explore = [], onRequest } = {}) {
+/**
+ * `fail` lets a test play a provider that REFUSES a request rather than
+ * answering it: it is handed the parsed body and returns `{ status, body }` to
+ * reject with, or null/undefined to serve the script as usual. A rejection
+ * does not consume a scripted turn, so the retry that follows gets the turn
+ * the failed attempt would have had — which is what makes a strip-and-retry
+ * assertable end to end.
+ */
+export function startMockModel({ main = [], explore = [], onRequest, fail } = {}) {
   const state = { mainIndex: 0, exploreIndex: 0, preloopCalls: 0, requests: [] };
 
   const nextFrom = (script, index) => (index < script.length ? script[index] : script[script.length - 1]);
@@ -48,6 +56,23 @@ export function startMockModel({ main = [], explore = [], onRequest } = {}) {
       const systemText = String((parsed.messages ?? []).find((m) => m?.role === 'system')?.content ?? '');
       const isPreloopExplorer = withoutTools && EXPLORER_PREAMBLE_RE.test(systemText);
       if (isPreloopExplorer) state.preloopCalls++;
+
+      const rejection = fail?.(parsed);
+      if (rejection) {
+        state.requests.push({
+          subAgent: isSubAgent,
+          preloopExplorer: isPreloopExplorer,
+          withoutTools,
+          toolCount: toolNames.length,
+          toolNames,
+          messages: parsed.messages ?? [],
+          rejectedWith: rejection.status,
+        });
+        onRequest?.(state.requests[state.requests.length - 1]);
+        res.writeHead(rejection.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rejection.body ?? {}));
+        return;
+      }
 
       const turn = isPreloopExplorer
         ? { finalContent: EXPLORER_DEFAULT }

@@ -32,6 +32,19 @@ await esbuild.build({
 });
 const m = await import(path.join(outDir, 'metering.mjs'));
 
+// config.ts is equally runtime-free (it imports only a type), so the layered
+// resolution can be driven the same way.
+await esbuild.build({
+  entryPoints: [path.join(pkgRoot, 'src/config.ts')],
+  outfile: path.join(outDir, 'config.mjs'),
+  bundle: true,
+  format: 'esm',
+  platform: 'neutral',
+  target: 'es2021',
+  logLevel: 'silent',
+});
+const conf = await import(path.join(outDir, 'config.mjs'));
+
 let pass = 0;
 const failures = [];
 async function t(name, fn) {
@@ -145,6 +158,45 @@ await t('weekly: override → plan → fallback', () => {
   assert.equal(m.weeklyCreditLimitFor({ plan: 'free', weekly_credit_limit: 9000 }, cfg), 9000, 'override wins');
   assert.equal(m.weeklyCreditLimitFor({ plan: 'free', weekly_credit_limit: 0 }, cfg), 2000, 'a zero override is ignored, not "uncapped"');
 });
+
+// The custom provider's endpoint is NAMED a base URL, and on 2026-09-07 it was
+// deployed as one — "https://api.tokenrouter.com/v1" — while the proxy fetched
+// it verbatim. Every request POSTed to /v1, the vendor answered 404 Invalid URL
+// (POST /v1), and that passed through to the extension looking like a broken
+// Worker route. Both forms must resolve to the same endpoint.
+console.log('\nresolveConfig: the custom endpoint accepts a base URL or a full one');
+{
+  const envFor = (url) => ({ INFERENCE_PROVIDER: 'custom', CUSTOM_API_BASE_URL: url, CUSTOM_MODEL: 'z-ai/glm-5.3-free' });
+  const chatUrl = (url, rows) => conf.resolveConfig(envFor(url), rows).chatUrl;
+
+  await t('a base URL gets the chat-completions path appended', () => {
+    assert.equal(chatUrl('https://api.tokenrouter.com/v1'), 'https://api.tokenrouter.com/v1/chat/completions');
+    assert.equal(chatUrl('https://api.tokenrouter.com/v1/'), 'https://api.tokenrouter.com/v1/chat/completions');
+  });
+  await t('a full chat-completions URL is left exactly as it is', () => {
+    assert.equal(
+      chatUrl('https://api.tokenrouter.com/v1/chat/completions'),
+      'https://api.tokenrouter.com/v1/chat/completions',
+    );
+  });
+  await t('a D1 override is normalised too, not just the wrangler var', () => {
+    assert.equal(
+      chatUrl('https://api.tokenrouter.com/v1/chat/completions', [
+        { key: 'custom_api_base_url', value: 'https://api.gmi-serving.com/v1' },
+      ]),
+      'https://api.gmi-serving.com/v1/chat/completions',
+    );
+  });
+  await t('an unset endpoint stays empty so the proxy fails closed', () => {
+    assert.equal(chatUrl(''), '');
+    assert.equal(chatUrl('   '), '');
+  });
+  await t('openrouter keeps its own hardcoded endpoint', () => {
+    const c = conf.resolveConfig({ INFERENCE_PROVIDER: 'openrouter' }, []);
+    assert.equal(c.chatUrl, 'https://openrouter.ai/api/v1/chat/completions');
+    assert.equal(c.apiKeyEnv, 'OPENROUTER_API_KEY');
+  });
+}
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {

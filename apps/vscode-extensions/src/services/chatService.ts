@@ -2252,6 +2252,10 @@ Query: "${query}"`;
           searchResults,
           modelId: modelId ?? this.currentModel,
           chatHistory: formattedChatHistory,
+          // Stable for every turn of this conversation — the worker sends it
+          // as the provider's prompt-cache / sticky-routing key so a 25-round
+          // run reads its shared prefix from cache instead of re-billing it.
+          sessionId: run.sessionId,
           provider: provider,
           apiKey: apiKeys[0],
           apiKeys: apiKeys,

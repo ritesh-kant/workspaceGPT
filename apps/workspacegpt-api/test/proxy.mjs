@@ -230,6 +230,27 @@ await t('forwards an allowlisted body with include_usage forced on and the model
   await ctx.settle();
 });
 
+await t('the prompt-cache key is namespaced by account, never forwarded verbatim', async ({ env, ctx }) => {
+  const calls = scriptUpstream(() => sseResponse(sseBody(['hi'], { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 })));
+  const res = await worker.fetch(chatRequest({ ...PROMPT, session_id: 'wgpt-session-abc' }), env, ctx);
+  assert.equal(res.status, 200);
+  const sent = calls[0];
+  assert.equal(sent.body.session_id, `${USER_ID}:wgpt-session-abc`, 'one tenant cannot steer another tenant\'s sticky routing');
+  assert.equal(sent.body.prompt_cache_key, `${USER_ID}:wgpt-session-abc`);
+  await res.text();
+  await ctx.settle();
+});
+
+await t('no cache key from the client means none is invented upstream', async ({ env, ctx }) => {
+  const calls = scriptUpstream(() => sseResponse(sseBody(['hi'], { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 })));
+  const res = await worker.fetch(chatRequest(PROMPT), env, ctx);
+  assert.equal(res.status, 200);
+  assert.equal(calls[0].body.session_id, undefined);
+  assert.equal(calls[0].body.prompt_cache_key, undefined);
+  await res.text();
+  await ctx.settle();
+});
+
 await t('client receives the upstream SSE bytes unchanged while the tee meters the same body', async ({ db, env, ctx }) => {
   const upstreamText = sseBody(['Hel', 'lo', ' world'], { prompt_tokens: 1200, completion_tokens: 900, total_tokens: 2100 });
   scriptUpstream(() => sseResponse(upstreamText));

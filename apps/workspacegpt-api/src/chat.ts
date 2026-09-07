@@ -35,6 +35,10 @@ const PASSTHROUGH_FIELDS = [
   'seed',
   'response_format',
   'reasoning',
+  // Anthropic's top-level cache breakpoint. Harmless on the models this
+  // proxy actually serves (they cache automatically) and needed the day the
+  // configured model is a Claude one.
+  'cache_control',
 ] as const;
 
 /** OpenAI-shaped error body, so the `openai` SDK on the client surfaces a useful `error.message`. */
@@ -152,6 +156,20 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
   for (const field of PASSTHROUGH_FIELDS) {
     if (body[field] !== undefined) upstreamBody[field] = body[field];
   }
+  // ── Prompt-cache / sticky-routing key ──
+  // An agent run resends its whole conversation every round, so the cached
+  // prefix is worth real money — but OpenRouter derives its sticky-routing
+  // key by hashing the messages, which change every round, so later rounds
+  // can land on an upstream whose cache is cold. The client sends a key that
+  // is stable for its chat session; it is namespaced by account here rather
+  // than forwarded verbatim, so one tenant's key can never steer another's
+  // routing, and clipped to OpenRouter's 256-char limit.
+  const clientCacheKey = typeof body.session_id === 'string' ? body.session_id : body.prompt_cache_key;
+  if (typeof clientCacheKey === 'string' && clientCacheKey) {
+    const scoped = `${session.userId}:${clientCacheKey}`.slice(0, 256);
+    upstreamBody.session_id = scoped;
+    upstreamBody.prompt_cache_key = scoped;
+  }
   // Streamed responses only report token usage when asked. Forced on, so the
   // metering branch below always has something to read; the extra final chunk
   // (`choices: []`, `usage: {...}`) is ignored by the extension's stream
@@ -215,6 +233,17 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
   // the user got no answer, so they are not charged for one. Other statuses
   // pass through so the client SDK can back off and retry.
   if (!upstream.ok || !upstream.body) {
+    // Whose 4xx is this? The body the client gets is the VENDOR's, but the
+    // extension logs it beside this Worker's baseUrl — which is how a vendor
+    // `404 Invalid URL (POST /v1)` read as a broken Worker route on
+    // 2026-09-07, and how a vendor's 400 over image content read as ours.
+    // Name the hop: status and provider only, never the body.
+    console.error('[workspacegpt-api] upstream rejected the request', {
+      provider: config.provider,
+      status: upstream.status,
+    });
+    headers.set('X-WorkspaceGPT-Upstream', config.provider);
+    headers.set('X-WorkspaceGPT-Upstream-Status', String(upstream.status));
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 

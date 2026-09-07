@@ -61,6 +61,12 @@ interface WorkerData {
   searchResults: EmbeddingSearchResult[];
   modelId?: string;
   chatHistory?: string;
+  /**
+   * The webview chat session this turn belongs to — stable across every turn
+   * of one conversation. Sent to the provider as its prompt-cache / sticky
+   * routing key (see PROMPT_CACHE_FIELDS); never used for anything else.
+   */
+  sessionId?: string;
   provider?: string;
   apiKey?: string;
   /** All configured keys, tried in order with failover on rate-limit (429). */
@@ -146,6 +152,7 @@ const {
   searchResults,
   modelId,
   chatHistory,
+  sessionId,
   provider,
   apiKey,
   apiKeys,
@@ -228,31 +235,40 @@ function unsentImages<T extends { dataUrl: string }>(images: T[]): T[] {
   return fresh;
 }
 
-/** True when the provider rejected the request specifically over image/vision content, not a generic 400. */
-function isInvalidImageError(err: any): boolean {
-  const status = err?.status ?? err?.statusCode ?? err?.response?.status;
-  if (status !== 400) return false;
-  const msg = String(err?.message ?? '').toLowerCase();
-  return /image/.test(msg) && /(invalid|not support|unsupported|vision)/.test(msg);
-}
+/**
+ * Statuses that mean "the request as SHAPED was refused", so changing the
+ * shape is worth one attempt before the run dies. Everything else is about
+ * the endpoint or the account — 401/403 auth, 404 route, 429 rate, 5xx — and
+ * no edit to the messages can cure those.
+ */
+const REQUEST_SHAPE_REJECTED = new Set([400, 413, 422]);
 
 /**
  * Whether a failed request is worth retrying with the images removed.
  *
- * Matching the error TEXT is not enough: Gemini rejects image content it can't
- * use with a completely empty 400 body, so the SDK reports only "400 status
- * code (no body)" — nothing for isInvalidImageError's regex to match, and the
- * strip-and-retry below never fired. A bodyless 400 is evidence of nothing in
- * particular, so if the conversation carries images at all, dropping them is
- * the cheapest thing to rule out (it also shrinks a request that may simply be
- * too large — a ticket's four inline screenshots are megabytes of base64).
- * The caller only retries when images were actually present, and a second
- * failure rethrows the original error.
+ * Keyed on the STATUS, plus whether the conversation actually carries images
+ * (the caller checks that by seeing if stripping changed anything).
+ * Deliberately NOT keyed on the provider's wording — two incidents in the
+ * same direction taught that:
+ *   · Gemini rejects image content it can't use with a completely EMPTY 400
+ *     body: the SDK reports only "400 status code (no body)", so there is no
+ *     prose to match at all.
+ *   · z-ai/glm-5.3-free via TokenRouter (2026-09-07) rejected a ticket's two
+ *     screenshots with "Failed to deserialize the JSON body into the target
+ *     type: `content` must be a string, or an array of content parts …". The
+ *     old gate required one of invalid/not support/unsupported/vision in that
+ *     text, found none, and the strip-and-retry never fired — a 7-step
+ *     autonomous run died one image away from succeeding.
+ *
+ * Every provider phrases a rejection differently and rewords it without
+ * notice, so this was never a matter of pattern accuracy: a miss costs the
+ * WHOLE RUN, a false positive costs ONE extra request. Direction of failure
+ * over accuracy of pattern — so retry whenever images are present and the
+ * status says the body was the problem.
  */
 function shouldRetryWithoutImages(err: any): boolean {
-  if (isInvalidImageError(err)) return true;
   const status = err?.status ?? err?.statusCode ?? err?.response?.status;
-  return status === 400 && /status code \(no body\)/i.test(String(err?.message ?? ''));
+  return REQUEST_SHAPE_REJECTED.has(status);
 }
 
 function isImageContentPart(part: any): boolean {
@@ -754,6 +770,48 @@ const WRITE_INTENT_RUN =
 
 const isOpenRouter = (provider ?? '').toLowerCase() === 'openrouter';
 
+// ── Provider prompt caching ──
+//
+// An agent turn resends the whole conversation on every round, so the prompt
+// is re-billed 25+ times per run and the first message alone (rules + tool
+// schemas + orientation + ticket) is tens of KB. Every provider worth using
+// caches a repeated prefix; what differs is what they need from us.
+//
+//   · OpenAI, DeepSeek, Z.AI (GLM), Grok, Groq, Moonshot, Gemini 2.5 — cache
+//     automatically off the token prefix. Nothing to send. This includes the
+//     managed remote model, so no `cache_control` plumbing is needed for the
+//     provider this project actually targets.
+//   · Anthropic — needs a breakpoint (see CACHE_CONTROL below).
+//   · Qwen — same explicit syntax as Anthropic, per-block only.
+//
+// The one thing that must be sent for ALL of them on OpenRouter is
+// `session_id`. OpenRouter load-balances a model across several upstream
+// providers and derives its sticky-routing key by hashing the messages — but
+// a tool loop's messages CHANGE every round, so the derived key drifts and a
+// later round can land on an upstream whose cache is cold. `session_id`
+// (≤256 chars) replaces that hash with a key that is stable for the whole
+// conversation, which is what pins every round of the run to the upstream
+// holding the warm prefix. `prompt_cache_key` is OpenRouter's documented
+// fallback for the same purpose and OpenAI's own cache-affinity knob, so it
+// rides along; both are gated per provider because strict OpenAI-compatible
+// endpoints reject unknown body fields.
+const isRemoteManaged = provider === REMOTE_MODEL.PROVIDER;
+const isOpenAIDirect = (provider ?? '').toLowerCase() === 'openai';
+/**
+ * Cache key for this run: the chat session, so it is identical across every
+ * round of the loop AND across follow-up turns in the same conversation.
+ * Absent on an older host — the fields are then simply not sent, which is the
+ * behaviour that shipped before this existed.
+ */
+const CACHE_KEY = sessionId ? `wgpt-${sessionId}`.slice(0, 256) : undefined;
+const PROMPT_CACHE_FIELDS: Record<string, unknown> = !CACHE_KEY
+  ? {}
+  : isOpenRouter || isRemoteManaged
+    ? { session_id: CACHE_KEY, prompt_cache_key: CACHE_KEY }
+    : isOpenAIDirect
+      ? { prompt_cache_key: CACHE_KEY }
+      : {};
+
 // ── Latency-adaptive degradation ──
 // Everything above (exploration decomposition, reflection/nudge extras, a
 // 25-turn cap) assumes turns that cost a few seconds. On a slow serving path
@@ -1042,7 +1100,12 @@ async function generateWithOpenAIStream(
       temperature: 0.3,
       max_tokens: maxTokens,
       stream: true,
-    });
+      // Shares the run's cache key: a RAG/answer turn on the same session
+      // reuses whatever prefix the agent rounds already warmed. Cast because
+      // the extra keys otherwise stop the literal from selecting the SDK's
+      // streaming overload, which is what types `stream` below as async.
+      ...PROMPT_CACHE_FIELDS,
+    } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming);
   };
 
   // Create the stream with key failover. A 429 surfaces at creation (before any
@@ -1214,18 +1277,79 @@ function describeEnvelope(messages: any[]): string[] {
 }
 
 /**
- * Prompt caching for Anthropic models served through OpenRouter: the first
- * message (structured prompt + repo orientation + ticket, tens of KB) and the
- * latest message get `cache_control` breakpoints, so every turn of a 25-turn
- * loop re-reads the stable prefix from cache instead of re-billing it. Other
- * providers either cache automatically (OpenAI) or ignore the field; the
- * transform is gated to models that honor it so strict providers never see
- * an unknown key. Messages are shallow-copied — the loop's own array is the
- * transcript and must stay plain.
+ * Log the structure of the conversation that just failed.
+ *
+ * A malformed tool-call envelope is the most common cause of an opaque 4xx,
+ * and the provider's status line names none of it — so report the structural
+ * defect (and the shape, always) rather than leaving only "400".
  */
-const CACHEABLE_MODEL_RE = /claude|anthropic/i;
+function reportEnvelope(messages: any[]): void {
+  const violations = findEnvelopeViolations(messages);
+  if (violations.length) {
+    console.error('[workspaceGPT] malformed tool-call conversation:', violations);
+  }
+  console.error('[workspaceGPT] message envelope at failure:', describeEnvelope(messages));
+}
+
+/**
+ * Explicit cache breakpoints, for the model families that require them.
+ *
+ * Anthropic is NOT handled here — see CACHE_CONTROL below. Marking the first
+ * and last message by hand (what this used to do for Anthropic) silently
+ * failed for the case that matters: on an agent round the last message is
+ * almost always a `tool` result, which this function skips, so only the
+ * breakpoint at message 0 was ever placed and the growing transcript above it
+ * was re-billed in full on every round.
+ *
+ * Qwen takes Anthropic's per-block syntax and has no top-level form, so it
+ * keeps the manual treatment: a breakpoint on the stable first message (the
+ * structured prompt — rules, orientation, ticket) and one on the newest
+ * cacheable message, which extends the cached prefix as the conversation
+ * grows. Messages are shallow-copied — the loop's own array is the transcript
+ * and must stay plain.
+ */
+/**
+ * What a model family needs from us in order to cache a repeated prefix,
+ * keyed on the VENDOR half of the OpenRouter model id
+ * (`anthropic/claude-sonnet-4.5` → `anthropic`).
+ *
+ * That prefix is structured data in a machine-generated id, so reading it is
+ * parsing — not a substring hunt across the whole slug, which is how `/qwen/i`
+ * and `/claude|anthropic/i` used to decide this at two separate call sites.
+ * An unknown vendor falls through to 'automatic', i.e. send nothing: a family
+ * we do not recognise loses a cache hint (costs money) and never has a request
+ * rejected (costs the run). Adding a family is one line in the table.
+ */
+type CacheStyle =
+  /** Caches off the token prefix unaided — nothing to send. OpenAI, DeepSeek, Z.AI (GLM), Grok, Groq, Moonshot, Gemini 2.5, and the managed remote model. */
+  | 'automatic'
+  /** One top-level `cache_control`, so OpenRouter moves the breakpoints with the conversation. */
+  | 'top-level-breakpoint'
+  /** Per-block `cache_control` with no top-level form, so the blocks are marked by hand. */
+  | 'per-block-breakpoint';
+
+const CACHE_STYLE_BY_VENDOR: Record<string, CacheStyle> = {
+  anthropic: 'top-level-breakpoint',
+  qwen: 'per-block-breakpoint',
+};
+
+/** The vendor half of an OpenRouter model id, lowercased — the whole id if it carries no prefix. */
+function modelVendor(model: string): string {
+  return String(model ?? '').split('/')[0].trim().toLowerCase();
+}
+
+/**
+ * Only OpenRouter accepts these fields: a strict OpenAI-compatible endpoint
+ * 400s on an unknown body key, so every other provider is 'automatic' here
+ * regardless of which model it is serving.
+ */
+function cacheStyleFor(model: string): CacheStyle {
+  if (!isOpenRouter) return 'automatic';
+  return CACHE_STYLE_BY_VENDOR[modelVendor(model)] ?? 'automatic';
+}
+
 function withPromptCache(messages: any[], model: string): any[] {
-  if (!isOpenRouter || !CACHEABLE_MODEL_RE.test(model) || messages.length === 0) return messages;
+  if (cacheStyleFor(model) !== 'per-block-breakpoint' || messages.length === 0) return messages;
   const mark = (msg: any) => {
     if (!msg || (msg.role !== 'user' && msg.role !== 'system')) return msg;
     if (typeof msg.content === 'string') {
@@ -1247,6 +1371,24 @@ function withPromptCache(messages: any[], model: string): any[] {
   const lastIdx = out.length - 1;
   if (lastIdx > 0) out[lastIdx] = mark(out[lastIdx]);
   return out;
+}
+
+/**
+ * Anthropic caching on OpenRouter, done the automatic way: a top-level
+ * `cache_control` tells OpenRouter to cache everything up to the last
+ * cacheable block, so the breakpoints move with the conversation instead of
+ * being pinned to two messages we picked in advance. That is exactly the
+ * shape of a tool loop — an append-only transcript whose tail is a tool
+ * result — and it is why the per-block marking above no longer covers
+ * Anthropic. Deliberately not combined with per-block breakpoints: they are
+ * documented as alternatives.
+ *
+ * Every other family either caches automatically (OpenAI, DeepSeek, Z.AI/GLM,
+ * Grok, Groq, Moonshot, Gemini 2.5 implicit) or ignores the field; the gate
+ * keeps it away from strict endpoints that would 400 on an unknown key.
+ */
+function cacheControlField(model: string): Record<string, unknown> {
+  return cacheStyleFor(model) === 'top-level-breakpoint' ? { cache_control: { type: 'ephemeral' } } : {};
 }
 
 async function runToolTurn(
@@ -1273,6 +1415,10 @@ async function runToolTurn(
       model,
       messages: withPromptCache(messages, model),
       ...(withTools ? { tools: tools as any, tool_choice: 'auto' as const } : {}),
+      // Prompt caching: the routing/affinity key for every round of this run,
+      // plus the breakpoint field for families that need one.
+      ...(PROMPT_CACHE_FIELDS as any),
+      ...(cacheControlField(model) as any),
       // Cap thinking on reasoning models: tool turns need a quick decision,
       // not a minute of deliberation, and unconstrained reasoning is the main
       // latency + token cost on models like Nemotron. OpenRouter normalizes
@@ -1300,21 +1446,23 @@ async function runToolTurn(
     // them either — and retry once as text-only rather than failing the
     // whole run over an attachment the model can't use.
     if (shouldRetryWithoutImages(err) && stripImageContentFromMessages(messages)) {
-      console.error('[workspaceGPT] request rejected with images attached — retrying without them.');
+      console.error(
+        `[workspaceGPT] ${(err as any)?.status ?? 'request'} rejected with images attached — retrying without them.`
+      );
       parentPort?.postMessage({
         type: 'image_unsupported',
         message: `${model} couldn't process the attached image(s) — continuing without them.`,
       });
-      response = await withKeyFailover(apiKeys, call, notifyKeyFailover);
-    } else {
-      // A malformed conversation is the most common cause of an opaque 4xx
-      // here; report the specific structural defect rather than leaving only
-      // the provider's unhelpful status line.
-      const violations = findEnvelopeViolations(messages);
-      if (violations.length) {
-        console.error('[workspaceGPT] malformed tool-call conversation:', violations);
+      try {
+        response = await withKeyFailover(apiKeys, call, notifyKeyFailover);
+      } catch (retryErr) {
+        // The images were not the cause after all; the envelope is now the
+        // best evidence there is, so it must be logged on this path too.
+        reportEnvelope(messages);
+        throw retryErr;
       }
-      console.error('[workspaceGPT] message envelope at failure:', describeEnvelope(messages));
+    } else {
+      reportEnvelope(messages);
       throw err;
     }
   }
@@ -2164,7 +2312,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           ...defaultExplorationConfig(isLocalProvider),
           // Same rationale as runToolTurn: explorers have a 600-token output cap,
           // which unconstrained reasoning burns entirely on thinking.
-          ...(isOpenRouter ? { extraBody: { reasoning: { effort: 'low' } } } : {}),
+          // The explorers share the run's cache key too: their own prompt is a
+          // stable system preamble plus a file pack, and pinning them to the
+          // same upstream keeps that preamble warm across clusters.
+          extraBody: { ...(isOpenRouter ? { reasoning: { effort: 'low' } } : {}), ...PROMPT_CACHE_FIELDS },
         },
         isLocalProvider,
         // Scout the ticket's own words, not just the prompt's: a seeded ticket

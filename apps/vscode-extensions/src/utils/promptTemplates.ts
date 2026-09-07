@@ -293,8 +293,6 @@ export function createStructuredPrompt(
   const personalityPrompt = `
   You are **WorkspaceGPT**, a local, privacy-first AI assistant for developers, designed to run entirely within Visual Studio Code. ${toolsEnabled ? 'You explore the open workspace live with tools to provide intelligent, verified answers about the codebase.' : "You use Retrieval-Augmented Generation (RAG) to provide intelligent, context-aware responses based on the user's codebase and integrated documentation."}
 
-  **Today's date: ${today}.** Use this to interpret relative time references like "current sprint", "this week", "recent", or "upcoming" based on sprint dates visible in the provided context.
-
   ${groundingRules}
 
   ## Response Style:
@@ -303,6 +301,12 @@ export function createStructuredPrompt(
   - Avoid small talk. Be to-the-point and helpful.
   - **ADO Tickets**: When answering about Azure DevOps tickets, ALWAYS explicitly mention its Status, assigned Sprint (Iteration), and any notable callouts from its Comments/Description — but ONLY if this information exists in the provided context.
   `;
+
+  // Everything above this point is identical for every question asked from
+  // this workspace in this mode — which is exactly what a provider's prompt
+  // cache keys on, so the date lives DOWN here with the other per-turn facts
+  // rather than at the top where it would expire the whole prefix once a day.
+  const todayBlock = `  **Today's date: ${today}.** Use this to interpret relative time references like "current sprint", "this week", "recent", or "upcoming" based on sprint dates visible in the provided context.\n`;
 
   // Inject user identity and current sprint if available
   const adoContextLines: string[] = [];
@@ -417,12 +421,17 @@ This run was started with a single click and nobody will answer questions mid-ta
   // On a tool turn the workspace rules and orientation must ride along whether
   // or not context was pre-fetched — the earlier shape only emitted them in the
   // no-context branch, because a tool turn never had context before.
+  //
+  // They are emitted ABOVE the Context rather than inside it: both are fixed
+  // for the whole workspace, so keeping them ahead of the first per-question
+  // byte puts them inside the cacheable prefix. See the return statement.
+  const workspaceBlock = codebaseToolsEnabled ? `${rulesBlock}${orientationBlock}` : '';
   const contextBlock = formattedContext
     ? codebaseToolsEnabled
-      ? `${rulesBlock}${orientationBlock}**Context (retrieved from Confluence/Azure DevOps before this turn — answer from it when it suffices; verify in the workspace with your tools when it does not):**\n\`\`\`\n${formattedContext}\n\`\`\`\n`
+      ? `**Context (retrieved from Confluence/Azure DevOps before this turn — answer from it when it suffices; verify in the workspace with your tools when it does not):**\n\`\`\`\n${formattedContext}\n\`\`\`\n`
       : `**Context (ONLY source of truth — do NOT add information not found here):**\n\`\`\`\n${formattedContext}\n\`\`\`\n`
     : codebaseToolsEnabled
-      ? `${rulesBlock}${orientationBlock}**Context:** No other pre-fetched context — use your tools to look at the workspace before answering.\n`
+      ? '**Context:** No other pre-fetched context — use your tools to look at the workspace before answering.\n'
       : '**Context:** No relevant information was found in the indexed data.\n';
 
   // Files the user attached to THIS message, and files they pointed at with
@@ -432,12 +441,31 @@ This run was started with a single click and nobody will answer questions mid-ta
 
   const ticketBlock = codebaseToolsEnabled ? buildTicketBlock(options?.ticketContext) : '';
 
+  // ── Block order is a caching decision as much as a prompt one ──
+  // Every round of an agent run resends this whole string, and so does every
+  // follow-up turn in the conversation. Providers cache the longest identical
+  // TOKEN PREFIX, so the ordering rule is simply: most stable first, and
+  // nothing per-question ahead of anything workspace-wide.
+  //
+  //   stable for the mode      personality/grounding, how-to-work, the tool
+  //                            playbook (contextInstruction — the single
+  //                            largest block here)
+  //   stable for the workspace project rules, repo orientation
+  //   per day / per user       today's date, ADO identity + sprint
+  //   per conversation         ticket
+  //   per turn                 retrieved context, sources, chat history,
+  //                            @-mentions, attachments, the question
+  //
+  // contextInstruction used to sit AFTER the ticket, which put a few thousand
+  // tokens of fixed playbook behind the first bytes that differ between two
+  // tickets — so none of it could be served from cache. Nothing here is
+  // reworded; only the order changed, and the question stays last.
   return `
 ${personalityPrompt}
-${adoContextBlock}
-${howToWorkBlock}${planModeBlock}${autonomousBlock}${options?.autonomous && !options?.ticketContext ? FINAL_REPORT_FORMAT : ''}${ticketBlock}${contextInstruction}
+${howToWorkBlock}${planModeBlock}${autonomousBlock}${options?.autonomous && !options?.ticketContext ? FINAL_REPORT_FORMAT : ''}${contextInstruction}
 
-${contextBlock}${sourcesMarkdown}
+${workspaceBlock}${todayBlock}${adoContextBlock}
+${ticketBlock}${contextBlock}${sourcesMarkdown}
 
 **Chat History:**
 \`\`\`

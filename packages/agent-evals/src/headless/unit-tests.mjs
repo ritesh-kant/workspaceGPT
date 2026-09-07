@@ -2179,6 +2179,100 @@ console.log('\nticket image de-duplication (real worker, real request bodies)');
   });
 }
 
+// A provider that refuses image content must cost the run its SCREENSHOTS, not
+// its life. The strip-and-retry existed for that and still failed on
+// 2026-09-07, because it required the rejection prose to contain one of
+// invalid/not support/unsupported/vision — z-ai/glm-5.3-free's serde error
+// contains none of them, so a 7-step autonomous run died one image away from
+// succeeding. Driven through the real worker against a provider that rejects
+// any request carrying an image, so the recovery is proven end to end rather
+// than asserted about a predicate.
+console.log('\nimage rejection recovery (real worker, a provider that refuses image content)');
+{
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ';
+
+  const hasImageParts = (messages) =>
+    (messages ?? []).some(
+      (m) => Array.isArray(m?.content) && m.content.some((part) => part?.type === 'image_url'),
+    );
+
+  /** The exact body TokenRouter relayed from z-ai/glm-5.3-free on 2026-09-07. */
+  const GLM_SERDE_400 = {
+    error: {
+      message:
+        'Failed to deserialize the JSON body into the target type: `content` must be a string, ' +
+        'or an array of content parts (`text`, `image_url`, `video_url`, `audio_url`, `input_audio`) ' +
+        'at line 1 column 440256',
+      type: 'invalid_request_error',
+      param: '',
+      code: null,
+    },
+  };
+
+  const runAgainstImageRefusingProvider = async (status, body) => {
+    const ws = tempWorkspace({ 'src/a.ts': 'export const a = 1;\n' });
+    const mock = await startMockModel({
+      main: [{ finalContent: 'The screenshots show the rejection panel. Nothing to change.' }],
+      // Refuse anything carrying an image, answer anything that does not —
+      // exactly the vendor behaviour, and it makes the assertion unambiguous.
+      fail: (parsed) => (hasImageParts(parsed.messages) ? { status, body } : null),
+    });
+    try {
+      const record = await runAgent(ws, 'What do these screenshots show?', () => {}, {
+        provider: 'Custom',
+        baseUrl: mock.baseUrl,
+        modelId: 'mock-model',
+        apiKey: 'MOCK',
+        apiKeys: ['MOCK'],
+        autonomous: true,
+        harnessProfile: 'strong-model',
+        imageAttachments: [{ name: 'shot.png', dataUrl: png }],
+      });
+      const main = mock.state.requests.filter((r) => !r.subAgent && !r.preloopExplorer);
+      return { record, main };
+    } finally {
+      await mock.close();
+    }
+  };
+
+  await t('a 400 whose prose names no image problem still gets the images stripped', async () => {
+    const { record, main } = await runAgainstImageRefusingProvider(400, GLM_SERDE_400);
+    assert.ok(record.ok, `run failed instead of degrading: ${record.error}`);
+    assert.ok(main.some((r) => r.rejectedWith === 400 && hasImageParts(r.messages)), 'the first attempt should have carried the images and been refused');
+    const served = main.filter((r) => !r.rejectedWith);
+    assert.ok(served.length > 0, 'the retry never reached the provider');
+    assert.ok(served.every((r) => !hasImageParts(r.messages)), 'the retry must not resend the rejected images');
+    assert.match(record.answer ?? '', /rejection panel/, 'the answer from the retried turn is what the user gets');
+  });
+
+  await t('a payload-too-large refusal is treated the same way', async () => {
+    // 413 says the same thing as a shape-rejecting 400 — the body was the
+    // problem — and the base64 screenshots are the largest thing in it.
+    const { record, main } = await runAgainstImageRefusingProvider(413, {
+      error: { message: 'request entity too large', type: 'entity_too_large' },
+    });
+    assert.ok(record.ok, `run failed instead of degrading: ${record.error}`);
+    assert.ok(main.filter((r) => !r.rejectedWith).every((r) => !hasImageParts(r.messages)));
+  });
+
+  await t('an auth or rate refusal is NOT retried without images — nothing about the body is wrong', async () => {
+    const { record, main } = await runAgainstImageRefusingProvider(401, {
+      error: { message: 'invalid api key', type: 'invalid_request_error' },
+    });
+    assert.ok(!record.ok, 'a 401 must surface, not be papered over by dropping attachments');
+    assert.ok(main.every((r) => r.rejectedWith === 401), 'no retry should have been served');
+  });
+
+  await t('the gate reads the status, never the provider prose', () => {
+    const src = fs.readFileSync(path.join(here, '../../../../apps/vscode-extensions/src/workers/model/modelWorker.ts'), 'utf8');
+    const gate = src.slice(src.indexOf('function shouldRetryWithoutImages'));
+    const body = gate.slice(0, gate.indexOf('}') + 1);
+    assert.ok(/REQUEST_SHAPE_REJECTED\.has/.test(body), 'decided by status');
+    assert.ok(!/\.test\(/.test(body) && !/message/.test(body), 'no pattern over the error text may come back');
+    assert.ok(!/isInvalidImageError/.test(src), 'the keyword gate is gone for good');
+  });
+}
+
 console.log('\nresumeStore (an interrupted run survives a reload)');
 {
   const {
@@ -3241,6 +3335,131 @@ console.log('\ncontextBudget (the context window bounds a run — not a turn cou
     // Automatic summarizing compaction is deliberately not built yet (TODO.md);
     // this asserts we have not half-built it and left it wired in.
     assert.ok(!/compactConversation/.test(src), 'the auto-summarizer was removed, not left dangling');
+  });
+}
+
+// Every round of an agent run resends the whole prompt, and every provider
+// worth using bills a repeated prefix at a fraction of the price — but only
+// the identical LEADING tokens. So "which block goes first" is a cost
+// decision: one per-question byte placed above a few thousand tokens of fixed
+// playbook makes all of it uncacheable. These tests pin the invariant, since
+// nothing about the prompt's readability would suffer from breaking it.
+console.log('\nprompt-cache friendliness (block order is a cost decision)');
+{
+  const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
+  const TICKET = {
+    id: 1534774,
+    title: 'Image rejection section is not displayed',
+    type: 'Bug',
+    state: 'In Progress',
+    url: 'https://dev.azure.com/x/_workitems/edit/1534774',
+    description: 'TICKET_MARKER',
+  };
+  const base = {
+    codebaseToolsEnabled: true,
+    repoOrientation: 'ORIENTATION_MARKER src/ README.md',
+    workspaceRules: 'RULES_MARKER always run tests',
+    toolAvailability: { codebase: true, confluence: true, ado: true },
+  };
+  const build = (q, opts = {}) => createStructuredPrompt([], q, '', undefined, null, { ...base, ...opts });
+
+  await t('the stable playbook sits ahead of every per-question block', () => {
+    const p = build('fix the crash in foo.ts', { ticketContext: TICKET });
+    const playbook = p.indexOf('Pick the right tool for the job');
+    assert.ok(playbook > 0, 'the tool playbook must be in the prompt');
+    for (const [label, marker] of [
+      ['project rules', 'RULES_MARKER'],
+      ['repo orientation', 'ORIENTATION_MARKER'],
+      ["today's date", "**Today's date:"],
+      ['the ticket', 'TICKET_MARKER'],
+      ['chat history', '**Chat History:**'],
+      ['the question', '**User Question:**'],
+    ]) {
+      assert.ok(p.indexOf(marker) > playbook, `${label} must come AFTER the fixed playbook, not before it`);
+    }
+  });
+
+  await t('workspace-wide text sits ahead of conversation-specific text', () => {
+    const p = build('fix the crash', { ticketContext: TICKET });
+    assert.ok(p.indexOf('RULES_MARKER') < p.indexOf('TICKET_MARKER'));
+    assert.ok(p.indexOf('ORIENTATION_MARKER') < p.indexOf('TICKET_MARKER'));
+    assert.ok(p.indexOf('TICKET_MARKER') < p.indexOf('**User Question:**'));
+  });
+
+  await t('two questions from the same workspace share a long identical prefix', () => {
+    const a = build('how is the mapper triggered');
+    const b = build('rename addUser to createUser everywhere');
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    // Not a token count — a floor that only holds if the whole fixed head
+    // (personality, grounding, norms, playbook, rules, orientation) is shared.
+    assert.ok(i > 6000, `shared prefix is only ${i} chars — a dynamic block has moved above the fixed head`);
+    assert.ok(a.slice(0, i).includes('RULES_MARKER'), 'the workspace rules must be inside the shared prefix');
+    assert.ok(a.slice(0, i).includes('Pick the right tool for the job'), 'so must the playbook');
+  });
+
+  await t("the date does not expire the prefix — it is below the fixed head", () => {
+    const p = build('q');
+    const head = p.slice(0, p.indexOf("**Today's date:"));
+    assert.ok(head.includes('Pick the right tool for the job'), 'the playbook must be above the date');
+    assert.ok(/\*\*Today's date: /.test(p), 'the date itself must still be sent');
+  });
+
+  await t('the question stays last — caching must not have reordered the ask', () => {
+    const p = build('UNIQUE_QUESTION_MARKER');
+    assert.ok(p.indexOf('UNIQUE_QUESTION_MARKER') > p.indexOf('**Chat History:**'));
+    assert.ok(p.lastIndexOf('**Answer (formatted in Markdown):**') > p.indexOf('UNIQUE_QUESTION_MARKER'));
+  });
+}
+
+// The cache is only reused if OpenRouter routes the next round to the SAME
+// upstream provider — and it derives that routing key by hashing the messages,
+// which change on every round of a tool loop. `session_id` replaces that hash
+// with a key stable for the conversation. Asserted on the source because the
+// alternative is a live provider call.
+console.log('\nprompt caching: the request fields that make a cache hit possible');
+{
+  const src = fs.readFileSync(path.join(here, '../../../../apps/vscode-extensions/src/workers/model/modelWorker.ts'), 'utf8');
+
+  await t('the cache key is the chat session, clipped to the documented limit', () => {
+    assert.ok(/const CACHE_KEY = sessionId \? `wgpt-\$\{sessionId\}`\.slice\(0, 256\)/.test(src), 'stable per conversation, ≤256 chars');
+    assert.ok(/session_id: CACHE_KEY/.test(src), 'OpenRouter sticky-routing key');
+    assert.ok(/prompt_cache_key: CACHE_KEY/.test(src), "OpenRouter's fallback and OpenAI's own affinity knob");
+  });
+
+  await t('every completion in a run carries it — the loop, the answer turn and the explorers', () => {
+    const uses = src.match(/PROMPT_CACHE_FIELDS/g) ?? [];
+    assert.ok(uses.length >= 4, `only ${uses.length} references — a request path is missing the cache key`);
+  });
+
+  await t('unknown body fields never reach a provider that would reject them', () => {
+    const gate = src.slice(src.indexOf('const PROMPT_CACHE_FIELDS'), src.indexOf('const PROMPT_CACHE_FIELDS') + 400);
+    assert.ok(/isOpenRouter \|\| isRemoteManaged/.test(gate), 'session_id is OpenRouter-shaped');
+    assert.ok(/isOpenAIDirect/.test(gate), 'OpenAI gets only the field it documents');
+    assert.ok(/!CACHE_KEY\n?\s*\? \{\}/.test(gate), 'an older host without a sessionId sends nothing');
+  });
+
+  await t('Anthropic gets the automatic top-level breakpoint, not two hand-placed ones', () => {
+    // The old shape marked message 0 and the LAST message — but on an agent
+    // round the last message is a tool result, which the marker skips, so the
+    // growing transcript above it was re-billed in full every round.
+    assert.ok(/cache_control: \{ type: 'ephemeral' \} \}/.test(src));
+    const table = src.slice(src.indexOf('const CACHE_STYLE_BY_VENDOR'));
+    assert.ok(/anthropic: 'top-level-breakpoint'/.test(table.slice(0, 200)), 'Anthropic takes the top-level form');
+    assert.ok(/qwen: 'per-block-breakpoint'/.test(table.slice(0, 200)), 'Qwen keeps the per-block form; it has no top-level one');
+    const marker = src.slice(src.indexOf('function withPromptCache'), src.indexOf('function cacheControlField'));
+    assert.ok(!/claude|anthropic/i.test(marker.split('\n')[0]), 'per-block marking must no longer claim to cover Anthropic');
+  });
+
+  await t('one table decides cache plumbing, keyed on the model id vendor rather than a substring', () => {
+    // `/qwen/i` over the whole slug is why nothing ever considered
+    // `z-ai/glm-5.3-free`, and why a renamed slug silently changes billing.
+    assert.ok(!/ANTHROPIC_MODEL_RE|EXPLICIT_BREAKPOINT_MODEL_RE/.test(src), 'the model-name regexes must not come back');
+    const vendor = src.slice(src.indexOf('function modelVendor'), src.indexOf('function cacheStyleFor'));
+    assert.ok(/split\('\/'\)\[0\]/.test(vendor), 'the vendor is parsed off the id, not pattern-matched');
+    const resolve = src.slice(src.indexOf('function cacheStyleFor'));
+    assert.ok(/\?\? 'automatic'/.test(resolve.slice(0, 300)), 'an unrecognised vendor loses the hint, never the request');
+    assert.ok(/if \(!isOpenRouter\) return 'automatic'/.test(resolve.slice(0, 300)), 'strict endpoints get no unknown body keys');
   });
 }
 
