@@ -16,7 +16,6 @@ import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
 import HomeGreeting from './components/HomeGreeting';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
-import CreatePrButton from './components/CreatePrButton';
 import UsageLimitBar from './components/UsageLimitBar';
 import ContextMeter, { ContextUsage } from './components/ContextMeter';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
@@ -2529,7 +2528,6 @@ const App: React.FC = () => {
                     />
                   </div>
                 )}
-                {hasWorkspaceFolder && <CreatePrButton />}
               </div>
               {isLoading || isStreaming ? (
                 <button

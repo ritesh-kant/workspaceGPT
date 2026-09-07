@@ -3,11 +3,10 @@ import { useChatStore } from '../store/chatStore';
 import { hasShippableChanges, useGitStatusStore } from '../store/gitStatusStore';
 
 /**
- * The one "Create PR" control, living in the composer's bottom row beside the
- * other controls rather than inside a message card or the git status bar —
- * the action belongs with the things you *do*, and offering it from several
- * places at once left two identical-looking buttons with different blast
- * radii on screen together.
+ * The one "Create PR" control, living in the git status bar next to the branch
+ * and diff it acts on. Offering it from several places at once left two
+ * identical-looking buttons with different blast radii on screen together, so
+ * the message card's per-turn copy is gone and this is the only one.
  *
  * It ships the latest shippable agent turn when there is one (ticket-aware:
  * the report becomes the PR body and is posted back on the work item), and
@@ -64,21 +63,12 @@ const CreatePrButton: React.FC = () => {
   return (
     <button
       type='button'
-      className='create-pr-chip'
+      className='git-status-ship'
       onClick={onClick}
       disabled={running || (!turn && !status?.branch)}
       title={title}
     >
-      <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg' aria-hidden='true'>
-        <path
-          d='M6 3v12M6 21a3 3 0 1 0 0-6M18 21a3 3 0 1 0 0-6M18 15V9l-4-4M14 5h4v4'
-          stroke='currentColor'
-          strokeWidth='2'
-          strokeLinecap='round'
-          strokeLinejoin='round'
-        />
-      </svg>
-      <span>{running ? 'Creating…' : 'Create PR'}</span>
+      {running ? 'Creating…' : 'Create PR'}
     </button>
   );
 };

@@ -1,14 +1,15 @@
 import React from 'react';
 import { hasShippableChanges, statusSignature, useGitStatusStore } from '../store/gitStatusStore';
+import CreatePrButton from './CreatePrButton';
 
 /**
  * Always-on git status bar above the composer, Claude-Code-desktop-style:
  * current branch and the working tree's uncommitted diff stats.
  *
- * State only — the "Create PR" action that used to live here now sits in the
- * composer's control row (CreatePrButton.tsx), beside the other controls.
- * The bar stays mounted while a ship result is worth reading, so the pushed
- * branch and its pull-request link survive the tree going clean underneath it.
+ * Carries the one "Create PR" (CreatePrButton.tsx), sitting with the branch
+ * and diff it acts on. The bar stays mounted while a ship result is worth
+ * reading, so the pushed branch and its pull-request link survive the tree
+ * going clean underneath it.
  */
 const GitStatusBar: React.FC = () => {
   const status = useGitStatusStore((s) => s.status);
@@ -61,6 +62,7 @@ const GitStatusBar: React.FC = () => {
           </span>
         )}
         <div className='git-status-actions'>
+          <CreatePrButton />
           <button type='button' className='git-status-dismiss' onClick={onDismiss} aria-label='Dismiss'>
             <svg width='11' height='11' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
               <path d='M6 6l12 12M18 6L6 18' stroke='currentColor' strokeWidth='2' strokeLinecap='round' />

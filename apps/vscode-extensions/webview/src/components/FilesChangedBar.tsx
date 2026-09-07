@@ -8,8 +8,8 @@ import { TurnSummary } from '../store/chatStore';
  * with an expandable per-file list and a Review button that opens each file's
  * native original ⟷ current diff in the editor.
  *
- * Read-only: "Create PR" for this turn is the composer's single Create PR
- * control (CreatePrButton.tsx), so the same action is not offered from two
+ * Read-only: "Create PR" for this turn is the git status bar's single Create
+ * PR control (CreatePrButton.tsx), so the same action is not offered from two
  * places at once. What stays here is the outcome once a turn has shipped,
  * recorded on the message itself in App.tsx and so surviving a reload.
  */
