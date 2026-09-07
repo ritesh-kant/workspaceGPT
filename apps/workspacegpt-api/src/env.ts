@@ -32,8 +32,14 @@ export interface Env {
    * INFERENCE_PROVIDER is `custom`; that's the only place this is read.
    */
   CUSTOM_API_BASE_URL?: string;
-  /** The model id remote-mode requests are routed to, in the chosen provider's format. */
+  /** Model id for the `openrouter` provider. Ignored when INFERENCE_PROVIDER is `custom`. */
   OPENROUTER_MODEL: string;
+  /**
+   * Model id for the `custom` provider, in whatever format that vendor
+   * expects (e.g. `z-ai/glm-5.3-free` for TokenRouter). Ignored unless
+   * INFERENCE_PROVIDER is `custom`.
+   */
+  CUSTOM_MODEL?: string;
   /** JSON `{"plan": creditsPerWeek}` map, e.g. `{"free":2000,"pro":50000}`. */
   PLAN_WEEKLY_CREDITS?: string;
   /** Credits/week for a plan absent from PLAN_WEEKLY_CREDITS. */

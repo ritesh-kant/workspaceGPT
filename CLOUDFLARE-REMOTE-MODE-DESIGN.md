@@ -244,18 +244,21 @@ costs no extra round trip and there is no cache to wait out.
 ### Turning the knobs
 
 Change the provider — `openrouter` (hardcoded URL) or `custom` (any
-OpenAI-compatible endpoint, e.g. TokenRouter; see `config.ts`). Switching to a
-provider whose key (and, for `custom`, base URL) was never set fails closed
-with `server_misconfigured`, so set those first:
+OpenAI-compatible endpoint, e.g. TokenRouter; see `config.ts`). Each provider
+keeps its own key and model; `custom` additionally needs a base URL. Switching
+to a provider whose key (and, for `custom`, base URL/model) was never set
+fails closed with `server_misconfigured`, so set those first:
 
 ```bash
 wrangler secret put CUSTOM_API_KEY
 wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('custom_api_base_url', 'https://api.tokenrouter.com/v1/chat/completions', unixepoch())"
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('custom_model', 'z-ai/glm-5.3-free', unixepoch())"
 wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('inference_provider', 'custom', unixepoch())"
 ```
 
-Change the model (must support tool calling — the agent loop depends on it;
-use whatever id format the currently configured provider expects):
+Change the model for whichever provider is active (must support tool calling —
+the agent loop depends on it; use the id format that provider expects). Key is
+`openrouter_model` for `openrouter`, `custom_model` for `custom`:
 
 ```bash
 wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('openrouter_model', 'anthropic/claude-sonnet-4.5', unixepoch())"

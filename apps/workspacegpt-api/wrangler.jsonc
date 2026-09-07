@@ -18,20 +18,20 @@
     // CLOUDFLARE-REMOTE-MODE-DESIGN.md §"Configuration".
 
     // Which upstream vendor remote-mode requests are routed to — "openrouter"
-    // (hardcoded URL, OPENROUTER_API_KEY) or "custom" (any OpenAI-compatible
-    // endpoint, URL from CUSTOM_API_BASE_URL below, key from CUSTOM_API_KEY —
-    // see src/config.ts). Using "custom" here for TokenRouter; switching to a
-    // different vendor later is just editing CUSTOM_API_BASE_URL + the secret,
-    // no code change.
+    // or "custom" (see ProviderName in src/config.ts). Each has its own key +
+    // model below; "custom" additionally needs a base URL. Switching vendors
+    // is editing these vars/secrets, no code change.
     "INFERENCE_PROVIDER": "custom",
-    // Chat-completions URL for the "custom" provider. Ignored when
-    // INFERENCE_PROVIDER is "openrouter".
+
+    // ── openrouter — key: `wrangler secret put OPENROUTER_API_KEY` ─────────
+    // Model must support tool calling — the agent loop depends on it.
+    "OPENROUTER_MODEL": "google/gemini-2.5-flash",
+
+    // ── custom — key: `wrangler secret put CUSTOM_API_KEY` ──────────────────
+    // Any OpenAI-compatible chat-completions endpoint (TokenRouter, GMI Cloud,
+    // self-hosted, ...). Both ignored unless INFERENCE_PROVIDER is "custom".
     "CUSTOM_API_BASE_URL": "https://api.tokenrouter.com/v1/chat/completions",
-    // The model remote-mode requests are routed to, in the chosen provider's
-    // format. Must support tool calling — the agent loop depends on it.
-    // "OPENROUTER_MODEL": "google/gemini-2.5-flash",
-    // "OPENROUTER_MODEL": "MiniMaxAI/MiniMax-M3",
-    "OPENROUTER_MODEL": "z-ai/glm-5.3-free",
+    "CUSTOM_MODEL": "z-ai/glm-5.3-free",
     // Usage is metered in vendor tokens and shown as credits (src/metering.ts):
     // one credit = TOKENS_PER_CREDIT tokens, charged per served request from
     // the usage the vendor reports. One allowance, keyed on `users.plan`:

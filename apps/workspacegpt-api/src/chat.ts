@@ -100,8 +100,8 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
   // Checked before anything is charged or even parsed: a deploy that forgot the
   // secret must not consume anyone's allowance.
   const apiKey = env[config.apiKeyEnv] as string | undefined;
-  if (!apiKey || !config.chatUrl) {
-    console.error('[workspacegpt-api] missing vendor key or base URL for configured provider', {
+  if (!apiKey || !config.chatUrl || !config.model) {
+    console.error('[workspacegpt-api] missing vendor key, base URL, or model for configured provider', {
       provider: config.provider,
     });
     return errorResponse(500, 'Inference is not configured on the server.', 'server_misconfigured');

@@ -42,7 +42,7 @@ export interface RuntimeConfig {
   chatUrl: string;
   /** Which Env field holds the resolved provider's API key. */
   apiKeyEnv: 'OPENROUTER_API_KEY' | 'CUSTOM_API_KEY';
-  /** Model id, in the format the chosen provider expects. */
+  /** Model id for the resolved provider, in the format it expects. */
   model: string;
   /** plan name → credits per ISO week. */
   planWeeklyCredits: Record<string, number>;
@@ -64,8 +64,9 @@ export interface RuntimeConfig {
  */
 export const CONFIG_KEYS = {
   PROVIDER: 'inference_provider',
-  MODEL: 'openrouter_model',
+  OPENROUTER_MODEL: 'openrouter_model',
   CUSTOM_BASE_URL: 'custom_api_base_url',
+  CUSTOM_MODEL: 'custom_model',
   PLAN_WEEKLY_CREDITS: 'plan_weekly_credits',
   FALLBACK_WEEKLY_CREDITS: 'weekly_credit_limit',
   TOKENS_PER_CREDIT: 'tokens_per_credit',
@@ -151,10 +152,13 @@ export function resolveConfig(env: Env, rows: ConfigRow[] | null | undefined): R
       : OPENROUTER.chatUrl;
   const apiKeyEnv = provider === 'custom' ? 'CUSTOM_API_KEY' : OPENROUTER.apiKeyEnv;
 
-  // Model id is provider-agnostic — whichever vendor is resolved above reads
-  // its model from this same value.
+  // Each provider keeps its own model id — a vendor swap must never silently
+  // reuse the other vendor's id format. `custom` has no built-in default: an
+  // unset one resolves to '' and chat.ts fails closed, same as a missing key.
   const model =
-    overrides.get(CONFIG_KEYS.MODEL)?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL;
+    provider === 'custom'
+      ? overrides.get(CONFIG_KEYS.CUSTOM_MODEL)?.trim() || env.CUSTOM_MODEL?.trim() || ''
+      : overrides.get(CONFIG_KEYS.OPENROUTER_MODEL)?.trim() || env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL;
 
   const planWeeklyCredits =
     parsePlanLimits(overrides.get(CONFIG_KEYS.PLAN_WEEKLY_CREDITS), 'app_config') ??
