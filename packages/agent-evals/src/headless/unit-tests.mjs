@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import { buildUnits } from './build-units.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, '../../../..');
 
 const outDir = await buildUnits();
 const writeTools = await import(path.join(outDir, 'agentWriteTools.mjs'));
@@ -35,6 +36,7 @@ const continuation = await import(path.join(outDir, 'continuationIntent.mjs'));
 const { startMockModel } = await import('./mock-model.mjs');
 const { withKeyFailover, isRateLimitError, isTransientServerError, TRANSIENT_RETRY_DELAYS_MS } = await import(path.join(outDir, 'apiKeyFailover.mjs'));
 const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, INCOMPLETE_ANSWER_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer, isUnbackedCompletionClaim, claimsFileChanges, REPORT_CLAIMS_DONE_RE, ROOT_CAUSE_NARRATION_RE, isUnfinishedWriteRun, writeWasExpected: answerGatesWriteWasExpected, commitNudgeTriggers, hasWriteIntent, resolveHarnessProfile, phraseGatesEnabled, SMALL_MODEL_HINT_RE } = await import(path.join(outDir, 'answerGates.mjs'));
+const filePathDisplay = await import(path.join(outDir, 'filePathDisplay.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -3469,6 +3471,57 @@ console.log('\nprompt caching: the request fields that make a cache hit possible
     const resolve = src.slice(src.indexOf('function cacheStyleFor'));
     assert.ok(/\?\? 'automatic'/.test(resolve.slice(0, 300)), 'an unrecognised vendor loses the hint, never the request');
     assert.ok(/if \(!isOpenRouter\) return 'automatic'/.test(resolve.slice(0, 300)), 'strict endpoints get no unknown body keys');
+  });
+}
+
+// ═══ Files Changed bar path display (webview) ═══
+console.log('\nfilesChangedBar (path display + review skip-delete)');
+{
+  const { fileName, parentDir, splitName, isReviewableDiff, diffPathsToOpen } = filePathDisplay;
+  const css = fs.readFileSync(
+    path.join(repoRoot, 'apps/vscode-extensions/webview/src/App.css'),
+    'utf8',
+  );
+
+  await t('parentDir keeps src/ vs tests/ when the last folder matches', () => {
+    assert.strictEqual(parentDir('src/components/foo.ts'), 'src/components');
+    assert.strictEqual(parentDir('tests/components/foo.ts'), 'tests/components');
+    assert.notStrictEqual(parentDir('src/components/foo.ts'), parentDir('tests/components/foo.ts'));
+  });
+  await t('parentDir is empty for a root-level file', () => {
+    assert.strictEqual(parentDir('README.md'), '');
+    assert.strictEqual(parentDir('.gitignore'), '');
+  });
+  await t('parentDir normalizes backslashes', () => {
+    assert.strictEqual(parentDir('apps\\webview\\App.css'), 'apps/webview');
+  });
+  await t('fileName is the last segment', () => {
+    assert.strictEqual(fileName('apps/vscode-extensions/webview/src/App.css'), 'App.css');
+  });
+  await t('splitName keeps .test.ts tellable from .ts after ellipsis', () => {
+    const long = 'VeryLongComponentNameForReuploadData.test.ts';
+    assert.deepStrictEqual(splitName(long), ['VeryLongComponentNameForReuploadData', '.test.ts']);
+    assert.deepStrictEqual(splitName('FilesChangedBar.tsx'), ['FilesChangedBar', '.tsx']);
+    assert.deepStrictEqual(splitName('.gitignore'), ['.gitignore', '']);
+  });
+  await t('Review skips deletes and keeps every other path', () => {
+    const files = [
+      { path: 'src/a.ts', kind: 'edit' },
+      { path: 'src/gone.ts', kind: 'delete' },
+      { path: 'src/new.ts', kind: 'create' },
+    ];
+    assert.deepStrictEqual(diffPathsToOpen(files), ['src/a.ts', 'src/new.ts']);
+    assert.strictEqual(isReviewableDiff('delete'), false);
+    assert.strictEqual(isReviewableDiff('edit'), true);
+  });
+  await t('row grid yields the name column first and floors the path column', () => {
+    const row = css.slice(css.indexOf('.files-changed-row {'), css.indexOf('.files-changed-row .files-changed-stats'));
+    assert.match(
+      row,
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(4\.5rem,\s*0\.7fr\)\s+auto/,
+      'name must be 1fr so long heads ellipsize; path must have a 4.5rem floor',
+    );
+    assert.doesNotMatch(row, /minmax\(0,\s*auto\)\s+minmax\(0,\s*auto\)/);
   });
 }
 

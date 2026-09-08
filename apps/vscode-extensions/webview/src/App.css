@@ -1287,7 +1287,10 @@ button:disabled {
 
 .files-changed-row {
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, auto) auto;
+  /* Name yields first (1fr + minmax 0). Path keeps a readable floor so a
+     long filename cannot crush `src/components` vs `tests/components`. Stats
+     stay pinned on the right. */
+  grid-template-columns: minmax(0, 1fr) minmax(4.5rem, 0.7fr) auto;
   align-items: center;
   gap: 0.5rem;
   padding: 3px 8px;

@@ -86,6 +86,15 @@ uncommitted work you care about). Local model: `qwen2.5-coder:14b-ctx24k`.
       expanding lists each file, clicking a row (or **Review**) opens a native
       original ⟷ current diff; deleted files render as `deleted` and don't
       open a diff.
+- [ ] Same basename in different trees stays distinguishable without the
+      tooltip: `src/components/foo.ts` shows parent `src/components`,
+      `tests/components/foo.ts` shows `tests/components`.
+- [ ] A long filename (e.g. `VeryLongComponentNameForReuploadData.test.ts`)
+      in a ~280px sidebar ellipsizes the *name*; the parent path and +/−
+      stats stay readable (path column must not collapse to a sliver).
+- [ ] A root-level file (`.gitignore`, `README.md`) has an empty parent
+      column; **Review** still opens its diff. An empty `filesChanged` list
+      renders no bar.
 - [ ] A run whose model returns no final text still produces a fallback
       answer message carrying the steps + files-changed bar (nothing vanishes).
 - [ ] Non-agent (Confluence/ADO) turns are unchanged: no timeline, no bar.

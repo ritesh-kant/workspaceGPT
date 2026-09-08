@@ -28,6 +28,16 @@
  *                     selectedModel: 'x', apiKey: 'x' } } })
  *   __host({ type: 'workspace-path', path: '/repo' })
  *
+ * Files Changed bar fixture (expand the bar after the turn summary lands):
+ *
+ *   __host({ type: 'agent-turn-summary', durationMs: 1200, filesChanged: [
+ *     { path: 'src/components/foo.ts', kind: 'edit', added: 1, removed: 0 },
+ *     { path: 'tests/components/foo.ts', kind: 'edit', added: 2, removed: 0 },
+ *     { path: 'src/VeryLongComponentNameForReuploadData.test.ts',
+ *       kind: 'edit', added: 4, removed: 1 },
+ *     { path: 'src/legacy.ts', kind: 'delete', added: 0, removed: 12 },
+ *   ]})
+ *
  * Sending a settings response with no `state` first puts the app into
  * onboarding and it will not come back out — reload and send the good one.
  */

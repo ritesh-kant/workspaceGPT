@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
 import { TurnSummary } from '../store/chatStore';
+import { diffPathsToOpen, fileName, isReviewableDiff, parentDir, splitName } from '../utils/filePathDisplay';
 
 /**
  * End-of-turn changed-files bar, Antigravity-style: "1 file changed +2 −2"
@@ -17,15 +18,6 @@ interface FilesChangedBarProps {
   summary: TurnSummary;
 }
 
-const fileName = (p: string) => p.split('/').pop() || p;
-/** Parent folder only — the full path stays in the row's tooltip. */
-const parentDir = (p: string) => p.split('/').slice(-2, -1)[0] || '';
-/** Split at the first dot so the extension survives the name's ellipsis. */
-const splitName = (n: string) => {
-  const i = n.indexOf('.');
-  return i > 0 ? [n.slice(0, i), n.slice(i)] : [n, ''];
-};
-
 const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
   const vscode = VSCodeAPI();
   const [expanded, setExpanded] = useState(false);
@@ -39,12 +31,12 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
   const totalRemoved = files.reduce((n, f) => n + f.removed, 0);
 
   const openDiff = (path: string, kind: string) => {
-    if (kind === 'delete') return; // nothing on disk to diff against
+    if (!isReviewableDiff(kind)) return; // nothing on disk to diff against
     vscode.postMessage({ type: MESSAGE_TYPES.OPEN_DIFF_IN_EDITOR, path });
   };
 
   const reviewAll = () => {
-    files.forEach((f) => openDiff(f.path, f.kind));
+    diffPathsToOpen(files).forEach((path) => openDiff(path, 'edit'));
   };
 
   return (
@@ -87,31 +79,36 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
       )}
       {expanded && (
         <div className='files-changed-list'>
-          {files.map((f) => (
-            <button
-              type='button'
-              key={f.path}
-              className={`files-changed-row${f.kind === 'delete' ? ' is-deleted' : ''}`}
-              title={f.kind === 'delete' ? `${f.path} (deleted)` : `Open diff for ${f.path}`}
-              onClick={() => openDiff(f.path, f.kind)}
-            >
-              <span className='files-changed-name'>
-                <span className='fc-head'>{splitName(fileName(f.path))[0]}</span>
-                <span className='fc-tail'>{splitName(fileName(f.path))[1]}</span>
-              </span>
-              <span className='files-changed-path'>{parentDir(f.path)}</span>
-              <span className='files-changed-stats'>
-                {f.kind === 'delete' ? (
-                  <span className='stat-removed'>deleted</span>
-                ) : (
-                  <>
-                    {f.added > 0 && <span className='stat-added'>+{f.added}</span>}
-                    {f.removed > 0 && <span className='stat-removed'>−{f.removed}</span>}
-                  </>
-                )}
-              </span>
-            </button>
-          ))}
+          {files.map((f) => {
+            const [head, tail] = splitName(fileName(f.path));
+            const rowLabel = f.kind === 'delete' ? `${f.path} (deleted)` : `Open diff for ${f.path}`;
+            return (
+              <button
+                type='button'
+                key={f.path}
+                className={`files-changed-row${f.kind === 'delete' ? ' is-deleted' : ''}`}
+                title={rowLabel}
+                aria-label={rowLabel}
+                onClick={() => openDiff(f.path, f.kind)}
+              >
+                <span className='files-changed-name'>
+                  <span className='fc-head'>{head}</span>
+                  <span className='fc-tail'>{tail}</span>
+                </span>
+                <span className='files-changed-path'>{parentDir(f.path)}</span>
+                <span className='files-changed-stats'>
+                  {f.kind === 'delete' ? (
+                    <span className='stat-removed'>deleted</span>
+                  ) : (
+                    <>
+                      {f.added > 0 && <span className='stat-added'>+{f.added}</span>}
+                      {f.removed > 0 && <span className='stat-removed'>−{f.removed}</span>}
+                    </>
+                  )}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
