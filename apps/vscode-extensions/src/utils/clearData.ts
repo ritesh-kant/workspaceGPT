@@ -8,6 +8,7 @@ import { deleteDirectory } from './deleteDirectory';
 const STORAGE_DIRECTORIES = [
   'confluence',
   'ado',
+  // Retained only to purge indexes created by the retired codebase pipeline.
   'codebase',
   'chats',
   'checkpoints',

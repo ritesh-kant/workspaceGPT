@@ -21,7 +21,7 @@ export interface EmbeddingIndexManifest {
    * model/space, different hint. Recorded for provenance; the compat check ignores it.
    */
   docTaskType?: string;
-  source: 'CONFLUENCE' | 'ADO' | 'CODEBASE';
+  source: 'CONFLUENCE' | 'ADO';
   count: number;
   builtAt: string; // ISO 8601
   builtBy: string; // who produced it, e.g. 'vscode-extension'

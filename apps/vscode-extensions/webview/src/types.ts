@@ -6,13 +6,6 @@ export interface SettingsButtonProps {
   onBack: () => void;
 }
 
-export interface StatusMessage {
-  section: 'confluence' | 'codebase';
-  field: 'statusMessage' | 'messageType';
-  value: string | 'unknown';
-  delay?: number;
-}
-
 export interface ConfluenceSpace {
   id: string;
   key: string;
@@ -40,25 +33,6 @@ export interface ConfluenceConfig {
   canResumeIndexing: boolean;
   lastSyncTime?: string;
   isConnecting?: boolean;
-}
-
-export interface CodebaseConfig {
-  repoPath: string;
-  scanFrequency: string;
-  includePatterns: string;
-  excludePatterns: string;
-  maxFileSizeKb: number;
-  isSyncing: boolean;
-  isIndexing: boolean;
-  isCodebaseEnabled: boolean;
-  codebaseSyncProgress: number;
-  codebaseIndexProgress: number;
-  messageType: 'success' | 'error';
-  statusMessage: string;
-  canResume: boolean;
-  canResumeIndexing: boolean;
-  isSyncCompleted: boolean;
-  isIndexingCompleted: boolean;
 }
 
 export interface AdoCurrentSprint {

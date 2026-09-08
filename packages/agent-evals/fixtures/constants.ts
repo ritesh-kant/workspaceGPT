@@ -48,23 +48,10 @@ export const MESSAGE_TYPES = {
   FETCH_CONFLUENCE_SPACES_RESPONSE: 'fetch-confluence-spaces-response',
   FETCH_CONFLUENCE_SPACES_ERROR: 'fetch-confluence-spaces-error',
 
-  START_CODEBASE_SYNC: 'start-codebase-sync',
-  RESUME_CODEBASE_SYNC: 'resume-codebase-sync',
-  SYNC_CODEBASE_IN_PROGRESS: 'sync-codebase-progress',
-  SYNC_CODEBASE_COMPLETE: 'sync-codebase-complete',
-  STOP_CODEBASE_SYNC: 'stop-codebase-sync',
-  CODEBASE_CONNECTION_STATUS: 'codebase-connection-status',
-  SYNC_CODEBASE_ERROR: 'sync-codebase-error',
-
   INDEXING_CONFLUENCE_ERROR: 'indexing-confluence-error',
   INDEXING_CONFLUENCE_IN_PROGRESS: 'indexing-confluence-progress',
   INDEXING_CONFLUENCE_COMPLETE: 'indexing-confluence-complete',
   RESUME_INDEXING_CONFLUENCE: 'resume-indexing-confluence',
-
-  INDEXING_CODEBASE_ERROR: 'indexing-codebase-error',
-  INDEXING_CODEBASE_IN_PROGRESS: 'indexing-codebase-progress',
-  INDEXING_CODEBASE_COMPLETE: 'indexing-codebase-complete',
-  RESUME_INDEXING_CODEBASE: 'resume-indexing-codebase',
 
   // Azure DevOps messages
   CHECK_ADO_CONNECTION: 'check-ado-connection',
@@ -237,7 +224,6 @@ export const STORAGE_KEYS = {
   MODEL: 'model',
   CONFLUENCE_SYNC_PROGRESS: 'confluence-sync-progress',
   EMBEDDING_PROGRESS: 'embedding-progress',
-  CODEBASE_SYNC_PROGRESS: 'codebase-sync-progress',
   CONFLUENCE_OAUTH_TOKENS: 'confluence-oauth-tokens',
   ADO_SYNC_PROGRESS: 'ado-sync-progress',
   ADO_OAUTH_TOKENS: 'ado-oauth-tokens',

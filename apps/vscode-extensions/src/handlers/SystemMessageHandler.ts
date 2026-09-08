@@ -224,11 +224,6 @@ export class SystemMessageHandler {
           path: workspacePath,
         });
 
-        const config = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
-        if (config?.state?.config?.codebase) {
-          config.state.config.codebase.repoPath = workspacePath;
-          await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-        }
       } else {
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.WORKSPACE_PATH,

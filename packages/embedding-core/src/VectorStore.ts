@@ -1,6 +1,6 @@
 import { EmbeddingIdentity } from './embeddingManifest';
 
-export type SourceName = 'CONFLUENCE' | 'ADO' | 'CODEBASE';
+export type SourceName = 'CONFLUENCE' | 'ADO';
 
 /** One vector + everything search needs to rebuild a result. */
 export interface VectorRecord {

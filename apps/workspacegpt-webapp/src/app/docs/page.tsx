@@ -9,7 +9,7 @@ const sections = [
   { id: "installation", label: "Installation" },
   { id: "modes", label: "Modes & Privacy" },
   { id: "ai-providers", label: "AI Providers" },
-  { id: "codebase", label: "Codebase Indexing" },
+  { id: "codebase", label: "Codebase Exploration" },
   { id: "embeddings", label: "Embeddings & Vector Storage" },
   { id: "confluence", label: "Confluence Integration" },
   { id: "ado", label: "Azure DevOps" },
@@ -385,25 +385,25 @@ ollama pull mistral`}</CodeBlock>
           {/* ── Codebase ──────────────────────────────────────── */}
           <SectionAnchor id="codebase" />
           <section className="mb-16">
-            <SectionTitle>Codebase Indexing</SectionTitle>
+            <SectionTitle>Codebase Exploration</SectionTitle>
             <SectionSubtitle>
-              WorkspaceGPT indexes your local workspace files so you can chat with your own code.
+              WorkspaceGPT explores the folder currently open in your editor with live search, file reads, and language-server navigation.
             </SectionSubtitle>
 
             <div className="space-y-0">
-              <Step number={1} title="Open the Codebase panel">
-                <p>In the WorkspaceGPT sidebar, go to <code className="bg-white/10 px-1 rounded text-xs">Settings → Codebase</code>.</p>
+              <Step number={1} title="Open a workspace folder">
+                <p>Open the repository you want to discuss in VS Code, Cursor, or Antigravity.</p>
               </Step>
-              <Step number={2} title="Start Sync">
-                <p>Click <strong className="text-white">Start Sync</strong>. The extension will walk the workspace folder tree, generate embeddings using the bundled local model (<code className="bg-white/10 px-1 rounded text-xs">all-MiniLM-L6-v2</code>), and store them in VS Code&apos;s global storage.</p>
+              <Step number={2} title="Ask about the code">
+                <p>Ask a question in WorkspaceGPT. The agent searches and reads relevant files as it works, and can follow symbols and references through your editor&apos;s language service.</p>
               </Step>
-              <Step number={3} title="Chat with your code">
-                <p>Once indexing is complete, your questions will automatically draw context from your codebase alongside any other connected data sources.</p>
+              <Step number={3} title="Review cited findings">
+                <p>Use the returned file references to inspect the live workspace context behind the answer.</p>
               </Step>
             </div>
 
             <div className="mt-4 p-5 bg-slate-900 border border-yellow-500/20 rounded-2xl text-sm text-slate-300">
-              <span className="text-yellow-400 font-semibold">Note:</span> Large monorepos may take a few minutes to index on first run. Subsequent syncs are incremental and much faster.
+              <span className="text-yellow-400 font-semibold">Note:</span> Codebase exploration does not create embeddings or a persistent index of your workspace. Availability depends on having a folder open in the current editor window.
             </div>
           </section>
 
@@ -412,7 +412,7 @@ ollama pull mistral`}</CodeBlock>
           <section className="mb-16">
             <SectionTitle>Embeddings &amp; Vector Storage</SectionTitle>
             <SectionSubtitle>
-              Every connected source (codebase, Confluence, ADO) is turned into vector embeddings so WorkspaceGPT can
+              Connected Confluence and Azure DevOps sources are turned into vector embeddings so WorkspaceGPT can
               retrieve the right context. Both halves &mdash; making the embeddings and storing them &mdash; happen
               entirely on your machine, in either mode.
             </SectionSubtitle>
@@ -676,7 +676,7 @@ ollama pull mistral`}</CodeBlock>
             </div>
 
             <div className="mt-4 p-5 bg-slate-900 border border-white/5 rounded-2xl text-sm text-slate-300">
-              <span className="text-slate-200 font-semibold">Scope:</span> the extension covers <strong className="text-white">Confluence</strong> and <strong className="text-white">Azure DevOps</strong> knowledge. Local codebase indexing stays in VS Code and is not part of the share. Regenerate the code if you rotate your keys.
+              <span className="text-slate-200 font-semibold">Scope:</span> the share covers <strong className="text-white">Confluence</strong> and <strong className="text-white">Azure DevOps</strong> knowledge. Live VS Code workspace exploration is not part of the share. Regenerate the code if you rotate your keys.
             </div>
           </section>
 
@@ -767,8 +767,8 @@ ollama pull mistral`}</CodeBlock>
                   fix: "Make sure the Ollama server is running (ollama serve). The default endpoint is http://localhost:11434. Verify at least one model is pulled: ollama list.",
                 },
                 {
-                  problem: "Codebase indexing is slow",
-                  fix: "Large repos with many files take longer. Indexing is incremental after the first run. Exclude large generated/build directories by adding them to .gitignore.",
+                  problem: "Codebase tools are unavailable",
+                  fix: "Open a folder or workspace in the current editor window, then start a new chat turn. WorkspaceGPT explores live files and does not build a codebase index.",
                 },
                 {
                   problem: "Confluence sync fails",

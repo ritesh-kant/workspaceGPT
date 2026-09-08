@@ -69,7 +69,7 @@ Also added `RETRIEVAL_STATUS` message type.
 
 ### `apps/vscode-extensions/src/types/types.ts`
 Added: `QueryIntent`, `DataSource`, `QueryClassification`, `RetrievalPlan`.
-Fixed: `EmbeddingSearchResult.data.sourceName` union now includes `'ADO'` (was `'CONFLUENCE' | 'CODEBASE'` only).
+Fixed: `EmbeddingSearchResult.data.sourceName` union includes both indexed sources: `'CONFLUENCE' | 'ADO'`.
 
 ### `apps/vscode-extensions/src/workers/common/searchProcess.ts`
 `SearchMessage` accepts optional `topK?: number`. Worker uses `topK ?? MAX_SEARCH_RESULTS` instead of the hardcoded constant.

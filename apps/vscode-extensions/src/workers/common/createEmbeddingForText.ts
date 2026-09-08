@@ -23,7 +23,7 @@ interface WorkerData {
   resume?: boolean;
   lastProcessedFile?: string;
   processedFiles?: number;
-  /** Enables per-batch logging; set from the `workspacegpt.debugIndexing` setting. */
+  /** Enables per-batch logging for document indexing. */
   debug?: boolean;
 }
 
@@ -187,8 +187,8 @@ function diag(...args: any[]) {
 
 /**
  * Per-batch logging is one line per batch, so it scales with corpus size
- * (hundreds of lines for a few thousand docs). Off unless the user enables
- * `workspacegpt.debugIndexing`, or WORKSPACEGPT_DEBUG is set for a dev run.
+ * (hundreds of lines for a few thousand docs). Off unless the document
+ * indexing job enables debug logging, or WORKSPACEGPT_DEBUG is set for a dev run.
  */
 const DEBUG: boolean =
   workerData?.debug === true || !!process.env.WORKSPACEGPT_DEBUG;
@@ -508,7 +508,6 @@ async function createEmbeddings(): Promise<void> {
 function sourceFromPath(embeddingDirPath: string): EmbeddingIndexManifest['source'] {
   const parent = path.basename(path.dirname(embeddingDirPath)).toLowerCase();
   if (parent === 'ado') return 'ADO';
-  if (parent === 'codebase') return 'CODEBASE';
   return 'CONFLUENCE';
 }
 

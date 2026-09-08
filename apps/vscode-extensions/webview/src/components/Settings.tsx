@@ -11,7 +11,6 @@ import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
 import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
-// import CodebaseSettings from './settings/CodebaseSettings';
 import McpSettings from './settings/McpSettings';
 import SectionShell from './settings/SectionShell';
 import { SettingsButtonProps } from '../types';
@@ -112,8 +111,6 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         </div>
 
         <McpSettings />
-
-        {/* <CodebaseSettings /> */}
 
         {/* Reset used to be a full-width red button at the foot of every
             Settings visit. It is a once-in-a-blue-moon recovery action, so it

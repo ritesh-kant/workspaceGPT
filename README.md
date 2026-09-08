@@ -39,7 +39,7 @@ Before you begin, ensure you have the following installed:
 
 *   **Atlassian Confluence:** ✅ (SUPPORTED) — Index Confluence spaces and pages.
 *   **Azure DevOps:** ✅ (SUPPORTED) — Index work items and query them in natural language.
-*   **Codebase:** 🧪 (EXPERIMENTAL) — Index a **local, checked-out repository** by pointing at its path for code Q&A. This is local-repo indexing, not GitHub-org-wide search.
+*   **Open workspace:** ✅ — Explore the repository currently open in the editor with live text search, file reads, and language-server navigation. No codebase index is created or stored.
 *   **Jira:** 🚧 (PLANNED) — Scaffolded, but not functional yet.
 
 ## 🔹 Key Features:
@@ -53,7 +53,7 @@ Before you begin, ensure you have the following installed:
     *   **Example Prompts:**
         *   "What is the current status of work item 12345?"
         *   "Who is assigned to this bug?"
--   **Code Search (experimental):** Index a local checked-out repository and ask questions about it. Note: this searches embeddings extracted from the local repo you point it at — not remote GitHub repositories.
+-   **Codebase exploration:** Search and inspect the workspace currently open in VS Code using live tools. This reads the files you ask about; it does not build embeddings or a persistent codebase index.
     *   **Example Prompts:**
         *   "Where is the network call defined?"
         *   "Show me examples of how to use the `calculate_total` function."
@@ -124,4 +124,3 @@ If you are interested in contributing or have ideas for more features, we welcom
 ## ⚠️ Disclaimer
 
 Workspace GPT is currently in active development. Features and functionality may change as the project evolves. **However, the core commitment to local operation and data privacy will remain a fundamental aspect of the project.**
-

@@ -118,7 +118,7 @@ rolls back cleanly. Ships as a pre-release to early users.
 the code, reruns the test to green, commits on approval — with every command
 visible and every action audited. Marketplace-quality "agent mode (beta)".
 
-**Out:** codebase RAG, org tools, sub-agents.
+**Out:** org tools and sub-agents.
 
 ---
 
@@ -131,7 +131,7 @@ Differentiation on top of a working agent. This phase is the marketing.
 | 3.1 | C1 org tools in agent | `search_docs` / `search_tickets` (semantic, RAG) — **done** |
 | 3.1b | **Ticket entry point** (added 2026-08-24, [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md) steps 1–3) | `get_ticket` exact-ID ADO tool + `listMyWorkItems`/cache + "Your work" panel in the chat empty state. Code-complete, unit-tested; **pending live verification** |
 | 3.2 | B5 @-mentions | files, symbols, Confluence pages, ADO tickets in one mention model — ticket kind is ticket-entry-point step 4, not started |
-| 3.3 | B1 codebase RAG revival | dormant jina-code path: incremental, hash-skipped, gitignore-aware; semantic `search_code` tool |
+| 3.3 | B1 live codebase exploration | improve focused search, repo orientation, and LSP navigation without a persistent embedding index |
 | 3.4 | B2 repo map | `buildRepoOrientation` + LSP symbols, import-graph ranked, in the cached prompt prefix |
 | 3.5 | C2 ticket→PR flow | "implement D2C-1234" end-to-end; record the 3-minute demo (G4) — 3.1b supplies the precise ticket read this needed; remaining is step 5 (prompt tuning + eval on 5 real tickets) |
 | 3.6 | **Workspace + third-party skills** (added 2026-08-17, [SKILLS-DESIGN.md](SKILLS-DESIGN.md) steps 3–4) | `.workspacegpt/skills/*.md` + authoring guide; `.claude/skills/*/SKILL.md` compat + `triggers.json` overlay. Team-encoded procedures = enterprise stickiness |

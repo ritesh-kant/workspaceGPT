@@ -171,23 +171,6 @@ finds the answer in content mode (buried past the 50-match cap) and ranks it
 Results: `results/codebase-rank-eval.json` (merge key `queryId`) +
 `results/codebase-rank-eval.md`.
 
-### Indexing throughput — `bench:index`
-
-```bash
-pnpm bench:index   # = index-bench.mjs --multiply 10
-```
-
-Measures files/min, wall clock, and peak RSS for the real two-stage codebase
-pipeline — `dist/workers/codebase/codebaseWorker.js` (file collection,
-worker_threads) and `dist/workers/codebase/codebaseEmbeddingProcess.js`
-(embedding, forked child) — over a scratch copy of the fixture corpus.
-`--multiply N` replicates the fixture with unique basenames to scale up the
-file count. `--docs` also benchmarks `createEmbeddingForText.js` against the
-retrieval fixture corpus.
-
-Results: `results/index-bench.json` (merge key `corpusId|multiply|stage`,
-historical rows kept per corpus) + `results/index-bench.md`.
-
 ### Run everything
 
 ```bash
@@ -198,7 +181,7 @@ pnpm bench:full
 
 - **Agent bench** needs a local Ollama with the target model pulled
   (default `qwen2.5-coder:14b-ctx24k`).
-- **Retrieval / codebase-rank / indexing benches** need no network or API
+- **Retrieval and codebase-rank benches** need no network or API
   key — embedding runs fully offline via the bundled local ONNX model
   (`apps/vscode-extensions/dist/models`). They do need the extension's
   worker bundles built: `cd apps/vscode-extensions && node esbuild.config.js`.

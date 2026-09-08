@@ -1032,9 +1032,8 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.WORKSPACE_PATH:
           // Answer to the GET_WORKSPACE_PATH sent on mount. Empty path means no
           // folder is open, which is exactly what makes codebase tools
-          // unavailable host-side — `config.codebase.repoPath` can't stand in
-          // for this, since the host persists it and it survives into windows
-          // that have no folder open at all.
+          // unavailable host-side. A persisted folder path must never stand in
+          // for an actual workspace in the current VS Code window.
           setHasWorkspaceFolder(!!message.path);
           break;
         case MESSAGE_TYPES.REMOTE_SESSION_STATUS:
@@ -1135,23 +1134,16 @@ const App: React.FC = () => {
               messageType: 'success' as const,
               isConnecting: false,
             };
-            const transientCodebaseDefaults = {
-              isSyncing: false,
-              isIndexing: false,
-              codebaseSyncProgress: 0,
-              codebaseIndexProgress: 0,
-              canResume: false,
-              canResumeIndexing: false,
-              isSyncCompleted: restoredConfig.codebase?.isSyncCompleted ?? false,
-              isIndexingCompleted: restoredConfig.codebase?.isIndexingCompleted ?? false,
-              statusMessage: '',
-              messageType: 'success' as const,
+            // Drop the retired codebase sync/index settings when an older
+            // install is hydrated. Live codebase tools derive their scope from
+            // the workspace that is open now, not persisted indexing state.
+            const { codebase: _legacyCodebase, ...currentConfig } = restoredConfig as typeof restoredConfig & {
+              codebase?: unknown;
             };
             setSettingsConfig({
-              ...restoredConfig,
+              ...currentConfig,
               confluence: { ...restoredConfig.confluence, ...transientConfluenceDefaults },
               ado: { ...restoredConfig.ado, ...transientAdoDefaults },
-              codebase: { ...restoredConfig.codebase, ...transientCodebaseDefaults },
             });
             setSettingsHydrated(true);
             if (!restoredConfig.onboardingCompleted) {
