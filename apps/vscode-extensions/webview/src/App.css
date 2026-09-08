@@ -1286,7 +1286,8 @@ button:disabled {
 }
 
 .files-changed-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, auto) auto;
   align-items: center;
   gap: 0.5rem;
   padding: 3px 8px;
@@ -1294,8 +1295,18 @@ button:disabled {
   border: none;
   color: var(--vscode-foreground);
   cursor: pointer;
+  width: 100%;
   min-width: 0;
+  overflow: hidden;
   text-align: left;
+}
+
+/* Stats stay pinned to the right edge and aligned down the column, however
+   long the file name is. */
+.files-changed-row .files-changed-stats {
+  margin-left: auto;
+  justify-content: flex-end;
+  white-space: nowrap;
 }
 
 .files-changed-row:hover {
@@ -1307,17 +1318,30 @@ button:disabled {
   opacity: 0.7;
 }
 
+/* Middle-truncated: the head ellipsises, the extension always stays visible so
+   `…ReuploadData.ts` and `…ReuploadData.test.ts` remain tellable apart. */
 .files-changed-name {
   font-family: var(--vscode-editor-font-family, monospace);
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.files-changed-name .fc-head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.files-changed-name .fc-tail {
   flex-shrink: 0;
 }
 
 .files-changed-path {
-  opacity: 0.6;
+  opacity: 0.55;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
   min-width: 0;
   font-size: 0.7rem;
 }

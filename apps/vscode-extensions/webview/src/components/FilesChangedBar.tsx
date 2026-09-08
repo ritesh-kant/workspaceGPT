@@ -18,6 +18,13 @@ interface FilesChangedBarProps {
 }
 
 const fileName = (p: string) => p.split('/').pop() || p;
+/** Parent folder only — the full path stays in the row's tooltip. */
+const parentDir = (p: string) => p.split('/').slice(-2, -1)[0] || '';
+/** Split at the first dot so the extension survives the name's ellipsis. */
+const splitName = (n: string) => {
+  const i = n.indexOf('.');
+  return i > 0 ? [n.slice(0, i), n.slice(i)] : [n, ''];
+};
 
 const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
   const vscode = VSCodeAPI();
@@ -88,8 +95,11 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
               title={f.kind === 'delete' ? `${f.path} (deleted)` : `Open diff for ${f.path}`}
               onClick={() => openDiff(f.path, f.kind)}
             >
-              <span className='files-changed-name'>{fileName(f.path)}</span>
-              <span className='files-changed-path'>{f.path}</span>
+              <span className='files-changed-name'>
+                <span className='fc-head'>{splitName(fileName(f.path))[0]}</span>
+                <span className='fc-tail'>{splitName(fileName(f.path))[1]}</span>
+              </span>
+              <span className='files-changed-path'>{parentDir(f.path)}</span>
               <span className='files-changed-stats'>
                 {f.kind === 'delete' ? (
                   <span className='stat-removed'>deleted</span>
