@@ -8,7 +8,8 @@ import * as path from 'path';
  * open item 2). A separate --git-dir lives under the extension's globalStorage
  * while the user's workspace is the --work-tree, so:
  *
- *  - snapshots capture the user's *uncommitted* working state, not HEAD;
+ *  - snapshots capture only the files an approved agent action is about to
+ *    change, never the user's entire working tree or unrelated credentials;
  *  - revert is one atomic `reset --hard` across modified/created/deleted files;
  *  - files the shadow repo never tracked (user's untracked work created after
  *    the last checkpoint) survive reverts;
@@ -101,7 +102,36 @@ export class CheckpointService {
     // Never snapshot the user's real repo metadata.
     const exclude = path.join(this.shadowGitDir, 'info', 'exclude');
     fs.mkdirSync(path.dirname(exclude), { recursive: true });
-    fs.writeFileSync(exclude, '.git/\n');
+    fs.writeFileSync(
+      exclude,
+      [
+        '.git/',
+        '.env',
+        '.env.*',
+        '*.pem',
+        '*.key',
+        '*.p12',
+        '*.pfx',
+        '*.keystore',
+        '*.jks',
+        'id_rsa',
+        'id_ed25519',
+        'id_ecdsa',
+        'id_dsa',
+        'credentials*.json',
+        '.npmrc',
+        '.netrc',
+        'secret.json',
+        'secrets.json',
+        'secret.yaml',
+        'secrets.yaml',
+        'secret.yml',
+        'secrets.yml',
+        'secret.toml',
+        'secrets.toml',
+        '',
+      ].join('\n'),
+    );
     this.initialized = true;
   }
 
@@ -109,20 +139,36 @@ export class CheckpointService {
    * Snapshot the current working state. Idempotent: if nothing changed since
    * the last checkpoint, returns the existing HEAD instead of an empty commit.
    */
-  checkpoint(label: string): Promise<Checkpoint> {
+  checkpoint(label: string, files: readonly string[], allowEmpty = false): Promise<Checkpoint> {
     return this.enqueue(async () => {
+      if (!files.length) {
+        throw new Error('A checkpoint requires at least one explicitly scoped file.');
+      }
+      const scopedFiles = [...new Set(files)].map((file) => {
+        const normalized = file.replace(/\\/g, '/').replace(/^\.\//, '');
+        if (!normalized || path.posix.isAbsolute(normalized) || normalized.split('/').some((part) => part === '..')) {
+          throw new Error(`Invalid checkpoint path: ${file}`);
+        }
+        return normalized;
+      });
       await this.ensureInit();
-      await this.git(['add', '-A']);
-      const status = await this.git(['status', '--porcelain']);
+      await this.git(['add', '-A', '--', ...scopedFiles]);
+      const hasStagedChanges = await this.git(['diff', '--cached', '--quiet']).then(
+        () => false,
+        () => true,
+      );
       const hasHead = await this.git(['rev-parse', '--verify', '--quiet', 'HEAD']).then(
         (s) => s.trim() !== '',
         () => false,
       );
-      if (status.trim() === '' && hasHead) {
+      if (!hasStagedChanges && hasHead) {
         const sha = (await this.git(['rev-parse', 'HEAD'])).trim();
         return { sha, label, timestamp: Date.now() };
       }
-      await this.git(['commit', '--quiet', '--no-verify', '-m', label]);
+      if (!hasStagedChanges && !allowEmpty) {
+        throw new Error(`No checkpointable change was found for: ${scopedFiles.join(', ')}`);
+      }
+      await this.git(['commit', '--quiet', '--no-verify', ...(allowEmpty ? ['--allow-empty'] : []), '-m', label]);
       const sha = (await this.git(['rev-parse', 'HEAD'])).trim();
       // Tag every checkpoint: revertTo() resets HEAD backwards, which would
       // otherwise leave later checkpoints unreachable (invisible to list(),

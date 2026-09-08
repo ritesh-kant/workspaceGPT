@@ -28,6 +28,7 @@ export class ConfluenceAuthService {
   private context: vscode.ExtensionContext;
   private server: http.Server | null = null;
   private pendingReject: ((reason?: any) => void) | null = null;
+  private timeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -47,9 +48,6 @@ export class ConfluenceAuthService {
   }> {
     // Generate a random state parameter for CSRF protection
     const state = this.generateRandomState();
-
-    // Build the authorization URL
-    const authUrl = this.buildAuthUrl(state);
 
     // Set up the local callback server and wait for the redirect
     const code = await this.waitForAuthCode(state);
@@ -104,7 +102,7 @@ export class ConfluenceAuthService {
   private waitForAuthCode(state: string): Promise<string> {
     return new Promise((resolve, reject) => {
       // Set a timeout (5 minutes)
-      const timeout = setTimeout(() => {
+      this.timeout = setTimeout(() => {
         this.clearPendingReject();
         this.shutdownServer();
         reject(new Error('OAuth authentication timed out. Please try again.'));
@@ -123,7 +121,7 @@ export class ConfluenceAuthService {
           if (error) {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml(error));
-            clearTimeout(timeout);
+            this.clearTimeout();
             this.clearPendingReject();
             this.shutdownServer();
             reject(new Error(`Atlassian authorization error: ${error}`));
@@ -133,7 +131,7 @@ export class ConfluenceAuthService {
           if (returnedState !== state) {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml('State mismatch - possible CSRF attack'));
-            clearTimeout(timeout);
+            this.clearTimeout();
             this.clearPendingReject();
             this.shutdownServer();
             reject(new Error('OAuth state mismatch. Please try again.'));
@@ -143,7 +141,7 @@ export class ConfluenceAuthService {
           if (!code) {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(this.getErrorHtml('No authorization code received'));
-            clearTimeout(timeout);
+            this.clearTimeout();
             this.clearPendingReject();
             this.shutdownServer();
             reject(new Error('No authorization code received from Atlassian.'));
@@ -153,7 +151,7 @@ export class ConfluenceAuthService {
           // Success!
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(this.getSuccessHtml());
-          clearTimeout(timeout);
+          this.clearTimeout();
           this.clearPendingReject();
           this.shutdownServer();
           resolve(code);
@@ -170,8 +168,9 @@ export class ConfluenceAuthService {
       });
 
       this.server.on('error', (err) => {
-        clearTimeout(timeout);
+        this.clearTimeout();
         this.clearPendingReject();
+        this.shutdownServer();
         reject(new Error(`Failed to start OAuth callback server: ${err.message}`));
       });
     });
@@ -306,7 +305,7 @@ export class ConfluenceAuthService {
 
     try {
       while (nextUrl) {
-        const response = await fetch(nextUrl, {
+        const response: Response = await fetch(nextUrl, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
             Accept: 'application/json',
@@ -318,14 +317,17 @@ export class ConfluenceAuthService {
           throw new Error(`Failed (${response.status}): ${errorText}`);
         }
 
-        const data = await response.json();
-        allSpaces = allSpaces.concat(data.results);
+        const data = (await response.json()) as {
+          results?: unknown[];
+          _links?: { next?: string };
+        };
+        allSpaces = allSpaces.concat(data.results ?? []);
 
         // Check if there is a next page
         if (data._links && data._links.next) {
           // The next link returned by API v2 is usually a relative path like /wiki/api/v2/spaces?cursor=...
           // We need to append it to the Atlassian proxy base URL
-          const nextPath = data._links.next;
+          const nextPath: string = data._links.next;
           nextUrl = `https://api.atlassian.com/ex/confluence/${cloudId}${nextPath}`;
         } else {
           nextUrl = null;
@@ -360,6 +362,7 @@ export class ConfluenceAuthService {
    * Cancel any pending OAuth flow
    */
   async cancelOAuthFlow(): Promise<void> {
+    this.clearTimeout();
     if (this.pendingReject) {
       this.pendingReject(new Error('Authentication cancelled.'));
       this.clearPendingReject();
@@ -412,6 +415,13 @@ export class ConfluenceAuthService {
     this.pendingReject = null;
   }
 
+  private clearTimeout(): void {
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = null;
+    }
+  }
+
   private generateRandomState(): string {
     const array = new Uint8Array(32);
     require('crypto').randomFillSync(array);
@@ -440,10 +450,19 @@ export class ConfluenceAuthService {
   <div style="text-align: center; padding: 40px; background: #16213e; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
     <div style="font-size: 64px; margin-bottom: 16px;">❌</div>
     <h1 style="color: #e74c3c; margin-bottom: 8px;">Authentication Failed</h1>
-    <p style="color: #a0a0a0;">${error}</p>
+    <p style="color: #a0a0a0;">${this.escapeHtml(error)}</p>
     <p style="color: #a0a0a0;">Please close this tab and try again in VS Code.</p>
   </div>
 </body>
 </html>`;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }

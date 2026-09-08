@@ -142,6 +142,7 @@ export class SystemMessageHandler {
       console.log('WorkspaceGPT storage reset.');
     } catch (error) {
       console.error('Error during WorkspaceGPT reset:', error);
+      throw error;
     }
   }
 

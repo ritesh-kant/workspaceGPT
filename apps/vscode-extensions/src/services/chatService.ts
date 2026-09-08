@@ -350,8 +350,10 @@ export class ChatService {
   private currentModel: string;
   /** Per-chat-session run state, keyed by the webview's sessionId. */
   private runs = new Map<string, SessionRun>();
-  /** Shadow-git checkpoints, created lazily per workspace on the first write. */
-  private checkpointService: CheckpointService | null = null;
+  /** Shadow-git checkpoints, created lazily per workspace root on the first write. */
+  private checkpointServices = new Map<string, CheckpointService>();
+  /** Shadow repository root for each checkpoint exposed to this live chat. */
+  private checkpointRootsBySha = new Map<string, string>();
   /** Commands the user approved "for this session" (exact string match). */
   private sessionCommandAllowlist = new Set<string>();
   /** When the in-flight turn started — reported as "Worked for Xs". */
@@ -1602,12 +1604,6 @@ export class ChatService {
         note: 'This exact command already ran this turn and no write has landed since — the result above is that run, not a new one. Do not run it again unless you change a file first.',
       };
     }
-    try {
-      const cp = await this.checkpoints(roots).checkpoint(`Run checks: ${plan.command}`);
-      if (!run.turnFirstCheckpointSha) run.turnFirstCheckpointSha = cp.sha;
-    } catch (e) {
-      console.warn('WorkspaceGPT: checkpoint before run_checks failed (continuing):', e);
-    }
     this.postStatus(run, `Running ${plan.kind}: ${plan.command}`);
     if (stepId) {
       this.post(run, { type: MESSAGE_TYPES.AGENT_STEP_UPDATE, id: stepId, status: 'running', summary: `in ${plan.displayCwd}`, meta: { output: `$ ${plan.command}\n` } });
@@ -1697,14 +1693,6 @@ export class ChatService {
       } else {
         decisionKind = 'approved';
       }
-    }
-
-    // Commands can mutate the workspace — same snapshot rule as file writes.
-    try {
-      const cp = await this.checkpoints(roots).checkpoint(summary);
-      if (!run.turnFirstCheckpointSha) run.turnFirstCheckpointSha = cp.sha;
-    } catch (e) {
-      console.warn('WorkspaceGPT: checkpoint before command failed (continuing):', e);
     }
 
     this.postStatus(run, `Running: ${command}`);
@@ -1808,8 +1796,19 @@ export class ChatService {
 
     // Snapshot BEFORE mutating, so "revert this step" is always available.
     try {
-      const cp = await this.checkpoints(roots).checkpoint(write.summary);
-      if (!run.turnFirstCheckpointSha) run.turnFirstCheckpointSha = cp.sha;
+      const root = roots.find((candidate) =>
+        write.uri.fsPath === candidate.uri.fsPath || write.uri.fsPath.startsWith(candidate.uri.fsPath + path.sep)
+      );
+      if (!root) throw new Error(`Cannot checkpoint ${write.displayPath}: it is not inside an open workspace root.`);
+      const relativePath = path.relative(root.uri.fsPath, write.uri.fsPath);
+      const cp = this.checkpointsFor(root).checkpoint(
+        write.summary,
+        [relativePath],
+        write.kind === 'create',
+      );
+      const checkpoint = await cp;
+      this.checkpointRootsBySha.set(checkpoint.sha, root.uri.fsPath);
+      if (!run.turnFirstCheckpointSha) run.turnFirstCheckpointSha = checkpoint.sha;
     } catch (e) {
       console.warn('WorkspaceGPT: checkpoint failed (continuing with the write):', e);
     }
@@ -1821,6 +1820,24 @@ export class ChatService {
     } catch (e) {
       await this.audit(write.kind, write.summary, decisionKind, 'failed', e instanceof Error ? e.message : String(e));
       throw e;
+    }
+    // A create's pre-write checkpoint is intentionally empty: the target did
+    // not exist yet. Commit the newly created file afterwards so resetting to
+    // that pre-write checkpoint removes it again.
+    if (write.kind === 'create') {
+      try {
+        const root = roots.find((candidate) =>
+          write.uri.fsPath === candidate.uri.fsPath || write.uri.fsPath.startsWith(candidate.uri.fsPath + path.sep)
+        );
+        if (root) {
+          await this.checkpointsFor(root).checkpoint(
+            `Track created file: ${write.displayPath}`,
+            [path.relative(root.uri.fsPath, write.uri.fsPath)],
+          );
+        }
+      } catch (e) {
+        console.warn('WorkspaceGPT: could not track newly created file in checkpoint history:', e);
+      }
     }
     await this.audit(write.kind, write.summary, decisionKind, 'applied');
     if (write.kind !== 'delete') await this.formatIfConfigured(write.uri);
@@ -1910,17 +1927,25 @@ export class ChatService {
 
   /** Lazily construct the per-workspace shadow-git checkpoint service. */
   private checkpoints(roots: NamedRoot[]): CheckpointService {
-    if (!this.checkpointService) {
-      this.checkpointService = checkpointServiceFor(this.context.globalStorageUri.fsPath, roots[0].uri.fsPath);
+    return this.checkpointsFor(roots[0]);
+  }
+
+  private checkpointsFor(root: NamedRoot): CheckpointService {
+    let service = this.checkpointServices.get(root.uri.fsPath);
+    if (!service) {
+      service = checkpointServiceFor(this.context.globalStorageUri.fsPath, root.uri.fsPath);
+      this.checkpointServices.set(root.uri.fsPath, service);
     }
-    return this.checkpointService;
+    return service;
   }
 
   /** Per-message "Undo changes up to this point" — hard-resets to a turn's first checkpoint. */
   public async revertToCheckpoint(sha: string): Promise<void> {
     const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
     if (!roots.length) throw new Error('No workspace folder is open.');
-    await this.checkpoints(roots).revertTo(sha);
+    const rootPath = this.checkpointRootsBySha.get(sha);
+    const root = roots.find((candidate) => candidate.uri.fsPath === rootPath) ?? roots[0];
+    await this.checkpointsFor(root).revertTo(sha);
   }
 
   /** Webview AGENT_WRITE_DECISION handler — resolves the parked write gate. */
