@@ -78,10 +78,10 @@ await t('zero or garbage tokens charge nothing, garbage divisor falls back to 10
 console.log('\nusageFromObject / extractUsage');
 await t('reads an OpenAI usage object and sums parts when total is missing', () => {
   assert.deepEqual(m.usageFromObject({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }), {
-    promptTokens: 10, completionTokens: 5, totalTokens: 15,
+    promptTokens: 10, completionTokens: 5, totalTokens: 15, cachedPromptTokens: 0,
   });
   assert.deepEqual(m.usageFromObject({ prompt_tokens: 10, completion_tokens: 5 }), {
-    promptTokens: 10, completionTokens: 5, totalTokens: 15,
+    promptTokens: 10, completionTokens: 5, totalTokens: 15, cachedPromptTokens: 0,
   });
   assert.equal(m.usageFromObject(null), null);
   assert.equal(m.usageFromObject({}), null);
@@ -90,7 +90,7 @@ await t('reads an OpenAI usage object and sums parts when total is missing', () 
 });
 await t('non-streaming JSON: top-level usage', () => {
   const body = JSON.stringify({ id: 'x', choices: [{ message: { content: 'hi' } }], usage: { prompt_tokens: 19, completion_tokens: 10, total_tokens: 29 } });
-  assert.deepEqual(m.extractUsage(body, 'application/json'), { promptTokens: 19, completionTokens: 10, totalTokens: 29 });
+  assert.deepEqual(m.extractUsage(body, 'application/json'), { promptTokens: 19, completionTokens: 10, totalTokens: 29, cachedPromptTokens: 0 });
   assert.equal(m.extractUsage('not json', 'application/json'), null);
   assert.equal(m.extractUsage(JSON.stringify({ choices: [] }), 'application/json'), null);
 });
@@ -104,7 +104,7 @@ await t('SSE: the LAST non-null usage wins; [DONE], null usage and junk lines ar
     'data: [DONE]',
     '',
   ].join('\n');
-  assert.deepEqual(m.extractUsage(sse, 'text/event-stream'), { promptTokens: 100, completionTokens: 20, totalTokens: 120 });
+  assert.deepEqual(m.extractUsage(sse, 'text/event-stream'), { promptTokens: 100, completionTokens: 20, totalTokens: 120, cachedPromptTokens: 0 });
 });
 await t('SSE detected by body shape when the content-type is missing', () => {
   const sse = 'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":1,"total_tokens":8}}\n\ndata: [DONE]\n';
@@ -118,6 +118,50 @@ await t('estimateTokensFromChars is ~chars/4 and never negative', () => {
   assert.equal(m.estimateTokensFromChars(1), 1);
   assert.equal(m.estimateTokensFromChars(0), 0);
   assert.equal(m.estimateTokensFromChars(-10), 0);
+});
+
+console.log('\ncached-token rebate');
+await t('reads cached_tokens from prompt_tokens_details, and from a bare field', () => {
+  assert.equal(
+    m.usageFromObject({ prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 80 } })
+      .cachedPromptTokens,
+    80
+  );
+  assert.equal(
+    m.usageFromObject({ prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, cached_tokens: 60 }).cachedPromptTokens,
+    60,
+    'providers that report it without the details wrapper'
+  );
+  assert.equal(m.usageFromObject({ prompt_tokens: 100, total_tokens: 100 }).cachedPromptTokens, 0, 'absent → nothing rebated');
+  assert.equal(
+    m.usageFromObject({ prompt_tokens: 100, total_tokens: 100, prompt_tokens_details: { cached_tokens: 999 } }).cachedPromptTokens,
+    100,
+    'a nonsense count larger than the prompt is clamped, never rebating more than was sent'
+  );
+  assert.equal(
+    m.usageFromObject({ prompt_tokens: 100, total_tokens: 100, prompt_tokens_details: { cached_tokens: -5 } }).cachedPromptTokens,
+    0
+  );
+});
+await t('billableTokens rebates only the cached share, and is exact when nothing is cached', () => {
+  const u = (p, c, t, cached) => ({ promptTokens: p, completionTokens: c, totalTokens: t, cachedPromptTokens: cached });
+  assert.equal(m.billableTokens(u(100, 10, 110, 0)), 110, 'no cache → unchanged, the case that must never drift');
+  assert.equal(m.billableTokens(u(100, 10, 110, 100)), 30, '110 - 100*0.8');
+  assert.equal(m.billableTokens(u(100, 10, 110, 50)), 70, '110 - 50*0.8');
+  assert.equal(m.billableTokens(u(0, 0, 0, 0)), 0);
+});
+await t('billableTokens never goes negative or NaN on a malformed usage object', () => {
+  assert.equal(m.billableTokens({ promptTokens: 0, completionTokens: 0, totalTokens: NaN, cachedPromptTokens: 10 }), 0);
+  assert.equal(m.billableTokens({ promptTokens: 0, completionTokens: 0, totalTokens: 50, cachedPromptTokens: 9999 }), 10, 'cached is clamped to the total too');
+  assert.equal(m.billableTokens({ promptTokens: 0, completionTokens: 0, totalTokens: 50 }), 50, 'missing cached field');
+});
+await t('the run that motivated this: a warm agent round costs a fraction of what it did', () => {
+  // One mid-run round of ADO #1534774: ~35k prompt, nearly all of it the
+  // resent transcript OpenRouter had cached, plus a small completion.
+  const round = { promptTokens: 35_000, completionTokens: 400, totalTokens: 35_400, cachedPromptTokens: 33_000 };
+  assert.equal(m.creditsForTokens(round.totalTokens, 1000), 36, 'what it used to charge');
+  assert.equal(m.billableTokens(round), 9_000, '35,400 - 33,000*0.8');
+  assert.equal(m.creditsForTokens(m.billableTokens(round), 1000), 9, 'what it charges now — a quarter of the old bill');
 });
 
 console.log('\ndecideAdmission');

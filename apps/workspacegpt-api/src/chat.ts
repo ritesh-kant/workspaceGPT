@@ -2,6 +2,7 @@ import type { Env } from './env';
 import { bearerToken, getSession } from './auth';
 import { loadAccount } from './db';
 import {
+  billableTokens,
   creditsForTokens,
   decideAdmission,
   describeRefusal,
@@ -279,16 +280,24 @@ async function meterAndCharge(
   const text = await new Response(body).text();
   const usage = extractUsage(text, contentType);
   let tokens: number;
+  let rawTokens: number;
   if (usage) {
-    tokens = usage.totalTokens;
+    // Charge the REBATED total: cache-hit prompt tokens cost about a fifth of
+    // fresh ones upstream, and an agent run is mostly cache hits after its
+    // first round (see CACHED_TOKEN_WEIGHT). `rawTokens` keeps the vendor's
+    // unrebated count for the usage row, so the stored tokens stay
+    // reconcilable against the provider's own dashboard.
+    tokens = billableTokens(usage);
+    rawTokens = usage.totalTokens;
   } else {
     // The vendor reported nothing. Charge for the prompt we know we sent
     // rather than nothing at all, and make the gap visible.
     tokens = estimateTokensFromChars(requestBodyChars);
+    rawTokens = tokens;
     console.warn('[workspacegpt-api] upstream response carried no usage; charging estimated prompt tokens', {
       estimatedTokens: tokens,
     });
   }
   const credits = creditsForTokens(tokens, tokensPerCredit);
-  await chargeCredits(env, userId, { credits, tokens });
+  await chargeCredits(env, userId, { credits, tokens: rawTokens });
 }

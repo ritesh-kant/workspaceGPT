@@ -31,6 +31,8 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** The part of `promptTokens` the vendor served from its prompt cache. */
+  cachedPromptTokens: number;
 }
 
 /**
@@ -38,6 +40,13 @@ export interface TokenUsage {
  * (some providers omit it) by summing the parts, and rejects anything that is
  * not a non-negative finite number so a malformed vendor payload can never
  * charge NaN credits.
+ *
+ * `prompt_tokens_details.cached_tokens` is OpenRouter's documented field for
+ * the cache-hit share of the prompt; it appears automatically, with no request
+ * flag. A few providers report a bare `cached_tokens` on the usage object
+ * instead, so both are read. It is clamped to `promptTokens` because a cached
+ * count larger than the prompt it describes is nonsense, and an unclamped one
+ * would rebate more than the call ever cost (see {@link billableTokens}).
  */
 export function usageFromObject(raw: unknown): TokenUsage | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -50,7 +59,52 @@ export function usageFromObject(raw: unknown): TokenUsage | null {
   if (prompt === null && completion === null && total === null) return null;
   const promptTokens = prompt ?? 0;
   const completionTokens = completion ?? 0;
-  return { promptTokens, completionTokens, totalTokens: total ?? promptTokens + completionTokens };
+  const details = o.prompt_tokens_details;
+  const cachedRaw =
+    details && typeof details === 'object'
+      ? n((details as Record<string, unknown>).cached_tokens)
+      : n(o.cached_tokens);
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: total ?? promptTokens + completionTokens,
+    cachedPromptTokens: Math.min(cachedRaw ?? 0, promptTokens),
+  };
+}
+
+/**
+ * What a cache-hit prompt token is charged, relative to a fresh one.
+ *
+ * An agent run resends its whole conversation every round, so after the first
+ * round most of the prompt is a cache read — and OpenRouter bills those at
+ * roughly a fifth of the input rate (chat.ts sends a stable `prompt_cache_key`
+ * precisely so they stay warm). Charging them at full freight, which is what
+ * this did until 2026-09-08, meant a 58-round agent run on ADO #1534774 cost
+ * 2033 credits — a whole free-plan week for one ticket — while the underlying
+ * vendor bill was a fraction of that. Credits are supposed to track the bill.
+ *
+ * 0.2 is the vendor's own typical cache-read multiple rather than a margin
+ * decision. If it ever needs tuning per deployment it belongs in config.ts
+ * beside `tokensPerCredit`; it is a constant here because one number in one
+ * place is easier to reason about than a knob nobody turns.
+ */
+export const CACHED_TOKEN_WEIGHT = 0.2;
+
+/**
+ * Tokens actually charged for: the vendor's total, less the rebate on the part
+ * it served from cache.
+ *
+ * Derived by REBATING from `totalTokens` rather than by re-adding the parts.
+ * The parts do not always sum to the total — reasoning tokens, for one, are
+ * counted in some providers' totals but not in `completion_tokens` — and a
+ * parts-based sum would silently undercharge whenever that happens. Starting
+ * from the number the vendor calls the total keeps this exact in every case
+ * where nothing is cached, which is the case that must never drift.
+ */
+export function billableTokens(usage: TokenUsage): number {
+  const total = Number.isFinite(usage.totalTokens) ? Math.max(0, usage.totalTokens) : 0;
+  const cached = Math.min(Math.max(0, usage.cachedPromptTokens || 0), total);
+  return Math.max(0, Math.round(total - cached * (1 - CACHED_TOKEN_WEIGHT)));
 }
 
 /**

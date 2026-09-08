@@ -63,6 +63,12 @@ export async function readUsageSnapshot(env: Env, userId: string): Promise<Usage
  * Called AFTER the upstream response has been fully read (tokens are only
  * known then), off the response path via `ctx.waitUntil`, so a slow D1 write
  * never delays the user's stream.
+ *
+ * `tokens` is the vendor's RAW total, so the column stays reconcilable against
+ * the provider's dashboard; `credits` is computed from the cache-rebated total
+ * (see metering.ts `billableTokens`). The two therefore no longer satisfy
+ * `credits === ceil(tokens / tokensPerCredit)`, and nothing should assume they
+ * do — on a long agent run the credits are several times smaller.
  */
 export async function chargeCredits(
   env: Env,

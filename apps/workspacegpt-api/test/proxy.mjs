@@ -313,6 +313,32 @@ await t('a JSON (non-stream) completion is charged from usage.total_tokens and s
   assert.deepEqual(weeklyRow(db), { requests: 1, credits: 3, tokens: 3000 });
 });
 
+await t('a cache-hit prompt is charged the rebated total, and the row keeps the raw one', async ({ db, env, ctx }) => {
+  // The agent-run shape: a big resent transcript the vendor served from cache.
+  scriptUpstream(() =>
+    new Response(
+      JSON.stringify({
+        id: 'c2',
+        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        usage: {
+          prompt_tokens: 35_000,
+          completion_tokens: 400,
+          total_tokens: 35_400,
+          prompt_tokens_details: { cached_tokens: 33_000 },
+        },
+      }),
+      { headers: { 'Content-Type': 'application/json' } }
+    )
+  );
+  const res = await worker.fetch(chatRequest({ ...PROMPT, stream: false }), env, ctx);
+  assert.equal(res.status, 200);
+  await res.text();
+  await ctx.settle();
+  // 9 credits, not the 36 the unrebated total would have cost; `tokens` stays
+  // the vendor's own number so the row still reconciles against their bill.
+  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 9, tokens: 35_400 });
+});
+
 await t('a stream with no usage chunk charges the estimated prompt size and warns', async ({ db, env, ctx, logs }) => {
   scriptUpstream(() => sseResponse(sseBody(['no usage here'], null)));
   const req = chatRequest(PROMPT);
