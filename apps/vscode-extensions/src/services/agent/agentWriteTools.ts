@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import {
   NamedRoot,
   WorkspaceRootRequiredError,
@@ -88,15 +89,50 @@ const SECRET_FILE_PATTERNS: RegExp[] = [
   /^secrets?\.(json|ya?ml|toml)$/i,
 ];
 
-function assertWritable(roots: NamedRoot[], relOrPrefixed: string): { uri: vscode.Uri; displayPath: string } {
+const isWithin = (parent: string, candidate: string): boolean =>
+  candidate === parent || candidate.startsWith(parent + path.sep);
+
+/**
+ * Resolve the closest existing ancestor of a path. This is needed for creates,
+ * whose leaf does not exist yet, so checking only the leaf's realpath would
+ * miss a symlinked parent directory.
+ */
+async function nearestExistingPath(target: string): Promise<string> {
+  let probe = target;
+  while (true) {
+    try {
+      await fs.promises.lstat(probe);
+      return probe;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = path.dirname(probe);
+      if (parent === probe) throw new Error(`No existing parent found for "${target}".`);
+      probe = parent;
+    }
+  }
+}
+
+/**
+ * A lexical `path.resolve` check blocks ../ traversal but not symlinks. Resolve
+ * both the workspace and the target (or its existing parent for a create) so a
+ * workspace link to another directory can never be used as an agent write path.
+ */
+async function assertWritable(roots: NamedRoot[], relOrPrefixed: string): Promise<{ uri: vscode.Uri; displayPath: string }> {
   if (!roots.length) throw new WorkspaceRootRequiredError();
   const resolved = resolveAgainstRoots(roots, relOrPrefixed);
   if (!resolved) throw new Error(`Cannot resolve path "${relOrPrefixed}" against the workspace.`);
 
   const rootFsPath = resolved.root.uri.fsPath;
   const absPath = path.resolve(rootFsPath, resolved.relPath);
-  if (absPath !== rootFsPath && !absPath.startsWith(rootFsPath + path.sep)) {
+  if (!isWithin(rootFsPath, absPath)) {
     throw new Error('Path resolves outside the workspace root — refusing to write.');
+  }
+  const [realRoot, realTarget] = await Promise.all([
+    fs.promises.realpath(rootFsPath),
+    fs.promises.realpath(await nearestExistingPath(absPath)),
+  ]);
+  if (!isWithin(realRoot, realTarget)) {
+    throw new Error('Path resolves outside the real workspace through a symlink — refusing to write.');
   }
   if (absPath.split(path.sep).includes('.git')) {
     throw new Error('Refusing to write inside a .git directory.');
@@ -244,7 +280,7 @@ export async function prepareEditFile(args: EditFileArgs, roots: NamedRoot[]): P
     if (typeof e.newString !== 'string') throw new Error(`${at}newString must be a string.`);
     if (e.oldString === e.newString) throw new Error(`${at}oldString and newString are identical — nothing to change.`);
   });
-  const { uri, displayPath } = assertWritable(roots, args.path);
+  const { uri, displayPath } = await assertWritable(roots, args.path);
 
   let before: string;
   try {
@@ -426,7 +462,7 @@ function applyOneEdit(before: string, args: EditReplacement, displayPath: string
 }
 
 export async function prepareCreateFile(args: CreateFileArgs, roots: NamedRoot[]): Promise<PreparedWrite> {
-  const { uri, displayPath } = assertWritable(roots, args.path);
+  const { uri, displayPath } = await assertWritable(roots, args.path);
   if (Buffer.byteLength(args.content ?? '', 'utf8') > MAX_WRITE_BYTES) {
     throw new Error(`Content exceeds the ${MAX_WRITE_BYTES / 1024}KB agent-write limit.`);
   }
@@ -450,7 +486,7 @@ export async function prepareCreateFile(args: CreateFileArgs, roots: NamedRoot[]
 }
 
 export async function prepareDeleteFile(args: DeleteFileArgs, roots: NamedRoot[]): Promise<PreparedWrite> {
-  const { uri, displayPath } = assertWritable(roots, args.path);
+  const { uri, displayPath } = await assertWritable(roots, args.path);
   let before: string;
   try {
     before = await documentText(uri);
@@ -495,6 +531,9 @@ export async function applyWrite(w: PreparedWrite): Promise<void> {
 
   if (w.kind !== 'delete') {
     const doc = await vscode.workspace.openTextDocument(w.uri);
-    await doc.save();
+    const saved = await doc.save();
+    if (!saved) {
+      throw new Error(`Could not save ${w.displayPath}; the edit remains in the editor but was not written to disk.`);
+    }
   }
 }
