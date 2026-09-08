@@ -82,6 +82,7 @@ import {
   recordAgentAudit,
   resolveCommandCwd,
   RunCommandArgs,
+  CommandResult,
   isAutonomousSafeCommand,
   describeAutonomousRefusal,
 } from './agent/commandTools';
@@ -289,6 +290,22 @@ interface SessionRun {
    * auto-verification pass makes that the common case, not the rare one).
    */
   checkRuns: Map<string, { writeSeq: number; result: unknown }>;
+  /**
+   * Executables this turn already proved are not installed — exit 127, keyed
+   * by the command's first word, holding the output of the attempt that found
+   * out. Unlike {@link checkRuns} this is NOT invalidated by a write: whether
+   * `pnpm` exists on the PATH has nothing to do with the contents of the
+   * files being checked, so the write-seq cache let the same impossible
+   * command run again after every edit.
+   *
+   * Ticket #1534774 ran nine of them (`pnpm exec jest` twice, `pnpm exec
+   * eslint` twice, `pnpm run tsc` twice, …), each one a full model turn at
+   * ~100k tokens of context, and still reported "could not verify".
+   *
+   * Per TURN, not per session: the user may well fix their PATH and ask again,
+   * and re-learning it costs one call instead of nine.
+   */
+  missingExecutables: Map<string, string>;
   /**
    * Click-to-run mode for the CURRENT turn: file writes and allowlisted
    * test/build commands apply without a review card (still checkpointed and
@@ -637,6 +654,7 @@ export class ChatService {
         turnFirstCheckpointSha: null,
         writeSeq: 0,
         checkRuns: new Map(),
+        missingExecutables: new Map(),
         autonomous: false,
         agentTranscript: null,
         lastAnswerStallShaped: false,
@@ -795,6 +813,7 @@ export class ChatService {
       run.turnFirstCheckpointSha = null;
       run.writeSeq = 0;
       run.checkRuns.clear();
+      run.missingExecutables.clear();
 
       const mode = getMode(this.context);
 
@@ -1502,6 +1521,52 @@ export class ChatService {
   }
 
   /**
+   * The executable a shell command invokes — its first bare word, so
+   * `pnpm exec jest src/x.test.ts` is `pnpm`. Enough to answer "did we
+   * already learn this one is not installed", which is all it is for.
+   */
+  private static commandExecutable(command: string): string {
+    return (command.trim().split(/\s+/)[0] ?? '').trim();
+  }
+
+  /**
+   * Exit 127 is the shell's "command not found", and it is deterministic: the
+   * binary will not appear because we asked a second time. Remember it so the
+   * next call short-circuits, and say plainly that this is the environment
+   * rather than the code — a run told only "exit 127" tries `npx`, then
+   * `yarn`, then reports the workspace as broken.
+   */
+  private noteExecutableMissing(run: SessionRun, command: string, res: CommandResult): void {
+    if (res.exitCode !== 127) return;
+    const exe = ChatService.commandExecutable(command);
+    if (!exe || run.missingExecutables.has(exe)) return;
+    run.missingExecutables.set(exe, (res.output || '').trim().slice(0, 400));
+  }
+
+  /**
+   * The remembered 127 for this command, as a result the caller can return
+   * without spawning anything. Null when this executable has not failed that
+   * way in this turn.
+   */
+  private replayMissingExecutable(run: SessionRun, command: string): CommandResult | null {
+    const exe = ChatService.commandExecutable(command);
+    const seen = exe ? run.missingExecutables.get(exe) : undefined;
+    if (seen === undefined) return null;
+    return {
+      exitCode: 127,
+      output:
+        `${seen}\n\n[not run — "${exe}" already exited 127 (command not found) earlier this turn. ` +
+        'That is this machine\'s PATH, not the code and not the workspace: retrying it, or the same ' +
+        'command through a different package manager, will fail identically. Verify what you can with ' +
+        'get_diagnostics, and in your final answer report the affected checks as NOT RUN with this ' +
+        'reason — do not claim they passed, and do not spend further steps on them.]',
+      durationMs: 0,
+      truncated: false,
+      timedOut: false,
+    };
+  }
+
+  /**
    * run_checks: derive the verification command for a file (see verifyTools),
    * run it, remember it on success. Autonomous-safe by construction — the
    * command is test/lint/typecheck for the file's own package.
@@ -1541,7 +1606,10 @@ export class ChatService {
     if (stepId) {
       this.post(run, { type: MESSAGE_TYPES.AGENT_STEP_UPDATE, id: stepId, status: 'running', summary: `in ${plan.displayCwd}`, meta: { output: `$ ${plan.command}\n` } });
     }
-    const res = await executeCommand(plan.command, plan.cwd, undefined, this.streamOutputTo(run, stepId));
+    const res =
+      this.replayMissingExecutable(run, plan.command) ??
+      (await executeCommand(plan.command, plan.cwd, undefined, this.streamOutputTo(run, stepId)));
+    this.noteExecutableMissing(run, plan.command, res);
     const channel = agentOutputChannel();
     channel.appendLine(`\n$ ${plan.command}   (cwd: ${plan.displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms) — run_checks ${plan.kind}`);
     if (res.output) channel.appendLine(res.output);
@@ -1567,6 +1635,11 @@ export class ChatService {
     if (!command) throw new Error('command must be non-empty.');
     assertCommandAllowed(command);
     const { cwd, displayCwd } = resolveCommandCwd(roots, args.cwd);
+    // Ahead of the approval gate and the checkpoint on purpose: a command we
+    // have already watched exit 127 must not cost the user a review card or
+    // the run a snapshot.
+    const missing = this.replayMissingExecutable(run, command);
+    if (missing) return missing;
     // A repo-wide `pnpm lint`/`pnpm test` at the workspace root checks every
     // package to verify a change that touched a few files — minutes of wall
     // clock in a monorepo, and auto-approved (so invisible) in an autonomous
@@ -1630,6 +1703,7 @@ export class ChatService {
 
     this.postStatus(run, `Running: ${command}`);
     const res = await executeCommand(command, cwd, args.timeoutSec, this.streamOutputTo(run, stepId));
+    this.noteExecutableMissing(run, command, res);
     const channel = agentOutputChannel();
     channel.appendLine(`\n$ ${command}   (cwd: ${displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms)`);
     if (res.output) channel.appendLine(res.output);

@@ -44,6 +44,107 @@ const DEFAULT_TIMEOUT_SEC = 60;
 /** Tests and builds in a monorepo routinely need more than a minute just to cold-start. */
 const VERIFY_TIMEOUT_SEC = 180;
 export const MAX_TIMEOUT_SEC = 600;
+
+// ── The PATH a command actually needs ──
+//
+// Commands run through `/bin/bash -lc`, which sources bash's login files —
+// but this user's toolchain is on the PATH that `~/.zshrc` builds (nvm puts
+// node and pnpm under ~/.nvm/versions/node/<v>/bin and writes its setup to
+// the rc file of the shell it was installed from). A VS Code launched from
+// the Dock never sources that file either, so the extension host's own PATH
+// has no nvm directory to inherit. The result, measured on ticket #1534774:
+//
+//   env -i PATH=/usr/bin:/bin bash -lc 'command -v pnpm' → not found
+//   env -i PATH=/usr/bin:/bin zsh  -lic 'command -v pnpm' → ~/.nvm/…/bin/pnpm
+//
+// Nine consecutive `run_checks` calls exited 127 and the run reported "could
+// not verify" against the ticket's own acceptance criterion, blaming the
+// workspace for what was really our environment.
+//
+// So ask the user's LOGIN SHELL what the PATH is, once per session, and hand
+// that to every spawn. Deliberately only the PATH is taken, and the command
+// interpreter stays `/bin/bash` — quoting and word-splitting differ between
+// shells, and the denylist in `prepare` was written against bash's grammar.
+//
+// `-i` is required, not decoration: nvm's block lives in `~/.zshrc`, which a
+// non-interactive shell does not read (`zsh -lc` fails the probe above,
+// `zsh -lic` passes).
+const PATH_PROBE_TIMEOUT_MS = 5_000;
+/** Markers, so rc-file chatter printed on startup can't be mistaken for the PATH. */
+const PATH_PROBE_START = '__WGPT_PATH_START__';
+const PATH_PROBE_END = '__WGPT_PATH_END__';
+
+/** Resolved once per extension host — a login shell costs ~100ms to start and the answer cannot change under us. */
+let userPathProbe: Promise<string | undefined> | undefined;
+
+function probeLoginShellPath(): Promise<string | undefined> {
+  // Windows has no login-shell rc convention to consult; cmd.exe inherits the
+  // PATH the host was started with, which is the best available answer there.
+  if (process.platform === 'win32') return Promise.resolve(undefined);
+  const shell = process.env.SHELL || '/bin/zsh';
+  return new Promise((resolve) => {
+    let out = '';
+    let settled = false;
+    const done = (value?: string) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(shell, ['-lic', `printf '${PATH_PROBE_START}%s${PATH_PROBE_END}' "$PATH"`], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      done(undefined);
+      return;
+    }
+    // An rc file that waits for input (a prompt, a version-manager banner
+    // paging) would otherwise hang every command in the session behind it.
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+      done(undefined);
+    }, PATH_PROBE_TIMEOUT_MS);
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      out += chunk.toString();
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      done(undefined);
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const start = out.indexOf(PATH_PROBE_START);
+      const end = out.indexOf(PATH_PROBE_END);
+      if (start < 0 || end <= start) return done(undefined);
+      const probed = out.slice(start + PATH_PROBE_START.length, end).trim();
+      done(probed.includes(path.sep) ? probed : undefined);
+    });
+  });
+}
+
+/**
+ * The PATH to run commands with: the login shell's, plus anything the
+ * extension host had that the shell did not mention.
+ *
+ * Union rather than replacement — VS Code injects directories of its own
+ * (its bundled `code` CLI, a remote server's helpers) and dropping them would
+ * trade one class of "command not found" for another.
+ */
+async function resolveCommandPath(): Promise<string | undefined> {
+  if (!userPathProbe) userPathProbe = probeLoginShellPath();
+  const probed = await userPathProbe;
+  if (!probed) return undefined;
+  const seen = new Set(probed.split(path.delimiter));
+  const extras = (process.env.PATH ?? '')
+    .split(path.delimiter)
+    .filter((dir) => dir && !seen.has(dir));
+  return extras.length ? `${probed}${path.delimiter}${extras.join(path.delimiter)}` : probed;
+}
 const VERIFY_COMMAND_RE = /\b(test|tests|jest|vitest|pytest|mocha|build|compile|tsc|typecheck|type-check|lint|eslint|cargo|go)\b/i;
 
 /**
@@ -315,7 +416,7 @@ export function resolveCommandCwd(roots: NamedRoot[], cwdArg?: string): { cwd: s
  * progress rather than a hang). Never rejects — a failed spawn is an exit
  * with null code and the error text as output.
  */
-export function executeCommand(
+export async function executeCommand(
   command: string,
   cwd: string,
   timeoutSec?: number,
@@ -325,6 +426,9 @@ export function executeCommand(
   const started = Date.now();
   const isWin = process.platform === 'win32';
   const [file, args] = isWin ? ['cmd.exe', ['/d', '/s', '/c', command]] : ['/bin/bash', ['-lc', command]];
+  // Awaited before the timer starts so a slow first probe is not billed to
+  // this command's timeout.
+  const commandPath = await resolveCommandPath();
 
   return new Promise((resolve) => {
     let combined = '';
@@ -356,7 +460,7 @@ export function executeCommand(
       // stdout pipe, 'close' (and so this promise) waited for them too.
       child = spawn(file, args as string[], {
         cwd,
-        env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+        env: { ...process.env, ...(commandPath ? { PATH: commandPath } : {}), CI: '1', FORCE_COLOR: '0' },
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: !isWin,
       });
