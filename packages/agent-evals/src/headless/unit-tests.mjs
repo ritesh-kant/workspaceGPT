@@ -1674,14 +1674,45 @@ This is a one-line behavioral fix in three files; I did not apply it because all
   await t('run_checks: jest package runs the sibling test file from the package dir', () => {
     const plan = planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'test' });
     assert.equal(plan.cwd, path.join(tmp, 'apps/web'));
-    assert.equal(plan.command, 'pnpm exec jest src/features/step/useStep.test.ts');
+    // --maxWorkers=2: jest otherwise forks one worker per core, ~1.5GB each on a jsdom suite.
+    assert.equal(plan.command, 'pnpm exec jest --maxWorkers=2 src/features/step/useStep.test.ts');
     assert.equal(plan.displayCwd, 'apps/web');
     assert.equal(plan.pkgName, '@acme/web');
   });
   await t('run_checks: a test file verifies itself; lint and typecheck derive from deps', () => {
     assert.equal(planVerification(roots, { path: 'apps/web/src/features/step/useStep.test.ts' }).target, 'src/features/step/useStep.test.ts');
-    assert.equal(planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'lint' }).command, 'pnpm exec eslint src/features/step/useStep.ts');
+    assert.equal(planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'lint' }).command, 'pnpm exec eslint --cache --cache-location node_modules/.cache/eslint/wgpt src/features/step/useStep.ts');
     assert.equal(planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'typecheck' }).command, 'pnpm exec tsc --noEmit -p tsconfig.json');
+  });
+  await t('run_checks: one eslint process covers every changed file in the package', () => {
+    // Type-aware eslint rebuilds a TS program per process (19.4s median
+    // measured), so N files must cost one invocation, not N.
+    const plan = planVerification(roots, {
+      path: 'apps/web/src/features/step/useStep.ts',
+      kind: 'lint',
+      paths: ['apps/web/src/features/step/useStep.test.ts'],
+    });
+    assert.match(plan.command, /eslint .*src\/features\/step\/useStep\.ts src\/features\/step\/useStep\.test\.ts$/);
+    assert.deepEqual(plan.targets, ['src/features/step/useStep.ts', 'src/features/step/useStep.test.ts']);
+    assert.deepEqual(plan.coveredPaths, [
+      'apps/web/src/features/step/useStep.ts',
+      'apps/web/src/features/step/useStep.test.ts',
+    ]);
+    // The recipe template stays the single-file shape — it is replayed as
+    // prose in a later run's prompt, not as this batch's argv.
+    assert.equal(plan.template, 'pnpm exec eslint {target}');
+  });
+  await t('run_checks: a batched lint drops files from another package, and SAYS it did', () => {
+    // Silently including them would run eslint on a path that does not
+    // resolve from this cwd; silently marking them verified would report an
+    // unlinted file as clean. coveredPaths is how the caller tells them apart.
+    const plan = planVerification(roots, {
+      path: 'apps/web/src/features/step/useStep.ts',
+      kind: 'lint',
+      paths: ['apps/api/src/handler.ts', 'apps/web/does-not-exist.ts'],
+    });
+    assert.deepEqual(plan.coveredPaths, ['apps/web/src/features/step/useStep.ts']);
+    assert.deepEqual(plan.targets, ['src/features/step/useStep.ts']);
   });
   await t('run_checks: no sibling test → refuses to widen to the package; a sub-directory scopes to itself', () => {
     // The removed fallback ("no sibling test → run the whole package") is what

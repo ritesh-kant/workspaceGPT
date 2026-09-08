@@ -44,6 +44,17 @@ const DEFAULT_TIMEOUT_SEC = 60;
 /** Tests and builds in a monorepo routinely need more than a minute just to cold-start. */
 const VERIFY_TIMEOUT_SEC = 180;
 export const MAX_TIMEOUT_SEC = 600;
+/**
+ * Ceiling for a command that runs with NOBODY approving it — every `run_checks`
+ * and every autonomous `run_command`. The 600s ceiling exists for a command a
+ * human deliberately asked for and is watching; applied to an unattended one it
+ * means a single bad derivation can silently eat ten minutes of the run, which
+ * is exactly what a `pnpm exec jest` over a 500-file suite did (636.8s, killed
+ * at the ceiling, ticket #1534774). A check that cannot finish in three minutes
+ * is reported as not-run, which costs a line in the report instead of a third
+ * of the run's wall clock.
+ */
+export const UNATTENDED_MAX_TIMEOUT_SEC = 180;
 
 // ── The PATH a command actually needs ──
 //
@@ -420,9 +431,12 @@ export async function executeCommand(
   command: string,
   cwd: string,
   timeoutSec?: number,
-  onOutput?: (combinedSoFar: string) => void
+  onOutput?: (combinedSoFar: string) => void,
+  /** No human approved this one — hold it to UNATTENDED_MAX_TIMEOUT_SEC. */
+  unattended = false
 ): Promise<CommandResult> {
-  const timeout = Math.min(Math.max(timeoutSec ?? defaultTimeoutSec(command), 1), MAX_TIMEOUT_SEC) * 1000;
+  const ceiling = unattended ? UNATTENDED_MAX_TIMEOUT_SEC : MAX_TIMEOUT_SEC;
+  const timeout = Math.min(Math.max(timeoutSec ?? defaultTimeoutSec(command), 1), ceiling) * 1000;
   const started = Date.now();
   const isWin = process.platform === 'win32';
   const [file, args] = isWin ? ['cmd.exe', ['/d', '/s', '/c', command]] : ['/bin/bash', ['-lc', command]];

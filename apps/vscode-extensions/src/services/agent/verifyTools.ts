@@ -23,6 +23,15 @@ export type CheckKind = 'test' | 'lint' | 'typecheck';
 export interface RunChecksArgs {
   path: string;
   kind?: CheckKind;
+  /**
+   * Additional files to lint in the SAME eslint invocation (lint only; other
+   * kinds ignore it). Type-aware eslint builds a TypeScript program on every
+   * process start — measured at 19.4s median, 90.7s worst, on a single file —
+   * so N one-file invocations pay that fixed cost N times over. Passing the
+   * package's changed files together pays it once. Paths outside `path`'s own
+   * package are dropped rather than run from the wrong cwd.
+   */
+  paths?: string[];
 }
 
 export interface VerificationPlan {
@@ -40,6 +49,18 @@ export interface VerificationPlan {
   template: string;
   /** Test/lint target relative to cwd, when the plan targets one file. */
   target?: string;
+  /**
+   * Every file this command covers, relative to cwd — `[target]` for a
+   * single-file plan, the whole batch for a multi-file lint.
+   */
+  targets?: string[];
+  /**
+   * The caller's OWN path strings that this command covers — `args.path` plus
+   * whichever of `args.paths` survived the same-package filter. The auto-
+   * verification pass marks exactly these done, so a file dropped for living
+   * in another package stays pending instead of being recorded as verified.
+   */
+  coveredPaths?: string[];
 }
 
 type PackageManager = 'pnpm' | 'npm' | 'yarn' | 'bun';
@@ -150,6 +171,35 @@ function hasFile(dir: string, name: string): boolean {
 }
 
 /**
+ * The file list one eslint process should cover: the primary target plus any
+ * `paths` sibling that resolves to a real file inside the SAME package. A path
+ * from another package is dropped — eslint runs with one cwd, and a foreign
+ * file would either miss that package's config or fail to resolve at all.
+ */
+function batchLintTargets(
+  target: string,
+  primary: string,
+  paths: string[] | undefined,
+  roots: NamedRoot[],
+  cwd: string
+): { targets: string[]; coveredPaths: string[] } {
+  const targets = [target];
+  const coveredPaths = [primary];
+  for (const p of paths ?? []) {
+    const hit = resolveAgainstRoots(roots, p);
+    if (!hit) continue;
+    const abs = path.resolve(hit.root.uri.fsPath, hit.relPath);
+    if (!abs.startsWith(cwd + path.sep)) continue;
+    if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) continue;
+    const rel = path.relative(cwd, abs);
+    if (targets.includes(rel)) continue;
+    targets.push(rel);
+    coveredPaths.push(p);
+  }
+  return { targets, coveredPaths };
+}
+
+/**
  * Derive the verification command for a file. Throws with a model-actionable
  * message when no runner can be identified.
  */
@@ -244,7 +294,11 @@ export function planVerification(roots: NamedRoot[], args: RunChecksArgs): Verif
       return { kind, ...base, target, command: template.replace('{target}', shellQuote(target)), rationale: `vitest is a dependency of ${pkg.name} (${pm}); running ${scope}`, template };
     }
     if (runner === 'jest') {
-      const template = `${exec} jest {target}`;
+      // `--maxWorkers=2`: jest defaults to one worker per core minus one, and
+      // a jsdom/React suite is ~1.5GB per worker — eleven of them is how
+      // ticket #1534774 put a 24GB machine into swap. Two is enough for a
+      // single test file (this plan never targets more) and bounds the cost.
+      const template = `${exec} jest --maxWorkers=2 {target}`;
       return { kind, ...base, target, command: template.replace('{target}', shellQuote(target)), rationale: `jest is a dependency of ${pkg.name} (${pm}); running ${scope}`, template };
     }
     const template = runScript(pm, 'test', '{target}');
@@ -255,7 +309,30 @@ export function planVerification(roots: NamedRoot[], args: RunChecksArgs): Verif
     const target = fs.existsSync(absPath) && !fs.statSync(absPath).isDirectory() ? path.relative(cwd, absPath) : undefined;
     if (pkg.deps.has('eslint') || findUp(pkg.dir, rootDir, ['eslint.config.js', 'eslint.config.mjs', '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.json', '.eslintrc'])) {
       const template = `${exec} eslint {target}`;
-      return { kind, ...base, target, command: template.replace('{target}', target ? shellQuote(target) : '.'), rationale: `eslint configured for ${pkg.name} (${pm})`, template };
+      // One process for every changed file in this package (see RunChecksArgs.paths).
+      const batch = target
+        ? batchLintTargets(target, args.path, args.paths, roots, cwd)
+        : { targets: [], coveredPaths: [] };
+      const targets = batch.targets;
+      // `--cache` makes a re-lint of an unchanged file free, which is most of
+      // what a fix-then-re-verify cycle re-runs. The location is deliberately
+      // under node_modules: eslint's default `.eslintcache` lands in the
+      // package directory, where it shows up in the `git_status` the agent
+      // reads back as evidence of its own writes.
+      const cacheFlags = `--cache --cache-location ${shellQuote(path.join('node_modules', '.cache', 'eslint', 'wgpt'))}`;
+      const args_ = targets.length ? targets.map(shellQuote).join(' ') : target ? shellQuote(target) : '.';
+      return {
+        kind,
+        ...base,
+        target,
+        ...(targets.length ? { targets, coveredPaths: batch.coveredPaths } : {}),
+        command: `${exec} eslint ${cacheFlags} ${args_}`,
+        rationale:
+          targets.length > 1
+            ? `eslint configured for ${pkg.name} (${pm}); linting ${targets.length} changed files in one pass`
+            : `eslint configured for ${pkg.name} (${pm})`,
+        template,
+      };
     }
     if (pkg.scripts.lint) {
       const cmd = runScript(pm, 'lint');

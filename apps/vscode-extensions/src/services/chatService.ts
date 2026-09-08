@@ -290,6 +290,16 @@ interface SessionRun {
    */
   checkRuns: Map<string, { writeSeq: number; result: unknown }>;
   /**
+   * Checks currently EXECUTING, same key as {@link checkRuns}. The result
+   * cache can only replay a command that already finished, so once the
+   * auto-verification pass started running a round's checks concurrently, two
+   * files in one package deriving the same package-wide command (`pnpm run
+   * tsc`, a shared suite) both missed the cache and both ran — the concurrency
+   * undoing the very saving the cache existed for. Joining the in-flight
+   * promise makes that one process again, whatever the call order.
+   */
+  checkInFlight: Map<string, Promise<unknown>>;
+  /**
    * Executables this turn already proved are not installed — exit 127, keyed
    * by the command's first word, holding the output of the attempt that found
    * out. Unlike {@link checkRuns} this is NOT invalidated by a write: whether
@@ -652,6 +662,7 @@ export class ChatService {
         lastShip: null,
         turnFirstCheckpointSha: null,
         writeSeq: 0,
+        checkInFlight: new Map(),
         checkRuns: new Map(),
         missingExecutables: new Map(),
         autonomous: false,
@@ -812,6 +823,8 @@ export class ChatService {
       run.turnFirstCheckpointSha = null;
       run.writeSeq = 0;
       run.checkRuns.clear();
+      // A promise left here would be against the previous turn's tree.
+      run.checkInFlight.clear();
       run.missingExecutables.clear();
 
       const mode = getMode(this.context);
@@ -1604,32 +1617,62 @@ export class ChatService {
         note: 'This exact command already ran this turn and no write has landed since — the result above is that run, not a new one. Do not run it again unless you change a file first.',
       };
     }
+    // Already running — join it rather than starting a second copy.
+    const inFlight = run.checkInFlight.get(cacheKey);
+    if (inFlight) {
+      if (stepId) {
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+          id: stepId,
+          status: 'running',
+          summary: `in ${plan.displayCwd}`,
+          meta: { output: `$ ${plan.command}\n(joined — this exact command is already running for another file)\n` },
+        });
+      }
+      const shared = (await inFlight) as Record<string, unknown>;
+      // coveredPaths belongs to the call that STARTED the command, not to
+      // this one — carrying it over would mark this caller's files verified
+      // by an argv that never named them.
+      const { coveredPaths: _shared, ...rest } = shared ?? {};
+      return { ...rest, ...(plan.coveredPaths ? { coveredPaths: plan.coveredPaths } : {}), cached: true };
+    }
     this.postStatus(run, `Running ${plan.kind}: ${plan.command}`);
     if (stepId) {
       this.post(run, { type: MESSAGE_TYPES.AGENT_STEP_UPDATE, id: stepId, status: 'running', summary: `in ${plan.displayCwd}`, meta: { output: `$ ${plan.command}\n` } });
     }
-    const res =
-      this.replayMissingExecutable(run, plan.command) ??
-      (await executeCommand(plan.command, plan.cwd, undefined, this.streamOutputTo(run, stepId)));
-    this.noteExecutableMissing(run, plan.command, res);
-    const channel = agentOutputChannel();
-    channel.appendLine(`\n$ ${plan.command}   (cwd: ${plan.displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms) — run_checks ${plan.kind}`);
-    if (res.output) channel.appendLine(res.output);
-    await this.audit('command', `${plan.command} → exit ${res.exitCode}`, 'auto', res.exitCode === 0 ? 'applied' : 'failed');
-    if (res.exitCode === 0) void rememberRecipe(this.context, plan);
-    const result = {
-      kind: plan.kind,
-      command: plan.command,
-      cwd: plan.displayCwd,
-      package: plan.pkgName,
-      rationale: plan.rationale,
-      ...res,
-      ...(res.exitCode !== 0 && !res.timedOut
-        ? { hint: 'Non-zero exit: read the output above and fix the cause (a failing assertion, a lint error, a missing import). Do not switch to run_command to "try another way" unless the output says the runner itself could not start.' }
-        : {}),
-    };
-    run.checkRuns.set(cacheKey, { writeSeq: run.writeSeq, result });
-    return result;
+    const execution = (async () => {
+      const res =
+        this.replayMissingExecutable(run, plan.command) ??
+        (await executeCommand(plan.command, plan.cwd, undefined, this.streamOutputTo(run, stepId), true));
+      this.noteExecutableMissing(run, plan.command, res);
+      const channel = agentOutputChannel();
+      channel.appendLine(`\n$ ${plan.command}   (cwd: ${plan.displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms) — run_checks ${plan.kind}`);
+      if (res.output) channel.appendLine(res.output);
+      await this.audit('command', `${plan.command} → exit ${res.exitCode}`, 'auto', res.exitCode === 0 ? 'applied' : 'failed');
+      if (res.exitCode === 0) void rememberRecipe(this.context, plan);
+      const result = {
+        kind: plan.kind,
+        command: plan.command,
+        cwd: plan.displayCwd,
+        package: plan.pkgName,
+        rationale: plan.rationale,
+        // Which of the caller's paths this one process actually covered — the
+        // auto-verification pass marks exactly these done (see planCheckJobs).
+        ...(plan.coveredPaths ? { coveredPaths: plan.coveredPaths } : {}),
+        ...res,
+        ...(res.exitCode !== 0 && !res.timedOut
+          ? { hint: 'Non-zero exit: read the output above and fix the cause (a failing assertion, a lint error, a missing import). Do not switch to run_command to "try another way" unless the output says the runner itself could not start.' }
+          : {}),
+      };
+      run.checkRuns.set(cacheKey, { writeSeq: run.writeSeq, result });
+      return result;
+    })();
+    run.checkInFlight.set(cacheKey, execution);
+    try {
+      return await execution;
+    } finally {
+      run.checkInFlight.delete(cacheKey);
+    }
   }
 
   private async gatedCommand(run: SessionRun, args: RunCommandArgs, roots: NamedRoot[], stepId?: string): Promise<unknown> {
@@ -1696,7 +1739,9 @@ export class ChatService {
     }
 
     this.postStatus(run, `Running: ${command}`);
-    const res = await executeCommand(command, cwd, args.timeoutSec, this.streamOutputTo(run, stepId));
+    // Autonomous runs auto-approve verification commands, so nobody is there
+    // to notice one that runs long — those get the unattended ceiling.
+    const res = await executeCommand(command, cwd, args.timeoutSec, this.streamOutputTo(run, stepId), run.autonomous);
     this.noteExecutableMissing(run, command, res);
     const channel = agentOutputChannel();
     channel.appendLine(`\n$ ${command}   (cwd: ${displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms)`);
@@ -2598,6 +2643,13 @@ Query: "${query}"`;
             usedPct?: number;
             remainingPct?: number;
             compactions?: number;
+            /** metrics: run wall clock and where it went (see the output-channel summary). */
+            wallMs?: number;
+            modelMs?: number;
+            toolMs?: number;
+            toolMsByName?: Record<string, { ms: number; calls: number }>;
+            turns?: number;
+            toolCallsExecuted?: number;
             /** agent_transcript: the worker's model-facing messages — full replacement, or an append. */
             reset?: unknown[];
             append?: unknown[];
@@ -2760,6 +2812,12 @@ Query: "${query}"`;
                 });
                 break;
 
+              case 'composing':
+                // The worker is generating the final report — the longest
+                // single completion of the run, and previously a silent one.
+                this.postStatus(run, 'Writing the final report…');
+                break;
+
               case 'slow_model': {
                 // The worker detected ~minute-long completions and trimmed the
                 // run (fewer iterations, no reflection extras). Tell the user
@@ -2796,6 +2854,23 @@ Query: "${query}"`;
                 // up in the extension host output for real chats too. Consumed
                 // properly by packages/agent-evals.
                 console.log('[agent-metrics]', JSON.stringify(result));
+                // Where the run's wall clock went, in the same channel as the
+                // command log — so the next "why did that take twenty minutes"
+                // is one line to read instead of an audit-log reconstruction.
+                {
+                  const sec = (ms: unknown) => `${Math.round(Number(ms ?? 0) / 1000)}s`;
+                  const pct = (ms: unknown) =>
+                    result.wallMs ? ` (${Math.round((Number(ms ?? 0) / result.wallMs) * 100)}%)` : '';
+                  const byName = Object.entries(result.toolMsByName ?? {})
+                    .slice(0, 5)
+                    .map(([n, v]: [string, any]) => `${n} ${sec(v.ms)}×${v.calls}`)
+                    .join(', ');
+                  agentOutputChannel().appendLine(
+                    `\n— run finished in ${sec(result.wallMs)}: model ${sec(result.modelMs)}${pct(result.modelMs)}, ` +
+                      `tools ${sec(result.toolMs)}${pct(result.toolMs)} over ${result.turns} turns / ${result.toolCallsExecuted} tool calls` +
+                      (byName ? `\n  top tools: ${byName}` : '')
+                  );
+                }
                 break;
 
               case 'agent_transcript':

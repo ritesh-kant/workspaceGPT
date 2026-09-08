@@ -55,7 +55,7 @@ import {
   LimitKind,
   pruneStaleHarnessMessages,
 } from './resumeHygiene';
-import { AutoVerifyTracker, CheckResultLike } from './autoVerify';
+import { AutoVerifyTracker, CheckResultLike, CheckKindName, PendingCheck } from './autoVerify';
 import { stripLineNumbers } from '../../services/codebase/lineNumbers';
 
 interface WorkerData {
@@ -829,8 +829,58 @@ const KNOWN_TOOL_NAMES = new Set(
   TOOL_DEFS.map((d: any) => d.function?.name).filter(Boolean)
 );
 
-/** Tools that change workspace state — never executed concurrently. */
-const MUTATING_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 'run_command', 'run_checks']);
+/** One `run_checks` process, and every pending check it discharges. */
+interface CheckJob {
+  args: { path: string; kind: CheckKindName; paths?: string[] };
+  covers: PendingCheck[];
+}
+
+/**
+ * Turn a round's pending checks into the processes that will actually run.
+ *
+ * Every lint in the batch collapses into ONE call: type-aware eslint rebuilds
+ * a TypeScript program on each process start (measured at 19.4s median and
+ * 90.7s worst on a single file), so linting four changed files as four
+ * invocations pays that cost four times for the same program. run_checks
+ * drops any path that is not in the first one's package, so a batch spanning
+ * two packages still lints the second one — on the next round, one process
+ * each, which is what a per-package command has to cost anyway.
+ *
+ * Typecheck and test are left one call per file: their derived commands are
+ * already package-wide, and the host replays an identical one for free.
+ */
+function planCheckJobs(batch: PendingCheck[]): CheckJob[] {
+  const lints = batch.filter((c) => c.kind === 'lint');
+  const jobs: CheckJob[] = [];
+  if (lints.length > 0) {
+    jobs.push({
+      args: {
+        path: lints[0].path,
+        kind: 'lint',
+        ...(lints.length > 1 ? { paths: lints.slice(1).map((c) => c.path) } : {}),
+      },
+      covers: lints,
+    });
+  }
+  for (const c of batch) {
+    if (c.kind !== 'lint') jobs.push({ args: { path: c.path, kind: c.kind }, covers: [c] });
+  }
+  return jobs;
+}
+
+/**
+ * Calls that must not overlap ANYTHING: they change the workspace (or, for
+ * run_command, may), so a read beside them sees an indeterminate tree and a
+ * check beside them verifies stale code. They act as barriers in the round —
+ * everything keeps its original relative order across one.
+ *
+ * `run_checks` was in this set (as MUTATING_TOOL_NAMES) and is deliberately
+ * out of it now: it only reads. It must not race a write, which the barrier
+ * ordering still guarantees, but two checks may overlap each other — which is
+ * the common shape (lint three changed files) and, measured on this
+ * workspace, ~20s each of pure waiting.
+ */
+const BARRIER_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 'run_command']);
 
 /** File-mutating subset whose success must be verified by diagnostics before the run may end. */
 const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file']);
@@ -1165,16 +1215,37 @@ async function generateWithOpenAIStream(
  * within the same worker lifetime.
  */
 function requestTool(name: string, args: unknown, id: string = randomUUID()): Promise<unknown> {
+  const started = Date.now();
   return new Promise((resolve, reject) => {
     const handler = (msg: any) => {
       if (msg?.type === 'tool_response' && msg.id === id) {
         parentPort?.off('message', handler);
+        noteToolMs(name, Date.now() - started);
         msg.error ? reject(new Error(msg.error)) : resolve(msg.result);
       }
     };
     parentPort?.on('message', handler);
     parentPort?.postMessage({ type: 'tool_request', id, name, arguments: args });
   });
+}
+
+/**
+ * Host-side wall clock per tool, so a finished run can say where its time
+ * actually went. Until this existed the only way to answer "why did that take
+ * twenty minutes" was to diff timestamps in the audit log by hand — and the
+ * answer, when finally measured, was that verification subprocesses were ~60%
+ * of the run. Anything optimised here should be visible here.
+ *
+ * Overlapping calls each bill their own elapsed time, so the total can exceed
+ * the run's wall clock — that gap IS the parallelism, and it is the number
+ * that says whether batching a round helped.
+ */
+const toolMsByName = new Map<string, { ms: number; calls: number }>();
+let toolMsTotal = 0;
+function noteToolMs(name: string, ms: number): void {
+  const prev = toolMsByName.get(name) ?? { ms: 0, calls: 0 };
+  toolMsByName.set(name, { ms: prev.ms + ms, calls: prev.calls + 1 });
+  toolMsTotal += ms;
 }
 
 /** Token usage for one (or more, if retried) API call(s) backing a turn. */
@@ -2257,6 +2328,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       usageMissingTurns,
       toolCallsExecuted,
       writesApplied,
+      /** Wall clock spent waiting on the model, summed over turns. */
+      modelMs: turnMsTotal,
+      /** Wall clock spent inside host tools; overlapping calls each bill their own. */
+      toolMs: toolMsTotal,
+      toolMsByName: Object.fromEntries([...toolMsByName].sort((a, b) => b[1].ms - a[1].ms)),
       failedToolCalls: [...failedCalls.values()].reduce((a, b) => a + b, 0),
       toolCharsUsed,
       budgetExhausted,
@@ -2506,34 +2582,65 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       const checkBatch = autoVerify.nextBatch();
       if (checkBatch.length > 0) {
         const round = ++autoVerifyRounds;
-        const calls = checkBatch.map((c, n) => ({
+        const jobs = planCheckJobs(checkBatch);
+        const calls = jobs.map((job, n) => ({
           id: `auto_checks_${round}_${n}`,
           type: 'function' as const,
-          function: { name: 'run_checks', arguments: JSON.stringify({ path: c.path, kind: c.kind }) },
+          function: { name: 'run_checks', arguments: JSON.stringify(job.args) },
         }));
         messages.push({ role: 'assistant', content: outcome.content || null, tool_calls: calls });
         const failures: string[] = [];
         const brokenRunners: string[] = [];
-        for (let n = 0; n < checkBatch.length; n++) {
-          const { path: checkPath, kind } = checkBatch[n];
-          autoVerify.markRunning(checkPath, kind);
+        const runJob = async (job: CheckJob): Promise<unknown> => {
+          // The primary is marked BEFORE the call, so a check that keeps
+          // throwing costs one round rather than repeating forever. The rest
+          // of a batched lint are marked from what the host says it actually
+          // covered — a path dropped for living in another package must stay
+          // pending, not be recorded as verified by a process that skipped it.
+          autoVerify.markRunning(job.args.path, job.args.kind);
           const transportId = randomUUID();
           parentPort?.postMessage({
             type: 'tool_status',
             id: transportId,
             name: 'run_checks',
-            arguments: { path: checkPath, kind, auto: true },
+            arguments: { ...job.args, auto: true },
           });
-          let checkResult: unknown;
+          let result: unknown;
           try {
-            checkResult = await requestTool('run_checks', { path: checkPath, kind }, transportId);
+            result = await requestTool('run_checks', job.args, transportId);
           } catch (e) {
-            checkResult = { error: e instanceof Error ? e.message : String(e) };
+            return { error: e instanceof Error ? e.message : String(e) };
           }
-          const verdict = autoVerify.noteOutcome(kind, checkResult as CheckResultLike);
-          if (verdict === 'failed') failures.push(`${kind} for ${checkPath}`);
-          if (verdict === 'unavailable') brokenRunners.push(kind);
-          messages.push({ role: 'tool', tool_call_id: calls[n].id, content: serializeToolResult(checkResult) });
+          const covered = (result as { coveredPaths?: unknown } | null)?.coveredPaths;
+          // No coveredPaths in the result means the batch was not honoured —
+          // only the primary ran. Leaving the rest pending re-runs them next
+          // round; assuming they passed would report unlinted files as clean.
+          const coveredSet = new Set((Array.isArray(covered) ? covered : []).map(String));
+          for (const c of job.covers) {
+            if (c.path !== job.args.path && coveredSet.has(c.path)) autoVerify.markRunning(c.path, c.kind);
+          }
+          return result;
+        };
+        // Lint and typecheck are single-process and cheap on memory, so they
+        // overlap; tests stay strictly serial. A jest run already forks
+        // cores-1 workers, and two of them at once is how ticket #1534774 put
+        // the machine into swap — concurrency here must not re-open that.
+        const results: unknown[] = new Array(jobs.length);
+        await Promise.all(
+          jobs.map(async (job, n) => {
+            if (job.args.kind === 'test') return;
+            results[n] = await runJob(job);
+          })
+        );
+        for (let n = 0; n < jobs.length; n++) {
+          if (jobs[n].args.kind === 'test') results[n] = await runJob(jobs[n]);
+        }
+        for (let n = 0; n < jobs.length; n++) {
+          const job = jobs[n];
+          const verdict = autoVerify.noteOutcome(job.args.kind, results[n] as CheckResultLike);
+          if (verdict === 'failed') failures.push(`${job.args.kind} for ${job.covers.map((c) => c.path).join(', ')}`);
+          if (verdict === 'unavailable') brokenRunners.push(job.args.kind);
+          messages.push({ role: 'tool', tool_call_id: calls[n].id, content: serializeToolResult(results[n]) });
           recordToolResult('run_checks', i, messages[messages.length - 1].content);
         }
         if (failures.length > 0) {
@@ -2958,7 +3065,6 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // results land in freed space instead of being truncated to nothing.
     compactOldToolResults(i);
 
-    const hasMutation = toolCalls.some((tc) => MUTATING_TOOL_NAMES.has(tc.name));
     const executeOne = async (tc: BufferedToolCall) => {
       let parsedArgs: unknown = {};
       try {
@@ -3101,12 +3207,28 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         return { error: e instanceof Error ? e.message : String(e) };
       }
     };
+    // Execute in the order the model asked for, but let ADJACENT non-barrier
+    // calls overlap. A round of [edit A, read B, read C] used to run all three
+    // back to back because one of them mutated; now the edit runs alone and
+    // B and C run together. Consecutive-run batching (rather than "all reads
+    // first") is what keeps read-after-write honest: a read the model placed
+    // after its edit still sees the edited file.
     const results: unknown[] = [];
-    if (hasMutation) {
-      for (const tc of toolCalls) results.push(await executeOne(tc));
-    } else {
-      results.push(...(await Promise.all(toolCalls.map(executeOne))));
+    let batch: BufferedToolCall[] = [];
+    const flush = async () => {
+      if (batch.length === 0) return;
+      results.push(...(batch.length === 1 ? [await executeOne(batch[0])] : await Promise.all(batch.map(executeOne))));
+      batch = [];
+    };
+    for (const tc of toolCalls) {
+      if (BARRIER_TOOL_NAMES.has(tc.name)) {
+        await flush();
+        results.push(await executeOne(tc));
+      } else {
+        batch.push(tc);
+      }
     }
+    await flush();
 
     // `role: 'tool'` messages must immediately and contiguously follow the
     // assistant `tool_calls` turn that requested them — several OpenAI-compat
@@ -3329,6 +3451,13 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   });
   let finalStarted = Date.now();
   syncTranscript();
+  // This turn writes the whole final report against a long tool history, and
+  // it is the longest single completion of the run. It cannot be streamed —
+  // the harness rewrites the text before delivery (preamble stripping, the
+  // honesty stamp, harness-limit notes), and streaming the raw draft would put
+  // an unstamped completion claim on screen ahead of its correction. So say
+  // what is happening instead of leaving the timeline silent for it.
+  parentPort?.postMessage({ type: 'composing' });
   let finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
   noteTurn(Date.now() - finalStarted, finalOutcome, 0, false);
   // Tools are off for this turn — it exists purely to force a prose answer —
