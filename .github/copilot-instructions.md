@@ -82,9 +82,9 @@ Azure DevOps API → adoWorker.ts (ESM) → FAISS embeddings (via @xenova/transf
                                               ↓
                                          VSCode Extension chat (chatService.ts)
 
-Codebase files → codebaseWorker.ts → FAISS embeddings
+Open workspace → live codebase tools (ripgrep, language-server navigation, file reads)
                                               ↓
-                                         VSCode Extension chat
+                                         VSCode Extension agent
 ```
 
 ### Key Patterns
@@ -146,7 +146,6 @@ src/
     ChatMessageHandler.ts
     ConfluenceMessageHandler.ts
     AdoMessageHandler.ts      # ADO PAT save/disconnect, sync, indexing
-    CodebaseMessageHandler.ts
     SystemMessageHandler.ts
   services/
     analyticsService.ts       # PostHog (eu.i.posthog.com)
@@ -154,12 +153,11 @@ src/
     historyService.ts
     confluence/               # confluenceAuthService, confluenceEmbeddingService, ...
     ado/                      # adoAuthService, adoEmbeddingService, adoService, adoSyncScheduler
-    codebase/
+    codebase/                 # Live workspace tools, mentions, and line utilities
     jira/                     # Empty placeholder
   workers/
     confluence/confluenceWorker.ts
     ado/adoWorker.ts          # ESM worker for ADO data
-    codebase/                 # codebaseWorker, codebaseCountWorker, codebaseSearchWorker
     model/modelWorker.ts
     common/                   # createEmbeddingForText, searchProcess
     utils/initializeEmbeddingModel.ts

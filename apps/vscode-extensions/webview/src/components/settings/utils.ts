@@ -67,41 +67,8 @@ export const handleAdoActions = {
   },
 };
 
-export const handleCodebaseActions = {
-  startSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.START_CODEBASE_SYNC,
-      section: 'codebase',
-      config,
-    });
-  },
-
-  resumeSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RESUME_CODEBASE_SYNC,
-      section: 'codebase',
-      config,
-    });
-  },
-
-  resumeIndexing: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.RESUME_INDEXING_CODEBASE,
-      section: 'codebase',
-      config,
-    });
-  },
-
-  stopSync: (vscode: ReturnType<typeof VSCodeAPI>, config: any) => {
-    vscode.postMessage({
-      type: MESSAGE_TYPES.STOP_CODEBASE_SYNC,
-      section: 'codebase',
-      config,
-    });
-  },
-};
 export const handleInputChange = (
-  section: 'confluence' | 'codebase' | 'ado',
+  section: 'confluence' | 'ado',
   field: string,
   value: string | number
 ) => {

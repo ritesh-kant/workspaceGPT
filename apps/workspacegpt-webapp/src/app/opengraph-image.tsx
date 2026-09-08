@@ -71,7 +71,7 @@ export default function OpengraphImage() {
             color: "#64748b",
           }}
         >
-          <span>Codebase RAG</span>
+          <span>Live Codebase Tools</span>
           <span style={{ color: "#1ff2b4" }}>•</span>
           <span>Confluence</span>
           <span style={{ color: "#1ff2b4" }}>•</span>

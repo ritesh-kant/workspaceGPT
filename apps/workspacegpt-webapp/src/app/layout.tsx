@@ -51,14 +51,14 @@ export const metadata: Metadata = {
     siteName: "WorkspaceGPT",
     title: "WorkspaceGPT — Local, Private AI Coding Assistant",
     description:
-      "Chat with your codebase, Confluence docs, and Azure DevOps inside your IDE. Zero data retention — your content and search index stay on your machine.",
+      "Explore your codebase and chat with Confluence docs and Azure DevOps inside your IDE. Zero data retention — connected knowledge and its search index stay on your machine.",
     locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
     title: "WorkspaceGPT — Local, Private AI Coding Assistant",
     description:
-      "Chat with your codebase, Confluence docs, and Azure DevOps inside your IDE. Zero data retention — your content and search index stay on your machine.",
+      "Explore your codebase and chat with Confluence docs and Azure DevOps inside your IDE. Zero data retention — connected knowledge and its search index stay on your machine.",
   },
   robots: {
     index: true,
@@ -84,7 +84,7 @@ const jsonLd = {
       "@id": `${SITE_URL}/#software`,
       name: "WorkspaceGPT",
       description:
-        "A RAG-based AI coding assistant with zero data retention. Indexing and the vector store run on-device in both Local and Remote mode. Chat with your codebase, Confluence docs, and Azure DevOps work items inside VS Code, Cursor, or Antigravity.",
+        "An AI coding assistant with zero data retention. It explores your open codebase live, while connected Confluence and Azure DevOps knowledge is indexed on-device in both Local and Remote mode.",
       url: SITE_URL,
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Windows, macOS, Linux",

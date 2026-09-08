@@ -13,8 +13,7 @@
     "bench:retrieval:index": "node src/retrieval/build-fixture-index.mjs",
     "bench:retrieval": "node src/retrieval/retrieval-eval.mjs --rerank",
     "bench:codebase-rank": "node src/retrieval/codebase-rank-eval.mjs",
-    "bench:index": "node src/indexing/index-bench.mjs --multiply 10",
-    "bench:full": "pnpm bench:agent && pnpm bench:chat && pnpm bench:retrieval && pnpm bench:codebase-rank && pnpm bench:index",
+    "bench:full": "pnpm bench:agent && pnpm bench:chat && pnpm bench:retrieval && pnpm bench:codebase-rank",
     "bench:chat": "node src/chat/chat-response-bench.mjs",
     "ticket-evals": "node src/headless/ticket-evals.mjs",
     "ticket-evals:live": "node src/headless/ticket-evals.mjs --live"

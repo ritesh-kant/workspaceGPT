@@ -54,7 +54,7 @@ and forks like Antigravity are already a distribution channel via Open VSX).
 | Tool-calling loop in chat (`modelWorker.ts` TOOL_DEFS) | working | the agent loop seed |
 | Read tools: ripgrep search, read file, list/find files, LSP symbols/defs/refs, repo orientation ([codebaseTools.ts](apps/vscode-extensions/src/services/codebase/codebaseTools.ts)) | working, read-only | the "explore" half of the agent |
 | Confluence + ADO RAG (sync, embeddings, Qdrant/local store) | live | org-knowledge tools |
-| Codebase RAG path (jina-embeddings-v2-base-code, 768-dim) | dormant | semantic code search |
+| Live codebase tools (search, reads, LSP navigation, repo orientation) | working | workspace exploration without a persistent index |
 | `workspacegpt-mcp` | exists | MCP surface for our tools |
 | `release-core` + deployment engine (plan→approve→apply, audit log) | built | deploy-loop tools |
 | Task→model routing (`REMOTE_TASK_MODELS`) | client-side | becomes server-side per-plan routing |
@@ -107,10 +107,8 @@ allow it.
 
 ### B. Context engine
 
-- **B1. Revive codebase RAG** (the dormant path): incremental indexing with
-  the existing content-hash skip, gitignore-aware, jina-code embeddings local
-  / vendor-embedded remote (same encrypted-payload model as Confluence data —
-  code chunks are exactly the "user code" we promise not to store readable).
+- **B1. Live codebase exploration:** improve repo orientation, focused search,
+  and LSP navigation without creating or storing a codebase embedding index.
 - **B2. Repo map:** compressed file-tree + key-symbol skeleton injected into
   the system prompt (`buildRepoOrientation` is the seed — extend with LSP
   document symbols, ranked by import-graph centrality).
@@ -202,7 +200,7 @@ allow it.
 |---|---|---|---|
 | **1. Agent MVP** | "it edits and verifies" | A1 edit tools + A5 diff review + A4 checkpoints + A3 minimal permissions + B3 diagnostics + B4 git-read | Smallest thing that changes the product category; read tools already exist |
 | **2. Agent that runs things** | "it tests its own work" | A2 run_command + E3 terminal + A6 hardening + A7 context mgmt + A9 rules files | Execution needs the trust UI from phase 1 in place first |
-| **3. The moat** | "it knows your org" | C1 org tools in agent + B5 @-mentions + C2 ticket→PR demo + B1 codebase RAG revival + B2 repo map | Differentiation on top of a working agent, not instead of one |
+| **3. The moat** | "it knows your org" | C1 org tools in agent + B5 @-mentions + C2 ticket→PR demo + B1 live codebase exploration + B2 repo map | Differentiation on top of a working agent, not instead of one |
 | **4. Commercial** | "it's a business" | D1 proxy extension + A8 caching + D4 cost display + G1 pricing + F2/F3 + G3 evals | SaaS backbone (REMOTE-MODE-SAAS steps a–h) can proceed in parallel from phase 1 |
 | **5. Parity & polish** | "no reason to leave" | E2 inline edit + C3 MCP client + A10 sub-agents + C4 deploy tools + E4 resume | Catch-up features after the wedge is sharp |
 
@@ -231,5 +229,4 @@ development run against the real proxy from day one.
 | 1 | Edit format: search/replace blocks vs unified diff vs full-file — pick per eval results, models differ | **DECIDED (2026-08-15): search/replace** (as structured `edit_file` tool args). qwen2.5-coder-14b matrix: search-replace 60% pass / 70% apply-ok / 375 avg output tokens; unified-diff 40/40/221 (fabricates hunk context); full-file 60/60 but **3× the tokens (1110) and 2× the latency (141s vs 73s)** with truncation risk on big files. Search/replace's failure mode is also the safest: a miscopied SEARCH is *rejected*, never mis-applied, and the error feeds back for a retry. Matches the shipped `edit_file(oldString,newString)` semantics. Frontier-model rows pending a working API key (Gemini 2.5 ids returned "no longer available to new users" 404s). |
 | 2 | Checkpoints: shadow git repo vs snapshot files — shadow git handles multi-file atomically | **DECIDED (2026-08-15): shadow git** — separate `--git-dir` under globalStorage, workspace as `--work-tree`, `info/exclude` for `.git/`; workspace `.gitignore` respected automatically. Spike verified: atomic multi-file revert incl. agent-created-file removal, captures user's *uncommitted* state, untracked user files survive, real repo untouched, free per-checkpoint diffs, ~2.7s cold / fast incremental. |
 | 3 | Which frontier model(s) for the managed agent tier (Claude Sonnet-class vs Gemini Pro) — decided by G3 evals + margin | Phase 4 |
-| 4 | Does codebase indexing in remote mode use vendor embedding (code leaves machine in-flight) or local jina even in remote mode (slower, private-er)? | Phase 3 |
-| 5 | Agent quota unit for pricing (tokens vs "agent runs") | Phase 4 |
+| 4 | Agent quota unit for pricing (tokens vs "agent runs") | Phase 4 |

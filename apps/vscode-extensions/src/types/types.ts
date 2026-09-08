@@ -16,19 +16,11 @@ export interface EmbeddingConfig {
   };
 }
 
-export interface CodebaseConfig {
-  repoPath: string;
-  includePatterns: string;
-  excludePatterns: string[];
-  maxFileSizeKb: number;
-  isSyncing?: boolean;
-}
-
 export interface EmbeddingSearchResult {
   text: string;
   score: number;
   data: {
-    sourceName: 'CONFLUENCE' | 'CODEBASE' | 'ADO';
+    sourceName: 'CONFLUENCE' | 'ADO';
     source: string;
     fileName: string;
   };

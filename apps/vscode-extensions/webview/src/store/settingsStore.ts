@@ -16,7 +16,6 @@ export interface SettingsConfig {
   /** Set once onboarding finishes (or is skipped past); gates the first-run flow. */
   onboardingCompleted: boolean;
   confluence: ConfluenceConfig;
-  codebase: CodebaseConfig;
   ado: AdoConfig;
   deployment: DeploymentConfig;
   embedding: EmbeddingProviderConfig;
@@ -69,24 +68,6 @@ export const settingsDefaultConfig: SettingsConfig = {
     isIndexingCompleted: false,
     lastSyncTime: undefined,
     isConnecting: false,
-  },
-  codebase: {
-    repoPath: '',
-    scanFrequency: 'daily',
-    includePatterns: '**/*.{js,ts,jsx,tsx,py,java,c,cpp,h,hpp}',
-    excludePatterns: '**/node_modules/**,**/dist/**,**/.git/**',
-    maxFileSizeKb: 500,
-    isSyncing: false,
-    isIndexing: false,
-    isCodebaseEnabled: false,
-    codebaseSyncProgress: 0,
-    codebaseIndexProgress: 0,
-    messageType: 'success',
-    statusMessage: '',
-    canResume: false,
-    canResumeIndexing: false,
-    isSyncCompleted: false,
-    isIndexingCompleted: false
   },
   deployment: {
     isDeploymentEnabled: false,
@@ -150,7 +131,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
-import { CodebaseConfig, ConfluenceConfig, AdoConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig, WebSearchConfig } from '../types';
+import { ConfluenceConfig, AdoConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig, WebSearchConfig } from '../types';
 
 const vscodeStorage = {
   getItem: () => {

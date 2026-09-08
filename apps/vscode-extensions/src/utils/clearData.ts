@@ -4,8 +4,10 @@ import { deleteDirectory } from './deleteDirectory';
 
 export async function clearWorkspaceGPTData(context: vscode.ExtensionContext) {
   try {
-    // 1. Delete storage directories for all integrations
-    const directoriesToDelete = ['confluence', 'ado', 'codebase', 'chat_history'];
+    // 1. Delete storage directories for all integrations. `codebase` is no
+    // longer an active source; retain it here solely to purge indexes left by
+    // the retired pipeline when the user explicitly clears all data.
+    const directoriesToDelete = ['confluence', 'ado', 'chat_history', 'codebase'];
     for (const dir of directoriesToDelete) {
       const dirPath = path.join(context.globalStorageUri.fsPath, dir);
       await deleteDirectory(dirPath);

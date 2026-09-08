@@ -1,6 +1,6 @@
 import { useSettingsStore } from './settingsStore';
 
-export type StatusSection = 'confluence' | 'codebase' | 'ado' | 'deployment';
+export type StatusSection = 'confluence' | 'ado' | 'deployment';
 
 /** At most one pending auto-clear per section. */
 const pending: Partial<Record<StatusSection, ReturnType<typeof setTimeout>>> = {};

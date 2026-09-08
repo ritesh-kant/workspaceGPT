@@ -208,7 +208,7 @@ export default function Home() {
                 Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand to-brand-blue">AI-powered</span> <br/> local coding assistant
               </h1>
               <p className="text-lg sm:text-xl text-slate-300 mb-8 sm:mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
-                Chat with your codebase, your Confluence docs, and your Azure DevOps work items from right inside your IDE. Your documents and the search index built from them <span className="text-white font-medium">never leave your machine</span> &mdash; in either mode.
+                Explore your codebase and chat with your Confluence docs and Azure DevOps work items from right inside your IDE. Your connected knowledge and its search index <span className="text-white font-medium">never leave your machine</span> &mdash; in either mode.
               </p>
               
               <div className="flex flex-wrap gap-4 justify-center lg:justify-start">

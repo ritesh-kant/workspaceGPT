@@ -4,7 +4,6 @@ import { AnalyticsService } from '../services/analyticsService';
 import { ConfluenceMessageHandler } from './ConfluenceMessageHandler';
 import { AdoMessageHandler } from './AdoMessageHandler';
 import { ChatMessageHandler } from './ChatMessageHandler';
-import { CodebaseMessageHandler } from './CodebaseMessageHandler';
 import { SystemMessageHandler } from './SystemMessageHandler';
 import { DeploymentMessageHandler } from './DeploymentMessageHandler';
 import { RemoteAuthMessageHandler } from './RemoteAuthMessageHandler';
@@ -38,7 +37,6 @@ export class WebviewMessageHandler {
   private confluenceHandler: ConfluenceMessageHandler;
   private adoHandler: AdoMessageHandler;
   private chatHandler: ChatMessageHandler;
-  private codebaseHandler: CodebaseMessageHandler;
   private systemHandler: SystemMessageHandler;
   private deploymentHandler: DeploymentMessageHandler;
   private remoteAuthHandler: RemoteAuthMessageHandler;
@@ -54,7 +52,6 @@ export class WebviewMessageHandler {
     this.confluenceHandler = new ConfluenceMessageHandler(webviewView, context, this.analyticsService);
     this.adoHandler = new AdoMessageHandler(webviewView, context, this.analyticsService);
     this.chatHandler = new ChatMessageHandler(webviewView, context, this.analyticsService, this.historyService);
-    this.codebaseHandler = new CodebaseMessageHandler(webviewView, context, this.analyticsService);
     this.systemHandler = new SystemMessageHandler(webviewView, context, this.analyticsService);
     this.deploymentHandler = new DeploymentMessageHandler(webviewView, context, this.analyticsService);
     this.remoteAuthHandler = new RemoteAuthMessageHandler(webviewView, context, this.analyticsService);
@@ -111,7 +108,6 @@ export class WebviewMessageHandler {
     if (await this.confluenceHandler.handleMessage(data)) return;
     if (await this.adoHandler.handleMessage(data)) return;
     if (await this.chatHandler.handleMessage(data)) return;
-    if (await this.codebaseHandler.handleMessage(data)) return;
     if (await this.deploymentHandler.handleMessage(data)) return;
     if (await this.systemHandler.handleMessage(data)) {
       if (isSettingsUpdate) {
@@ -200,7 +196,6 @@ export class WebviewMessageHandler {
       // Orchestrate reset across all handlers
       await this.confluenceHandler.reset();
       await this.adoHandler.reset();
-      await this.codebaseHandler.reset();
       await this.systemHandler.reset();
       this.chatHandler.dispose();
       

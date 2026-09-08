@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "WorkspaceGPT Documentation",
     description:
-      "Installation, AI providers, codebase indexing, Confluence and Azure DevOps integration, MCP server, and troubleshooting.",
+      "Installation, AI providers, live codebase exploration, Confluence and Azure DevOps integration, MCP server, and troubleshooting.",
     url: "/docs",
   },
 };

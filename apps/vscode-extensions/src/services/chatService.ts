@@ -11,7 +11,6 @@ import {
   STORAGE_KEYS,
   ChatAttachment,
 } from '../../constants';
-import { CodebaseService } from './codebase/codebaseService';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
 import { AnalyticsService } from './analyticsService';
 import { getLlmSettings } from 'src/utils/getLlmSettings';
@@ -346,7 +345,6 @@ interface SessionRun {
 export class ChatService {
   private embeddingService: ConfluenceEmbeddingService;
   private adoEmbeddingService: AdoEmbeddingService;
-  private codebaseService: CodebaseService;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private currentModel: string;
@@ -374,7 +372,6 @@ export class ChatService {
     this.context = context;
     this.embeddingService = new ConfluenceEmbeddingService(webviewView, context);
     this.adoEmbeddingService = new AdoEmbeddingService(webviewView, context);
-    this.codebaseService = new CodebaseService(webviewView, context);
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
     // Housekeeping, once per activation: an interrupted run the user never
     // came back to would otherwise keep its transcript in global storage
