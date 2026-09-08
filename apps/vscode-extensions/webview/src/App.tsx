@@ -262,6 +262,7 @@ const TURN_SCOPED_TYPES = new Set<string>([
   MESSAGE_TYPES.RECEIVE_MESSAGE,
   MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK,
   MESSAGE_TYPES.RECEIVE_MESSAGE_DONE,
+  MESSAGE_TYPES.RECEIVE_MESSAGE_RESTART,
   MESSAGE_TYPES.RETRIEVAL_STATUS,
   MESSAGE_TYPES.AGENT_STEP,
   MESSAGE_TYPES.AGENT_STEP_UPDATE,
@@ -363,6 +364,7 @@ const App: React.FC = () => {
     removeMessageAt,
     truncateFrom,
     appendToLastMessage,
+    restartLastMessage,
     clearMessages,
     setInputValue,
     setIsLoading,
@@ -725,6 +727,8 @@ const App: React.FC = () => {
   const flushStreamRemainderRef = useRef(flushStreamRemainder);
   startStreamPumpRef.current = startStreamPump;
   flushStreamRemainderRef.current = flushStreamRemainder;
+  const restartLastMessageRef = useRef(restartLastMessage);
+  restartLastMessageRef.current = restartLastMessage;
 
   // Stops the pump and discards any buffered text — used when a stream is
   // abandoned (new chat, new message, stop, error).
@@ -736,6 +740,8 @@ const App: React.FC = () => {
     pendingTextRef.current = '';
     streamDoneRef.current = false;
   }, []);
+  const resetStreamBufferRef = useRef(resetStreamBuffer);
+  resetStreamBufferRef.current = resetStreamBuffer;
 
   // Clean up the pump on unmount.
   useEffect(() => () => resetStreamBuffer(), [resetStreamBuffer]);
@@ -787,6 +793,9 @@ const App: React.FC = () => {
           // No typewriter for an off-screen chat — append the text directly.
           store.bgAppendToLast(sessionId, message.content || '');
           store.bgPatch(sessionId, { isLoading: false, isStreaming: true, statusText: '' });
+          break;
+        case MESSAGE_TYPES.RECEIVE_MESSAGE_RESTART:
+          store.bgRestartLast(sessionId);
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_DONE:
           store.bgFinalizeTurn(sessionId, message.fallbackAnswer || AGENT_FALLBACK_ANSWER);
@@ -887,6 +896,13 @@ const App: React.FC = () => {
           setStatusText('');
           setIsLoading(false);
           setIsStreaming(false);
+          break;
+        case MESSAGE_TYPES.RECEIVE_MESSAGE_RESTART:
+          // Discard buffered text from the superseded report as well as what
+          // already reached the bubble — otherwise the pump keeps typing the
+          // old answer out underneath the new one.
+          resetStreamBufferRef.current();
+          restartLastMessageRef.current();
           break;
         case MESSAGE_TYPES.RECEIVE_MESSAGE_CHUNK:
           // Buffer the chunk; the pump drains it to the UI at a steady rate.

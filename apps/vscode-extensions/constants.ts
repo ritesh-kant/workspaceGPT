@@ -4,6 +4,18 @@ export const MESSAGE_TYPES = {
   RECEIVE_MESSAGE: 'receive-message',
   RECEIVE_MESSAGE_CHUNK: 'receive-message-chunk',
   RECEIVE_MESSAGE_DONE: 'receive-message-done',
+  /**
+   * The answer streamed so far is SUPERSEDED — clear it and stream the
+   * replacement into the same bubble, keeping the turn's steps and summary.
+   *
+   * One turn can produce two reports: the autonomous stall auto-resume runs a
+   * second segment when the first ended without writing anything. Both were
+   * appended to the same message, so #1384667 was stored as a single answer
+   * whose visible heading said "0 edits applied · step limit reached" while
+   * further down the SAME message a second report listed the two files it went
+   * on to change.
+   */
+  RECEIVE_MESSAGE_RESTART: 'receive-message-restart',
   CLEAR_CHAT: 'clear-chat',
   NEW_CHAT: 'new-chat',
   SHOW_SETTINGS: 'show-settings',

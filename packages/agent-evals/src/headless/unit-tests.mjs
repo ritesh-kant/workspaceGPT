@@ -2971,6 +2971,37 @@ console.log('\nresumeHygiene (a resumed run must not inherit the previous segmen
     assert.equal(h.limitKindOf(assistant(h.HARNESS_LIMIT_PREFIX.steps)), null, 'only harness (user-role) messages count');
   });
 
+  // #1384667 reported "step limit reached" under a diagnostics footer reading
+  // "62 turns (cap 200) · tool budget 49% used". The loop has FOUR exits and
+  // had two labels; the clock and a full context both borrowed the step wording.
+  await t('every way the loop can end has its own announcement, phrase and noun', () => {
+    const kinds = Object.keys(h.HARNESS_LIMIT_PREFIX);
+    assert.deepEqual(kinds.sort(), ['budget', 'clock', 'context', 'steps'], 'one per loop exit');
+    for (const kind of kinds) {
+      assert.ok(h.HARNESS_LIMIT_PHRASE[kind], `${kind} needs an answer phrase`);
+      assert.ok(h.HARNESS_LIMIT_NOUN[kind], `${kind} needs a resume noun`);
+    }
+    // Distinct, or the label carries no information.
+    assert.equal(new Set(Object.values(h.HARNESS_LIMIT_PREFIX)).size, kinds.length);
+    assert.equal(new Set(Object.values(h.HARNESS_LIMIT_PHRASE)).size, kinds.length);
+    // A clock ending must not be describable as a step limit.
+    assert.doesNotMatch(h.HARNESS_LIMIT_PHRASE.clock, /step/i);
+    assert.doesNotMatch(h.HARNESS_LIMIT_PHRASE.context, /step/i);
+  });
+
+  await t('a clock or context ending is recognised as itself, not as a step limit', () => {
+    const seen = (kind) =>
+      h.limitKindOf(user(`${h.HARNESS_LIMIT_PREFIX[kind]}: 100 tool call(s) over 62 turns (cap 200).`));
+    assert.equal(seen('clock'), 'clock', 'the #1384667 ending');
+    assert.equal(seen('context'), 'context');
+    assert.equal(seen('steps'), 'steps');
+    assert.equal(seen('budget'), 'budget');
+    // And each is still pruned from a resumed transcript.
+    for (const kind of Object.keys(h.HARNESS_LIMIT_PREFIX)) {
+      assert.ok(h.isStaleHarnessMessage(user(`${h.HARNESS_LIMIT_PREFIX[kind]}: 1 tool call(s).`)), kind);
+    }
+  });
+
   await t('the retry nudge, the checkpoint, and the empty placeholder are stale too', () => {
     assert.ok(h.isStaleHarnessMessage(user(`${h.HARNESS_PROSE_RETRY_PREFIX} 3 tool result(s) already gathered above.`)));
     assert.ok(h.isStaleHarnessMessage(user(`${h.HARNESS_CHECKPOINT_PREFIX} 2 tool turn(s) left in this run.`)));
@@ -3126,7 +3157,7 @@ console.log('\nno phrase decides a budget or a capability (the #1534774 class of
 console.log('\nwritePressure (a run that owes an edit may not spend its whole budget reading)');
 {
   const wp = await import(path.join(outDir, 'writePressure.mjs'));
-  const base = { contextExhausted: false, stagnant: false, writesApplied: 0 };
+  const base = { contextExhausted: false, stagnant: false, investigationCallsWithoutWrite: 0, writesApplied: 0 };
 
   await t('narrows on measured facts only: no room left, or nothing new being learned', () => {
     const at = (over = {}) => wp.shouldNarrowToConclude({ ...base, ...over });
@@ -3137,6 +3168,34 @@ console.log('\nwritePressure (a run that owes an edit may not spend its whole bu
     // There is no turn index and no cap in the signature at all — turn count
     // was only ever a proxy for these two.
     assert.ok(!('turnIndex' in base) && !('iterationCap' in base));
+  });
+
+  // #1384667: 62 turns of a 200 cap, tool budget 49% used, every turn learning
+  // something, zero writes — neither of the two triggers above could fire, and
+  // the run died on the wall clock having read 60 files and searched 41 times.
+  await t('investigation without a write is its own trigger, not a side effect of the other two', () => {
+    const at = (over = {}) => wp.shouldNarrowToConclude({ ...base, ...over });
+    const limit = wp.INVESTIGATION_CALLS_WITHOUT_WRITE;
+    assert.equal(at({ investigationCallsWithoutWrite: limit - 1 }), false, 'one short — still investigating');
+    assert.equal(at({ investigationCallsWithoutWrite: limit }), true, 'at the limit with nothing written');
+    assert.equal(at({ investigationCallsWithoutWrite: 101 }), true, 'the #1384667 shape');
+    assert.equal(
+      at({ investigationCallsWithoutWrite: 101, writesApplied: 1 }),
+      false,
+      'a run that has written keeps every tool, however much it read first'
+    );
+    // Fires on the facts alone: no room pressure, no stagnation, no clock.
+    assert.equal(at({ investigationCallsWithoutWrite: limit }), true);
+  });
+
+  await t('the investigation limit leaves healthy runs untouched', () => {
+    const at = (n) => wp.shouldNarrowToConclude({ ...base, investigationCallsWithoutWrite: n });
+    // agent-smoke medians: s1 read-only exploration 15 tool calls, s2/s3
+    // multi-file edits 28-29 — all of them TOTAL, not just investigation.
+    assert.equal(at(15), false, 's1 read-only exploration');
+    assert.equal(at(29), false, 's2 multi-file rename');
+    assert.ok(wp.INVESTIGATION_CALLS_WITHOUT_WRITE >= 29 * 1.3, 'must keep real headroom over a passing run');
+    assert.ok(wp.INVESTIGATION_CALLS_WITHOUT_WRITE < 101, 'and must still fire on the run that failed');
   });
 
   await t('narrowing removes the discovery tools and keeps everything needed to finish', () => {

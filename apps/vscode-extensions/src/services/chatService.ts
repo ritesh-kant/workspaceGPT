@@ -1359,6 +1359,15 @@ export class ChatService {
         !run.cancelled
       ) {
         run.chatHistory.push({ role: 'assistant', content: modelResponse });
+        // The report just streamed is SUPERSEDED by the one this second
+        // segment will produce, so clear the bubble rather than appending to
+        // it. Without this both reports end up in one message and the stale
+        // heading is the visible one — #1384667 was stored as a single answer
+        // reading "0 edits applied · step limit reached" above a second report
+        // that listed the two files the run went on to change. The chat
+        // history entry above is deliberately kept: the MODEL still needs its
+        // own previous answer as context for the continuation.
+        this.post(run, { type: MESSAGE_TYPES.RECEIVE_MESSAGE_RESTART });
         this.postStatus(run, 'Run ended without finishing — resuming with a fresh tool budget...');
         modelResponse = await callModel(
           'Continue the ticket run from where the previous turn stopped — the investigation so far is carried over above. ' +

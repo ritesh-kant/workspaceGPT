@@ -40,6 +40,7 @@ import {
 } from './contextBudget';
 import {
   COMMIT_NARROWED_NOTICE,
+  DISCOVERY_TOOL_NAMES,
   VERIFICATION_RESERVE_TURNS,
   capWithVerificationReserve,
   narrowToCommitTools,
@@ -48,6 +49,7 @@ import {
 import {
   EMPTY_RESPONSE_PLACEHOLDER,
   HARNESS_CHECKPOINT_PREFIX,
+  HARNESS_LIMIT_PHRASE,
   HARNESS_LIMIT_PREFIX,
   HARNESS_PROSE_RETRY_PREFIX,
   LimitKind,
@@ -1821,6 +1823,13 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   };
   let toolCharsUsed = 0;
   let toolCallsExecuted = 0;
+  /**
+   * Investigation calls (read_file + the discovery tools) made before the
+   * first write. Feeds the third convergence trigger — see
+   * INVESTIGATION_CALLS_WITHOUT_WRITE in writePressure.ts. Stops mattering the
+   * moment a write lands, which is why it is never reset.
+   */
+  let investigationCallsWithoutWrite = 0;
   let planNudgesUsed = 0;
   // The last answer that was a finished, verified report (writes landed,
   // diagnostics clean after them, REPORT_SHAPED_RE). If the gates' follow-up
@@ -1991,7 +2000,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         `\n\n<sub>Run diagnostics: ${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · ${HARNESS_PROFILE} harness · 0 edits applied` +
         `${anyWriteAttempted ? ' (writes attempted but none landed)' : ' (no write ever attempted)'}` +
         ` · tool budget ${pct}% used${budgetExhausted ? ' — EXHAUSTED, honesty gates skipped' : ''}` +
-        ` · nudges fired: ${nudgesFired.length ? nudgesFired.join(', ') : 'none'}</sub>`;
+        ` · nudges fired: ${nudgesFired.length ? nudgesFired.join(', ') : 'none'}` +
+        // The reason the loop ACTUALLY ended, next to the counters that
+        // otherwise contradict it: #1384667's footer read "62 turns (cap 200)
+        // · tool budget 49% used" under a heading that blamed the step limit.
+        ` · stopped: ${HARNESS_LIMIT_PHRASE[stopReason]}</sub>`;
     }
     return out;
   };
@@ -2082,6 +2095,16 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // on a large monorepo query). Once set, the round-robin loop below stops
   // accepting further tool calls and forces the final answer immediately.
   let budgetExhausted = false;
+  /**
+   * WHY the loop stopped, for the forced-answer message below.
+   *
+   * Defaults to 'steps' because that is the ending the `for` condition itself
+   * produces; every other exit assigns before it breaks. Previously this was
+   * inferred from `budgetExhausted` alone, so the wall clock and a full
+   * context window were both announced as a step limit (#1384667: "step limit
+   * reached" at 62 turns of a 200 cap, 49% budget).
+   */
+  let stopReason: LimitKind = 'steps';
   // Populated by the exploration phase below, if it ran — surfaced in metrics
   // so its token cost is visible against the baseline it's meant to beat.
   let explorationStats: import('./explorationPhase').ExplorationStats | null = null;
@@ -2369,6 +2392,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // ── Wall clock: the only thing that ENDS a healthy run early ──
     if (Date.now() - runStarted > RUN_WALL_CLOCK_MS) {
       console.log(`[agent] wall clock reached after ${i} turns — concluding`);
+      stopReason = 'clock';
       break;
     }
     // Snapshot for the progress check at the end of this round. Nothing
@@ -2387,6 +2411,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     const narrow = shouldNarrowToConclude({
       contextExhausted: contextNow.exhausted,
       stagnant: isStagnant(turnsWithoutProgress),
+      investigationCallsWithoutWrite,
       writesApplied,
     });
     if (narrow && !commitNarrowingApplied) {
@@ -2394,7 +2419,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       messages.push({ role: 'user', content: COMMIT_NARROWED_NOTICE });
       console.log(
         `[agent] convergence pressure at turn ${i + 1}: discovery tools withdrawn ` +
-          `(context ${contextNow.usedPct}%, ${turnsWithoutProgress} turns without progress, 0 edits)`
+          `(context ${contextNow.usedPct}%, ${turnsWithoutProgress} turns without progress, ` +
+          `${investigationCallsWithoutWrite} investigation calls, 0 edits)`
       );
     }
     const turnToolDefs = narrow ? narrowToCommitTools(SCOPED_TOOL_DEFS) : SCOPED_TOOL_DEFS;
@@ -3149,6 +3175,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         autoVerify.noteCheckRan(argPath, kind);
       }
       if ((tc.name === 'run_command' || tc.name === 'run_checks') && !failed) commandRunSinceWrite = true;
+      if (writesApplied === 0 && (tc.name === 'read_file' || DISCOVERY_TOOL_NAMES.has(tc.name))) {
+        investigationCallsWithoutWrite++;
+      }
     });
     messages.push(...pendingImageTurns);
     toolCallsExecuted += toolCalls.length;
@@ -3238,10 +3267,14 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // The one real stop: no room left to show the model anything more.
     if (contextNow.exhausted) {
       console.log(`[agent] context full at turn ${i + 1} (${contextNow.usedPct}%) — concluding`);
+      stopReason = 'context';
       break;
     }
     // Backstop: truncation could not free room for even one more result.
-    if (budgetExhausted) break;
+    if (budgetExhausted) {
+      stopReason = 'budget';
+      break;
+    }
   }
 
   // The run already produced a finished, verified report and only the gates'
@@ -3262,24 +3295,25 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
   }
 
-  // Either MAX_TOOL_ITERATIONS or the tool-output budget was hit: force a
-  // final answer without tools so the user always gets a response instead of
-  // hanging or erroring. Tell the model WHICH limit ended the run — without
-  // this it discovers its tools are gone and invents a reason ("over budget,
-  // then tool access was cut off" — observed live at 9% budget), and that
-  // fabrication ends up in the user-facing answer.
+  // One of the four loop exits was taken: force a final answer without tools
+  // so the user always gets a response instead of hanging or erroring. Tell
+  // the model WHICH limit ended the run — without this it discovers its tools
+  // are gone and invents a reason ("over budget, then tool access was cut off"
+  // — observed live at 9% budget), and that fabrication ends up in the
+  // user-facing answer. Which is also why the reason has to be the REAL one:
+  // `stopReason` is set at each break rather than guessed from
+  // `budgetExhausted`, so a clock or context ending is no longer reported as a
+  // step limit (#1384667).
   messages.push({
     role: 'user',
     content:
       // Built from the resumeHygiene prefixes: a resumed run strips this
       // message, because the limit it announces belongs to THIS segment only.
-      (budgetExhausted
-        ? `${HARNESS_LIMIT_PREFIX.budget} after ${toolCallsExecuted} tool call(s).`
-        : `${HARNESS_LIMIT_PREFIX.steps}: ${toolCallsExecuted} tool call(s) over ${perTurn.length} turns (cap ${iterationCap}).`) +
+      `${HARNESS_LIMIT_PREFIX[stopReason]}: ${toolCallsExecuted} tool call(s) over ${perTurn.length} turns (cap ${iterationCap}).` +
       ' No further tools can run this turn. Answer now from what you already gathered. ' +
       'If the task itself is complete (fix applied and verified), do NOT mention the limit at all — deliver the final report in the required format as if the run ended normally. ' +
       'Only if the task is unfinished, be exact about why you stopped — say "' +
-      (budgetExhausted ? 'tool-output budget exhausted' : 'step limit reached') +
+      HARNESS_LIMIT_PHRASE[stopReason] +
       '"; do NOT claim tool access was revoked, cut off, or broken. ' +
       // Running out of steps is a HARNESS limit, not a fact about the ticket.
       // Observed live on #1534774: the model relabelled the cap hit as
@@ -3288,8 +3322,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // downstream as a product question the ticket failed to answer. It also
       // took this prompt's own "list the files still unread" instruction and
       // rendered it as a paragraph of homework for the next run.
-      'Do NOT use the "## Blocked" heading for this: a step or budget limit is a harness limit, not a missing product decision, and "## Blocked" claims the second. ' +
-      'Put that reason IN the status heading, after what is left — e.g. "## ⚠️ Partially done — run_checks not run · step limit reached after the edits" — a heading that names only what is left ("run_checks not run yet") tells the user nothing they can act on. ' +
+      'Do NOT use the "## Blocked" heading for this: a harness limit is not a missing product decision, and "## Blocked" claims the second. ' +
+      `Put that reason IN the status heading, after what is left — e.g. "## ⚠️ Partially done — run_checks not run · ${HARNESS_LIMIT_PHRASE[stopReason]} after the edits" — a heading that names only what is left ("run_checks not run yet") tells the user nothing they can act on. ` +
       'If you had already identified the fix, say so plainly under that heading and state what the edit would be, in one or two lines; if the task is a bug, still give the "### Root cause" section — the user wants to know what was wrong even when the fix is unfinished. ' +
       'Then list only the specific files still unread — the run resumes with everything gathered so far carried over, so keep it to file paths, not instructions.',
   });

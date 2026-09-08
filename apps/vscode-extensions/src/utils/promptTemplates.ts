@@ -1,4 +1,5 @@
 import { EmbeddingSearchResult } from 'src/types/types';
+import { HARNESS_LIMIT_NOUN, LimitKind } from '../workers/model/resumeHygiene';
 
 /** The turn-scoped extras a user message can carry, shared by both prompt builders below. */
 interface TurnExtras {
@@ -515,7 +516,7 @@ export function createContinuationPrompt(
      * model still has to be told the budget is fresh, or it reads its own
      * "Partially done" answer above as the state of play and stops again.
      */
-    previousSegmentEndedAt?: 'steps' | 'budget' | null;
+    previousSegmentEndedAt?: LimitKind | null;
   }
 ): string {
   const gathered = options?.toolResultsAbove
@@ -524,7 +525,7 @@ export function createContinuationPrompt(
 
   const howItEnded = options?.previousSegmentEndedAt
     ? `That run stopped when it hit the harness's ${
-        options.previousSegmentEndedAt === 'budget' ? 'tool-output budget' : 'step limit'
+        HARNESS_LIMIT_NOUN[options.previousSegmentEndedAt]
       }, and the partial report above is what the user saw. **This segment starts with a fresh step and tool-output budget: your tools are available again.** The limit no longer applies — do not repeat it, do not answer "Partially done" for that reason, and do not list files to read "when the run resumes": read them now.`
     : 'That run did not finish: it was cut short by a provider error or by the user stopping it, and no final answer was ever delivered.';
 

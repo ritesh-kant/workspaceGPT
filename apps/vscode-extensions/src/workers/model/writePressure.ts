@@ -52,6 +52,32 @@ export const DISCOVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
 /** Turns guaranteed after the first write, so an edit can always be verified. */
 export const VERIFICATION_RESERVE_TURNS = 4;
 
+/**
+ * Investigation calls a run may spend before its first write without the
+ * discovery tools being withdrawn.
+ *
+ * Counts `read_file` as well as the {@link DISCOVERY_TOOL_NAMES} — reading is
+ * the other half of investigating, and a run can burn a budget entirely on
+ * reads while every search it makes still returns something new.
+ *
+ * The two triggers above are both about running OUT of something (room,
+ * new information). Ticket #1384667 ran out of neither: 62 turns of a 200
+ * cap, tool budget 49% used, every turn learning something, zero writes, no
+ * nudge ever fired — and it died on the 30-minute wall clock having read 60
+ * files and searched 41 times. Nothing in the run was degrading, so nothing
+ * intervened. Investigation without a write is its own failure mode and needs
+ * its own fact.
+ *
+ * 40 is set from measured healthy runs, not taste: the agent-smoke scenarios
+ * complete in 15 (read-only exploration) to 29 (multi-file edit) tool calls
+ * TOTAL, so this leaves better than 2x the headroom of a normal successful
+ * run while firing at roughly turn 25 of the #1384667 shape rather than
+ * never. Narrowing is not a stop — `read_file`, the write tools and the
+ * checks all remain, so a run that legitimately needs the 41st search can
+ * still read the exact lines its edit copies.
+ */
+export const INVESTIGATION_CALLS_WITHOUT_WRITE = 40;
+
 export interface CommitPressureContext {
   /**
    * The conversation is close enough to filling the context window that this
@@ -60,6 +86,12 @@ export interface CommitPressureContext {
   contextExhausted: boolean;
   /** Consecutive turns that produced no new information (see contextBudget). */
   stagnant: boolean;
+  /**
+   * `read_file` + discovery-tool calls made so far while nothing has been
+   * written. Counted by the worker; compared against
+   * {@link INVESTIGATION_CALLS_WITHOUT_WRITE}.
+   */
+  investigationCallsWithoutWrite: number;
   writesApplied: number;
 }
 
@@ -84,7 +116,11 @@ export interface CommitPressureContext {
  */
 export function shouldNarrowToConclude(ctx: CommitPressureContext): boolean {
   if (ctx.writesApplied > 0) return false;
-  return ctx.contextExhausted || ctx.stagnant;
+  return (
+    ctx.contextExhausted ||
+    ctx.stagnant ||
+    ctx.investigationCallsWithoutWrite >= INVESTIGATION_CALLS_WITHOUT_WRITE
+  );
 }
 
 /** The offered tools with the discovery set removed. Order is preserved. */
@@ -127,6 +163,6 @@ export function capWithVerificationReserve(ctx: {
  * one this run owes. The model does know, and it is the one being asked.
  */
 export const COMMIT_NARROWED_NOTICE =
-  'Checkpoint from the harness: the search and exploration tools are now withdrawn for the rest of this run — deliberately, by the harness, because most of the turn budget is spent and this run has not reached a conclusion yet. This is not a fault and nothing is broken: read_file, your edit tools (edit_file/create_file/delete_file) and the checks are all still available and still work. ' +
+  'Checkpoint from the harness: the search and exploration tools are now withdrawn for the rest of this run — deliberately, by the harness, because this run has spent a great deal of investigation without reaching a conclusion yet. This is not a fault and nothing is broken: read_file, your edit tools (edit_file/create_file/delete_file) and the checks are all still available and still work. ' +
   'Conclude now from what you already have. If this task needs a code change, state the cause in ONE line with its file:line and make your NEXT tool call an edit — re-read only the exact lines you need to copy for oldString. ' +
   'If it does not need a change, give your final answer now. Either way, do not spend another turn looking for somewhere new to look.';

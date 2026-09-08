@@ -211,6 +211,22 @@ const appendToLastIn = (s: TurnSlice, content: string): TurnSlice => {
   return addMessageIn(s, { content, isUser: false });
 };
 
+/**
+ * Blank the last assistant message's text, keeping its timeline and summary.
+ *
+ * For the superseding second report of a single turn (see
+ * RECEIVE_MESSAGE_RESTART): the steps belong to the whole turn and must
+ * survive, but the first report's prose is now wrong — it says nothing was
+ * changed about a turn that went on to change files.
+ */
+const restartLastIn = (s: TurnSlice): TurnSlice => {
+  const msgs = [...s.messages];
+  const last = msgs[msgs.length - 1];
+  if (!last || last.isUser || last.writeReview) return s;
+  msgs[msgs.length - 1] = { ...last, content: '' };
+  return { ...s, messages: msgs };
+};
+
 const setTurnSummaryIn = (s: TurnSlice, summary: TurnSummary): TurnSlice => {
   const msgs = [...s.messages];
   const last = msgs[msgs.length - 1];
@@ -291,6 +307,7 @@ interface ChatState {
    */
   truncateFrom: (index: number) => void;
   appendToLastMessage: (content: string) => void;
+  restartLastMessage: () => void;
   addAgentStep: (step: AgentStep) => void;
   updateAgentStep: (id: string, patch: Partial<AgentStep>) => void;
   setTurnSummary: (summary: TurnSummary) => void;
@@ -322,6 +339,7 @@ interface ChatState {
   // to liveSessions[sessionId]. All no-op if the session isn't backgrounded.
   bgAddMessage: (sessionId: string, message: Message) => void;
   bgAppendToLast: (sessionId: string, content: string) => void;
+  bgRestartLast: (sessionId: string) => void;
   bgAddAgentStep: (sessionId: string, step: AgentStep) => void;
   bgUpdateAgentStep: (sessionId: string, id: string, patch: Partial<AgentStep>) => void;
   bgSetTurnSummary: (sessionId: string, summary: TurnSummary) => void;
@@ -397,6 +415,7 @@ export const useChatStore = create<ChatState>()(
         pendingTurnSummary: null,
       })),
       appendToLastMessage: (content) => set((state) => appendToLastIn(state, content)),
+      restartLastMessage: () => set((state) => restartLastIn(state)),
       addAgentStep: (step) => set((state) => ({ agentSteps: [...state.agentSteps, step] })),
       updateAgentStep: (id, patch) => set((state) => ({
         agentSteps: state.agentSteps.map((s) => (s.id === id ? { ...s, ...patch } : s)),
@@ -466,6 +485,11 @@ export const useChatStore = create<ChatState>()(
         const entry = state.liveSessions[sessionId];
         if (!entry) return {};
         return { liveSessions: { ...state.liveSessions, [sessionId]: { ...entry, ...appendToLastIn(entry, content) } } };
+      }),
+      bgRestartLast: (sessionId) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return { liveSessions: { ...state.liveSessions, [sessionId]: { ...entry, ...restartLastIn(entry) } } };
       }),
       bgAddAgentStep: (sessionId, step) => set((state) => {
         const entry = state.liveSessions[sessionId];

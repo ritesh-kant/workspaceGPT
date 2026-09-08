@@ -19,12 +19,41 @@
  * Pure — no worker state — so it is pinned by the headless unit tests.
  */
 
-export type LimitKind = 'steps' | 'budget';
+export type LimitKind = 'steps' | 'budget' | 'clock' | 'context';
 
-/** Lead-ins of the two "this run is over" messages. */
+/**
+ * Lead-ins of the "this run is over" messages, one per way the loop can end.
+ *
+ * There are four, and there used to be two labels for them: the loop also
+ * breaks on the wall clock and on a full context window, and both of those
+ * fell through to the `steps` wording. Observed on ticket #1384667: a run that
+ * ran out of its 30-minute clock told the user "step limit reached" while its
+ * own diagnostics footer read `62 turns (cap 200) · tool budget 49% used`.
+ * A harness that misreports why it stopped sends the user looking for the
+ * wrong fix — and, because this same text is what the model is told, it
+ * launders the wrong reason into the user-facing report.
+ */
 export const HARNESS_LIMIT_PREFIX: Record<LimitKind, string> = {
   steps: 'The step limit for this run is reached',
   budget: 'The tool-OUTPUT budget for this run is exhausted',
+  clock: 'The wall-clock limit for this run is reached',
+  context: 'The context window for this run is full',
+};
+
+/** How each ending must be NAMED in the answer, when the task is unfinished. */
+export const HARNESS_LIMIT_PHRASE: Record<LimitKind, string> = {
+  steps: 'step limit reached',
+  budget: 'tool-output budget exhausted',
+  clock: 'time limit reached',
+  context: 'context window full',
+};
+
+/** The same endings in the words the resume prompt uses ("it hit the harness's ..."). */
+export const HARNESS_LIMIT_NOUN: Record<LimitKind, string> = {
+  steps: 'step limit',
+  budget: 'tool-output budget',
+  clock: 'wall-clock limit',
+  context: 'context window',
 };
 
 /** Lead-in of the retry nudge sent when the forced final answer came back empty. */
