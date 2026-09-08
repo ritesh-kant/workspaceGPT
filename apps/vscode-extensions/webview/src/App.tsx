@@ -635,6 +635,9 @@ const App: React.FC = () => {
   // Fresh handleNewChat for the host-initiated NEW_CHAT command (stale closure).
   const handleNewChatRef = useRef<() => void>(() => {});
   const handleSelectSessionRef = useRef<(sessionId: string) => void>(() => {});
+  // Same, for a delete that came from the Sessions sidebar rather than the
+  // in-chat history list.
+  const forgetDeletedSessionRef = useRef<(sessionId: string) => void>(() => {});
 
   // Typewriter streaming buffer. Network chunk size varies wildly by provider —
   // some (Ollama, Gemini) emit token-sized deltas, others (NVIDIA) ship the whole
@@ -1046,6 +1049,9 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.LOAD_CHAT_SESSION:
           if (message.sessionId) handleSelectSessionRef.current(message.sessionId);
+          break;
+        case MESSAGE_TYPES.SESSION_DELETED:
+          if (message.sessionId) forgetDeletedSessionRef.current(message.sessionId);
           break;
         case MESSAGE_TYPES.SHOW_HISTORY:
           setActiveView('history');
@@ -1813,6 +1819,11 @@ const App: React.FC = () => {
    * checkpointed and reviewable afterwards). The prompt therefore asks for the
    * full loop including verification, and — since nobody is present to answer —
    * makes "stop and report the blocker" the expected ambiguity outcome.
+   *
+   * The run is autonomous by construction, so it also snaps the composer dial
+   * to Agent: leaving it on Plan/Ask would show a mode the run isn't in, and
+   * the next follow-up in this session would go out with planMode (or no flag
+   * at all) and contradict the run already in flight.
    */
   const handleAutoRunWorkItem = (item: WorkItemSummary) => {
     if (mode === 'local' && !selectedModelProvider?.selectedModel) {
@@ -1835,6 +1846,7 @@ const App: React.FC = () => {
       'and report the result against each acceptance criterion. ' +
       'If, after reading the ticket, the docs, and the code, a decision the ticket should have made ' +
       "is genuinely missing, stop and report exactly what's unclear instead of guessing.";
+    setChatModePersisted('agent');
     resetStreamBuffer();
     let sessionId = currentSessionId;
     if (!sessionId) {
@@ -1938,20 +1950,31 @@ const App: React.FC = () => {
   };
   handleSelectSessionRef.current = handleSelectSession;
 
-  const handleDeleteSession = (sessionId: string) => {
-    // Kill any run this session still has going, then forget its live state.
+  // A session's history is gone (deleted here or from the Sessions sidebar):
+  // kill any run it still has going, forget its live state, and — if it is the
+  // one on screen — reset without the save-before-new-chat step, which would
+  // just recreate the file that was removed. The pending debounced save for
+  // that session has to go too, for the same reason.
+  const forgetDeletedSession = (sessionId: string) => {
     stoppedSessionsRef.current.add(sessionId);
     vscode.postMessage({ type: MESSAGE_TYPES.STOP_MESSAGE, sessionId });
     dropLiveSession(sessionId);
+    if (sessionId === currentSessionId) {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      handleNewChat(true);
+    }
+  };
+  forgetDeletedSessionRef.current = forgetDeletedSession;
+
+  const handleDeleteSession = (sessionId: string) => {
     vscode.postMessage({
       type: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
       sessionId,
     });
-    // If deleting the active session, reset — but skip the save-before-new-chat
-    // step, since that would just resave the messages under the file we deleted.
-    if (sessionId === currentSessionId) {
-      handleNewChat(true);
-    }
+    forgetDeletedSession(sessionId);
   };
 
   const handleUndo = (sha: string) => {

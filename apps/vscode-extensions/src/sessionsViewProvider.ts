@@ -23,7 +23,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     private readonly extensionUri: vscode.Uri,
     private readonly historyService: HistoryService,
     private readonly onNewSession: () => void,
-    private readonly onSelectSession: (sessionId: string) => void
+    private readonly onSelectSession: (sessionId: string) => void,
+    private readonly onDeleteSession: (sessionId: string) => void
   ) {}
 
   public resolveWebviewView(
@@ -110,10 +111,13 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
+    // The chat surface hears about it first: it has to stop the session's run
+    // and forget its live state, otherwise a save it still has queued writes
+    // the file back moments after we remove it.
+    this.onDeleteSession(sessionId);
     await this.historyService.deleteChatSession(sessionId);
     if (sessionId === this.activeSessionId) {
       this.activeSessionId = null;
-      this.onNewSession();
     }
     void this.postList();
   }

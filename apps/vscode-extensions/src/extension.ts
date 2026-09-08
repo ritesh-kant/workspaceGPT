@@ -80,6 +80,9 @@ export async function activate(context: vscode.ExtensionContext) {
     },
     (sessionId) => {
       webViewProvider.loadSession(sessionId);
+    },
+    (sessionId) => {
+      webViewProvider.notifySessionDeleted(sessionId);
     }
   );
   webViewProvider.setSessionsView(sessionsViewProvider);

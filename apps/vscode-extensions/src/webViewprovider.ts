@@ -49,6 +49,11 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     void this.postMessage({ type: MESSAGE_TYPES.LOAD_CHAT_SESSION, sessionId });
   }
 
+  /** A stored chat was deleted elsewhere (Sessions panel) — let the chat drop it. */
+  public notifySessionDeleted(sessionId: string): void {
+    void this.postMessage({ type: MESSAGE_TYPES.SESSION_DELETED, sessionId });
+  }
+
   public getWebviewView(): vscode.WebviewView | undefined {
     return this._view;
   }

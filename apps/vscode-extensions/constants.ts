@@ -112,6 +112,9 @@ export const MESSAGE_TYPES = {
   SHOW_HISTORY: 'show-history',
   // Host → chat webview: open this stored session (Sessions panel / commands).
   LOAD_CHAT_SESSION: 'load-chat-session',
+  // Host → chat webview: this session was deleted from the Sessions panel —
+  // stop its run and drop its live state without saving it back to disk.
+  SESSION_DELETED: 'session-deleted',
   // Chat webview → host: the visible session id changed (Sessions panel highlight).
   SESSION_CHANGED: 'session-changed',
   // Host → Sessions webview.

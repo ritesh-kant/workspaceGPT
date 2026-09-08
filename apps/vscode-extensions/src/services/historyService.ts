@@ -66,6 +66,17 @@ function sessionDiffStats(messages: unknown): { added: number; removed: number }
   return { added, removed };
 }
 
+/**
+ * Sessions deleted during this host run. Deletion removes the file, but the
+ * chat webview can still have a save in flight for the same id — the debounced
+ * autosave, the save-before-new-chat, or a background run's per-turn save —
+ * and that write would recreate the row the user just removed. Session ids are
+ * never reused, so once an id is deleted no later write for it is legitimate.
+ * Module level because the Sessions sidebar and the message handler each hold
+ * their own HistoryService instance.
+ */
+const deletedSessionIds = new Set<string>();
+
 export class HistoryService {
   private historyDir: vscode.Uri;
 
@@ -84,6 +95,7 @@ export class HistoryService {
   }
 
   public async saveHistory(sessionId: string, messages: ChatMessage[]): Promise<void> {
+    if (deletedSessionIds.has(sessionId)) return;
     await this.initializeDirectory();
     const filePath = vscode.Uri.file(path.join(this.historyDir.fsPath, `${sessionId}.json`));
     
@@ -186,6 +198,7 @@ export class HistoryService {
   }
 
   public async deleteChatSession(sessionId: string): Promise<void> {
+    deletedSessionIds.add(sessionId);
     await this.initializeDirectory();
     const filePath = vscode.Uri.file(path.join(this.historyDir.fsPath, `${sessionId}.json`));
     
