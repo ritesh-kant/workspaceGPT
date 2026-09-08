@@ -21,11 +21,11 @@
     // or "custom" (see ProviderName in src/config.ts). Each has its own key +
     // model below; "custom" additionally needs a base URL. Switching vendors
     // is editing these vars/secrets, no code change.
-    "INFERENCE_PROVIDER": "custom",
+    "INFERENCE_PROVIDER": "openrouter",
 
     // ── openrouter — key: `wrangler secret put OPENROUTER_API_KEY` ─────────
     // Model must support tool calling — the agent loop depends on it.
-    "OPENROUTER_MODEL": "google/gemini-2.5-flash",
+    "OPENROUTER_MODEL": "z-ai/glm-5.3-flash",
 
     // ── custom — key: `wrangler secret put CUSTOM_API_KEY` ──────────────────
     // Any OpenAI-compatible chat-completions endpoint (TokenRouter, GMI Cloud,
