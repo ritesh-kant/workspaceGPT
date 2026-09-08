@@ -22,6 +22,8 @@
  * self-corrects (see {@link observedWindowFloor}).
  */
 
+import { REMOTE_MODEL } from '../../../constants';
+
 /**
  * Assumed window when the model is unknown. 128k is the common floor among
  * current hosted models; assuming less would compact needlessly, assuming more
@@ -51,6 +53,14 @@ const KNOWN_CONTEXT_WINDOWS: ReadonlyArray<{ match: RegExp; tokens: number }> = 
   { match: /\bclaude\b/i, tokens: 200_000 },
   { match: /\bgpt-4o|gpt-4\.1|o[34]-(mini|preview)|\bgpt-5/i, tokens: 128_000 },
   { match: /\bgemini-(1\.5|2|2\.5|3)/i, tokens: 1_000_000 },
+  // In managed (remote) mode the worker is handed REMOTE_MODEL.ID — a
+  // placeholder, not the name of the model actually serving the request — so
+  // none of the entries here matched and every managed run silently ran on the
+  // 128k default. That is not a guess we need to make: managed inference is
+  // ours, we know it is glm behind the placeholder, and the ceiling below is a
+  // deliberate choice rather than an estimate. Keep this above the glm entry so
+  // it reads as the same decision, once for each name the model arrives under.
+  { match: new RegExp(`\\b${REMOTE_MODEL.ID}\\b`, 'i'), tokens: MAX_MANAGED_WINDOW },
   // glm-5.3-flash's real window is 1M; managed at MAX_MANAGED_WINDOW by choice.
   { match: /\bglm\b/i, tokens: MAX_MANAGED_WINDOW },
   { match: /\bminimax\b/i, tokens: 192_000 },

@@ -3252,6 +3252,15 @@ console.log('\ncontextBudget (the context window bounds a run — not a turn cou
     assert.equal(cb.resolveContextWindow({ override: 12 }), cb.DEFAULT_CONTEXT_WINDOW, 'absurd values ignored');
   });
 
+  await t('managed mode gets the full 200k, not the unknown-model default', () => {
+    // The worker is handed REMOTE_MODEL.ID in managed mode, never the name of
+    // the model actually serving the request. That matched nothing, so every
+    // managed run quietly ran on the 128k default and entered its endgame at
+    // 96k — barely half of the window it really had.
+    assert.equal(cb.resolveContextWindow({ modelId: 'workspacegpt-default' }), 200_000);
+    assert.notEqual(cb.resolveContextWindow({ modelId: 'workspacegpt-default' }), cb.DEFAULT_CONTEXT_WINDOW);
+  });
+
   await t('nothing is managed beyond the 200k quality ceiling, however big the model is', () => {
     // glm-5.3-flash really has a 1M window. Filling it is not the goal:
     // quality falls off long before that and every turn re-sends the whole

@@ -20,6 +20,9 @@ const KNOWN_WINDOWS: ReadonlyArray<{ match: RegExp; tokens: number }> = [
   { match: /\bclaude\b/i, tokens: 200_000 },
   { match: /\bgpt-4o|gpt-4\.1|o[34]-(mini|preview)|\bgpt-5/i, tokens: 128_000 },
   { match: /\bgemini-(1\.5|2|2\.5|3)/i, tokens: 1_000_000 },
+  // Managed mode reports REMOTE_MODEL.ID rather than the model behind it; same
+  // 200k ceiling as the glm entry below. Mirrors src/workers/model/contextBudget.ts.
+  { match: /\bworkspacegpt-default\b/i, tokens: 200_000 },
   { match: /\bglm\b/i, tokens: 200_000 },
   { match: /\bminimax\b/i, tokens: 192_000 },
   { match: /\bdeepseek\b/i, tokens: 128_000 },
