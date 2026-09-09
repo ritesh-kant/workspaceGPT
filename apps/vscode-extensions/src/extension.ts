@@ -22,6 +22,7 @@ let updateChecker: UpdateChecker;
 export async function activate(context: vscode.ExtensionContext) {
   // Initialize analytics service
   analyticsService = new AnalyticsService(context);
+  analyticsService.trackInstall();
   analyticsService.trackEvent('extension_activated');
   analyticsService.startSession();
 

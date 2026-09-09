@@ -6,6 +6,7 @@ export class AnalyticsService {
   private posthog: PostHog;
   private userId: string;
   private isEnabled: boolean = true;
+  private readonly isFirstRun: boolean;
   private sessionStartedAt: number | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   // 5 minutes — frequent enough to bound "time spent" resolution without flooding events.
@@ -25,15 +26,48 @@ export class AnalyticsService {
       disableGeoip: false,
     });
 
-    // Get or create a unique user ID
-    this.userId =
-      (this.context.globalState.get('analytics.userId') as string) ||
-      this.generateUserId();
+    // Get or create a unique user ID. A stored id means this profile has run
+    // the extension before, which is also how `trackInstall` tells a genuinely
+    // new install from an upgrade.
+    const storedUserId = this.context.globalState.get('analytics.userId') as
+      | string
+      | undefined;
+    this.isFirstRun = !storedUserId;
+    this.userId = storedUserId || this.generateUserId();
     this.context.globalState.update('analytics.userId', this.userId);
   }
 
+  /**
+   * Derives this install's distinctId from `vscode.env.machineId` — a stable
+   * per-installation hash — rather than a random value. The old random id was
+   * only ever persisted in globalState, so any environment that starts from an
+   * empty profile (Marketplace scanners, CI containers, `--user-data-dir`
+   * throwaways) minted a brand-new "person" on every single launch. Falls back
+   * to a random id if machineId is somehow unavailable.
+   */
   private generateUserId(): string {
-    return 'user_' + Math.random().toString(36).substring(2, 15);
+    return vscode.env.machineId
+      ? `machine_${vscode.env.machineId}`
+      : 'user_' + Math.random().toString(36).substring(2, 15);
+  }
+
+  /**
+   * Fires `extension_installed` once per profile, on the first activation after
+   * install. `extension_activated` fires on *every* VS Code launch, so it can
+   * never anchor an activation funnel: someone who installed months ago
+   * re-enters step 1 each day and can only ever look like a drop-off. This is
+   * the install-time anchor to use for that step instead.
+   *
+   * Profiles that already had an analytics id when this shipped are marked as
+   * reported without emitting anything, so upgrading users don't show up as a
+   * one-off wave of retroactive installs.
+   */
+  public trackInstall(): void {
+    if (!this.isEnabled) return;
+    if (this.context.globalState.get('analytics.installReported')) return;
+    this.context.globalState.update('analytics.installReported', true);
+    if (!this.isFirstRun) return;
+    this.trackEvent('extension_installed');
   }
 
   /**
