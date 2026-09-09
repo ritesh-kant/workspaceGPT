@@ -44,8 +44,10 @@ const UNITS = [
   'src/services/agent/verifyTools.ts',
   'src/services/agent/agentHunkLens.ts',
   'src/services/agent/shipHelpers.ts',
+  'src/services/agent/referenceIndex.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',
+  'webview/src/utils/ticketRefs.ts',
 ];
 
 // codebaseTools.ts dynamically `import('@vscode/ripgrep')`s to find the `rg`

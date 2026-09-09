@@ -37,6 +37,8 @@ const { startMockModel } = await import('./mock-model.mjs');
 const { withKeyFailover, isRateLimitError, isTransientServerError, TRANSIENT_RETRY_DELAYS_MS } = await import(path.join(outDir, 'apiKeyFailover.mjs'));
 const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, INCOMPLETE_ANSWER_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer, isUnbackedCompletionClaim, claimsFileChanges, REPORT_CLAIMS_DONE_RE, ROOT_CAUSE_NARRATION_RE, isUnfinishedWriteRun, writeWasExpected: answerGatesWriteWasExpected, commitNudgeTriggers, hasWriteIntent, resolveHarnessProfile, phraseGatesEnabled, SMALL_MODEL_HINT_RE } = await import(path.join(outDir, 'answerGates.mjs'));
 const filePathDisplay = await import(path.join(outDir, 'filePathDisplay.mjs'));
+const ticketRefs = await import(path.join(outDir, 'ticketRefs.mjs'));
+const referenceIndex = await import(path.join(outDir, 'referenceIndex.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -1626,7 +1628,7 @@ This is a one-line behavioral fix in three files; I did not apply it because all
 {
   const { planVerification } = await import(path.join(outDir, 'verifyTools.mjs'));
   const { computeHunks } = await import(path.join(outDir, 'agentHunkLens.mjs'));
-  const { pullRequestUrl, slugify, reportToHtml, turnCommitType } = await import(path.join(outDir, 'shipHelpers.mjs'));
+  const { pullRequestUrl, pullRequestUrlTemplate, slugify, reportToHtml, turnCommitType } = await import(path.join(outDir, 'shipHelpers.mjs'));
   const fs = await import('fs');
   const os = await import('os');
 
@@ -1752,6 +1754,17 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     assert.match(pullRequestUrl('git@ssh.dev.azure.com:v3/acme/Proj/web', 'main', 'wgpt/x', 'T', 'B'), /_git\/web\/pullrequestcreate/);
     assert.match(pullRequestUrl('https://gitlab.com/acme/web.git', 'main', 'wgpt/x', 'T', 'B'), /merge_requests\/new/);
     assert.equal(pullRequestUrl('https://example.com/acme/web.git', 'main', 'wgpt/x', 'T', 'B'), undefined);
+  });
+  await t('pullRequestUrlTemplate: PR-by-number shape per provider, {id} left to substitute', () => {
+    assert.equal(
+      pullRequestUrlTemplate('git@github.com:Mars-Incorporated/phoenix-mach-component-monorepo.git'),
+      'https://github.com/Mars-Incorporated/phoenix-mach-component-monorepo/pull/{id}',
+    );
+    assert.equal(pullRequestUrlTemplate('https://acme@dev.azure.com/acme/Proj/_git/web'), 'https://dev.azure.com/acme/Proj/_git/web/pullrequest/{id}');
+    assert.equal(pullRequestUrlTemplate('git@ssh.dev.azure.com:v3/acme/Proj/web'), 'https://dev.azure.com/acme/Proj/_git/web/pullrequest/{id}');
+    assert.equal(pullRequestUrlTemplate('https://gitlab.com/acme/web.git'), 'https://gitlab.com/acme/web/-/merge_requests/{id}');
+    // Unknown host → no template, and the renderer then leaves `PR #12359` as plain text.
+    assert.equal(pullRequestUrlTemplate('https://example.com/acme/web.git'), undefined);
   });
   await t('slugify + reportToHtml basics', () => {
     assert.equal(slugify('1516750-Checkout analytics impacted by a bug fix!'), '1516750-checkout-analytics-impacted-by-a');
@@ -3612,6 +3625,185 @@ console.log('\nfilesChangedBar (path display + review skip-delete)');
       'name must be 1fr so long heads ellipsize; path must have a 4.5rem floor',
     );
     assert.doesNotMatch(row, /minmax\(0,\s*auto\)\s+minmax\(0,\s*auto\)/);
+  });
+}
+
+// ═══ Reference provenance: what the run saw an id as (host) ═══
+console.log('\nreferenceIndex (id provenance collected from tool results)');
+{
+  const { collectRefs, refsFromTicket, mergeRefs } = referenceIndex;
+  const kindOf = (refs, id) => refs.filter((r) => r.id === id).map((r) => r.kind);
+
+  await t('git_log: PR numbers per provider merge convention, plus the commits', () => {
+    const log = [
+      // GitHub/GitLab squash — the shape that caused the original mislink.
+      '5a0c35b9265 2026-09-03 A — feat(mms-webapp): [D2C-1510986] express checkout in modal (#12359)',
+      // GitHub merge commit.
+      'abc1234def5 2026-09-01 B — Merge pull request #987 from feature/x',
+      // Azure Repos.
+      'beef1234567 2026-08-27 C — Merged PR 4321: fix the divider colour',
+    ].join('\n');
+    const refs = collectRefs('git_log', log, { prUrlTemplate: 'https://github.com/acme/web/pull/{id}' });
+    assert.deepStrictEqual(kindOf(refs, '12359'), ['pull-request']);
+    // The url is stamped at record time: a message re-read from history must
+    // not resolve its PRs against whatever repo happens to be open then.
+    assert.equal(refs.find((r) => r.id === '12359').url, 'https://github.com/acme/web/pull/12359');
+    assert.deepStrictEqual(kindOf(refs, '987'), ['pull-request']);
+    assert.deepStrictEqual(kindOf(refs, '4321'), ['pull-request']);
+    assert.deepStrictEqual(kindOf(refs, '5a0c35b9265'), ['commit']);
+    assert.deepStrictEqual(kindOf(refs, 'beef1234567'), ['commit']);
+  });
+
+  await t('git_log: a tracker id in the subject is NOT claimed as a work item', () => {
+    // 1510986 IS this org's work item, but "[D2C-1510986]" is a repo naming
+    // convention, not provenance — inferring from it is the guessing this
+    // table exists to remove. It stays unknown and takes the default reading.
+    const refs = collectRefs('git_log', 'aaa1111bbb2 2026-09-03 A — feat: [D2C-1510986] thing (#12359)');
+    assert.deepStrictEqual(kindOf(refs, '1510986'), []);
+  });
+
+  await t('get_ticket / search_tickets: work items, with url and label kept', () => {
+    const fromTicket = collectRefs('get_ticket', {
+      id: 1384667,
+      title: '[EU]Express Checkout Modal',
+      url: 'https://dev.azure.com/org/proj/_workitems/edit/1384667',
+      parentId: 1384600,
+    });
+    assert.deepStrictEqual(kindOf(fromTicket, '1384667'), ['work-item']);
+    assert.equal(fromTicket[0].label, '[EU]Express Checkout Modal');
+    assert.deepStrictEqual(kindOf(fromTicket, '1384600'), ['work-item'], 'a parent named by the API is a real id');
+
+    const fromSearch = collectRefs('search_tickets', {
+      results: [
+        { url: 'https://dev.azure.com/org/proj/_workitems/edit/1384665', title: 'EU express checkout section' },
+        { url: undefined, title: 'ADO-1540302', source: 'ADO-1540302' },
+        { url: 'https://example.com/nothing', title: 'no id anywhere' },
+      ],
+    });
+    assert.deepStrictEqual(kindOf(fromSearch, '1384665'), ['work-item']);
+    assert.deepStrictEqual(kindOf(fromSearch, '1540302'), ['work-item']);
+    assert.equal(fromSearch.length, 2, 'a row with no recoverable id contributes nothing');
+  });
+
+  await t('tools with no id provenance contribute nothing', () => {
+    assert.deepStrictEqual(collectRefs('read_file', { text: 'see #1384667 and (#12359)' }), []);
+    assert.deepStrictEqual(collectRefs('run_command', 'Merged PR 4321: x'), []);
+  });
+
+  await t('mergeRefs is first-writer-wins per kind+id and caps the table', () => {
+    const table = [];
+    mergeRefs(table, refsFromTicket({ id: 7, title: 'first', url: 'u1' }));
+    mergeRefs(table, refsFromTicket({ id: 7, title: 'second', url: 'u2' }));
+    assert.equal(table.length, 1);
+    assert.equal(table[0].label, 'first');
+    // Same number under two kinds is a real (if rare) state — both are kept.
+    mergeRefs(table, [{ id: '7', kind: 'pull-request' }]);
+    assert.deepStrictEqual(kindOf(table, '7'), ['work-item', 'pull-request']);
+    mergeRefs(table, Array.from({ length: 500 }, (_, i) => ({ id: `x${i}`, kind: 'commit' })));
+    assert.ok(table.length <= 250, `capped, got ${table.length}`);
+  });
+}
+
+// ═══ Chat ref linkification: resolved against that provenance (webview) ═══
+console.log('\nticketRefs (work-item vs PR linkification)');
+{
+  const { linkifyTicketIds, adoWorkItemUrl, pullRequestUrl } = ticketRefs;
+  const { collectRefs } = referenceIndex;
+  const PR_TEMPLATE = 'https://github.com/Mars-Incorporated/phoenix-mach-component-monorepo/pull/{id}';
+  const resolver = (refs) => ({
+    workItemUrl: (id) => adoWorkItemUrl('marsinc', 'D2C', id),
+    pullRequestUrl: (id) => pullRequestUrl(PR_TEMPLATE, id),
+    refs,
+  });
+  // The provenance the real run had: git_log returned both commit subjects.
+  const RUN_REFS = collectRefs(
+    'git_log',
+    '5a0c35b9265 2026-09-03 A — feat(mms-webapp): [D2C-1510986] express checkout in modal (#12359)\n' +
+      '6d5ba9b81b3 2026-09-01 A — feat(mms-amplience): [D2C] created EU express checkout section (#12331)',
+    { prUrlTemplate: PR_TEMPLATE },
+  );
+  const link = (md, refs = RUN_REFS) => linkifyTicketIds(md, resolver(refs));
+
+  await t('an id the run recorded as a PR links to the PR', () => {
+    // The original defect: both of these linked into _workitems/edit/.
+    const out = link('landed via commits `6d5ba9b81b3` (#12331, EU section) and `5a0c35b9265` (#12359, modal with buttons)');
+    assert.match(out, /\[#12331\]\([^)]*\/pull\/12331/);
+    assert.match(out, /\[#12359\]\([^)]*\/pull\/12359/);
+    assert.doesNotMatch(out, /_workitems/);
+  });
+
+  await t('position is irrelevant — the same id resolves the same anywhere', () => {
+    // What the adjacency heuristic could not do: no commit citation in sight.
+    assert.match(link('The modal work is already merged (#12359).'), /\/pull\/12359/);
+    assert.match(link('#12359 shipped before the freeze'), /\/pull\/12359/);
+    assert.match(link('| Criterion | #12359 |'), /\/pull\/12359/);
+  });
+
+  await t('an id with no provenance keeps the default work-item reading', () => {
+    // #1540302 was named in the ticket's own description, not returned by a
+    // tool — it must still link, or the table would break working citations.
+    assert.match(link('owned by tasks #1540302 / #1540318'), /_workitems\/edit\/1540302/);
+    assert.match(link('Ticket #1384667'), /_workitems\/edit\/1384667/);
+    assert.match(link('Ticket #1384667', undefined), /_workitems\/edit\/1384667/, 'no table at all (old message)');
+  });
+
+  await t("a recorded work item uses the API's own url and title", () => {
+    const refs = collectRefs('get_ticket', {
+      id: 1384667,
+      title: 'Express Checkout Modal',
+      url: 'https://dev.azure.com/other/Proj/_workitems/edit/1384667',
+    });
+    const out = link('Ticket #1384667 is In Progress', refs);
+    assert.match(out, /\(https:\/\/dev\.azure\.com\/other\/Proj\/_workitems\/edit\/1384667 "Express Checkout Modal"\)/);
+  });
+
+  await t('an explicit PR #id wins over the table and needs no digit floor', () => {
+    assert.match(link('follow-up in PR #42', []), /\[#42\]\([^)]*\/pull\/42\)/);
+    assert.match(link('see pull request #12359', []), /\/pull\/12359/);
+    assert.match(link('merged in PR#12359', []), /\/pull\/12359/);
+    // "PR" has to be its own word — SUPR #1384667 is not a PR reference.
+    assert.match(link('SUPR #1384667', []), /_workitems\/edit\/1384667/);
+  });
+
+  await t('a number that is both a PR and a work item prefers the ticket unless marked', () => {
+    const both = [
+      { id: '12359', kind: 'pull-request' },
+      { id: '12359', kind: 'work-item' },
+    ];
+    assert.match(link('#12359', both), /_workitems\/edit\/12359/);
+    assert.match(link('PR #12359', both), /\/pull\/12359/);
+  });
+
+  await t('a commit hash recorded as such is never linked', () => {
+    assert.equal(link('deployed 5a0c35b9265 today'), 'deployed 5a0c35b9265 today');
+  });
+
+  await t('unknown git host: the ref is still known to be a PR, and stays plain text', () => {
+    // No template host-side → no url on the ref, and none to fall back to.
+    // Better a plain "#12359" than a link into the wrong namespace.
+    const noUrl = collectRefs('git_log', '5a0c35b9265 2026-09-03 A — modal (#12359)');
+    assert.equal(noUrl.find((r) => r.id === '12359').url, undefined);
+    const out = linkifyTicketIds('(#12359, modal)', {
+      workItemUrl: (id) => adoWorkItemUrl('marsinc', 'D2C', id),
+      pullRequestUrl: () => null,
+      refs: noUrl,
+    });
+    assert.equal(out, '(#12359, modal)');
+  });
+
+  await t('code spans and fences are still untouched', () => {
+    assert.equal(link('run `git show 6d5ba9b81b3 #12359`'), 'run `git show 6d5ba9b81b3 #12359`');
+    assert.equal(link('```\n(#12359)\n```'), '```\n(#12359)\n```');
+  });
+
+  await t('an id the model already linked itself is not wrapped twice', () => {
+    const already = '[#12359](https://github.com/acme/web/pull/12359)';
+    assert.equal(link(already), already);
+  });
+
+  await t('## headings and short #n refs are left alone', () => {
+    assert.equal(link('## 1384667 heading'), '## 1384667 heading');
+    assert.equal(link('item #3 in the list'), 'item #3 in the list');
   });
 }
 

@@ -827,6 +827,7 @@ const App: React.FC = () => {
             filesChanged: message.filesChanged || [],
             checkpointSha: message.checkpointSha,
             ticketId: message.ticketId,
+            refs: message.refs,
             shippable: !!message.shippable,
           });
           break;
@@ -978,6 +979,7 @@ const App: React.FC = () => {
             filesChanged: message.filesChanged || [],
             checkpointSha: message.checkpointSha,
             ticketId: message.ticketId,
+            refs: message.refs,
             shippable: !!message.shippable,
           });
           break;

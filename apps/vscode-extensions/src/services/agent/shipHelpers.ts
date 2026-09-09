@@ -119,9 +119,35 @@ export function slugify(text: string, max = 40): string {
     .replace(/-+$/g, '') || 'agent-change';
 }
 
+/** `git@host:org/repo.git`, `https://host/org/repo`, `ssh://git@host/org/repo` → [host, repoPath]. */
+const REMOTE_URL_RE = /^(?:https?:\/\/(?:[^@/]+@)?|git@|ssh:\/\/git@)([^/:]+)[/:](.+?)(?:\.git)?\/?$/;
+
+/**
+ * URL template for an EXISTING pull request by number, `{id}` standing in for
+ * it — what the chat renderer needs to turn a `PR #12359` reference in a
+ * report into a link. Separate from `pullRequestUrl` below, which opens the
+ * provider's "create a PR for this branch" form instead.
+ */
+export function pullRequestUrlTemplate(remoteUrl: string): string | undefined {
+  const m = REMOTE_URL_RE.exec(remoteUrl.trim());
+  if (!m) return undefined;
+  const host = m[1];
+  const repoPath = m[2];
+  if (/github\.com$/.test(host)) return `https://${host}/${repoPath}/pull/{id}`;
+  if (/dev\.azure\.com$/.test(host) || /visualstudio\.com$/.test(host)) {
+    // ssh form: v3/org/project/repo ; https form: org/project/_git/repo
+    const parts = repoPath.replace(/^v3\//, '').split('/');
+    const httpsPath = parts.includes('_git') ? repoPath : `${parts[0]}/${parts[1]}/_git/${parts[2]}`;
+    return `https://dev.azure.com/${httpsPath}/pullrequest/{id}`;
+  }
+  if (/gitlab/.test(host)) return `https://${host}/${repoPath}/-/merge_requests/{id}`;
+  if (/bitbucket\.org$/.test(host)) return `https://${host}/${repoPath}/pull-requests/{id}`;
+  return undefined;
+}
+
 /** Hosting provider's "open a PR for this branch" URL, pre-filled where the provider supports it. */
 export function pullRequestUrl(remoteUrl: string, base: string, branch: string, title: string, body: string): string | undefined {
-  const m = /^(?:https?:\/\/(?:[^@/]+@)?|git@|ssh:\/\/git@)([^/:]+)[/:](.+?)(?:\.git)?\/?$/.exec(remoteUrl.trim());
+  const m = REMOTE_URL_RE.exec(remoteUrl.trim());
   if (!m) return undefined;
   const host = m[1];
   const repoPath = m[2];

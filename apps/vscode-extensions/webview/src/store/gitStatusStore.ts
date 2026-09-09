@@ -10,6 +10,8 @@ export interface GitStatus {
   removed: number;
   filesChanged: number;
   hasRemote: boolean;
+  /** `origin`'s PR-by-number URL with `{id}` to substitute — undefined when the host is unknown. */
+  prUrlTemplate?: string;
 }
 
 /**

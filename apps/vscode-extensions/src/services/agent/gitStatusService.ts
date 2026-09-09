@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import { NamedRoot } from '../codebase/codebaseTools';
+import { pullRequestUrlTemplate } from './shipHelpers';
 
 /**
  * Always-on snapshot for the composer's git status bar: current branch and
@@ -17,6 +18,8 @@ export interface GitStatusSnapshot {
   /** Tracked files with changes, plus untracked files. */
   filesChanged: number;
   hasRemote: boolean;
+  /** `origin`'s PR-by-number URL with `{id}` to substitute — lets the chat renderer link `PR #123`. */
+  prUrlTemplate?: string;
 }
 
 const EMPTY_STATUS: GitStatusSnapshot = { isRepo: false, added: 0, removed: 0, filesChanged: 0, hasRemote: false };
@@ -29,6 +32,23 @@ function git(cwd: string, args: string[]): Promise<string> {
       else resolve(stdout.trim());
     });
   });
+}
+
+/**
+ * `origin`'s PR-by-number url template for the workspace, or undefined when
+ * there is no remote / no known host. Resolved per agent turn so a recorded
+ * pull-request reference can carry an absolute url — a message re-read from
+ * history must not resolve its PRs against whatever repo is open later.
+ */
+export async function getPrUrlTemplate(roots: NamedRoot[]): Promise<string | undefined> {
+  if (!roots.length) return undefined;
+  try {
+    const gitCwd = await git(roots[0].uri.fsPath, ['rev-parse', '--show-toplevel']);
+    const remote = await git(gitCwd, ['remote', 'get-url', 'origin']);
+    return remote ? pullRequestUrlTemplate(remote) : undefined;
+  } catch {
+    return undefined; // not a repo, or no origin
+  }
 }
 
 export async function getGitStatus(roots: NamedRoot[]): Promise<GitStatusSnapshot> {
@@ -68,5 +88,6 @@ export async function getGitStatus(roots: NamedRoot[]): Promise<GitStatusSnapsho
     removed: removedMatch ? parseInt(removedMatch[1], 10) : 0,
     filesChanged: (trackedMatch ? parseInt(trackedMatch[1], 10) : 0) + untrackedCount,
     hasRemote: !!remote,
+    prUrlTemplate: remote ? pullRequestUrlTemplate(remote) : undefined,
   };
 }

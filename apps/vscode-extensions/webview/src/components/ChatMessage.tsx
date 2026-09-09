@@ -7,11 +7,12 @@ import AgentTimeline, { formatDuration } from './AgentTimeline';
 import FilesChangedBar from './FilesChangedBar';
 import InlineFileRef from './InlineFileRef';
 import { parseFileRef } from '../utils/fileRefs';
-import { adoWorkItemUrl, linkifyTicketIds } from '../utils/ticketRefs';
+import { adoWorkItemUrl, linkifyTicketIds, pullRequestUrl } from '../utils/ticketRefs';
 import { useSettingsStore } from '../store';
+import { useGitStatusStore } from '../store/gitStatusStore';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { AgentStep, TurnSummary } from '../store/chatStore';
+import { AgentStep, RunRef, TurnSummary } from '../store/chatStore';
 import type { ChatAttachment } from '../constants';
 import { copyToClipboard } from '../utils/clipboard';
 
@@ -24,7 +25,7 @@ type InlineCodeProps = React.ComponentPropsWithoutRef<'code'>;
  * suppressed. A ticket link renders as a pill, matching file citations.
  */
 type AnchorProps = React.ComponentPropsWithoutRef<'a'> & ExtraProps;
-const ChatLink: React.FC<AnchorProps> = ({ href, children, className, node: _node, ...rest }) => {
+const ChatLink: React.FC<AnchorProps> = ({ href, children, className, title, node: _node, ...rest }) => {
   const vscode = VSCodeAPI();
   const isTicket = /\/_workitems\/edit\/\d+/.test(href ?? '');
   return (
@@ -32,7 +33,8 @@ const ChatLink: React.FC<AnchorProps> = ({ href, children, className, node: _nod
       {...rest}
       href={href}
       className={[className, isTicket ? 'ticket-ref' : ''].filter(Boolean).join(' ') || undefined}
-      title={href}
+      // A ref the run resolved carries the ticket's own title; fall back to the url.
+      title={title || href}
       onClick={(e) => {
         e.preventDefault();
         if (href) vscode.postMessage({ type: MESSAGE_TYPES.OPEN_EXTERNAL, url: href });
@@ -220,11 +222,15 @@ const MarkdownBody = React.memo(function MarkdownBody({
   highlight,
   orgName,
   projectName,
+  prUrlTemplate,
+  refs,
 }: {
   content: string;
   highlight: boolean;
   orgName: string;
   projectName: string;
+  prUrlTemplate?: string;
+  refs?: RunRef[];
 }) {
   return (
     <ReactMarkdown
@@ -232,7 +238,11 @@ const MarkdownBody = React.memo(function MarkdownBody({
       rehypePlugins={highlight ? [rehypeHighlight] : []}
       components={MARKDOWN_COMPONENTS}
     >
-      {linkifyTicketIds(content, (id) => adoWorkItemUrl(orgName, projectName, id))}
+      {linkifyTicketIds(content, {
+        workItemUrl: (id) => adoWorkItemUrl(orgName, projectName, id),
+        pullRequestUrl: (id) => pullRequestUrl(prUrlTemplate, id),
+        refs,
+      })}
     </ReactMarkdown>
   );
 });
@@ -312,6 +322,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   // Azure DevOps coordinates for turning `#1516750` in the answer into a link.
   // Absent (not connected yet) → ids stay plain text.
   const ado = useSettingsStore((s) => s.config.ado);
+  const prUrlTemplate = useGitStatusStore((s) => s.status?.prUrlTemplate);
   const [draft, setDraft] = useState<string | null>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const isEditing = draft !== null;
@@ -507,6 +518,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
               highlight={!isLive}
               orgName={ado?.orgName ?? ''}
               projectName={ado?.projectName ?? ''}
+              prUrlTemplate={prUrlTemplate}
+              refs={turnSummary?.refs}
             />
           </div>
           {turnSummary && turnSummary.filesChanged.length > 0 && (

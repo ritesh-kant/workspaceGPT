@@ -63,6 +63,8 @@ import { deriveShipTitle } from './agent/shipHelpers';
 import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
 import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
 import { fetchWorkItem, TicketDetail } from './ado/adoWorkItemService';
+import { collectRefs, mergeRefs, refsFromTicket, RunRef } from './agent/referenceIndex';
+import { getPrUrlTemplate } from './agent/gitStatusService';
 import { fetchConfluencePage, ConfluencePageDetail } from './confluence/confluencePageService';
 import { detectTicketId } from 'src/utils/ticketDetection';
 import { detectConfluenceUrl } from 'src/utils/confluenceUrlDetection';
@@ -252,6 +254,15 @@ interface SessionRun {
   turnStartMs: number;
   /** File-change rollup for the current agent turn (path → cumulative counts). */
   turnFilesChanged: Map<string, TurnFileChange>;
+  /**
+   * Ids this turn's tools actually returned, with what each one refers to.
+   * Travels to the webview on the turn summary so the answer's `#12359` links
+   * to the pull request it came from instead of a same-numbered work item —
+   * see referenceIndex.ts for why the renderer cannot work this out alone.
+   */
+  turnRefs: RunRef[];
+  /** `origin`'s PR url template for this turn's workspace — stamped onto pull-request refs as they are recorded. */
+  turnPrUrlTemplate?: string;
   /**
    * Structured steps posted for the current turn. Counted so a turn that ends
    * with no prose can be described truthfully — zero steps and zero writes is
@@ -656,6 +667,7 @@ export class ChatService {
         cancelled: false,
         turnStartMs: 0,
         turnFilesChanged: new Map(),
+        turnRefs: [],
         turnStepsPosted: 0,
         userAskedRepoWide: false,
         sessionWritesApplied: 0,
@@ -819,6 +831,7 @@ export class ChatService {
       run.turnStartMs = Date.now();
       run.userAskedRepoWide = REPO_WIDE_REQUEST_RE.test(message);
       run.turnFilesChanged.clear();
+      run.turnRefs.length = 0;
       run.turnStepsPosted = 0;
       run.turnFirstCheckpointSha = null;
       run.writeSeq = 0;
@@ -1154,6 +1167,7 @@ export class ChatService {
         });
         try {
           ticketContext = await fetchWorkItem(this.context, { id: ticketId, includeComments: true });
+          mergeRefs(run.turnRefs, refsFromTicket(ticketContext));
           this.post(run, {
             type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
             id: stepId,
@@ -2386,6 +2400,10 @@ Query: "${query}"`;
         } catch (e) {
           console.warn('Failed to build repo orientation (continuing without):', e);
         }
+        // Which repo this turn's pull-request references belong to. Resolved
+        // once, and stamped onto each ref, so a message re-read from history
+        // still points at the right repository.
+        run.turnPrUrlTemplate = await getPrUrlTemplate(codebaseRoots);
       }
 
       // Resume the previous, interrupted agent turn when one is stranded and
@@ -2534,6 +2552,7 @@ Query: "${query}"`;
                 filesChanged: [...run.turnFilesChanged.values()],
                 checkpointSha: shippable ? run.turnFirstCheckpointSha ?? undefined : undefined,
                 ticketId: ticketContext?.id,
+                refs: run.turnRefs.length ? [...run.turnRefs] : undefined,
                 shippable,
                 // Carried so "Create PR" can re-arm itself from the persisted
                 // transcript alone — the host's own run.lastShip is in-memory
@@ -2746,6 +2765,13 @@ Query: "${query}"`;
                   .then((toolResult) => {
                     const summary = JSON.stringify(toolResult);
                     console.log(`[codebase-tool] ← ${result.name}: ${summary.length} chars${summary.length <= 300 ? ` — ${summary}` : ''}`);
+                    // Provenance, recorded while the result is still structured:
+                    // once it is prose in the answer, which namespace an id
+                    // belongs to is unrecoverable.
+                    mergeRefs(
+                      run.turnRefs,
+                      collectRefs(result.name!, toolResult, { prUrlTemplate: run.turnPrUrlTemplate })
+                    );
                     const done = this.summarizeToolResult(result.name!, toolResult);
                     this.post(run, {
                       type: MESSAGE_TYPES.AGENT_STEP_UPDATE,

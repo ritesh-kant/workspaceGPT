@@ -30,6 +30,7 @@ export function useGitStatusSync(enabled: boolean): void {
           removed: m.removed ?? 0,
           filesChanged: m.filesChanged ?? 0,
           hasRemote: !!m.hasRemote,
+          prUrlTemplate: m.prUrlTemplate,
         });
       } else if (m?.type === MESSAGE_TYPES.AGENT_SHIP_ALL_DONE || m?.type === MESSAGE_TYPES.AGENT_SHIP_DONE) {
         // Both shapes land here: the composer's Create PR drives the

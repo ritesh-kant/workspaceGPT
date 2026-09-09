@@ -51,6 +51,14 @@ export interface AgentStep {
 export const normalizeAgentStep = (step: AgentStep | string): AgentStep =>
   typeof step === 'string' ? { kind: 'info', title: step, status: 'done' } : step;
 
+/** One id a run's tools returned, and what it refers to (host: services/agent/referenceIndex.ts). */
+export interface RunRef {
+  id: string;
+  kind: 'work-item' | 'pull-request' | 'commit';
+  url?: string;
+  label?: string;
+}
+
 /** End-of-turn rollup: how long the agent worked and which files changed. */
 export interface TurnSummary {
   durationMs: number;
@@ -59,6 +67,13 @@ export interface TurnSummary {
   checkpointSha?: string;
   /** The ADO ticket this turn was grounded in, if any — "Create PR" comments the report on it. */
   ticketId?: number;
+  /**
+   * What each id this turn's tools returned actually refers to, so the answer's
+   * `#12359` links to the pull request it came from rather than to a work item
+   * that happens to share the number. Absent on messages from before the run
+   * recorded it, and on turns that returned no ids.
+   */
+  refs?: RunRef[];
   /** The ticket's work item type (e.g. "Bug", "Feature") — picks the branch's Conventional Commits prefix. */
   ticketType?: string;
   /** Commit/PR title, precomputed host-side (ticket title, else the answer's first heading). */
