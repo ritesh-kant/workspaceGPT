@@ -6,7 +6,7 @@ import SectionShell from './SectionShell';
 const MODE_COPY: Record<WorkspaceMode, { title: string; description: string }> = {
   local: {
     title: 'Local',
-    description: 'Bring your own chat model — Ollama, OpenAI, Gemini, anything OpenAI-compatible. No account needed.',
+    description: 'Bring your own chat model — Ollama, OpenAI, Claude, Gemini, anything OpenAI-compatible. No account needed.',
   },
   remote: {
     title: 'Remote',

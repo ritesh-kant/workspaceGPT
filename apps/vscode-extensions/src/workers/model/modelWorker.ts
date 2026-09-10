@@ -30,6 +30,7 @@ import {
   writeWasExpected,
 } from './answerGates';
 import { normalizeModelId } from '../../utils/normalizeModelId';
+import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
 import { consumeStream, shouldRetryEmptyStream } from './streamOutcome';
 import { scopeToolDefs, ToolAvailability } from './toolScope';
 import {
@@ -1140,7 +1141,11 @@ async function generateWithOpenAIStream(
 ): Promise<void> {
   let userContent = buildUserContent(prompt);
   const call = (apiKey: string) => {
-    const openai = new OpenAI({ apiKey, baseURL });
+    const openai = new OpenAI({
+      apiKey,
+      baseURL,
+      defaultHeaders: getProviderDefaultHeaders(baseURL, apiKey),
+    });
     return openai.chat.completions.create({
       model: model,
       messages: [
@@ -1483,7 +1488,12 @@ async function runToolTurn(
     // attempts are cheap insurance. Sustained outages are handled a layer up,
     // in withKeyFailover's TRANSIENT_RETRY_DELAYS_MS schedule; this only
     // absorbs the short blips so that schedule is rarely reached.
-    const openai = new OpenAI({ apiKey, baseURL, maxRetries: MODEL_CLIENT_MAX_RETRIES });
+    const openai = new OpenAI({
+      apiKey,
+      baseURL,
+      maxRetries: MODEL_CLIENT_MAX_RETRIES,
+      defaultHeaders: getProviderDefaultHeaders(baseURL, apiKey),
+    });
     return openai.chat.completions.create({
       model,
       messages: withPromptCache(messages, model),

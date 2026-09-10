@@ -20,6 +20,7 @@ import { FileReleaseSource } from '../services/deployment/fileReleaseSource';
 import { getLlmSettings } from '../utils/getLlmSettings';
 import { withKeyFailover, isRateLimitError } from '../utils/apiKeyFailover';
 import { normalizeModelId } from '../utils/normalizeModelId';
+import { getProviderDefaultHeaders } from '../utils/anthropicHeaders';
 import { MachAuthService } from '../services/deployment/machAuthService';
 import { MachSyncTarget, setComponentVersion, type MachSyncOptions } from '../services/deployment/machSyncTarget';
 import { MachEnvTarget, NoSyncPrError } from '../services/deployment/machEnvTarget';
@@ -462,7 +463,12 @@ export class DeploymentMessageHandler {
     const keys = s.apiKeys.length ? s.apiKeys : ['local'];
     try {
       return await withKeyFailover(keys, async (apiKey) => {
-        const client = new OpenAI({ apiKey: apiKey || 'local', baseURL: s.baseUrl, maxRetries: 4 });
+        const client = new OpenAI({
+          apiKey: apiKey || 'local',
+          baseURL: s.baseUrl,
+          maxRetries: 4,
+          defaultHeaders: getProviderDefaultHeaders(s.baseUrl, apiKey),
+        });
         const res = await client.chat.completions.create({
           model: normalizeModelId(s.model!),
           messages: [{ role: 'user', content: prompt }],

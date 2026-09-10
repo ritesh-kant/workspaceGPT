@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
+import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
 import { extractBalancedJsonObjects } from './jsonExtract';
 
 /**
@@ -520,7 +521,11 @@ async function runOneExplorer(
     const response = await withKeyFailover(
       apiKeys,
       (apiKey) => {
-        const openai = new OpenAI({ apiKey, baseURL });
+        const openai = new OpenAI({
+          apiKey,
+          baseURL,
+          defaultHeaders: getProviderDefaultHeaders(baseURL, apiKey),
+        });
         return openai.chat.completions.create({
           model,
           messages: [

@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { getProviderDefaultHeaders } from './anthropicHeaders';
 
 // Model catalogs (OpenAI, Gemini, and router/aggregator providers like
 // OpenRouter, Requesty, NVIDIA) mix chat-completion models in with
@@ -17,6 +18,7 @@ export async function fetchAvailableModels(baseURL: string, apiKey: string) {
     const openai = new OpenAI({
       apiKey,
       baseURL,
+      defaultHeaders: getProviderDefaultHeaders(baseURL, apiKey),
     });
 
     const response = await openai.models.list();

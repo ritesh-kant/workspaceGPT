@@ -27,6 +27,7 @@ import {
   describeAge,
 } from './agent/resumeStore';
 import { normalizeModelId } from 'src/utils/normalizeModelId';
+import { getProviderDefaultHeaders } from 'src/utils/anthropicHeaders';
 import { describeTurnOutcome } from 'src/utils/turnOutcome';
 import { classifyQuery } from 'src/utils/queryClassifier';
 import { buildPlan, expandQuery } from 'src/utils/queryPlanner';
@@ -2317,7 +2318,11 @@ Query: "${query}"`;
       const response = await withKeyFailover(
         effApiKeys,
         (apiKey) => {
-          const client = new OpenAI({ apiKey, baseURL: resolvedBaseUrl });
+          const client = new OpenAI({
+            apiKey,
+            baseURL: resolvedBaseUrl,
+            defaultHeaders: getProviderDefaultHeaders(resolvedBaseUrl, apiKey),
+          });
           return client.chat.completions.create({
             model: normalizeModelId(effModelId),
             messages: [{ role: 'user', content: prompt }],

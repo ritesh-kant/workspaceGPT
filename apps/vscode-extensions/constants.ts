@@ -532,6 +532,12 @@ export const MODEL_PROVIDERS = [
     DEFAULT_CHAT_MODEL: 'gpt-3.5-turbo',
   },
   {
+    MODEL_PROVIDER: 'Claude',
+    requireApiKey: true,
+    BASE_URL: 'https://api.anthropic.com/v1',
+    DEFAULT_CHAT_MODEL: 'claude-3-7-sonnet-latest',
+  },
+  {
     MODEL_PROVIDER: 'Gemini',
     requireApiKey: true,
     BASE_URL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
