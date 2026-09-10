@@ -2254,12 +2254,22 @@ button:disabled {
 .agent-write-kind.kind-command { background: rgba(200, 140, 255, 0.18); color: var(--vscode-charts-purple, #b180d7); }
 .agent-command-text { font-weight: 600; }
 
+/* ── Messages pane ──────────────────────────────────────────────────────
+   Flex:1 wrapper around the transcript so "jump to latest" can float over
+   the bottom of the scroll area without taking a full-width layout strip. */
+.messages-pane {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ── Composer affordances ─────────────────────────────────────────────────
-   Sits between the transcript and the composer: a "jump to latest" pill while
-   the user is scrolled up, and a pinned copy of a pending review's decision
-   buttons whenever the card's own buttons are out of view. Laid out as a flex
-   row (not floated over the transcript) so it can never cover the diff the
-   user is trying to read. */
+   Pinned copy of a pending review's decision buttons whenever the card's
+   own buttons are out of view. Lives in layout (not floated) so it cannot
+   cover the diff the user is trying to read. */
 .composer-affordances {
   display: flex;
   flex-direction: column;
@@ -2511,18 +2521,24 @@ button:disabled {
 .review-pin-view:hover { text-decoration: underline; }
 
 .jump-to-bottom {
-  align-self: center;
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 5;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 12px;
+  width: max-content;
+  padding: 5px 14px;
   border-radius: 999px;
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
   background: var(--vscode-editorWidget-background);
   color: var(--vscode-descriptionForeground, inherit);
   font-size: 11px;
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 .jump-to-bottom:hover {
   color: var(--vscode-editor-foreground);

@@ -2236,6 +2236,7 @@ const App: React.FC = () => {
             </div>
           )
         ) : (
+          <div className='messages-pane'>
           <div className={`messages-container${editingIndex !== null ? ' messages-container--editing' : ''}`} ref={setMessagesRef} onScroll={handleMessagesScroll} onWheel={handleMessagesWheel}>
             {messages.map((message, index) => {
               if (editingIndex !== null && index > editingIndex) {
@@ -2307,61 +2308,6 @@ const App: React.FC = () => {
             )}
             <div ref={messagesEndRef} />
           </div>
-        )}
-        {(showJumpToBottom || (pendingReview && reviewActionsOffscreen)) && (
-          <div className='composer-affordances'>
-            {pendingReview && reviewActionsOffscreen && (
-              // The tool loop is blocked on this decision, so the buttons have
-              // to be reachable without hunting for the card upstream.
-              <div className='review-pin-bar'>
-                <span className={`agent-write-kind kind-${pendingReview.kind}`}>
-                  {REVIEW_KIND_LABEL[pendingReview.kind]}
-                </span>
-                <button
-                  type='button'
-                  className='review-pin-path'
-                  title={
-                    pendingReview.kind === 'command'
-                      ? `${pendingReview.command ?? pendingReview.summary} — show it`
-                      : `${pendingReview.path} — show the diff`
-                  }
-                  onClick={() => scrollToReview(pendingReview.id)}
-                >
-                  {pendingReview.kind === 'command'
-                    ? pendingReview.command ?? pendingReview.summary
-                    : pendingReview.path.split('/').pop() || pendingReview.path}
-                </button>
-                <span className='agent-write-stats'>
-                  {pendingReview.diff.added > 0 && (
-                    <span className='stat-added'>+{pendingReview.diff.added}</span>
-                  )}
-                  {pendingReview.diff.removed > 0 && (
-                    <span className='stat-removed'>−{pendingReview.diff.removed}</span>
-                  )}
-                </span>
-                <button
-                  type='button'
-                  className='review-pin-view'
-                  onClick={() => scrollToReview(pendingReview.id)}
-                >
-                  {pendingReview.kind === 'command' ? 'View' : 'View diff'}
-                </button>
-                <button
-                  type='button'
-                  className='agent-write-approve'
-                  onClick={() => decideReview(pendingReview.id, true)}
-                >
-                  ✓ Approve
-                </button>
-                <button
-                  type='button'
-                  className='agent-write-reject-open'
-                  onClick={() => decideReview(pendingReview.id, false)}
-                >
-                  ✕ Reject
-                </button>
-              </div>
-            )}
             {showJumpToBottom && (
               <button
                 type='button'
@@ -2375,6 +2321,60 @@ const App: React.FC = () => {
                 Jump to latest
               </button>
             )}
+          </div>
+        )}
+        {pendingReview && reviewActionsOffscreen && (
+          <div className='composer-affordances'>
+            {/* The tool loop is blocked on this decision, so the buttons have
+                to be reachable without hunting for the card upstream. */}
+            <div className='review-pin-bar'>
+              <span className={`agent-write-kind kind-${pendingReview.kind}`}>
+                {REVIEW_KIND_LABEL[pendingReview.kind]}
+              </span>
+              <button
+                type='button'
+                className='review-pin-path'
+                title={
+                  pendingReview.kind === 'command'
+                    ? `${pendingReview.command ?? pendingReview.summary} — show it`
+                    : `${pendingReview.path} — show the diff`
+                }
+                onClick={() => scrollToReview(pendingReview.id)}
+              >
+                {pendingReview.kind === 'command'
+                  ? pendingReview.command ?? pendingReview.summary
+                  : pendingReview.path.split('/').pop() || pendingReview.path}
+              </button>
+              <span className='agent-write-stats'>
+                {pendingReview.diff.added > 0 && (
+                  <span className='stat-added'>+{pendingReview.diff.added}</span>
+                )}
+                {pendingReview.diff.removed > 0 && (
+                  <span className='stat-removed'>−{pendingReview.diff.removed}</span>
+                )}
+              </span>
+              <button
+                type='button'
+                className='review-pin-view'
+                onClick={() => scrollToReview(pendingReview.id)}
+              >
+                {pendingReview.kind === 'command' ? 'View' : 'View diff'}
+              </button>
+              <button
+                type='button'
+                className='agent-write-approve'
+                onClick={() => decideReview(pendingReview.id, true)}
+              >
+                ✓ Approve
+              </button>
+              <button
+                type='button'
+                className='agent-write-reject-open'
+                onClick={() => decideReview(pendingReview.id, false)}
+              >
+                ✕ Reject
+              </button>
+            </div>
           </div>
         )}
         <div className='composer-status-bars'>
