@@ -157,7 +157,7 @@ Every request spends the vendor's single key, so admission control is not
 optional. Usage is **metered in tokens and presented as credits** — one credit
 is `tokens_per_credit` model tokens (default 1,000) — with one allowance per
 account: an **ISO week**. Defaults are placeholders pending a pricing decision:
-free 2,000 credits/week, pro 50,000/week. Sized from the eval harness
+free 50 credits/week, pro 50,000/week. Sized from the eval harness
 (2026-09-05): a documentation answer is ~7 credits, an agent run that edits
 code ~50.
 
@@ -267,13 +267,13 @@ wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO a
 Change every plan's weekly credit cap:
 
 ```bash
-wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_weekly_credits', '{\"free\":2000,\"pro\":50000}', unixepoch())"
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('plan_weekly_credits', '{\"free\":50,\"pro\":50000}', unixepoch())"
 ```
 
 Change the weekly cap for plans absent from that map:
 
 ```bash
-wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('weekly_credit_limit', '2000', unixepoch())"
+wrangler d1 execute workspacegpt-db --remote --command "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('weekly_credit_limit', '50', unixepoch())"
 ```
 
 Change what a credit is worth (tokens per credit):

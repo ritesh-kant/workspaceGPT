@@ -17,6 +17,17 @@ import { SessionsViewProvider } from './sessionsViewProvider';
 
 const SNAPSHOT_TIMEOUT_MS = 1500;
 
+/**
+ * Chat messages that speak for the whole session rather than for the surface
+ * that sent them: writing its history, and naming the session the Sessions
+ * list should highlight. Only the surface that currently owns the chat may
+ * send these — see `routeMessage`.
+ */
+const SURFACE_OWNED_MESSAGES = new Set<string>([
+  MESSAGE_TYPES.SAVE_CHAT_HISTORY,
+  MESSAGE_TYPES.SESSION_CHANGED,
+]);
+
 export class WebViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _editorPanel?: vscode.WebviewPanel;
@@ -24,6 +35,10 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
   private _snapshotWaiter?: (snapshot: unknown) => void;
   private _pendingEditorSnapshot?: unknown;
   private _pendingSidebarSnapshot?: unknown;
+  /** Session the editor panel is showing, so the sidebar can pick it back up. */
+  private _editorSessionId: string | null = null;
+  /** That session, waiting for a sidebar webview that is not up yet. */
+  private _pendingSidebarSessionId?: string;
   private messageHandler?: WebviewMessageHandler;
   private htmlTemplate: WebviewHtmlTemplate;
   private readonly hub = new ChatWebviewHub();
@@ -106,7 +121,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     this.trackVisibility(webviewView);
     this.configureWebview(webviewView.webview);
     this.setWebviewHtml(webviewView.webview, 'sidebar');
-    this.subscribeToMessages(webviewView.webview);
+    this.subscribeToMessages(webviewView.webview, 'sidebar');
 
     if (this._context.extensionMode === vscode.ExtensionMode.Development) {
       this.watchWebviewDist(webviewView);
@@ -140,6 +155,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     if (this._editorPanel) {
       this._editorPanel.reveal(vscode.ViewColumn.Active);
       this.hub.setActive('editor');
+      await this.releaseSurface('sidebar');
       await this.setChatInEditorContext(true);
       await maximizeChatWorkbench();
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -172,7 +188,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     this.hub.setEditor(panel.webview);
     this.hub.setActive('editor');
     this.setWebviewHtml(panel.webview, 'editor');
-    this.subscribeToMessages(panel.webview);
+    this.subscribeToMessages(panel.webview, 'editor');
 
     panel.onDidDispose(() => {
       this.hub.setEditor(undefined);
@@ -184,11 +200,30 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
         void vscode.commands.executeCommand(
           `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
         );
+        // Closing the tab is not "unmaximize", so there is no snapshot to hand
+        // back — and the sidebar was released when the chat moved here. Reopen
+        // the same session from its saved history instead of dropping the user
+        // on an empty chat.
+        if (this._editorSessionId) {
+          // Revealing the container may still have to build the webview, so
+          // hand the load to `onChatWebviewReady` when one isn't up yet.
+          if (this.hub.hasSidebar()) {
+            void this.hub.postTo('sidebar', {
+              type: MESSAGE_TYPES.LOAD_CHAT_SESSION,
+              sessionId: this._editorSessionId,
+            });
+          } else {
+            this._pendingSidebarSessionId = this._editorSessionId;
+          }
+        }
       }
+      this._editorSessionId = null;
       this._restoringToSidebar = false;
     });
 
     this._pendingEditorSnapshot = snapshot;
+    // Only once the transcript is safely queued for the new panel.
+    await this.releaseSurface('sidebar');
     await this.setChatInEditorContext(true);
     // Let the workbench register the new editor before maximize looks at it.
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -196,6 +231,21 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     // maximizeEditorHideSidebar closes the primary sidebar; reopen Sessions on the left.
     await new Promise((resolve) => setTimeout(resolve, 50));
     await this.sessionsView?.revealInPrimarySidebar(true);
+  }
+
+  /**
+   * Hand the conversation over: the surface the chat just left keeps a full
+   * copy of it — a retained webview is not torn down when it goes off screen —
+   * and that copy is frozen at the moment of the handover. Left in place it
+   * shadows the live chat: its "New chat" button force-saves the session id it
+   * still holds, writing the pre-handover transcript over every turn taken
+   * since. Reset it to an empty chat so it owns no session at all.
+   */
+  private releaseSurface(surface: 'sidebar' | 'editor'): Thenable<boolean> {
+    return this.hub.postTo(surface, {
+      type: MESSAGE_TYPES.CHAT_SNAPSHOT_APPLY,
+      snapshot: { pendingStreamText: '' },
+    });
   }
 
   public async restoreChatToSidebar(): Promise<void> {
@@ -262,13 +312,24 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     webview.html = this.htmlTemplate.getHtml(webview, layout);
   }
 
-  private subscribeToMessages(webview: vscode.Webview): void {
+  private subscribeToMessages(webview: vscode.Webview, surface: 'sidebar' | 'editor'): void {
     webview.onDidReceiveMessage(async (data) => {
-      await this.routeMessage(data);
+      await this.routeMessage(data, surface);
     });
   }
 
-  private async routeMessage(data: any): Promise<void> {
+  /**
+   * Both chat surfaces stay alive while the chat is maximized — the sidebar
+   * view is retained behind Sessions — so a history write has to say which one
+   * it came from. Only the surface that currently owns the chat may write: an
+   * inactive surface still holds the transcript as it stood when the chat left
+   * it, and its save-before-new-chat would replace the live session file with
+   * that older, shorter conversation.
+   */
+  private async routeMessage(data: any, surface: 'sidebar' | 'editor' = 'sidebar'): Promise<void> {
+    if (SURFACE_OWNED_MESSAGES.has(data?.type) && surface !== this.hub.getActive()) {
+      return;
+    }
     if (data?.type === MESSAGE_TYPES.COLLAPSE_SIDEBAR) {
       await collapseWorkspaceGptSidebar(data.dock);
       return;
@@ -291,6 +352,9 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     if (data?.type === MESSAGE_TYPES.SESSION_CHANGED) {
+      if (surface === 'editor') {
+        this._editorSessionId = data.sessionId ?? null;
+      }
       this.sessionsView?.setActiveSession(data.sessionId ?? null);
       return;
     }
@@ -317,6 +381,14 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       await this.hub.postTo('editor', {
         type: MESSAGE_TYPES.CHAT_SNAPSHOT_APPLY,
         snapshot,
+      });
+    }
+    if (surface === 'sidebar' && this._pendingSidebarSessionId) {
+      const sessionId = this._pendingSidebarSessionId;
+      this._pendingSidebarSessionId = undefined;
+      await this.hub.postTo('sidebar', {
+        type: MESSAGE_TYPES.LOAD_CHAT_SESSION,
+        sessionId,
       });
     }
     if (surface === 'sidebar' && this._pendingSidebarSnapshot !== undefined) {

@@ -17,7 +17,7 @@ import HomeGreeting from './components/HomeGreeting';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
 import UsageLimitBar from './components/UsageLimitBar';
-import ContextMeter, { ContextUsage } from './components/ContextMeter';
+import ContextMeter from './components/ContextMeter';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
 import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
 import SettingsButton from './components/Settings';
@@ -389,6 +389,8 @@ const App: React.FC = () => {
     stashCurrentSession,
     activateLiveSession,
     dropLiveSession,
+    sessionContext,
+    setSessionContext,
   } = useChatStore();
 
   const {
@@ -520,9 +522,12 @@ const App: React.FC = () => {
   // Weekly remote-mode quota, so the composer can warn before the user hits
   // a wall mid-chat instead of only surfacing this in Settings > Account.
   const [remoteUsage, setRemoteUsage] = useState<{ used: number; limit: number } | null>(null);
-  // Live context-window occupancy for the foreground run. Cleared when a new
-  // turn starts so the meter never shows the previous turn's number as current.
-  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  // Live context-window occupancy for the chat on screen. Read from the
+  // per-session map rather than held here: a run continues while the user
+  // reads another chat, so one shared value meant a background run's numbers
+  // landed on the visible meter, and switching back showed 0% for a
+  // conversation that was nearly full.
+  const contextUsage = currentSessionId ? sessionContext[currentSessionId] ?? null : null;
 
   // One poll loop behind both the status bar and the composer's Create PR button.
   useGitStatusSync(!!hasWorkspaceFolder);
@@ -654,6 +659,21 @@ const App: React.FC = () => {
 
   // Debounced save: to avoid writing to disk on every keystroke / rapid message
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * The transcript this webview last *restored* rather than produced — from its
+   * own persisted state on boot, from a snapshot handed over by the other chat
+   * surface, or from a session opened out of history.
+   *
+   * A restored transcript came from disk (or is older than what is on disk), so
+   * writing it back can only ever leave the file unchanged or regress it. That
+   * is not hypothetical: closing or reopening the chat view rebuilds the
+   * webview, zustand rehydrates whatever conversation it held when it was last
+   * torn down, and the autosave below then wrote that stale copy over the turns
+   * taken since — the conversation "wasn't recorded". Compared by array
+   * identity: every real change to the transcript produces a new array, so this
+   * only ever matches a transcript nothing has touched since it was restored.
+   */
+  const restoredMessagesRef = useRef<unknown>(null);
   const saveCurrentChat = useCallback(
     (msgs: typeof messages, sessionId: string | null) => {
       if (!sessionId || msgs.length === 0) return;
@@ -876,6 +896,25 @@ const App: React.FC = () => {
         });
       }
 
+      // Context readings are recorded against their own session, whether or
+      // not that chat is on screen — the meter belongs to the conversation,
+      // not to the panel. Goes through getState() so this once-created
+      // closure never writes through a stale action.
+      if (message.type === MESSAGE_TYPES.AGENT_CONTEXT) {
+        useChatStore.getState().setSessionContext(
+          message.sessionId ?? currentSessionIdRef.current,
+          {
+            usedTokens: message.usedTokens ?? 0,
+            windowTokens: message.windowTokens ?? 0,
+            usedPct: message.usedPct ?? 0,
+            remainingPct: message.remainingPct ?? 100,
+            compactions: message.compactions ?? 0,
+            ...(message.segments ? { segments: message.segments } : {}),
+          }
+        );
+        return;
+      }
+
       // Route turn-scoped messages by the session they belong to. Messages
       // from an old host build carry no sessionId — treat them as belonging
       // to the visible chat, matching the previous behavior.
@@ -963,15 +1002,6 @@ const App: React.FC = () => {
               meta: message.meta,
             });
           }
-          break;
-        case MESSAGE_TYPES.AGENT_CONTEXT:
-          setContextUsage({
-            usedTokens: message.usedTokens ?? 0,
-            windowTokens: message.windowTokens ?? 0,
-            usedPct: message.usedPct ?? 0,
-            remainingPct: message.remainingPct ?? 100,
-            compactions: message.compactions ?? 0,
-          });
           break;
         case MESSAGE_TYPES.AGENT_TURN_SUMMARY:
           setTurnSummary({
@@ -1101,6 +1131,10 @@ const App: React.FC = () => {
             setActiveView(snap.activeView);
           }
           currentSessionIdRef.current = snap.currentSessionId ?? null;
+          // Deliberately NOT marked restored: a handover snapshot is the live
+          // copy from the other surface, which is about to be torn down. It
+          // can carry a last flush the sending side will never get to save, so
+          // this surface inherits the right to write it.
           break;
         }
         case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
@@ -1213,6 +1247,7 @@ const App: React.FC = () => {
             setMessages(message.messages);
             setCurrentSessionId(message.sessionId);
             currentSessionIdRef.current = message.sessionId;
+            restoredMessagesRef.current = useChatStore.getState().messages;
             // A stored session opens idle — clear turn state left behind by
             // whatever chat was on screen before.
             resetTurnState();
@@ -1225,6 +1260,9 @@ const App: React.FC = () => {
           break;
       }
     };
+
+    // Whatever zustand rehydrated belongs to a previous life of this webview.
+    restoredMessagesRef.current = useChatStore.getState().messages;
 
     window.addEventListener('message', handleMessage);
     vscode.postMessage({
@@ -1257,6 +1295,10 @@ const App: React.FC = () => {
   // Auto-save whenever messages change (debounced)
   useEffect(() => {
     if (messages.length > 0 && currentSessionId) {
+      // ...but never write back a transcript we only restored: see
+      // restoredMessagesRef. Nothing here has changed it, so the file is
+      // already at least this current.
+      if (messages === restoredMessagesRef.current) return;
       saveCurrentChat(messages, currentSessionId);
     }
   }, [messages, currentSessionId, saveCurrentChat]);
@@ -1477,8 +1519,9 @@ const App: React.FC = () => {
   const handleNewChat = (skipSave = false) => {
     backgroundCurrentSession();
 
-    // Save current chat before starting a new one
-    if (!skipSave && currentSessionId && messages.length > 0) {
+    // Save current chat before starting a new one — unless it is a transcript
+    // we only restored, which would write an older copy over a newer file.
+    if (!skipSave && currentSessionId && messages.length > 0 && messages !== restoredMessagesRef.current) {
       // Force an immediate save (no debounce)
       vscode.postMessage({
         type: MESSAGE_TYPES.SAVE_CHAT_HISTORY,
@@ -1564,7 +1607,8 @@ const App: React.FC = () => {
     setShowTips(false);
     // The meter is per-run: a new turn starts from an empty conversation, so
     // showing the previous turn's occupancy would misreport the live number.
-    setContextUsage(null);
+    // Scoped to this session — other chats' meters are not this turn's business.
+    setSessionContext(sessionId, null);
 
     // Get the selected model directly from the dropdown
 
@@ -1934,8 +1978,8 @@ const App: React.FC = () => {
     // A running turn keeps going — park it so its stream lands off-screen.
     backgroundCurrentSession();
 
-    // Save current chat first
-    if (currentSessionId && messages.length > 0) {
+    // Save current chat first — same restored-transcript exemption as above.
+    if (currentSessionId && messages.length > 0 && messages !== restoredMessagesRef.current) {
       vscode.postMessage({
         type: MESSAGE_TYPES.SAVE_CHAT_HISTORY,
         sessionId: currentSessionId,
@@ -1969,6 +2013,9 @@ const App: React.FC = () => {
     stoppedSessionsRef.current.add(sessionId);
     vscode.postMessage({ type: MESSAGE_TYPES.STOP_MESSAGE, sessionId });
     dropLiveSession(sessionId);
+    // The meter outlives liveSessions on purpose, so a deleted session's
+    // reading has to be cleared here rather than riding along with it.
+    setSessionContext(sessionId, null);
     if (sessionId === currentSessionId) {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);

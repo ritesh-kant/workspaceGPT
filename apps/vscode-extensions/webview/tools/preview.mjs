@@ -83,6 +83,17 @@ const INJECTED = `
     --vscode-input-foreground: #cccccc;
     --vscode-descriptionForeground: #9d9d9d;
     --vscode-textLink-foreground: #4daafc;
+    --vscode-editorHoverWidget-background: #202020;
+    --vscode-editorHoverWidget-foreground: #cccccc;
+    --vscode-editorHoverWidget-border: #454545;
+    --vscode-editorWarning-foreground: #cca700;
+    --vscode-editorError-foreground: #f14c4c;
+    /* Chart palette — the context meter's breakdown colors. */
+    --vscode-charts-blue: #3794ff;
+    --vscode-charts-orange: #d18616;
+    --vscode-charts-purple: #b180d7;
+    --vscode-charts-green: #89d185;
+    --vscode-charts-yellow: #cca700;
   }
   body { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); }
 </style>

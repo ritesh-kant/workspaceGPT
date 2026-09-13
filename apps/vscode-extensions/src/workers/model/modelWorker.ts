@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { randomUUID } from 'crypto';
-import { createStructuredPrompt, createContinuationPrompt, TicketPromptContext } from '../../utils/promptTemplates';
+import { createStructuredPrompt, createContinuationPrompt, isResearchWorkItem, TicketPromptContext } from '../../utils/promptTemplates';
 import { MODEL_PROVIDERS, REMOTE_MODEL } from '../../../constants';
 import OpenAI from 'openai';
 import { EmbeddingSearchResult } from 'src/types/types';
@@ -39,6 +39,7 @@ import {
   observedWindowFloor,
   resolveContextWindow,
 } from './contextBudget';
+import { contextBreakdown } from './contextBreakdown';
 import {
   COMMIT_NARROWED_NOTICE,
   DISCOVERY_TOOL_NAMES,
@@ -762,7 +763,13 @@ const MAX_TOOL_ITERATIONS = SAFETY_ITERATION_CEILING;
 // Kept for the two places that legitimately want "this run has a ticket and
 // changed nothing": the harness note and the self-diagnosing stamp. It no
 // longer decides what the run is ALLOWED to spend.
-const TICKET_IMPLEMENT_RUN = !!ticketContext;
+// A ticket attached is not, by itself, a mandate to change the tree. On a
+// research work item (Spike/Research/POC) the deliverable is the answer, so a
+// zero-write run is a finished run — unless the user's own instruction for
+// this run asks for the implementation too (#1536998 asked for both).
+const TICKET_RESEARCH_RUN = !!ticketContext && isResearchWorkItem(ticketContext.type);
+const TICKET_IMPLEMENT_MANDATE = !!executeMandate || IMPLEMENT_MANDATE_RE.test(prompt) || hasWriteIntent(prompt);
+const TICKET_IMPLEMENT_RUN = !!ticketContext && (!TICKET_RESEARCH_RUN || TICKET_IMPLEMENT_MANDATE);
 // Is CHANGING the workspace this turn's job? Now only feeds the commit NUDGE
 // (prose the model may ignore) and the exploration-phase skip — positions
 // where a miss costs a reminder or a little context, never a capability or a
@@ -1054,6 +1061,7 @@ async function generateResponse(): Promise<void> {
         mentionedFiles,
         executeMandate,
         ticketContext,
+        implementMandate: TICKET_IMPLEMENT_MANDATE,
         autonomous,
         planMode,
       }
@@ -2085,7 +2093,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         // The reason the loop ACTUALLY ended, next to the counters that
         // otherwise contradict it: #1384667's footer read "62 turns (cap 200)
         // · tool budget 49% used" under a heading that blamed the step limit.
-        ` · stopped: ${HARNESS_LIMIT_PHRASE[stopReason]}</sub>`;
+        ` · stopped: ${stopReason === 'none' ? 'model concluded (no harness limit hit)' : HARNESS_LIMIT_PHRASE[stopReason]}</sub>`;
     }
     return out;
   };
@@ -2179,13 +2187,20 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   /**
    * WHY the loop stopped, for the forced-answer message below.
    *
-   * Defaults to 'steps' because that is the ending the `for` condition itself
-   * produces; every other exit assigns before it breaks. Previously this was
-   * inferred from `budgetExhausted` alone, so the wall clock and a full
-   * context window were both announced as a step limit (#1384667: "step limit
-   * reached" at 62 turns of a 200 cap, 49% budget).
+   * Every exit assigns before it breaks; the `for` condition running out is
+   * promoted to 'steps' after the loop. Previously this was inferred from
+   * `budgetExhausted` alone, so the wall clock and a full context window were
+   * both announced as a step limit (#1384667: "step limit reached" at 62 turns
+   * of a 200 cap, 49% budget).
+   *
+   * 'none' is the DEFAULT and the commonest ending: the model answered and the
+   * loop returned from inside. It used to default to 'steps', which is only
+   * ever correct for one of the five exits — so the footer on #1536998's
+   * blocked run read "stopped: step limit reached" beside "41 tool calls over
+   * 7 turns (cap 200) · tool budget 7% used", and the reader has to guess
+   * which half is lying. A limit that did not fire must not be named.
    */
-  let stopReason: LimitKind = 'steps';
+  let stopReason: LimitKind | 'none' = 'none';
   // Populated by the exploration phase below, if it ran — surfaced in metrics
   // so its token cost is visible against the baseline it's meant to beat.
   let explorationStats: import('./explorationPhase').ExplorationStats | null = null;
@@ -2532,6 +2547,14 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         // Truncated-result count, so the meter can say the context has already
         // been trimmed once. Not summarizing compaction — see TODO.md.
         compactions: toolResultLog.filter((e) => e.compacted).length,
+        // Where that occupancy came from. The total above is the provider's;
+        // this split is derived from the same payload it counted, so the two
+        // always agree — see contextBreakdown.ts.
+        segments: contextBreakdown({
+          messages,
+          toolDefs: turnToolDefs,
+          promptTokens: outcome.usage.promptTokens,
+        }),
       });
     }
 
@@ -3409,6 +3432,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
   }
 
+  // Past the loop, so one of the limit exits was taken — and if none assigned,
+  // the `for` condition itself ran out, which IS the step limit.
+  const limitReason: LimitKind = stopReason === 'none' ? 'steps' : stopReason;
+  stopReason = limitReason;
+
   // The run already produced a finished, verified report and only the gates'
   // follow-up rounds (reflection, re-verification) consumed the rest of the
   // budget. Deliver that report as-is: one more forced turn would only make
@@ -3441,11 +3469,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     content:
       // Built from the resumeHygiene prefixes: a resumed run strips this
       // message, because the limit it announces belongs to THIS segment only.
-      `${HARNESS_LIMIT_PREFIX[stopReason]}: ${toolCallsExecuted} tool call(s) over ${perTurn.length} turns (cap ${iterationCap}).` +
+      `${HARNESS_LIMIT_PREFIX[limitReason]}: ${toolCallsExecuted} tool call(s) over ${perTurn.length} turns (cap ${iterationCap}).` +
       ' No further tools can run this turn. Answer now from what you already gathered. ' +
       'If the task itself is complete (fix applied and verified), do NOT mention the limit at all — deliver the final report in the required format as if the run ended normally. ' +
       'Only if the task is unfinished, be exact about why you stopped — say "' +
-      HARNESS_LIMIT_PHRASE[stopReason] +
+      HARNESS_LIMIT_PHRASE[limitReason] +
       '"; do NOT claim tool access was revoked, cut off, or broken. ' +
       // Running out of steps is a HARNESS limit, not a fact about the ticket.
       // Observed live on #1534774: the model relabelled the cap hit as
@@ -3455,7 +3483,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // took this prompt's own "list the files still unread" instruction and
       // rendered it as a paragraph of homework for the next run.
       'Do NOT use the "## Blocked" heading for this: a harness limit is not a missing product decision, and "## Blocked" claims the second. ' +
-      `Put that reason IN the status heading, after what is left — e.g. "## ⚠️ Partially done — run_checks not run · ${HARNESS_LIMIT_PHRASE[stopReason]} after the edits" — a heading that names only what is left ("run_checks not run yet") tells the user nothing they can act on. ` +
+      `Put that reason IN the status heading, after what is left — e.g. "## ⚠️ Partially done — run_checks not run · ${HARNESS_LIMIT_PHRASE[limitReason]} after the edits" — a heading that names only what is left ("run_checks not run yet") tells the user nothing they can act on. ` +
       'If you had already identified the fix, say so plainly under that heading and state what the edit would be, in one or two lines; if the task is a bug, still give the "### Root cause" section — the user wants to know what was wrong even when the fix is unfinished. ' +
       'Then list only the specific files still unread — the run resumes with everything gathered so far carried over, so keep it to file paths, not instructions.',
   });

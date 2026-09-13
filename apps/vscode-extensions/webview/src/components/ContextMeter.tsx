@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
+import type { ContextSegment, ContextUsage } from '../store/chatStore';
 
-export interface ContextUsage {
-  usedTokens: number;
-  windowTokens: number;
-  usedPct: number;
-  remainingPct: number;
-  /** How many times this run has summarized itself to free room. */
-  compactions: number;
-}
+export type { ContextSegment, ContextUsage };
 
 interface ContextMeterProps {
   usage?: ContextUsage | null;
@@ -41,6 +35,21 @@ function resolveWindow(modelId?: string | null): number {
   return DEFAULT_CONTEXT_WINDOW;
 }
 
+/**
+ * One color per part of the prompt, from the theme's own chart palette so the
+ * breakdown stays legible in light and dark themes alike. Keyed by the
+ * worker's segment keys (contextBreakdown.ts); an unknown key falls back to
+ * the neutral foreground rather than going invisible.
+ */
+const SEGMENT_COLORS: Record<string, string> = {
+  system: 'var(--vscode-charts-blue, #3794ff)',
+  tools: 'var(--vscode-charts-orange, #d18616)',
+  conversation: 'var(--vscode-charts-purple, #b180d7)',
+  toolResults: 'var(--vscode-charts-green, #89d185)',
+  attachments: 'var(--vscode-charts-yellow, #cca700)',
+};
+const SEGMENT_FALLBACK_COLOR = 'var(--vscode-descriptionForeground, #9da5b4)';
+
 /** 128000 → "128k", 9800 → "9.8k", 450 → "450". */
 function formatTokens(n: number): string {
   if (n < 1_000) return String(Math.round(n));
@@ -66,6 +75,14 @@ const ContextMeter: React.FC<ContextMeterProps> = ({ usage, modelId, running = f
 
   const usedTokens = usage?.usedTokens ?? 0;
   const compactions = usage?.compactions ?? 0;
+  // No turn has been measured for this chat yet (freshly opened, or the first
+  // request of a new one is still in flight). Saying "0%" there would be a
+  // claim we have not measured — the meter says so instead.
+  const measured = !!usage && usedTokens > 0;
+  const segments: ContextSegment[] = measured ? usage?.segments ?? [] : [];
+  const freeTokens = Math.max(0, windowTokens - usedTokens);
+  const pctOfWindow = (tokens: number) =>
+    windowTokens > 0 ? Math.round((tokens / windowTokens) * 100) : 0;
 
   const computedPct = windowTokens > 0 ? Math.round((usedTokens / windowTokens) * 100) : 0;
   const usedPct = usage?.usedPct !== undefined ? usage.usedPct : computedPct;
@@ -89,7 +106,9 @@ const ContextMeter: React.FC<ContextMeterProps> = ({ usage, modelId, running = f
   const visualPct = Math.max(clamped, 12);
   const strokeDashoffset = circumference - (visualPct / 100) * circumference;
 
-  const summaryLabel = `Context ${clamped}% · ${formatTokens(usedTokens)} of ${formatTokens(windowTokens)}`;
+  const summaryLabel = measured
+    ? `Context ${clamped}% · ${formatTokens(usedTokens)} of ${formatTokens(windowTokens)}`
+    : `Context not measured yet · window ${formatTokens(windowTokens)}`;
 
   return (
     <div
@@ -142,21 +161,65 @@ const ContextMeter: React.FC<ContextMeterProps> = ({ usage, modelId, running = f
         <div className='context-meter-popover-header'>
           <span className='context-meter-popover-title'>Context</span>
           <span className={`context-meter-popover-badge context-meter-popover-badge--${tone}`}>
-            {clamped}%
+            {measured ? `${clamped}%` : '—'}
           </span>
         </div>
 
-        <div className='context-meter-popover-bar'>
-          <div
-            className={`context-meter-popover-bar-fill context-meter-popover-bar-fill--${tone}`}
-            style={{ width: `${clamped}%` }}
-          />
+        {/* One bar, split by what is filling the window when we know the split
+            and plain occupancy when we don't (an older host, or a provider
+            that reported usage without a payload to weigh). */}
+        <div
+          className={`context-meter-popover-bar${segments.length > 0 ? ' context-meter-popover-bar--split' : ''}`}
+        >
+          {segments.length > 0 ? (
+            segments.map((segment) => (
+              <div
+                key={segment.key}
+                className='context-meter-popover-bar-seg'
+                style={{
+                  width: `${(segment.tokens / Math.max(1, windowTokens)) * 100}%`,
+                  background: SEGMENT_COLORS[segment.key] ?? SEGMENT_FALLBACK_COLOR,
+                }}
+              />
+            ))
+          ) : (
+            <div
+              className={`context-meter-popover-bar-fill context-meter-popover-bar-fill--${tone}`}
+              style={{ width: `${measured ? clamped : 0}%` }}
+            />
+          )}
         </div>
 
         <div className='context-meter-popover-usage'>
-          {formatTokens(usedTokens)} / {formatTokens(windowTokens)}
+          {measured ? formatTokens(usedTokens) : '—'} / {formatTokens(windowTokens)}
           <span className='context-meter-popover-sub'> tokens</span>
         </div>
+
+        {segments.length > 0 && (
+          <ul className='context-meter-breakdown'>
+            {segments.map((segment) => (
+              <li key={segment.key} className='context-meter-breakdown-row'>
+                <span
+                  className='context-meter-breakdown-swatch'
+                  style={{ background: SEGMENT_COLORS[segment.key] ?? SEGMENT_FALLBACK_COLOR }}
+                  aria-hidden='true'
+                />
+                <span className='context-meter-breakdown-label'>{segment.label}</span>
+                <span className='context-meter-breakdown-tokens'>{formatTokens(segment.tokens)}</span>
+                <span className='context-meter-breakdown-pct'>{pctOfWindow(segment.tokens)}%</span>
+              </li>
+            ))}
+            <li className='context-meter-breakdown-row context-meter-breakdown-row--free'>
+              <span
+                className='context-meter-breakdown-swatch context-meter-breakdown-swatch--free'
+                aria-hidden='true'
+              />
+              <span className='context-meter-breakdown-label'>Free space</span>
+              <span className='context-meter-breakdown-tokens'>{formatTokens(freeTokens)}</span>
+              <span className='context-meter-breakdown-pct'>{pctOfWindow(freeTokens)}%</span>
+            </li>
+          </ul>
+        )}
 
         <div className='context-meter-popover-footer'>
           {running && (
@@ -164,7 +227,11 @@ const ContextMeter: React.FC<ContextMeterProps> = ({ usage, modelId, running = f
               <span className='context-meter-live-dot' aria-hidden='true' /> Updating
             </div>
           )}
-          {compactions > 0 ? (
+          {!measured ? (
+            <div className='context-meter-popover-note'>
+              Nothing measured for this chat yet — the next answer fills this in
+            </div>
+          ) : compactions > 0 ? (
             <div className='context-meter-popover-note context-meter-popover-note--compact'>
               Summarized {compactions === 1 ? 'once' : `${compactions} times`} to keep going
             </div>

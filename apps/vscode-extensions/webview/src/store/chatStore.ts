@@ -143,6 +143,32 @@ export interface LiveSession {
   pendingTurnSummary: TurnSummary | null;
 }
 
+/** One named part of the prompt, as the worker weighed it (contextBreakdown.ts). */
+export interface ContextSegment {
+  key: string;
+  label: string;
+  tokens: number;
+}
+
+/**
+ * A context-window reading for one session: the provider's measured
+ * occupancy, plus the split of it the worker derived.
+ *
+ * Keyed BY SESSION rather than held as one live value, because a run keeps
+ * going while the user reads another chat: a single value meant a background
+ * run's numbers overwrote the visible meter, and coming back to a session
+ * showed 0% for a conversation that was in fact nearly full.
+ */
+export interface ContextUsage {
+  usedTokens: number;
+  windowTokens: number;
+  usedPct: number;
+  remainingPct: number;
+  /** How many times this run has truncated a tool result to free room. */
+  compactions: number;
+  segments?: ContextSegment[];
+}
+
 /** The subset of session state the turn reducers below operate on. */
 interface TurnSlice {
   messages: Message[];
@@ -310,6 +336,12 @@ interface ChatState {
    * sessions are applied here instead of to the visible chat.
    */
   liveSessions: Record<string, LiveSession>;
+  /**
+   * Last context-window reading per session, visible or backgrounded. Outlives
+   * `liveSessions` entries on purpose: those are consumed when a session is
+   * opened, but the meter must survive switching back and forth.
+   */
+  sessionContext: Record<string, ContextUsage>;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
   /** Drop one message by index — used to clear a failed turn's error bubble before retrying it. */
@@ -350,6 +382,8 @@ interface ChatState {
   activateLiveSession: (sessionId: string) => boolean;
   /** Forget a backgrounded session (deleted, or consumed elsewhere). */
   dropLiveSession: (sessionId: string) => void;
+  /** Record (or clear, with null) one session's context reading. */
+  setSessionContext: (sessionId: string | null, usage: ContextUsage | null) => void;
   // Background-session variants of the turn actions — same reducers, applied
   // to liveSessions[sessionId]. All no-op if the session isn't backgrounded.
   bgAddMessage: (sessionId: string, message: Message) => void;
@@ -408,6 +442,7 @@ export const chatDefaultState = {
   agentSteps: [],
   pendingTurnSummary: null,
   liveSessions: {},
+  sessionContext: {},
 };
 
 export const useChatStore = create<ChatState>()(
@@ -490,6 +525,15 @@ export const useChatStore = create<ChatState>()(
         if (!state.liveSessions[sessionId]) return {};
         const { [sessionId]: _dropped, ...rest } = state.liveSessions;
         return { liveSessions: rest };
+      }),
+      setSessionContext: (sessionId, usage) => set((state) => {
+        if (!sessionId) return {};
+        if (!usage) {
+          if (!state.sessionContext[sessionId]) return {};
+          const { [sessionId]: _cleared, ...rest } = state.sessionContext;
+          return { sessionContext: rest };
+        }
+        return { sessionContext: { ...state.sessionContext, [sessionId]: usage } };
       }),
       bgAddMessage: (sessionId, message) => set((state) => {
         const entry = state.liveSessions[sessionId];
@@ -625,6 +669,7 @@ export function collectChatSnapshot() {
     agentSteps: s.agentSteps,
     pendingTurnSummary: s.pendingTurnSummary,
     liveSessions: s.liveSessions,
+    sessionContext: s.sessionContext,
   };
 }
 
@@ -645,5 +690,6 @@ export function applyChatSnapshot(
     agentSteps: snapshot.agentSteps ?? [],
     pendingTurnSummary: snapshot.pendingTurnSummary ?? null,
     liveSessions: snapshot.liveSessions ?? {},
+    sessionContext: snapshot.sessionContext ?? {},
   });
 }

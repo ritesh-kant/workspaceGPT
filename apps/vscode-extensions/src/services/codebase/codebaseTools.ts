@@ -98,6 +98,15 @@ export interface SearchCodebaseResult {
   note?: string;
   /** Populated instead of matches when outputMode is 'files_with_matches'. */
   files?: string[];
+  /**
+   * True when this search did NOT cover the workspace — ripgrep was
+   * unavailable or died, and the fallback scanner read only a capped sample of
+   * the files. Zero matches on a partial search says nothing about absence, so
+   * the flag travels with the result instead of only in the prose note.
+   */
+  partial?: boolean;
+  /** How many files the fallback scanner actually read (absent when ripgrep served the search). */
+  scannedFiles?: number;
 }
 
 export interface FindSymbolArgs {
@@ -181,7 +190,13 @@ const MAX_READ_LINES = 2000;
 const MAX_READ_BYTES = 64 * 1024;
 const CONTEXT_LINES = 2;
 const MAX_CONTEXT_CHARS = 500;
-const RIPGREP_TIMEOUT_MS = 10_000;
+// Measured on the phoenix monorepo (ticket #1536998): the same query took
+// 83s on a cold FS cache and 1.5s warm. At the old 10s the FIRST searches of
+// every run on a big repo were killed — exactly the calls that decide whether
+// the agent believes the feature exists — and each silently became a 500-file
+// sample that reported "no matches". A generous ceiling is only ever paid on a
+// repo that needs it; the common case still returns in seconds.
+const RIPGREP_TIMEOUT_MS = 90_000;
 
 export class WorkspaceRootRequiredError extends Error {
   constructor() {
@@ -337,6 +352,15 @@ function normalizeGlob(glob: string): string {
   return negated ? `!${g}` : g;
 }
 
+/**
+ * Appended when the exact-phrase pass ran clean but the broader keyword retry
+ * died: the phrase verdict is sound, the synonym sweep simply never happened,
+ * and saying nothing would present a half-search as a full one.
+ */
+function partialRetryNote(reason?: string): string {
+  return reason ? ` (The broader keyword retry did not run — ${reason}. Re-run this search to include it.)` : '';
+}
+
 /** Diagnostic for zero-hit searches — without it the model can't tell "term absent" from "glob matched nothing". */
 function zeroHitNote(args: SearchCodebaseArgs, triedTokens?: string[]): string {
   const tokenPart = triedTokens?.length ? ` (also tried keywords: ${triedTokens.join(', ')})` : '';
@@ -395,11 +419,27 @@ interface RgEntry {
   isMatch: boolean;
 }
 
+/**
+ * Why a ripgrep call gave up. `null` used to mean both "this install has no
+ * binary" and "the search was killed mid-walk", and the caller could not tell
+ * them apart — so a timeout arrived at the model dressed as a clean zero.
+ */
+function ripgrepFailureReason(error: unknown): string {
+  const e = error as { killed?: boolean; signal?: string; code?: unknown; message?: string };
+  if (e?.killed || e?.signal) return `ripgrep was killed after ${Math.round(RIPGREP_TIMEOUT_MS / 1000)}s`;
+  if (e?.code === 'ENOBUFS') return 'ripgrep produced more output than the buffer allows';
+  // The code, never execFile's `message` — that is the entire command line,
+  // excluded directories and all, and this string is quoted back to the model.
+  const code = typeof e?.code === 'number' ? `exit ${e.code}` : String(e?.code ?? 'unknown error');
+  return `ripgrep failed (${code})`;
+}
+
 function runRipgrepRaw(
   rgPath: string,
   pattern: string,
   opts: { caseSensitive?: boolean; glob?: string },
-  roots: NamedRoot[]
+  roots: NamedRoot[],
+  failure?: { reason?: string }
 ): Promise<string | null> {
   const args = ['--json', '--context', String(CONTEXT_LINES), '--max-count', '200', '--max-filesize', String(MAX_FILE_SIZE_BYTES)];
   if (!opts.caseSensitive) args.push('--ignore-case');
@@ -415,6 +455,7 @@ function runRipgrepRaw(
       (error, stdout) => {
         // Exit code 1 with no stderr means "ran fine, zero matches" — not a failure.
         if (error && (error as any).code !== 1) {
+          if (failure) failure.reason = ripgrepFailureReason(error);
           resolve(null);
           return;
         }
@@ -475,7 +516,8 @@ function runRipgrepFilesOnly(
   rgPath: string,
   pattern: string,
   opts: { caseSensitive?: boolean; glob?: string },
-  roots: NamedRoot[]
+  roots: NamedRoot[],
+  failure?: { reason?: string }
 ): Promise<string[] | null> {
   const args = ['-l', '--max-filesize', String(MAX_FILE_SIZE_BYTES)];
   if (!opts.caseSensitive) args.push('--ignore-case');
@@ -490,6 +532,7 @@ function runRipgrepFilesOnly(
       { maxBuffer: 20 * 1024 * 1024, timeout: RIPGREP_TIMEOUT_MS, cwd: roots[0].uri.fsPath },
       (error, stdout) => {
         if (error && (error as any).code !== 1) {
+          if (failure) failure.reason = ripgrepFailureReason(error);
           resolve(null);
           return;
         }
@@ -505,13 +548,17 @@ function runRipgrepFilesOnly(
 
 async function searchCodebaseViaRipgrep(
   args: SearchCodebaseArgs,
-  roots: NamedRoot[]
+  roots: NamedRoot[],
+  failure?: { reason?: string }
 ): Promise<SearchCodebaseResult | null> {
   const rgPath = await resolveRipgrepPath();
-  if (!rgPath) return null;
+  if (!rgPath) {
+    if (failure) failure.reason = 'ripgrep is not available in this install';
+    return null;
+  }
 
   if (args.outputMode === 'files_with_matches') {
-    const files = await runRipgrepFilesOnly(rgPath, escapeForLiteralOrRegex(args.query), args, roots);
+    const files = await runRipgrepFilesOnly(rgPath, escapeForLiteralOrRegex(args.query), args, roots, failure);
     if (files === null) return null;
     if (files.length > 0) {
       return {
@@ -524,8 +571,12 @@ async function searchCodebaseViaRipgrep(
     // Zero exact-phrase files — try the keyword-union fallback, same as content mode.
     const tokens = expandTokens(tokenize(args.query));
     const tokenPattern = tokens.map(escapeRegExp).join('|');
+    // Tracked separately from `failure`: the exact-phrase pass above already
+    // succeeded, so a death HERE costs only the broader keyword retry — the
+    // phrase verdict still stands and must not be thrown away.
+    const tokenFailure: { reason?: string } = {};
     if (tokens.length > 0 && tokenPattern.toLowerCase() !== escapeForLiteralOrRegex(args.query).toLowerCase()) {
-      const tokenFiles = await runRipgrepFilesOnly(rgPath, tokenPattern, args, roots);
+      const tokenFiles = await runRipgrepFilesOnly(rgPath, tokenPattern, args, roots, tokenFailure);
       if (tokenFiles && tokenFiles.length > 0) {
         return {
           matches: [],
@@ -536,10 +587,16 @@ async function searchCodebaseViaRipgrep(
         };
       }
     }
-    return { matches: [], files: [], truncated: false, totalMatches: 0, note: zeroHitNote(args, tokens) };
+    return {
+      matches: [],
+      files: [],
+      truncated: false,
+      totalMatches: 0,
+      note: zeroHitNote(args, tokens) + partialRetryNote(tokenFailure.reason),
+    };
   }
 
-  const phraseStdout = await runRipgrepRaw(rgPath, escapeForLiteralOrRegex(args.query), args, roots);
+  const phraseStdout = await runRipgrepRaw(rgPath, escapeForLiteralOrRegex(args.query), args, roots, failure);
   if (phraseStdout === null) return null; // ripgrep failed unexpectedly — fall back to JS scanner
 
   const phraseMatches = toMatchesWithContext(parseRipgrepJson(phraseStdout, roots));
@@ -558,8 +615,16 @@ async function searchCodebaseViaRipgrep(
     return { matches: [], truncated: false, totalMatches: 0, note: zeroHitNote(args) };
   }
 
-  const tokenStdout = await runRipgrepRaw(rgPath, tokenPattern, args, roots);
-  if (tokenStdout === null) return { matches: [], truncated: false, totalMatches: 0, note: zeroHitNote(args, tokens) };
+  const tokenFailure: { reason?: string } = {};
+  const tokenStdout = await runRipgrepRaw(rgPath, tokenPattern, args, roots, tokenFailure);
+  if (tokenStdout === null) {
+    return {
+      matches: [],
+      truncated: false,
+      totalMatches: 0,
+      note: zeroHitNote(args, tokens) + partialRetryNote(tokenFailure.reason),
+    };
+  }
 
   const tokenMatches = toMatchesWithContext(parseRipgrepJson(tokenStdout, roots));
   if (tokenMatches.length === 0) {
@@ -574,10 +639,31 @@ async function searchCodebaseViaRipgrep(
   };
 }
 
-/** Pure-JS fallback scanner, used only when ripgrep can't be resolved on this platform/install. */
+/**
+ * What the fallback scanner must say about its own reach.
+ *
+ * `findFiles` caps at MAX_CANDIDATE_FILES, and in a monorepo that is a ~1%
+ * sample of the source in no meaningful order. Reporting that sample's zero
+ * hits as "No matches for X — try different keywords" is a false negative the
+ * caller cannot detect: on ticket #1536998 it answered `paypal` with "0
+ * results" in a repo holding 185 matching files, and the run only recovered
+ * because the model happened to retry with find_files. So a capped scan says
+ * so, in the note AND in a `partial` flag the caller can branch on.
+ */
+function partialScanNote(scanned: number, reason: string): string {
+  return (
+    `⚠️ PARTIAL SEARCH — this did NOT cover the workspace: ${reason}, so a fallback scanner read only ` +
+    `${scanned} file(s) (cap ${MAX_CANDIDATE_FILES}) out of however many the workspace holds. ` +
+    `Zero or few hits here is NOT evidence the term is absent. Confirm with find_files on a name pattern, ` +
+    `find_symbol for a symbol, or re-run this search (ripgrep is usually fast once the file cache is warm).`
+  );
+}
+
+/** Pure-JS fallback scanner, used only when ripgrep can't be resolved or didn't finish. */
 async function searchCodebaseViaJsScan(
   args: SearchCodebaseArgs,
-  roots: NamedRoot[]
+  roots: NamedRoot[],
+  degradedReason = 'ripgrep did not serve this search'
 ): Promise<SearchCodebaseResult> {
   const flags = args.caseSensitive ? 'g' : 'gi';
   let phrasePattern: RegExp;
@@ -663,20 +749,47 @@ async function searchCodebaseViaJsScan(
     }
   }
 
+  // The scan is a sample whenever findFiles handed back a full cap's worth —
+  // there is no way to know how much more there was.
+  const capped = files.length >= MAX_CANDIDATE_FILES;
+  const partialNote = capped ? partialScanNote(files.length, degradedReason) : undefined;
+
   if (phraseMatches.length > 0) {
-    return { matches: phraseMatches, truncated: phraseTruncated, totalMatches: phraseTotalMatches };
+    return {
+      matches: phraseMatches,
+      truncated: phraseTruncated || capped,
+      totalMatches: phraseTotalMatches,
+      partial: capped,
+      scannedFiles: files.length,
+      note: partialNote,
+    };
   }
 
   if (tokenMatches.length > 0) {
     return {
       matches: rankTokenMatches(tokenMatches, tokens),
-      truncated: tokenTruncated,
+      truncated: tokenTruncated || capped,
       totalMatches: tokenMatches.length,
-      note: `No exact match for "${args.query}" — showing lines matching any of: ${tokens.join(', ')}, ranked by how many keywords each hit.`,
+      partial: capped,
+      scannedFiles: files.length,
+      note:
+        `No exact match for "${args.query}" — showing lines matching any of: ${tokens.join(', ')}, ranked by how many keywords each hit.` +
+        (partialNote ? ` ${partialNote}` : ''),
     };
   }
 
-  return { matches: [], truncated: false, totalMatches: 0, note: zeroHitNote(args, tokens) };
+  return {
+    // `note` leads deliberately: microcompaction keeps only a result's first
+    // COMPACT_HEAD_CHARS, and the warning is the entire value of this result.
+    // A capped scan has also not earned zeroHitNote's "try different keywords"
+    // advice — the vocabulary may be perfect and simply outside the sample.
+    note: partialNote ?? zeroHitNote(args, tokens),
+    matches: [],
+    truncated: capped,
+    totalMatches: 0,
+    partial: capped,
+    scannedFiles: files.length,
+  };
 }
 
 export async function searchCodebase(
@@ -686,19 +799,32 @@ export async function searchCodebase(
   if (!roots.length) throw new WorkspaceRootRequiredError();
 
   const run = async (a: SearchCodebaseArgs): Promise<SearchCodebaseResult> => {
-    const viaRipgrep = await searchCodebaseViaRipgrep(a, roots);
+    const failure: { reason?: string } = {};
+    const viaRipgrep = await searchCodebaseViaRipgrep(a, roots, failure);
     if (viaRipgrep) return viaRipgrep;
 
-    const jsResult = await searchCodebaseViaJsScan(a, roots);
+    const jsResult = await searchCodebaseViaJsScan(a, roots, failure.reason);
     if (a.outputMode === 'files_with_matches') {
       const files = [...new Set(jsResult.matches.map((m) => m.file))];
-      return { matches: [], files, truncated: jsResult.truncated, totalMatches: files.length, note: jsResult.note };
+      return {
+        matches: [],
+        files,
+        truncated: jsResult.truncated,
+        totalMatches: files.length,
+        note: jsResult.note,
+        partial: jsResult.partial,
+        scannedFiles: jsResult.scannedFiles,
+      };
     }
     return jsResult;
   };
 
   const first = await run(args);
   const empty = (r: SearchCodebaseResult) => (r.totalMatches ?? 0) === 0;
+  // A partial zero is not a finding, whatever the glob did — hand it back with
+  // its warning intact rather than spending a second capped scan to "confirm"
+  // an absence neither pass can establish.
+  if (empty(first) && first.partial) return first;
   if (!args.glob || !empty(first)) return first;
 
   // A glob that matches no files returns zero hits and looks exactly like "the

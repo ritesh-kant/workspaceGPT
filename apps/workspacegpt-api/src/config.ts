@@ -101,8 +101,8 @@ const DEFAULT_MODEL = 'google/gemini-2.5-flash';
  * that edits code ~50. So free ≈ 280 questions or ~40 fixes a week; pro ≈ 25×
  * that. These are starting points for a pricing decision, not the decision.
  */
-const DEFAULT_PLAN_WEEKLY_CREDITS: Record<string, number> = { free: 2000, pro: 50000 };
-const DEFAULT_FALLBACK_WEEKLY_CREDITS = 2000;
+const DEFAULT_PLAN_WEEKLY_CREDITS: Record<string, number> = { free: 50, pro: 50000 };
+const DEFAULT_FALLBACK_WEEKLY_CREDITS = 50;
 const DEFAULT_TOKENS_PER_CREDIT = 1000;
 
 export interface ConfigRow {

@@ -91,6 +91,7 @@ import {
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
+import { readLastSyncTime } from 'src/utils/syncStateStore';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -285,6 +286,13 @@ interface SessionRun {
   sessionWritesApplied: number;
   /** What "Create PR" ships: the last turn that changed files, with its report and ticket. */
   lastShip: ShipInput | null;
+  /**
+   * The most recent context-window reading for this session, as posted to the
+   * webview. Replayed when the chat is reopened — the webview's own copy dies
+   * with a panel reload, and a meter that reads 0% on a long conversation is
+   * worse than no meter at all.
+   */
+  lastContext: Record<string, unknown> | null;
   /** First checkpoint of the turn — the "undo this turn" target. */
   turnFirstCheckpointSha: string | null;
   /**
@@ -673,6 +681,7 @@ export class ChatService {
         userAskedRepoWide: false,
         sessionWritesApplied: 0,
         lastShip: null,
+        lastContext: null,
         turnFirstCheckpointSha: null,
         writeSeq: 0,
         checkInFlight: new Map(),
@@ -756,6 +765,11 @@ export class ChatService {
     // exactly when it should still be resumable, and sendMessage reloads it
     // when the user asks to continue.
     this.dropResumeFromMemory(run);
+  }
+
+  /** The last context reading this session produced, for replay on reopen. */
+  public lastContextFor(sessionId: string): Record<string, unknown> | null {
+    return this.runs.get(sessionId)?.lastContext ?? null;
   }
 
   public async newChat(): Promise<void> {
@@ -1810,7 +1824,22 @@ export class ChatService {
           'The source may not be connected/synced — answer from the codebase alone or tell the user.'
       );
     }
+    // Every hit here comes from a local snapshot, so the snapshot's age is part
+    // of the answer: anything created or edited since is simply not searchable,
+    // and zero hits for it means nothing (#1536998 — a design doc written the
+    // day of the run, against an index a week old).
+    const lastSync = readLastSyncTime(this.context, source === 'CONFLUENCE' ? 'confluence' : 'ado');
+    const staleNote = lastSync
+      ? `This index was last synced ${lastSync.slice(0, 10)} — anything created or edited after that date is NOT in it. ` +
+        `For a page or ticket you can name (a URL or id in the ticket, or one the user gave), fetch it live with ${
+          source === 'CONFLUENCE' ? 'get_confluence_page' : 'get_ticket'
+        } instead of relying on these results.`
+      : `This index's last sync time is unknown — it may predate recent pages. Fetch anything you can name by URL or id with ${
+          source === 'CONFLUENCE' ? 'get_confluence_page' : 'get_ticket'
+        }.`;
     return {
+      indexedThrough: lastSync ?? 'unknown',
+      note: staleNote,
       results: results.map((r) => ({
         source: r.data?.source,
         title: (r.data as any)?.title ?? (r.data as any)?.name,
@@ -2098,7 +2127,10 @@ export class ChatService {
     switch (name) {
       case 'search_codebase': {
         const n = result?.totalMatches ?? result?.matches?.length ?? result?.files?.length ?? 0;
-        return { summary: plural(n, 'result') };
+        // "0 results" on a capped fallback scan reads in the timeline exactly
+        // like "this workspace does not contain that" — the false negative
+        // behind #1536998's early searches. Say which one the user is seeing.
+        return { summary: result?.partial ? `${plural(n, 'result')} · partial scan` : plural(n, 'result') };
       }
       case 'find_files':
         return { summary: plural(result?.files?.length ?? 0, 'file') };
@@ -2667,6 +2699,8 @@ Query: "${query}"`;
             usedPct?: number;
             remainingPct?: number;
             compactions?: number;
+            /** Per-part split of the reading above — see contextBreakdown.ts. */
+            segments?: { key: string; label: string; tokens: number }[];
             /** metrics: run wall clock and where it went (see the output-channel summary). */
             wallMs?: number;
             modelMs?: number;
@@ -2869,13 +2903,20 @@ Query: "${query}"`;
                 // Forwarded straight through: the meter in the composer is the
                 // user's view of the thing that now bounds a run, so it has to
                 // track the real number rather than a host-side estimate.
-                this.post(run, {
-                  type: MESSAGE_TYPES.AGENT_CONTEXT,
+                // Kept on the run as well as posted: reopening this chat
+                // later must be able to show the meter again, and the webview
+                // cannot recompute a number only the provider knows.
+                run.lastContext = {
                   usedTokens: result.usedTokens,
                   windowTokens: result.windowTokens,
                   usedPct: result.usedPct,
                   remainingPct: result.remainingPct,
                   compactions: result.compactions,
+                  segments: result.segments,
+                };
+                this.post(run, {
+                  type: MESSAGE_TYPES.AGENT_CONTEXT,
+                  ...run.lastContext,
                 });
                 break;
 

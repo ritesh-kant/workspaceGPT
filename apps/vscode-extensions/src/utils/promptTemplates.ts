@@ -61,6 +61,34 @@ export interface TicketPromptContext {
   comments?: { author: string; date?: string; text: string }[];
 }
 
+/**
+ * Is this work item a piece of RESEARCH rather than a change to make?
+ *
+ * Read off the work-item TYPE — a structured field ADO already gives us and
+ * buildTicketBlock already prints — never off the user's phrasing. Ticket
+ * #1536998 is the case this exists for: a Spike, correctly labelled "Spike" in
+ * its own header line, was handed a prompt block ending "an investigation
+ * report ... is NOT a valid ending", so the run edited four files and stamped
+ * the result shippable while the spike's three open questions and its "High
+ * level estimation" deliverable went unanswered.
+ *
+ * Types, not keywords in prose: these are the values teams actually put in the
+ * type field across ADO/Jira process templates.
+ */
+const RESEARCH_WORK_ITEM_TYPES = new Set([
+  'spike',
+  'research',
+  'investigation',
+  'analysis',
+  'discovery',
+  'poc',
+  'proof of concept',
+]);
+
+export function isResearchWorkItem(type?: string): boolean {
+  return RESEARCH_WORK_ITEM_TYPES.has(String(type ?? '').trim().toLowerCase());
+}
+
 const TICKET_DESCRIPTION_MAX_CHARS = 4_000;
 const TICKET_AC_MAX_CHARS = 2_000;
 const TICKET_COMMENTS_SHOWN = 3;
@@ -156,12 +184,97 @@ Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they be
 `;
 
 /**
+ * The shape of a SPIKE's final answer.
+ *
+ * A spike is finished when the questions it was raised to settle are settled —
+ * so the deliverable is findings, an answer per open question, the change set
+ * it recommends (as file:line, not as a diff), and the estimate the ticket
+ * asks for. FINAL_REPORT_FORMAT cannot carry that: its criteria table demands
+ * per-criterion verdicts against code that, on a spike, deliberately does not
+ * change yet, and its instructions call an investigation report an invalid
+ * ending. Same H2-banner-then-sections contract, so the webview card renders
+ * it unchanged.
+ */
+export const SPIKE_REPORT_FORMAT = `## SPIKE REPORT FORMAT
+The user reads ONLY your final answer, in a narrow side panel that renders this exact structure as a card. The status heading is the FIRST LINE — no preamble. Then only the sections below, in this order.
+
+## 🔍 Spike complete — <the answer the spike was raised to get, in ≤ 25 words>
+Use exactly one of these instead when it applies:
+  ## ⚠️ Spike partially answered — <which question is still open> · <WHY: the exact obstacle>
+  ## 🚫 Blocked — <the ONE decision or access the spike cannot proceed without>
+
+### Findings
+- <one fact per bullet, each anchored to \`path/from/repo/root.ts:L12-L20\`, a doc, or a ticket — what IS true in the code today, not what should change>
+
+### Open questions
+| Question (from the ticket) | Answer | Evidence |
+|---|---|---|
+| <the ticket's question, ≤ 12 words> | <the answer, or "Unresolved — <what it needs>"> | <ONE item: file:line, doc link, or test output> |
+Every question the ticket asks gets a row. An unresolved one says what would resolve it — never leave it out, and never invent a question the ticket does not ask.
+
+### Recommended change
+- \`path/from/repo/root.ts:L12\` — what to change and why, one line each (the change set, NOT applied unless you were asked to apply it)
+- <or "None — <why the current code already satisfies the goal>">
+
+### Estimate
+<Size the recommended change: the files/flows touched and what dominates the effort. One or two lines. If the ticket asks for a high-level estimate, this section is mandatory.>
+
+### Verification
+- ✅ \`<exact command or search run>\` — <one-line result>
+  (use ⚠️ for anything you could NOT verify, and say what it would take)
+
+### Notes  (optional, at most 3 bullets)
+- Assumption: <a default you acted on>
+- Out of scope: <related work you deliberately did not do>
+
+Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they become clickable. Write a work-item reference as a bare \`#<id>\` OUTSIDE backticks. No process narration ("this turn", "I re-ran"), no restating the ticket. Everything outside the tables stays under ~200 words.
+`;
+
+/**
  * The pre-fetched ticket as a prompt section. This is the run's definition of
  * done: the model is told to key its final answer to the acceptance criteria,
  * which is what makes an autonomous run's report auditable (met / not met /
  * could not verify, per criterion).
  */
-function buildTicketBlock(t?: TicketPromptContext): string {
+/**
+ * Every link the ticket itself carries, hoisted out of its prose.
+ *
+ * The design doc for #1536998 was linked in the ticket's only comment and the
+ * prompt did include that comment — the run still never opened it, because a
+ * URL sitting in a sentence is not an instruction to fetch anything, and the
+ * synced index it searched instead predated the page by a week. Listing the
+ * links as their own section, each next to the tool that retrieves it, turns
+ * "there is a doc behind this ticket" from something the model has to notice
+ * into something it has to decline.
+ */
+const URL_RE = /https?:\/\/[^\s)\]<>"']+/g;
+const TICKET_LINKS_SHOWN = 6;
+
+function isConfluenceUrl(url: string): boolean {
+  return /atlassian\.net\/wiki\//i.test(url) || /confluence/i.test(url);
+}
+
+function buildTicketLinks(t: TicketPromptContext): string {
+  const haystack = [t.description ?? '', t.acceptanceCriteria ?? '', ...(t.comments ?? []).map((c) => c.text)].join('\n');
+  const urls = [...new Set(haystack.match(URL_RE) ?? [])]
+    // The ticket's own URL is already in the header and is not a reference.
+    .filter((u) => !u.includes(`/${t.id}`))
+    .slice(0, TICKET_LINKS_SHOWN);
+  if (!urls.length) return '';
+  return (
+    `\n**Links in this ticket — open them, do not answer around them:**\n` +
+    urls
+      .map((u) =>
+        isConfluenceUrl(u)
+          ? `- ${u} → call \`get_confluence_page\` with this URL (live; the synced docs index may predate the page)`
+          : `- ${u} → external reference; use \`search_web\` if you need what it says`
+      )
+      .join('\n') +
+    `\nIf one of these cannot be retrieved, say so in your report — do not silently substitute a search result for the document the ticket points at.`
+  );
+}
+
+function buildTicketBlock(t?: TicketPromptContext, implementMandate = false): string {
   if (!t) return '';
   const lines: string[] = [
     `## Ticket #${t.id}: ${t.title}`,
@@ -184,6 +297,24 @@ function buildTicketBlock(t?: TicketPromptContext): string {
           .join('\n')
     );
   }
+  const links = buildTicketLinks(t);
+  if (links) lines.push(links);
+  // A spike's definition of done is an ANSWER, not a diff. The implement
+  // paragraph below would otherwise tell this run that the very deliverable
+  // the ticket asks for is "NOT a valid ending" (#1536998).
+  if (isResearchWorkItem(t.type)) {
+    lines.push(
+      `\nThis work item is a **${t.type}** — research, not a change to ship. Its definition of done is the ANSWER: every question the description asks, settled with evidence, plus the change set you recommend (as \`file:line\`) and the estimate the ticket asks for. ` +
+        `Investigate the real code and docs as thoroughly as you would for an implementation — a spike answered from assumption is worthless — but reaching a well-evidenced recommendation IS the valid ending here, and leaving the tree untouched is not a stall. ` +
+        `Do NOT edit files to "prove" the recommendation` +
+        (implementMandate
+          ? `, EXCEPT that the user's instruction for this run also asks you to implement: do both — answer the spike's questions first, then apply the change and verify it, and add a "### Changes" and per-criterion "### Acceptance criteria" section after the spike sections.`
+          : `; if the change turns out to be trivial, say so in "Recommended change" and let the user ask for it.`) +
+        ` If the ticket links a design doc (SDR, RFC, Confluence page), READ IT before concluding — fetch it by URL or id rather than relying on a search index that may predate it, and if you could not retrieve it, say so in the report instead of answering around it. ` +
+        `Your final answer MUST follow the SPIKE REPORT FORMAT given below. Never invent a question the ticket does not ask.`
+    );
+    return lines.join('\n') + '\n' + SPIKE_REPORT_FORMAT + (implementMandate ? '\n' + FINAL_REPORT_FORMAT : '');
+  }
   lines.push(
     `\nTreat the acceptance criteria (or, absent explicit ones, the description's expected behavior) as the definition of done. ` +
       `Your final answer MUST follow the FINAL REPORT FORMAT given below: one status heading, then an **"Acceptance criteria"** table with a verdict per criterion — met, not met, or could not verify — and ONE item of evidence each (file:line, diagnostic, or test output). ` +
@@ -202,7 +333,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; ado: boolean }; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; autonomous?: boolean; planMode?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; ado: boolean }; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; implementMandate?: boolean; autonomous?: boolean; planMode?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -441,7 +572,7 @@ This run was started with a single click and nobody will answer questions mid-ta
   const attachmentsBlock = buildAttachmentsBlock(options);
   const mentionsBlock = buildMentionsBlock(options);
 
-  const ticketBlock = codebaseToolsEnabled ? buildTicketBlock(options?.ticketContext) : '';
+  const ticketBlock = codebaseToolsEnabled ? buildTicketBlock(options?.ticketContext, !!options?.implementMandate) : '';
 
   // ── Block order is a caching decision as much as a prompt one ──
   // Every round of an agent run resends this whole string, and so does every

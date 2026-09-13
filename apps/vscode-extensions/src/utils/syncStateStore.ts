@@ -47,6 +47,25 @@ export const HOST_OWNED_SYNC_FIELDS = [
 ] as const;
 
 /**
+ * When a section's index was last brought up to date, as an ISO string.
+ *
+ * Read-only counterpart to persistSyncState, for callers that must tell the
+ * difference between "the index says no" and "the index has not seen this
+ * yet". On ticket #1536998 the run was asked to read a design doc created the
+ * same day; the docs index had last synced a week earlier, so search_docs
+ * answered confidently from a copy that could not contain it, and the report
+ * never mentioned the gap.
+ */
+export function readLastSyncTime(
+  context: vscode.ExtensionContext,
+  section: SyncSection
+): string | undefined {
+  const settings = context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+  const value = settings?.state?.config?.[section]?.lastSyncTime;
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+/**
  * Write sync state into global state. Use when the change should not be
  * reflected in the UI — notably a background sync setting `isSyncing: true`,
  * which the scheduler needs for its own re-entrancy guard but which must not

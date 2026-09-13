@@ -3129,8 +3129,8 @@ button:disabled {
   position: absolute;
   bottom: calc(100% + 6px);
   right: 0;
-  width: 196px;
-  max-width: min(196px, calc(100vw - 24px));
+  width: 232px;
+  max-width: min(232px, calc(100vw - 24px));
   padding: 8px 10px;
   background: var(--vscode-editorHoverWidget-background, #252526);
   border: 1px solid var(--vscode-editorHoverWidget-border, rgba(255, 255, 255, 0.12));
@@ -3218,6 +3218,77 @@ button:disabled {
 
 .context-meter-popover-bar-fill--critical {
   background: var(--vscode-editorError-foreground, #f14c4c);
+}
+
+/* Stacked variant: one strip per part of the prompt, in the order the worker
+   weighed them, with the unfilled tail left as the track's own background. */
+.context-meter-popover-bar--split {
+  display: flex;
+  align-items: stretch;
+}
+
+.context-meter-popover-bar-seg {
+  height: 100%;
+  min-width: 1px;
+  transition: width 0.3s ease;
+}
+
+.context-meter-popover-bar-seg + .context-meter-popover-bar-seg {
+  box-shadow: inset 1px 0 0 var(--vscode-editorHoverWidget-background, #252526);
+}
+
+.context-meter-breakdown {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.context-meter-breakdown-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.context-meter-breakdown-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.context-meter-breakdown-swatch--free {
+  background: rgba(128, 128, 128, 0.32);
+}
+
+.context-meter-breakdown-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-foreground, #cccccc);
+}
+
+.context-meter-breakdown-tokens {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground, #9da5b4);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-meter-breakdown-pct {
+  flex: 0 0 auto;
+  width: 30px;
+  text-align: right;
+  color: var(--vscode-descriptionForeground, #888888);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-meter-breakdown-row--free .context-meter-breakdown-label,
+.context-meter-breakdown-row--free .context-meter-breakdown-tokens {
+  color: var(--vscode-descriptionForeground, #888888);
 }
 
 .context-meter-popover-usage {

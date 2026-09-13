@@ -400,6 +400,18 @@ export class ChatMessageHandler {
         sessionId: data.sessionId,
         messages,
       });
+      // Restore the context meter for the chat being opened. Without this the
+      // webview has nothing to show for a session it did not run this
+      // lifetime, and the meter reads 0% on a conversation that is nearly
+      // full — see AGENT_CONTEXT handling in App.tsx.
+      const lastContext = this.chatService.lastContextFor(data.sessionId);
+      if (lastContext) {
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.AGENT_CONTEXT,
+          sessionId: data.sessionId,
+          ...lastContext,
+        });
+      }
     } catch (error) {
       console.error('Error getting chat session:', error);
     }

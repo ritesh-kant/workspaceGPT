@@ -40,7 +40,7 @@ export interface Env {
    * INFERENCE_PROVIDER is `custom`.
    */
   CUSTOM_MODEL?: string;
-  /** JSON `{"plan": creditsPerWeek}` map, e.g. `{"free":2000,"pro":50000}`. */
+  /** JSON `{"plan": creditsPerWeek}` map, e.g. `{"free":50,"pro":50000}`. */
   PLAN_WEEKLY_CREDITS?: string;
   /** Credits/week for a plan absent from PLAN_WEEKLY_CREDITS. */
   WEEKLY_CREDIT_LIMIT?: string;
