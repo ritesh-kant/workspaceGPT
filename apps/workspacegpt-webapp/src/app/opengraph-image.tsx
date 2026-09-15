@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 export const alt =
-  "WorkspaceGPT — Local, Private AI Coding Assistant. Install free for VS Code, Cursor & Antigravity.";
+  "WorkspaceGPT — the coding agent that knows your whole org. Install free for VS Code, Cursor & Antigravity.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -59,8 +59,8 @@ export default function OpengraphImage() {
             textAlign: "center",
           }}
         >
-          Your AI-powered coding assistant for VS Code, Cursor &amp;
-          Antigravity
+          The coding agent that knows your whole org &mdash; for VS Code,
+          Cursor &amp; Antigravity
         </div>
         <div
           style={{
@@ -71,7 +71,7 @@ export default function OpengraphImage() {
             color: "#64748b",
           }}
         >
-          <span>Live Codebase Tools</span>
+          <span>Edits &amp; verifies code</span>
           <span style={{ color: "#1ff2b4" }}>•</span>
           <span>Confluence</span>
           <span style={{ color: "#1ff2b4" }}>•</span>

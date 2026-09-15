@@ -18,23 +18,23 @@ const SITE_URL = "https://www.workspacegpt.in";
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "WorkspaceGPT — Local, Private AI Coding Assistant",
+    default: "WorkspaceGPT — The Coding Agent That Knows Your Whole Org",
     template: "%s | WorkspaceGPT",
   },
   description:
-    "A RAG-based AI coding assistant with zero data retention. Your documents, code, and search index never leave your machine — in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor, and Antigravity.",
+    "A coding agent that reads, edits and verifies your code — grounded in your Confluence docs and Azure DevOps tickets, not just your repo. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor, and Antigravity.",
   applicationName: "WorkspaceGPT",
   keywords: [
     "AI coding assistant",
     "local AI assistant",
-    "private AI code chat",
-    "RAG codebase chat",
+    "AI coding agent",
+    "agentic coding",
     "VS Code extension",
     "Cursor extension",
     "Ollama coding assistant",
     "Confluence AI integration",
     "Azure DevOps AI integration",
-    "chat with codebase",
+    "Confluence grounded coding agent",
     "zero data retention AI",
     "on-device embeddings",
     "no data retention coding assistant",
@@ -49,16 +49,16 @@ export const metadata: Metadata = {
     type: "website",
     url: SITE_URL,
     siteName: "WorkspaceGPT",
-    title: "WorkspaceGPT — Local, Private AI Coding Assistant",
+    title: "WorkspaceGPT — The Coding Agent That Knows Your Whole Org",
     description:
-      "Explore your codebase and chat with Confluence docs and Azure DevOps inside your IDE. Zero data retention — connected knowledge and its search index stay on your machine.",
+      "An agent that edits and verifies your code, grounded in your Confluence docs and Azure DevOps tickets. Zero data retention — connected knowledge and its search index stay on your machine.",
     locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
-    title: "WorkspaceGPT — Local, Private AI Coding Assistant",
+    title: "WorkspaceGPT — The Coding Agent That Knows Your Whole Org",
     description:
-      "Explore your codebase and chat with Confluence docs and Azure DevOps inside your IDE. Zero data retention — connected knowledge and its search index stay on your machine.",
+      "An agent that edits and verifies your code, grounded in your Confluence docs and Azure DevOps tickets. Zero data retention — connected knowledge and its search index stay on your machine.",
   },
   robots: {
     index: true,
@@ -84,7 +84,7 @@ const jsonLd = {
       "@id": `${SITE_URL}/#software`,
       name: "WorkspaceGPT",
       description:
-        "An AI coding assistant with zero data retention. It explores your open codebase live, while connected Confluence and Azure DevOps knowledge is indexed on-device in both Local and Remote mode.",
+        "A coding agent with zero data retention. It searches, reads and edits your code and runs your checks to verify the result, while connected Confluence and Azure DevOps knowledge is indexed on-device in both Local and Remote mode.",
       url: SITE_URL,
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Windows, macOS, Linux",

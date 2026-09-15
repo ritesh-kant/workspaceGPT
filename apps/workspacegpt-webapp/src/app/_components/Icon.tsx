@@ -18,7 +18,13 @@ export type IconName =
   | 'sparkles'
   | 'file-text'
   | 'clipboard-list'
-  | 'message-square';
+  | 'message-square'
+  | 'shield-check'
+  | 'search'
+  | 'at-sign'
+  | 'git-branch'
+  | 'plug'
+  | 'wifi-off';
 
 /** Path geometry only — the <svg> wrapper below supplies the shared stroke. */
 const PATHS: Record<IconName, React.ReactNode> = {
@@ -76,6 +82,52 @@ const PATHS: Record<IconName, React.ReactNode> = {
   ),
   'message-square': (
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  ),
+  'shield-check': (
+    <>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <path d="M9 12l2 2 4-4" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" />
+    </>
+  ),
+  'at-sign': (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9" />
+    </>
+  ),
+  'git-branch': (
+    <>
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="6" cy="18" r="2.5" />
+      <circle cx="18" cy="8" r="2.5" />
+      <path d="M6 8.5v7" />
+      <path d="M18 10.5a6 6 0 0 1-6 6H8.5" />
+    </>
+  ),
+  plug: (
+    <>
+      <path d="M9 2v6" />
+      <path d="M15 2v6" />
+      <path d="M6 8h12v3a6 6 0 0 1-12 0z" />
+      <path d="M12 17v5" />
+    </>
+  ),
+  'wifi-off': (
+    <>
+      <path d="M2 2l20 20" />
+      <path d="M8.5 16.5a5 5 0 0 1 7 0" />
+      <path d="M5 12.9a10 10 0 0 1 4-2.5" />
+      <path d="M15 10.4a10 10 0 0 1 4 2.5" />
+      <path d="M2 8.8a15 15 0 0 1 5-3.1" />
+      <path d="M11 3.2a15 15 0 0 1 11 5.6" />
+      <path d="M12 20h.01" />
+    </>
   ),
 };
 

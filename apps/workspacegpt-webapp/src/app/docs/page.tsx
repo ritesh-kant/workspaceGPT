@@ -177,8 +177,8 @@ export default function DocsPage() {
               <Card icon="🔐" title="Privacy-First" accent="green">
                 <p>Indexing and embeddings run on-device and the vector index stays in local files — in <em>both</em> modes. We retain nothing.</p>
               </Card>
-              <Card icon="🤖" title="RAG-Powered" accent="brand">
-                <p>Retrieval-Augmented Generation over your codebase, Confluence docs, and ADO tickets.</p>
+              <Card icon="🤖" title="Agentic" accent="brand">
+                <p>Reads and edits your code, then runs your checks to verify it. Retrieval over your Confluence docs and ADO tickets supplies the &ldquo;why&rdquo;.</p>
               </Card>
               <Card icon="⚡" title="Zero Setup" accent="blue">
                 <p>Install from the marketplace and start chatting in under 2 minutes.</p>
@@ -232,7 +232,7 @@ export default function DocsPage() {
 
             <div className="bg-slate-900 border border-white/5 rounded-2xl p-5 mt-2">
               <p className="text-sm text-slate-300">
-                <span className="text-brand font-semibold">Minimum VS Code version:</span> 1.98.0. WorkspaceGPT activates automatically on startup (<code className="bg-white/10 px-1 rounded text-xs">onStartupFinished</code>).
+                <span className="text-brand font-semibold">Minimum VS Code version:</span> 1.98.0. WorkspaceGPT activates when you open its sidebar, so it costs you nothing until you use it.
               </p>
             </div>
           </section>
@@ -257,7 +257,7 @@ export default function DocsPage() {
             <div className="grid sm:grid-cols-2 gap-4 mb-8">
               <Card icon="🔐" title="Local" accent="green">
                 <p>Everything runs on your machine: the chat model, the embeddings, the index, the retrieval.</p>
-                <p>Use Ollama for a fully offline setup, or supply your own key for OpenAI, Gemini, Groq, OpenRouter, NVIDIA, or any OpenAI-compatible endpoint. No WorkspaceGPT account needed.</p>
+                <p>Use Ollama for a fully offline setup, or supply your own key for OpenAI, Claude, Gemini, Groq, OpenRouter, NVIDIA, or any OpenAI-compatible endpoint. No WorkspaceGPT account needed.</p>
               </Card>
               <Card icon="⚡" title="Remote" accent="brand">
                 <div className="mb-2"><Badge color="brand">Preview</Badge></div>

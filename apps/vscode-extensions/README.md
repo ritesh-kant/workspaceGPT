@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/gagogpeepmgaljpabdlpbcknjnbcaole.svg?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole)
 
-> 🧩 **New: WorkspaceGPT for Chrome** — ask your Confluence & Azure DevOps questions from a browser side panel. [Add to Chrome](https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole), then paste a share code from this extension (Settings → Share to Chrome).
+> 🧩 **WorkspaceGPT for Chrome** — a browser side panel for your Confluence & Azure DevOps questions. **Pairing is paused for new setups:** the panel reads your search index directly, and that index now lives only on your machine, so there is nothing for another browser to connect to. Existing installs are unaffected. The [Chrome listing](https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole) stays up while a hosted index is in progress.
 
 Visit our homepage: [workspacegpt.in](https://workspacegpt.in)
 

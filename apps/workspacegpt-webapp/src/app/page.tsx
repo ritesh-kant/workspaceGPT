@@ -203,13 +203,13 @@ export default function Home() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
                 </span>
-                WorkspaceGPT v2.0 — Local &amp; Remote modes
+                WorkspaceGPT v2.0 — agentic coding, Local &amp; Remote modes
               </div>
               <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight mb-6 sm:mb-8 leading-[1.1]">
-                Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand to-brand-blue">AI-powered</span> <br/> local coding assistant
+                The coding agent that knows <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand to-brand-blue">your whole org</span>
               </h1>
               <p className="text-lg sm:text-xl text-slate-300 mb-8 sm:mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
-                Explore your codebase and chat with your Confluence docs and Azure DevOps work items from right inside your IDE. Your connected knowledge and its search index <span className="text-white font-medium">never leave your machine</span> &mdash; in either mode.
+                It searches and reads your code, edits files, and runs your tests &mdash; grounded in your Confluence docs and Azure DevOps tickets, not just your repo. Every change is a diff you approve first, and your connected knowledge and its search index <span className="text-white font-medium">never leave your machine</span>.
               </p>
               
               <div className="flex flex-wrap gap-4 justify-center lg:justify-start">
@@ -378,7 +378,7 @@ export default function Home() {
           <div className="container mx-auto px-6">
             <div className="text-center mb-12 sm:mb-16">
               <h2 className="text-3xl sm:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-300 mb-4 tracking-tight">Capabilities designed for builders</h2>
-              <p className="text-slate-300 text-base sm:text-lg max-w-2xl mx-auto">Everything you need to navigate, understand, and build within your existing codebase seamlessly.</p>
+              <p className="text-slate-300 text-base sm:text-lg max-w-2xl mx-auto">A full agent that reads, edits and verifies &mdash; with the docs and tickets that explain <span className="text-white font-medium">why</span> already in reach.</p>
             </div>
             
             <div className="grid md:grid-cols-3 gap-6 auto-rows-fr">
@@ -387,8 +387,8 @@ export default function Home() {
                 <div className="absolute top-0 right-0 w-64 h-64 bg-brand/5 rounded-full blur-3xl -mx-24 -my-24 group-hover:bg-brand/10 transition-colors"></div>
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 shadow-inner text-brand"><Icon name="sparkles" size={26} /></div>
-                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">AI-Powered Q&A</h3>
-                  <p className="text-slate-300 text-base sm:text-lg leading-relaxed max-w-lg">Get context-aware answers from your local workspace using blazing fast Retrieval-Augmented Generation (RAG).</p>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Agentic coding</h3>
+                  <p className="text-slate-300 text-base sm:text-lg leading-relaxed max-w-lg">The agent searches and reads your code, makes multi-file edits, then runs your linter, type-checker and tests to verify its own work before handing it back.</p>
                 </div>
               </div>
               
@@ -398,7 +398,7 @@ export default function Home() {
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-blue-400"><Icon name="file-text" size={26} /></div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Confluence One-Click</h3>
-                  <p className="text-slate-300">Seamlessly connect to your Confluence space and instantly start chatting with your documentation alongside your code.</p>
+                  <p className="text-slate-300">Connect your space in one click and your team&apos;s documentation becomes context the agent can pull mid-task &mdash; the design page, not just the file.</p>
                 </div>
               </div>
 
@@ -408,7 +408,7 @@ export default function Home() {
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-purple-400"><Icon name="clipboard-list" size={26} /></div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Azure DevOps (ADO)</h3>
-                  <p className="text-slate-300">Deep integration with ADO to fetch work items, user stories, and pull requests directly into your AI context.</p>
+                  <p className="text-slate-300">Work items, user stories and PR context synced and searchable, so a run can be grounded in the ticket that asked for it.</p>
                 </div>
               </div>
 
@@ -416,11 +416,68 @@ export default function Home() {
               <div className="md:col-span-2 bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-brand/40 transition-colors duration-500 group flex flex-col md:flex-row gap-8 items-center relative overflow-hidden">
                 <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-black/20 to-transparent"></div>
                 <div className="flex-1 relative z-10">
-                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-brand"><Icon name="message-square" size={26} /></div>
-                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Interactive Editor Chat</h3>
-                  <p className="text-slate-300 text-base sm:text-lg leading-relaxed">Ask questions directly in the IDE to receive intelligent, project-specific code solutions. Stop switching context.</p>
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-brand"><Icon name="shield-check" size={26} /></div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Review before it writes</h3>
+                  <p className="text-slate-300 text-base sm:text-lg leading-relaxed">Every file change arrives as a diff you approve or reject. A checkpoint is taken before the first write, so one click reverts the whole turn.</p>
                 </div>
               </div>
+            </div>
+
+            {/* The rest of the surface, at a glance. */}
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+              {[
+                {
+                  icon: "search" as const,
+                  title: "Codebase understanding",
+                  body: "ripgrep search plus symbol, definition and reference lookup through your editor's own language server.",
+                },
+                {
+                  icon: "clipboard-list" as const,
+                  title: "Your work, on open",
+                  body: "The sidebar lists the ADO items assigned to you with their state and sprint — start a run straight from a ticket.",
+                },
+                {
+                  icon: "search" as const,
+                  title: "Web search mid-task",
+                  body: "Lets the agent look up what your code and docs can't tell it: a new library, an unfamiliar API, current release notes.",
+                },
+                {
+                  icon: "at-sign" as const,
+                  title: "@-mentions",
+                  body: "Pull a specific file or folder into the conversation instead of hoping retrieval finds it.",
+                },
+                {
+                  icon: "git-branch" as const,
+                  title: "Release automation",
+                  body: "Config-sync and hotfix pipelines with a plan → approve → apply flow, so work doesn't stop at “PR opened”.",
+                },
+                {
+                  icon: "plug" as const,
+                  title: "MCP server",
+                  body: "Ships an MCP server that exposes your Confluence and ADO search to Claude Desktop, Cursor and other MCP clients.",
+                },
+                {
+                  icon: "wifi-off" as const,
+                  title: "Runs offline",
+                  body: "In Local mode with Ollama there are no remote APIs at all — the whole loop works on a plane.",
+                },
+                {
+                  icon: "message-square" as const,
+                  title: "Chat where you want it",
+                  body: "Run it in the sidebar or open it as a full editor tab, with several sessions going at once.",
+                },
+              ].map((f) => (
+                <div
+                  key={f.title}
+                  className="bg-white/[0.03] border border-white/5 rounded-2xl p-5 hover:border-white/15 transition-colors"
+                >
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-brand"><Icon name={f.icon} size={18} /></span>
+                    <h3 className="font-semibold text-white">{f.title}</h3>
+                  </div>
+                  <p className="text-slate-400 text-sm leading-relaxed">{f.body}</p>
+                </div>
+              ))}
             </div>
           </div>
         </section>
@@ -461,7 +518,7 @@ export default function Home() {
                         <div className="leading-relaxed">
                           <span className="font-medium text-slate-200">Local</span> &mdash; bring your own model. Ollama for fully offline (default{" "}
                           <code className="font-mono text-xs bg-white/10 px-1 py-0.5 rounded text-slate-300">llama3.2:1b</code>), or your own
-                          OpenAI / Gemini / Groq / OpenRouter key.
+                          OpenAI / Claude / Gemini / Groq / OpenRouter key &mdash; or any OpenAI-compatible endpoint.
                         </div>
                       </li>
                       <li className="flex items-start gap-3">
