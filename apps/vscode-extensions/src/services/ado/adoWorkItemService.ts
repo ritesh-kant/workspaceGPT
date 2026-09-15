@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ATTACHMENT_LIMITS, STORAGE_KEYS } from '../../../constants';
 import { AdoAuthService } from './adoAuthService';
 import { MyTicketsResult, TicketComment, TicketDetail, TicketImage, TicketSummary } from '../tickets/types';
+import { sniffImageMime } from '../tickets/imageSniff';
 
 /**
  * Live, by-ID work-item reads for the agent loop.
@@ -142,35 +143,6 @@ function extractImageUrls(html: string, ctx: AdoRequestContext): string[] {
     }
   }
   return [...urls].slice(0, MAX_TICKET_IMAGES);
-}
-
-/**
- * Identifies an image from its magic bytes, returning null for anything that
- * isn't one of the formats vision models accept.
- *
- * The HTTP `content-type` cannot be trusted here: ADO serves attachments as
- * `application/octet-stream` (sometimes with a `; charset=...` suffix), and
- * baking that into the data URL produces `data:application/octet-stream;...`,
- * which providers reject — Gemini with a completely empty 400 that names no
- * cause. The bytes themselves are unambiguous, so sniff them instead.
- */
-function sniffImageMime(buf: ArrayBuffer): string | null {
-  const b = new Uint8Array(buf);
-  const startsWith = (...sig: number[]) => sig.every((v, i) => b[i] === v);
-  if (startsWith(0x89, 0x50, 0x4e, 0x47)) return 'image/png';
-  if (startsWith(0xff, 0xd8, 0xff)) return 'image/jpeg';
-  if (startsWith(0x47, 0x49, 0x46, 0x38)) return 'image/gif';
-  // RIFF....WEBP
-  if (startsWith(0x52, 0x49, 0x46, 0x46) && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) {
-    return 'image/webp';
-  }
-  // ISO-BMFF brands at offset 4: 'ftyp' followed by heic/heif/mif1
-  if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
-    const brand = String.fromCharCode(b[8], b[9], b[10], b[11]);
-    if (brand === 'heic' || brand === 'heix' || brand === 'mif1') return 'image/heic';
-    if (brand === 'heif') return 'image/heif';
-  }
-  return null;
 }
 
 /** Download + base64-encode each image. A single bad image never fails the ticket read. */

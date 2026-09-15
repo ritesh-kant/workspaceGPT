@@ -419,6 +419,13 @@ export const STORAGE_KEYS = {
   ADO_MSAL_CACHE: 'ado-msal-cache',
   /** Last successful "assigned to me" fetch, so the panel renders instantly. */
   ADO_MY_WORK_ITEMS_CACHE: 'ado-my-work-items-cache',
+  /**
+   * Jira Cloud API token — v1 auth is API-token only (Basic email:token), see
+   * JIRA-INTEGRATION-DESIGN.md §5 P2. Site URL/email/project live in the
+   * ordinary settings blob (config.jira.*), same as ADO's org/project names;
+   * only the token itself is a secret.
+   */
+  JIRA_API_TOKEN: 'jira-api-token',
   // Deployment automation — write-scoped creds (SecretStorage), never shared to Chrome
   GITHUB_OAUTH_TOKENS: 'github-oauth-tokens',
   // (Optional GitHub App mode — see GitHubAppAuthService)

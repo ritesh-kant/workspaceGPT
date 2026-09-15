@@ -34,7 +34,8 @@ export interface TicketDetail {
   sprint?: string;
   area?: string;
   tags?: string[];
-  priority?: number;
+  /** ADO gives a numeric level (1-4); Jira names one ("High", "Medium", …) — currently carried but unread anywhere. */
+  priority?: number | string;
   createdDate?: string;
   changedDate?: string;
   url: string;
