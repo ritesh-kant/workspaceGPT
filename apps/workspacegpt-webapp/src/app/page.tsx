@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
+import { Icon } from "./_components/Icon";
 
 export default function Home() {
   const [showVSCodeOpenedMessage, setShowVSCodeOpenedMessage] = useState(false);
@@ -233,10 +234,10 @@ export default function Home() {
             </div>
             
             <div className="lg:w-1/2 flex justify-center lg:justify-end animate-float">
-              <div className="relative w-full max-w-lg aspect-square lg:aspect-[4/3]">
+              <div className="relative w-full max-w-md lg:max-w-lg">
                 {/* Decorative UI element for the hero mockup */}
                 <div className="absolute inset-0 bg-gradient-to-tr from-brand-blue/20 to-brand/20 rounded-2xl blur-2xl -z-10"></div>
-                <div className="relative w-full h-full bg-slate-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+                <div className="relative w-full bg-slate-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
                   {/* Mockup Header */}
                   <div className="h-10 border-b border-white/5 bg-slate-950 flex items-center px-4 gap-2">
                     <div className="w-3 h-3 rounded-full bg-rose-500/80"></div>
@@ -244,15 +245,23 @@ export default function Home() {
                     <div className="w-3 h-3 rounded-full bg-emerald-500/80"></div>
                     <div className="mx-auto text-xs text-slate-500 font-medium tracking-wide">WorkspaceGPT</div>
                   </div>
-                  {/* Mockup Image */}
-                  <div className="relative flex-grow p-4 bg-slate-950 overflow-hidden">
+                  {/* The extension's own sidebar, captured from the real webview.
+                      Cropped to the top of the transcript, so the answer runs past
+                      the bottom edge — the gradient below fades it out rather than
+                      ending on a hard cut through a sentence. */}
+                  <div className="relative">
                     <Image
-                      src="/icon.png"
-                      alt="WorkspaceGPT Logo"
-                      fill
-                      className="object-contain p-6 sm:p-12 opacity-90 drop-shadow-[0_0_15px_rgba(31,242,180,0.2)]"
+                      src="/screenshots/hero-grounded-answer.png"
+                      alt="The WorkspaceGPT sidebar answering “Why is the payment retry capped at 3?” — it searched Confluence and the codebase, then cited the Retry &amp; Backoff Policy page, src/payments/retryPolicy.ts and Azure DevOps work item #12359."
+                      width={880}
+                      height={1080}
+                      className="w-full h-auto"
                       priority
                     />
+                    <div
+                      className="absolute inset-x-0 bottom-0 h-24 pointer-events-none"
+                      style={{ background: "linear-gradient(to top, #1f1f1f, rgba(31,31,31,0))" }}
+                    ></div>
                   </div>
                 </div>
               </div>
@@ -268,19 +277,19 @@ export default function Home() {
           <div className="container mx-auto px-6">
             <div className="flex flex-col md:flex-row items-start justify-center gap-10 md:gap-16 text-center">
               <div className="flex flex-col items-center max-w-xs mx-auto">
-                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4 text-2xl border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]">💾</div>
+                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.15)]"><Icon name="laptop" /></div>
                 <h3 className="text-lg font-semibold text-white mb-2">Your data stays on your machine</h3>
                 <p className="text-slate-300 text-sm">Indexing and embeddings run on-device, and the vector index is written to local files. We never upload your documents or your code.</p>
               </div>
               <div className="hidden md:block w-px h-20 bg-gradient-to-b from-transparent via-white/10 to-transparent"></div>
               <div className="flex flex-col items-center max-w-xs mx-auto">
-                <div className="w-12 h-12 rounded-full bg-brand/10 text-brand flex items-center justify-center mb-4 text-2xl border border-brand/20 shadow-[0_0_15px_rgba(31,242,180,0.15)]">🗑️</div>
+                <div className="w-12 h-12 rounded-full bg-brand/10 text-brand flex items-center justify-center mb-4 border border-brand/20 shadow-[0_0_15px_rgba(31,242,180,0.15)]"><Icon name="trash" /></div>
                 <h3 className="text-lg font-semibold text-white mb-2">Zero data retention</h3>
                 <p className="text-slate-300 text-sm">We store no prompts, no answers, no documents &mdash; not even in logs. In Remote mode your question is processed in memory and discarded.</p>
               </div>
               <div className="hidden md:block w-px h-20 bg-gradient-to-b from-transparent via-white/10 to-transparent"></div>
               <div className="flex flex-col items-center max-w-xs mx-auto">
-                <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-4 text-2xl border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)]">🙈</div>
+                <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mb-4 border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)]"><Icon name="eye-off" /></div>
                 <h3 className="text-lg font-semibold text-white mb-2">Never used for training</h3>
                 <p className="text-slate-300 text-sm">Nothing you ask is used to train a model, sold, or shared. Anonymous feature-usage counts are all we measure &mdash; never your content.</p>
               </div>
@@ -310,7 +319,7 @@ export default function Home() {
                 <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none"></div>
                 <div className="relative z-10 flex-1">
                   <div className="flex items-center gap-3 mb-4">
-                    <span className="text-2xl">🔐</span>
+                    <Icon name="lock" size={22} />
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">Local &middot; Free</span>
                   </div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Everything runs locally</h3>
@@ -333,7 +342,7 @@ export default function Home() {
                 <div className="absolute top-0 right-0 w-48 h-48 bg-brand/5 rounded-full blur-3xl pointer-events-none"></div>
                 <div className="relative z-10 flex-1">
                   <div className="flex items-center gap-3 mb-4">
-                    <span className="text-2xl">⚡</span>
+                    <Icon name="zap" size={22} />
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-brand/10 text-brand border-brand/20">Remote &middot; Preview</span>
                   </div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">We run the infrastructure</h3>
@@ -377,7 +386,7 @@ export default function Home() {
               <div className="md:col-span-2 bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-brand/40 transition-colors duration-500 group relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-brand/5 rounded-full blur-3xl -mx-24 -my-24 group-hover:bg-brand/10 transition-colors"></div>
                 <div className="relative z-10">
-                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 shadow-inner text-brand">🤖</div>
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 shadow-inner text-brand"><Icon name="sparkles" size={26} /></div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">AI-Powered Q&A</h3>
                   <p className="text-slate-300 text-base sm:text-lg leading-relaxed max-w-lg">Get context-aware answers from your local workspace using blazing fast Retrieval-Augmented Generation (RAG).</p>
                 </div>
@@ -387,7 +396,7 @@ export default function Home() {
               <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-blue-500/40 transition-colors duration-500 group relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-colors"></div>
                 <div className="relative z-10">
-                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-blue-400">📄</div>
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-blue-400"><Icon name="file-text" size={26} /></div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Confluence One-Click</h3>
                   <p className="text-slate-300">Seamlessly connect to your Confluence space and instantly start chatting with your documentation alongside your code.</p>
                 </div>
@@ -397,7 +406,7 @@ export default function Home() {
               <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-purple-500/40 transition-colors duration-500 group relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/10 rounded-full blur-2xl group-hover:bg-purple-500/20 transition-colors"></div>
                 <div className="relative z-10">
-                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-purple-400">🔷</div>
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-purple-400"><Icon name="clipboard-list" size={26} /></div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Azure DevOps (ADO)</h3>
                   <p className="text-slate-300">Deep integration with ADO to fetch work items, user stories, and pull requests directly into your AI context.</p>
                 </div>
@@ -407,7 +416,7 @@ export default function Home() {
               <div className="md:col-span-2 bg-gradient-to-br from-slate-800 to-slate-900 border border-white/5 p-8 rounded-3xl hover:border-brand/40 transition-colors duration-500 group flex flex-col md:flex-row gap-8 items-center relative overflow-hidden">
                 <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-black/20 to-transparent"></div>
                 <div className="flex-1 relative z-10">
-                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-3xl mb-6 text-brand">💬</div>
+                  <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-brand"><Icon name="message-square" size={26} /></div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Interactive Editor Chat</h3>
                   <p className="text-slate-300 text-base sm:text-lg leading-relaxed">Ask questions directly in the IDE to receive intelligent, project-specific code solutions. Stop switching context.</p>
                 </div>

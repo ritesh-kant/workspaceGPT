@@ -41,9 +41,9 @@
     // Every request spends the vendor's key, so this is the spend control.
     // The sizes below are placeholders from the 2026-09-05 eval harness (a doc
     // answer ≈ 7 credits, an agent run ≈ 50) pending a pricing decision.
-    "PLAN_WEEKLY_CREDITS": "{\"free\":50,\"pro\":50000}",
+    "PLAN_WEEKLY_CREDITS": "{\"free\":200,\"pro\":50000}",
     // Weekly cap for a plan not named above.
-    "WEEKLY_CREDIT_LIMIT": "50",
+    "WEEKLY_CREDIT_LIMIT": "200",
     "TOKENS_PER_CREDIT": "1000"
   },
   "kv_namespaces": [

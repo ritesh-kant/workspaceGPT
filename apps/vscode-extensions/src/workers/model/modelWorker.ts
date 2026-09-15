@@ -2509,12 +2509,21 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // a model that wants one more search does one more search. Both triggers
     // are measured — never inferred from what the user typed. Announced the
     // round it happens, or the model reports its tools as broken.
-    const narrow = shouldNarrowToConclude({
-      contextExhausted: contextNow.exhausted,
-      stagnant: isStagnant(turnsWithoutProgress),
-      investigationCallsWithoutWrite,
-      writesApplied,
-    });
+    // Latched once applied. Of the three triggers only `stagnant` resets
+    // (turnsWithoutProgress goes back to 0 on any progress), and a narrowed
+    // run still has `read_file` — so one new file read counted as progress,
+    // handed back all fourteen discovery tools, and re-narrowed four turns
+    // later with no notice, since the announcement below fires once. The
+    // release condition is the one shouldNarrowToConclude already uses: a run
+    // that has written is verifying, not stalling.
+    const narrow = commitNarrowingApplied
+      ? writesApplied === 0
+      : shouldNarrowToConclude({
+          contextExhausted: contextNow.exhausted,
+          stagnant: isStagnant(turnsWithoutProgress),
+          investigationCallsWithoutWrite,
+          writesApplied,
+        });
     if (narrow && !commitNarrowingApplied) {
       commitNarrowingApplied = true;
       messages.push({ role: 'user', content: COMMIT_NARROWED_NOTICE });
