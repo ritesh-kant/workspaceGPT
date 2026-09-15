@@ -30,7 +30,7 @@ import {
  */
 
 export interface ShipInput {
-  ticketId?: number;
+  ticketId?: string;
   /** ADO work item type (e.g. "Bug", "Feature", "Task") — picks the branch's Conventional Commits prefix. */
   ticketType?: string;
   /** Ticket title (or the first line of the report) — becomes the commit/PR title.

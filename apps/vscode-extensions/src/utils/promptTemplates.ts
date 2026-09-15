@@ -48,7 +48,7 @@ function buildMentionsBlock(options?: TurnExtras): string {
  * converted to text.
  */
 export interface TicketPromptContext {
-  id: number;
+  id: string;
   title: string;
   type: string;
   state: string;
@@ -57,7 +57,7 @@ export interface TicketPromptContext {
   sprint?: string;
   description?: string;
   acceptanceCriteria?: string;
-  parentId?: number;
+  parentId?: string;
   comments?: { author: string; date?: string; text: string }[];
 }
 

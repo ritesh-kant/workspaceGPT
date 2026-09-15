@@ -66,7 +66,7 @@ export interface TurnSummary {
   /** Sha of the checkpoint taken before this turn's first change — undo target for the triggering user message. */
   checkpointSha?: string;
   /** The ADO ticket this turn was grounded in, if any — "Create PR" comments the report on it. */
-  ticketId?: number;
+  ticketId?: string;
   /**
    * What each id this turn's tools returned actually refers to, so the answer's
    * `#12359` links to the pull request it came from rather than to a work item

@@ -9,7 +9,7 @@ interface ChatSessionPreview {
 }
 
 /** Ticket id → title, from the "Your work" cache, to repair truncated legacy group headers. */
-export type TicketTitleLookup = ReadonlyMap<number, string>;
+export type TicketTitleLookup = ReadonlyMap<string, string>;
 
 interface ChatHistorySidebarProps {
     isVisible: boolean;
@@ -61,7 +61,7 @@ function buildRows(sessions: ChatSessionPreview[], ticketTitles?: TicketTitleLoo
     // The ticket cache knows the real title; a stored summary that is a
     // prefix of it (or shorter) was truncated by an older build.
     for (const group of tickets.values()) {
-        const known = ticketTitles?.get(Number(group.id));
+        const known = ticketTitles?.get(group.id);
         if (known && known.length > group.summary.length) group.summary = known;
     }
 

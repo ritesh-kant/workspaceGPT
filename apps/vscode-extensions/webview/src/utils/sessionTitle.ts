@@ -52,11 +52,11 @@ function cleanSummary(text: string): string {
  */
 export function displaySessionTitle(
   title: string,
-  ticketTitles?: ReadonlyMap<number, string>
+  ticketTitles?: ReadonlyMap<string, string>
 ): string {
   const ticket = parseTicketTitle(title);
   if (ticket) {
-    const known = ticketTitles?.get(Number(ticket.id));
+    const known = ticketTitles?.get(ticket.id);
     const summary = known && known.length > ticket.summary.length ? known : ticket.summary;
     return summary ? `#${ticket.id} ${summary}` : `#${ticket.id}`;
   }

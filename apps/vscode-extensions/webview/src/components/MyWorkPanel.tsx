@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 export interface WorkItemSummary {
-  id: number;
+  id: string;
   title: string;
   type: string;
   state: string;

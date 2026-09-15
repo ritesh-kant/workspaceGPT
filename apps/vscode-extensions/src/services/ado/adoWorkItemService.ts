@@ -21,7 +21,8 @@ export interface TicketComment {
 }
 
 export interface TicketDetail {
-  id: number;
+  /** Canonical id as a string ("1234") — see parseWorkItemId for why. */
+  id: string;
   title: string;
   type: string;
   state: string;
@@ -36,7 +37,7 @@ export interface TicketDetail {
   description?: string;
   acceptanceCriteria?: string;
   /** Parent work item (epic/feature) when the item is part of a hierarchy. */
-  parentId?: number;
+  parentId?: string;
   /** Only populated when `includeComments` was requested. */
   comments?: TicketComment[];
   /** Screenshots/diagrams embedded in the description, base64-encoded for vision models. */
@@ -56,14 +57,19 @@ interface AdoRequestContext {
 }
 
 /**
- * Ticket ID as users write it → the numeric ID the ADO API needs.
+ * Ticket ID as users write it → the canonical ID Azure DevOps needs, as a
+ * string. ("Canonical" here is still a plain digit run — ADO ids are
+ * genuinely numeric — but returning a string rather than a `number` keeps this
+ * function's signature identical in shape to a future provider's, e.g. a Jira
+ * `parseId` that returns "PROJ-123" unchanged; see JIRA-INTEGRATION-DESIGN.md
+ * §3.)
  *
  * Prefixes like `TKT-`, `D2C-` or a leading `#` are *organisation conventions*,
  * not part of Azure DevOps: work items are plain integers. So rather than
  * knowing any org's prefix (which would put an org string in the engine — see
  * NORTH-STAR.md), take the trailing digit run and ignore whatever precedes it.
  */
-export function parseWorkItemId(raw: string): number {
+export function parseWorkItemId(raw: string): string {
   const match = String(raw ?? '').trim().match(/(\d+)\s*$/);
   if (!match) {
     throw new Error(
@@ -72,7 +78,7 @@ export function parseWorkItemId(raw: string): number {
         'To find an item by description instead, use search_tickets.'
     );
   }
-  return Number(match[1]);
+  return match[1];
 }
 
 /**
@@ -221,7 +227,7 @@ async function fetchTicketImages(ctx: AdoRequestContext, urls: string[]): Promis
 }
 
 /** Comments are supplementary — never fail the whole read because they 404'd. */
-async function fetchComments(ctx: AdoRequestContext, id: number): Promise<TicketComment[]> {
+async function fetchComments(ctx: AdoRequestContext, id: string): Promise<TicketComment[]> {
   try {
     const url =
       `https://dev.azure.com/${encodeURIComponent(ctx.orgName)}/${encodeURIComponent(ctx.projectName)}` +
@@ -263,9 +269,7 @@ export async function fetchWorkItem(
   const parentRelation = (item.relations ?? []).find(
     (r: any) => r?.rel === 'System.LinkTypes.Hierarchy-Reverse'
   );
-  const parentId = parentRelation?.url
-    ? Number(String(parentRelation.url).split('/').pop())
-    : undefined;
+  const parentId = parentRelation?.url ? String(parentRelation.url).split('/').pop() : undefined;
 
   const tags = String(f['System.Tags'] ?? '')
     .split(';')
@@ -277,7 +281,7 @@ export async function fetchWorkItem(
   const images = imageUrls.length ? await fetchTicketImages(ctx, imageUrls) : [];
 
   return {
-    id: item.id ?? id,
+    id: item.id != null ? String(item.id) : id,
     title: f['System.Title'] ?? '(untitled)',
     type: f['System.WorkItemType'] ?? 'Work Item',
     state: f['System.State'] ?? 'Unknown',
@@ -295,7 +299,7 @@ export async function fetchWorkItem(
     acceptanceCriteria: f['Microsoft.VSTS.Common.AcceptanceCriteria']
       ? htmlToText(f['Microsoft.VSTS.Common.AcceptanceCriteria'])
       : undefined,
-    parentId: Number.isFinite(parentId) ? parentId : undefined,
+    parentId: parentId || undefined,
     images: images.length ? images : undefined,
     ...(args?.includeComments ? { comments: await fetchComments(ctx, id) } : {}),
   };
@@ -304,7 +308,7 @@ export async function fetchWorkItem(
 // ── "Your work": the tickets assigned to the signed-in user ──────────────────
 
 export interface WorkItemSummary {
-  id: number;
+  id: string;
   title: string;
   type: string;
   state: string;
@@ -358,7 +362,7 @@ export function isInCurrentSprint(iterationPath?: string, sprintPath?: string): 
  */
 export function orderWorkItems(
   items: WorkItemSummary[],
-  rank: Map<number, number>
+  rank: Map<string, number>
 ): WorkItemSummary[] {
   return [...items].sort((a, b) => {
     if (a.inCurrentSprint !== b.inCurrentSprint) return a.inCurrentSprint ? -1 : 1;
@@ -392,7 +396,7 @@ async function adoPost(ctx: AdoRequestContext, url: string, body: unknown, what:
 }
 
 /** Post an HTML comment on a work item (the agent's run report, after "Create PR"). */
-export async function addWorkItemComment(context: vscode.ExtensionContext, id: number, html: string): Promise<void> {
+export async function addWorkItemComment(context: vscode.ExtensionContext, id: string, html: string): Promise<void> {
   const ctx = await getRequestContext(context);
   const url =
     `https://dev.azure.com/${encodeURIComponent(ctx.orgName)}/${encodeURIComponent(ctx.projectName)}` +
@@ -467,15 +471,17 @@ export async function listMyWorkItems(
   );
 
   // workitemsbatch does not guarantee the order we asked for; WIQL already
-  // ranked the ids by recency, so re-impose that order.
-  const rank = new Map(ids.map((id, i) => [id, i]));
+  // ranked the ids by recency, so re-impose that order. Keyed by the string
+  // form since that is what WorkItemSummary.id (and orderWorkItems' rank
+  // lookup) use.
+  const rank = new Map(ids.map((id, i) => [String(id), i]));
   const sprintPath: string | undefined = currentSprint?.iterationPath;
 
   const mapped: WorkItemSummary[] = (batch.value ?? []).map((item: any): WorkItemSummary => {
     const f = item.fields ?? {};
     const iteration: string | undefined = f['System.IterationPath'];
     return {
-      id: item.id,
+      id: String(item.id),
       title: f['System.Title'] ?? '(untitled)',
       type: f['System.WorkItemType'] ?? 'Work Item',
       state: f['System.State'] ?? 'Unknown',
