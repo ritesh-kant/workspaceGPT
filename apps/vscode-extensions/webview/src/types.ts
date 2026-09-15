@@ -67,6 +67,26 @@ export interface AdoConfig {
   isConnecting?: boolean;
 }
 
+/**
+ * Sized to what's actually built (JIRA-INTEGRATION-DESIGN.md §5 P2/P4): auth
+ * + project discovery + get_ticket/addComment. No lookback/sync/indexing/
+ * sprint fields — those belong to P5/P6 and don't exist yet.
+ */
+export interface JiraConfig {
+  isJiraEnabled?: boolean;
+  isAuthenticated: boolean;
+  siteUrl: string;
+  email: string;
+  projectKey: string;
+  projectName: string;
+  availableProjects: { id: string; key: string; name: string }[];
+  accountId?: string;
+  displayName?: string;
+  messageType: 'success' | 'error';
+  statusMessage: string;
+  isConnecting?: boolean;
+}
+
 export interface DeploymentConnectionTest {
   ok: boolean;
   detail?: string;

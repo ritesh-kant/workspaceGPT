@@ -217,6 +217,21 @@ export const MESSAGE_TYPES = {
   GET_MY_WORK_ITEMS_RESPONSE: 'get-my-work-items-response',
   SAVE_ADO_USER_DISPLAY_NAME: 'save-ado-user-display-name',
 
+  // Jira messages (JIRA-INTEGRATION-DESIGN.md §5 P7). Deliberately a smaller
+  // set than ADO's: v1 has one auth mode (API token, not three), and no
+  // sync/indexing or My Work yet (§5 P5/P6) — so there is no
+  // START/STOP/RESUME_*_SYNC, INDEXING_JIRA_*, or GET_MY_WORK_ITEMS
+  // equivalent here. Add those alongside their backing feature, not before.
+  SAVE_JIRA_CREDENTIALS: 'save-jira-credentials',
+  JIRA_CREDENTIALS_SUCCESS: 'jira-credentials-success',
+  JIRA_CREDENTIALS_ERROR: 'jira-credentials-error',
+  DISCONNECT_JIRA: 'disconnect-jira',
+  FETCH_JIRA_PROJECTS: 'fetch-jira-projects',
+  FETCH_JIRA_PROJECTS_SUCCESS: 'fetch-jira-projects-success',
+  FETCH_JIRA_PROJECTS_ERROR: 'fetch-jira-projects-error',
+  CHECK_JIRA_CONNECTION: 'check-jira-connection',
+  JIRA_CONNECTION_STATUS: 'jira-connection-status',
+
   MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
   MODEL_DOWNLOAD_ERROR: 'model-download-error',

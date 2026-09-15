@@ -391,6 +391,83 @@ function handleAdoMessage(message: any): void {
   }
 }
 
+/**
+ * Host → webview handling for Jira. A smaller set of cases than ADO's on
+ * purpose — v1 has one auth mode and no sync/indexing/My Work yet (see
+ * constants.ts's MESSAGE_TYPES comment for why); this grows alongside those
+ * features, not ahead of them.
+ */
+function handleJiraMessage(message: any): void {
+  const batchUpdateConfig = useSettingsStore.getState().batchUpdateConfig;
+
+  switch (message.type) {
+    case MESSAGE_TYPES.JIRA_CREDENTIALS_SUCCESS:
+      batchUpdateConfig('jira', {
+        isAuthenticated: true,
+        isConnecting: false,
+        accountId: message.accountId || '',
+        displayName: message.displayName || '',
+        messageType: 'success',
+        statusMessage: `Connected to Jira${message.displayName ? ` as ${message.displayName}` : ''}`,
+      });
+      clearStatusMessageAfterDelay('jira');
+      break;
+
+    case MESSAGE_TYPES.JIRA_CREDENTIALS_ERROR:
+      batchUpdateConfig('jira', {
+        isConnecting: false,
+        messageType: 'error',
+        statusMessage: message.message || 'Could not verify Jira credentials',
+      });
+      clearStatusMessageAfterDelay('jira');
+      break;
+
+    case MESSAGE_TYPES.FETCH_JIRA_PROJECTS_SUCCESS:
+      batchUpdateConfig('jira', {
+        isConnecting: false,
+        messageType: 'success',
+        statusMessage: 'Projects loaded successfully',
+        availableProjects: message.projects || [],
+      });
+      clearStatusMessageAfterDelay('jira');
+      break;
+
+    case MESSAGE_TYPES.FETCH_JIRA_PROJECTS_ERROR:
+      batchUpdateConfig('jira', {
+        isConnecting: false,
+        messageType: 'error',
+        statusMessage: message.message || 'Failed to load projects',
+        availableProjects: [],
+      });
+      clearStatusMessageAfterDelay('jira');
+      break;
+
+    case MESSAGE_TYPES.DISCONNECT_JIRA:
+      batchUpdateConfig('jira', {
+        isAuthenticated: false,
+        siteUrl: '',
+        email: '',
+        projectKey: '',
+        projectName: '',
+        availableProjects: [],
+        accountId: '',
+        displayName: '',
+        messageType: 'success',
+        statusMessage: 'Disconnected from Jira',
+      });
+      clearStatusMessageAfterDelay('jira');
+      break;
+
+    case MESSAGE_TYPES.JIRA_CONNECTION_STATUS:
+      batchUpdateConfig('jira', {
+        messageType: message.status ? 'success' : 'error',
+        statusMessage: message.message || '',
+      });
+      clearStatusMessageAfterDelay('jira');
+      break;
+  }
+}
+
 let registered = false;
 
 /**
@@ -423,5 +500,6 @@ export function registerSettingsMessageListener(): void {
     handleBackgroundSyncState(message);
     handleConfluenceMessage(message);
     handleAdoMessage(message);
+    handleJiraMessage(message);
   });
 }

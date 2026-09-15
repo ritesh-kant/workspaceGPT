@@ -17,6 +17,7 @@ export interface SettingsConfig {
   onboardingCompleted: boolean;
   confluence: ConfluenceConfig;
   ado: AdoConfig;
+  jira: JiraConfig;
   deployment: DeploymentConfig;
   embedding: EmbeddingProviderConfig;
   vectorStore: VectorStoreConfig;
@@ -67,6 +68,20 @@ export const settingsDefaultConfig: SettingsConfig = {
     isSyncCompleted: false,
     isIndexingCompleted: false,
     lastSyncTime: undefined,
+    isConnecting: false,
+  },
+  jira: {
+    isJiraEnabled: false,
+    isAuthenticated: false,
+    siteUrl: '',
+    email: '',
+    projectKey: '',
+    projectName: '',
+    availableProjects: [],
+    accountId: '',
+    displayName: '',
+    messageType: 'success',
+    statusMessage: '',
     isConnecting: false,
   },
   deployment: {
@@ -131,7 +146,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
-import { ConfluenceConfig, AdoConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig, WebSearchConfig } from '../types';
+import { ConfluenceConfig, AdoConfig, JiraConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig, WebSearchConfig } from '../types';
 
 const vscodeStorage = {
   getItem: () => {

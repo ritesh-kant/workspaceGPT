@@ -108,6 +108,23 @@ export class JiraAuthService {
   }
 
   /**
+   * Re-validates the stored token against `/myself` — the "Check connection"
+   * action. There is no ADO-style item-count to report here (no sync exists
+   * yet to have counted anything, design doc §5 P5); a working identity
+   * fetch is the whole check.
+   */
+  async checkConnection(siteUrl: string, email: string): Promise<JiraIdentity> {
+    const site = normalizeSiteUrl(siteUrl);
+    const authHeader = await this.getValidAuthHeader(email);
+    const me = await jiraGet(`${site}/rest/api/3/myself`, authHeader, 'verify Jira connection');
+    const accountId = me?.accountId;
+    if (!accountId) {
+      throw new Error('Jira did not return an account id.');
+    }
+    return { accountId, displayName: me?.displayName || email };
+  }
+
+  /**
    * Projects visible to this account, alphabetical. Paginates `project/search`
    * (the current, non-deprecated endpoint) until `isLast` — a site with more
    * than one page of projects is not rare the way it would be for ADO's

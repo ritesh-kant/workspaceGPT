@@ -9,6 +9,7 @@ import ModelSettings from './settings/ModelSettings';
 import RemoteAccountSettings from './settings/RemoteAccountSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
+import JiraSettings from './settings/JiraSettings';
 import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
 import McpSettings from './settings/McpSettings';
@@ -87,6 +88,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         <ConfluenceSettings />
 
         <AdoSettings />
+
+        <JiraSettings />
 
         <WebSearchSettings />
 

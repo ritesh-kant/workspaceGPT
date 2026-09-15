@@ -67,8 +67,17 @@ export const handleAdoActions = {
   },
 };
 
+export const handleJiraActions = {
+
+  disconnect: (vscode: ReturnType<typeof VSCodeAPI>) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.DISCONNECT_JIRA,
+    });
+  },
+};
+
 export const handleInputChange = (
-  section: 'confluence' | 'ado',
+  section: 'confluence' | 'ado' | 'jira',
   field: string,
   value: string | number
 ) => {

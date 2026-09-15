@@ -3,6 +3,7 @@ import { MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
 import { AnalyticsService } from '../services/analyticsService';
 import { ConfluenceMessageHandler } from './ConfluenceMessageHandler';
 import { AdoMessageHandler } from './AdoMessageHandler';
+import { JiraMessageHandler } from './JiraMessageHandler';
 import { ChatMessageHandler } from './ChatMessageHandler';
 import { SystemMessageHandler } from './SystemMessageHandler';
 import { DeploymentMessageHandler } from './DeploymentMessageHandler';
@@ -36,6 +37,7 @@ export class WebviewMessageHandler {
   
   private confluenceHandler: ConfluenceMessageHandler;
   private adoHandler: AdoMessageHandler;
+  private jiraHandler: JiraMessageHandler;
   private chatHandler: ChatMessageHandler;
   private systemHandler: SystemMessageHandler;
   private deploymentHandler: DeploymentMessageHandler;
@@ -51,6 +53,7 @@ export class WebviewMessageHandler {
     // Initialize domain-specific handlers
     this.confluenceHandler = new ConfluenceMessageHandler(webviewView, context, this.analyticsService);
     this.adoHandler = new AdoMessageHandler(webviewView, context, this.analyticsService);
+    this.jiraHandler = new JiraMessageHandler(webviewView, context, this.analyticsService);
     this.chatHandler = new ChatMessageHandler(webviewView, context, this.analyticsService, this.historyService);
     this.systemHandler = new SystemMessageHandler(webviewView, context, this.analyticsService);
     this.deploymentHandler = new DeploymentMessageHandler(webviewView, context, this.analyticsService);
@@ -107,6 +110,7 @@ export class WebviewMessageHandler {
     if (await this.remoteAuthHandler.handleMessage(data)) return;
     if (await this.confluenceHandler.handleMessage(data)) return;
     if (await this.adoHandler.handleMessage(data)) return;
+    if (await this.jiraHandler.handleMessage(data)) return;
     if (await this.chatHandler.handleMessage(data)) return;
     if (await this.deploymentHandler.handleMessage(data)) return;
     if (await this.systemHandler.handleMessage(data)) {
