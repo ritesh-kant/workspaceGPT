@@ -24,7 +24,7 @@ interface CachedEmbedding {
   embeddingOffset: number;
 }
 
-type SourceNamespace = 'CONFLUENCE' | 'ADO';
+type SourceNamespace = 'CONFLUENCE' | 'ADO' | 'JIRA';
 
 interface SourceData {
   namespace: SourceNamespace;
@@ -93,6 +93,7 @@ export class SearchEngine {
     // Load embeddings for each available source
     await this.loadSource('CONFLUENCE', path.join(this.dataDir, 'confluence', 'embeddings'));
     await this.loadSource('ADO', path.join(this.dataDir, 'ado', 'embeddings'));
+    await this.loadSource('JIRA', path.join(this.dataDir, 'jira', 'embeddings'));
 
     this.initialized = true;
 
@@ -193,7 +194,7 @@ export class SearchEngine {
    */
   async search(
     query: string,
-    source: 'confluence' | 'ado' | 'all' = 'all',
+    source: 'confluence' | 'ado' | 'jira' | 'all' = 'all',
     topK: number = 10
   ): Promise<SearchResult[]> {
     if (!this.initialized) {

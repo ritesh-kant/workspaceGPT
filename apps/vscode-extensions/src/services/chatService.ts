@@ -905,6 +905,9 @@ export class ChatService {
       const isAdoConnected =
         settings?.state?.config?.ado?.isAuthenticated &&
         settings?.state?.config?.ado?.isIndexingCompleted;
+      const isJiraConnected =
+        settings?.state?.config?.jira?.isAuthenticated &&
+        settings?.state?.config?.jira?.isIndexingCompleted;
 
       const userDisplayName: string = settings?.state?.config?.ado?.userDisplayName || '';
       const currentSprint = settings?.state?.config?.ado?.currentSprint || null;
@@ -939,6 +942,7 @@ export class ChatService {
       const availableSources: DataSource[] = [
         ...(isConfluenceConnected ? ['CONFLUENCE' as DataSource] : []),
         ...(isAdoConnected ? ['ADO' as DataSource] : []),
+        ...(isJiraConnected ? ['JIRA' as DataSource] : []),
         ...(isCodebaseAvailable ? ['CODEBASE' as DataSource] : []),
       ];
 
@@ -2837,7 +2841,10 @@ Query: "${query}"`;
                     // belongs to is unrecoverable.
                     mergeRefs(
                       run.turnRefs,
-                      collectRefs(result.name!, toolResult, { prUrlTemplate: run.turnPrUrlTemplate })
+                      collectRefs(result.name!, toolResult, {
+                        prUrlTemplate: run.turnPrUrlTemplate,
+                        ticketIdPatterns: getActiveTicketProvider(this.context)?.idPatterns,
+                      })
                     );
                     const done = this.summarizeToolResult(result.name!, toolResult);
                     this.post(run, {

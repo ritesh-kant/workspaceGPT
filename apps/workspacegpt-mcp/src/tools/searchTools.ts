@@ -83,13 +83,40 @@ export function createSearchAdoTool(engine: SearchEngine) {
 }
 
 /**
+ * Tool handler for search_jira
+ */
+export function createSearchJiraTool(engine: SearchEngine) {
+  return {
+    name: 'search_jira',
+    description:
+      'Search Jira issues including bugs, stories, tasks, epics, and other tickets. ' +
+      'Use this when the user asks about specific issues, sprints, bugs, tasks, or project tracking in Jira.',
+    inputSchema: z.object({
+      query: z.string().describe('The search query — issue key, keywords, or natural language question'),
+      topK: z.number().optional().default(10).describe('Maximum number of results to return'),
+    }),
+    handler: async (args: { query: string; topK?: number }) => {
+      const results = await engine.search(args.query, 'jira', args.topK ?? 10);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: formatResults(results, 'Jira'),
+          },
+        ],
+      };
+    },
+  };
+}
+
+/**
  * Tool handler for search_workspace
  */
 export function createSearchWorkspaceTool(engine: SearchEngine) {
   return {
     name: 'search_workspace',
     description:
-      'Search across all connected workspace sources (Confluence + Azure DevOps). ' +
+      'Search across all connected workspace sources (Confluence, Azure DevOps, Jira). ' +
       'Use this for general questions where the best data source is unclear, or when the answer may span multiple sources.',
     inputSchema: z.object({
       query: z.string().describe('The search query — natural language question or keywords'),

@@ -1,7 +1,7 @@
 /**
  * WorkspaceGPT MCP Server
  *
- * Exposes Confluence & Azure DevOps search as MCP tools,
+ * Exposes Confluence, Azure DevOps & Jira search as MCP tools,
  * making WorkspaceGPT's knowledge base available inside
  * Cursor, Claude Desktop, Windsurf, and other MCP clients.
  *
@@ -13,7 +13,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { resolveDataDir, getAvailableSources } from './utils/dataDir.js';
 import { SearchEngine } from './search/searchEngine.js';
-import { createSearchConfluenceTool, createSearchAdoTool, createSearchWorkspaceTool } from './tools/searchTools.js';
+import { createSearchConfluenceTool, createSearchAdoTool, createSearchJiraTool, createSearchWorkspaceTool } from './tools/searchTools.js';
 
 async function main() {
   // Show help
@@ -21,7 +21,7 @@ async function main() {
     console.log(`
 WorkspaceGPT MCP Server
 
-Exposes your synced Confluence & Azure DevOps knowledge base as MCP tools.
+Exposes your synced Confluence, Azure DevOps & Jira knowledge base as MCP tools.
 
 Usage:
   workspacegpt-mcp [options]
@@ -35,7 +35,7 @@ Environment Variables:
   WORKSPACEGPT_DATA_DIR   Alternative way to specify the data directory
 
 Setup:
-  1. Sync your Confluence/ADO data using the WorkspaceGPT VS Code extension
+  1. Sync your Confluence/ADO/Jira data using the WorkspaceGPT VS Code extension
   2. Add this server to your MCP client config:
 
      Cursor (Settings → MCP):
@@ -76,7 +76,7 @@ Setup:
   const available = getAvailableSources(dataDir);
   console.error(`[WorkspaceGPT MCP] Available sources: ${JSON.stringify(available)}`);
 
-  if (!available.confluence && !available.ado) {
+  if (!available.confluence && !available.ado && !available.jira) {
     console.error(
       '[WorkspaceGPT MCP] Warning: No embedding data found. ' +
       'Please sync and index your data from the WorkspaceGPT VS Code extension.'
@@ -97,7 +97,7 @@ Setup:
     name: 'workspacegpt',
     version: '1.0.0',
     description:
-      'Search your workspace knowledge base — Confluence docs, Azure DevOps work items, and more.',
+      'Search your workspace knowledge base — Confluence docs, Azure DevOps and Jira work items, and more.',
   });
 
   // ── Register Tools ──────────────────────────────────────────────────
@@ -114,8 +114,14 @@ Setup:
     console.error('[WorkspaceGPT MCP] Registered tool: search_ado');
   }
 
+  if (available.jira) {
+    const tool = createSearchJiraTool(engine);
+    server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, tool.handler);
+    console.error('[WorkspaceGPT MCP] Registered tool: search_jira');
+  }
+
   // Always register the unified search if any source is available
-  if (available.confluence || available.ado) {
+  if (available.confluence || available.ado || available.jira) {
     const tool = createSearchWorkspaceTool(engine);
     server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, tool.handler);
     console.error('[WorkspaceGPT MCP] Registered tool: search_workspace');

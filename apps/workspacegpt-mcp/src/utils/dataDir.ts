@@ -85,7 +85,8 @@ function autoDetectDataDir(): string | null {
       // Check that it contains at least one data subdirectory
       const hasAdo = fs.existsSync(path.join(candidate, 'ado'));
       const hasConfluence = fs.existsSync(path.join(candidate, 'confluence'));
-      if (hasAdo || hasConfluence) {
+      const hasJira = fs.existsSync(path.join(candidate, 'jira'));
+      if (hasAdo || hasConfluence || hasJira) {
         return candidate;
       }
     }
@@ -101,13 +102,22 @@ function validateDataDir(dir: string): void {
 
   const hasAdo = fs.existsSync(path.join(dir, 'ado'));
   const hasConfluence = fs.existsSync(path.join(dir, 'confluence'));
+  const hasJira = fs.existsSync(path.join(dir, 'jira'));
 
-  if (!hasAdo && !hasConfluence) {
+  if (!hasAdo && !hasConfluence && !hasJira) {
     throw new Error(
       `Data directory exists but contains no synced data: ${dir}\n` +
-      'Please sync Confluence or Azure DevOps from the WorkspaceGPT VS Code extension first.'
+      'Please sync Confluence, Azure DevOps, or Jira from the WorkspaceGPT VS Code extension first.'
     );
   }
+}
+
+function hasEmbeddings(embeddingDir: string): boolean {
+  return (
+    fs.existsSync(embeddingDir) &&
+    (fs.existsSync(path.join(embeddingDir, 'embeddings.bin')) ||
+     fs.existsSync(path.join(embeddingDir, 'index.json')))
+  );
 }
 
 /**
@@ -116,18 +126,11 @@ function validateDataDir(dir: string): void {
 export function getAvailableSources(dataDir: string): {
   confluence: boolean;
   ado: boolean;
+  jira: boolean;
 } {
-  const confluenceEmbeddings = path.join(dataDir, 'confluence', 'embeddings');
-  const adoEmbeddings = path.join(dataDir, 'ado', 'embeddings');
-
   return {
-    confluence:
-      fs.existsSync(confluenceEmbeddings) &&
-      (fs.existsSync(path.join(confluenceEmbeddings, 'embeddings.bin')) ||
-       fs.existsSync(path.join(confluenceEmbeddings, 'index.json'))),
-    ado:
-      fs.existsSync(adoEmbeddings) &&
-      (fs.existsSync(path.join(adoEmbeddings, 'embeddings.bin')) ||
-       fs.existsSync(path.join(adoEmbeddings, 'index.json'))),
+    confluence: hasEmbeddings(path.join(dataDir, 'confluence', 'embeddings')),
+    ado: hasEmbeddings(path.join(dataDir, 'ado', 'embeddings')),
+    jira: hasEmbeddings(path.join(dataDir, 'jira', 'embeddings')),
   };
 }

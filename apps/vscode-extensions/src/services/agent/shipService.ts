@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { execFile } from 'child_process';
 import * as path from 'path';
 import { NamedRoot, resolveAgainstRoots } from '../codebase/codebaseTools';
-import { addWorkItemComment } from '../ado/adoWorkItemService';
+import { getActiveTicketProvider } from '../tickets/registry';
 import {
   CONVENTIONAL_TYPES,
   deriveShipTitle,
@@ -11,7 +11,6 @@ import {
   parseConventionalSubject,
   parsePorcelain,
   pullRequestUrl,
-  reportToHtml,
   slugify,
   suggestShipSubject,
 } from './shipHelpers';
@@ -19,7 +18,8 @@ import {
 /**
  * "Create PR" after an agent turn: branch, commit ONLY the files the agent
  * changed, push, open the hosting provider's new-PR page pre-filled with the
- * report, and post the acceptance-criteria report back on the ADO ticket.
+ * report, and post the acceptance-criteria report back on the ticket (via
+ * whichever tracker is active — see tickets/registry.ts).
  *
  * Deliberately uses the user's own `git` and browser session — no token ever
  * passes through the agent, and it works for GitHub, Azure Repos, GitLab and
@@ -31,7 +31,7 @@ import {
 
 export interface ShipInput {
   ticketId?: string;
-  /** ADO work item type (e.g. "Bug", "Feature", "Task") — picks the branch's Conventional Commits prefix. */
+  /** The ticket's type (ADO: "Bug"/"Feature"/"Task"; Jira: issue type name) — picks the branch's Conventional Commits prefix. */
   ticketType?: string;
   /** Ticket title (or the first line of the report) — becomes the commit/PR title.
    *  Optional: a turn shipped from the webview's persisted copy has none, and
@@ -118,12 +118,16 @@ export async function shipChanges(
   const existing = await git(gitCwd, ['branch', '--list', branch]);
   if (existing) branch = `${branch}-${Date.now().toString(36).slice(-4)}`;
 
+  // Only one tracker is ever connected (§9): the ticket named in `input`
+  // always belongs to whichever one that is.
+  const ticketProvider = input.ticketId ? getActiveTicketProvider(context) : null;
+
   onStatus(`Creating branch ${branch}…`);
   await git(gitCwd, ['checkout', '-b', branch]);
   try {
     onStatus(`Committing ${filesFromTop.length} file${filesFromTop.length === 1 ? '' : 's'}…`);
     await git(gitCwd, ['add', '--', ...filesFromTop]);
-    const trailer = input.ticketId ? `\n\nAB#${input.ticketId}` : '';
+    const trailer = input.ticketId ? `\n\n${ticketProvider?.commitTrailer(input.ticketId) ?? input.ticketId}` : '';
     const message = `${shortTitle}\n\n${input.report.trim()}${trailer}\n\nCo-authored-by: WorkspaceGPT Agent <agent@workspacegpt.dev>`;
     await git(gitCwd, ['commit', '--quiet', '-m', message]);
   } catch (e) {
@@ -158,8 +162,9 @@ export async function shipChanges(
   if (input.ticketId) {
     onStatus(`Posting the report on ticket #${input.ticketId}…`);
     try {
-      const header = `<p><b>WorkspaceGPT agent run</b> — branch <code>${branch}</code>${prUrl ? ` · <a href="${prUrl}">open pull request</a>` : ''}</p>`;
-      await addWorkItemComment(context, input.ticketId, header + reportToHtml(input.report));
+      if (!ticketProvider) throw new Error('No ticket tracker is connected.');
+      const header = `**WorkspaceGPT agent run** — branch \`${branch}\`${prUrl ? ` · [open pull request](${prUrl})` : ''}`;
+      await ticketProvider.addComment(input.ticketId, `${header}\n\n${input.report.trim()}`);
       ticketCommented = true;
     } catch (e) {
       warnings.push(`Could not comment on ticket #${input.ticketId}: ${e instanceof Error ? e.message : String(e)}`);

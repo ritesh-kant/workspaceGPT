@@ -7,7 +7,7 @@ export interface SearchResult {
   text: string;
   score: number;
   data: {
-    sourceName: 'CONFLUENCE' | 'ADO';
+    sourceName: 'CONFLUENCE' | 'ADO' | 'JIRA';
     source: string;   // URL
     fileName: string;
   };

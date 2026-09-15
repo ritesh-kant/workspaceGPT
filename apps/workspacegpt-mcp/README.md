@@ -1,13 +1,13 @@
 # WorkspaceGPT MCP Server
 
-An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that exposes your synced **Confluence** and **Azure DevOps** knowledge base as searchable tools — usable inside **Cursor**, **Claude Desktop**, **Windsurf**, and any MCP-compatible client.
+An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that exposes your synced **Confluence**, **Azure DevOps**, and **Jira** knowledge base as searchable tools — usable inside **Cursor**, **Claude Desktop**, **Windsurf**, and any MCP-compatible client.
 
 ## How It Works
 
 ```
 ┌────────────────────────────────┐
 │  VS Code Extension (existing)  │
-│  Sync & Index Confluence/ADO   │
+│ Sync & Index Confluence/ADO/Jira│
 │         ↓                      │
 │  Markdown + Embeddings on disk │
 └────────────┬───────────────────┘
@@ -53,6 +53,7 @@ node dist/index.js --help
 |------|-------------|
 | `search_confluence` | Search Confluence wiki pages, docs, and guides |
 | `search_ado` | Search Azure DevOps work items, bugs, stories, and tasks |
+| `search_jira` | Search Jira issues, bugs, stories, and tasks |
 | `search_workspace` | Search across all connected sources |
 
 Tools are registered conditionally — only sources that have been synced appear.

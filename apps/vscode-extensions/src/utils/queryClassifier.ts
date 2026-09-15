@@ -2,7 +2,12 @@ import { DataSource, QueryClassification, QueryIntent } from 'src/types/types';
 
 // ── Keyword lists ──────────────────────────────────────────────────────
 
-const ADO_KEYWORDS = [
+// Matches either tracker's vocabulary — 'jira' and 'ado' have sat side by
+// side in this list since before Jira was a real source, but only ADO was
+// ever a real DataSource then, so every hit routed there regardless of which
+// word matched. detectSources below now picks whichever tracker is actually
+// connected instead of hardcoding ADO.
+const TICKET_KEYWORDS = [
   'ticket', 'tickets', 'bug', 'bugs', 'story', 'stories', 'work item',
   'work items', 'sprint', 'iteration', 'backlog', 'epic', 'task', 'tasks',
   'assigned', 'assignee', 'ado', 'azure devops', 'jira', 'board', 'release',
@@ -28,15 +33,20 @@ const CODEBASE_KEYWORDS = [
 
 // ── Intent detection ───────────────────────────────────────────────────
 
+/** ADO's id shape: bare digits. */
+const ADO_ID_RE = /\b\d{5,}\b/;
+/** Jira's id shape: `PROJ-123` — ADO never produces this, so it disambiguates the tracker on sight. */
+const JIRA_KEY_RE = /\b[A-Z]{2,10}-\d+\b/;
+
 const INTENT_PATTERNS: Array<{ intent: QueryIntent; pattern: RegExp }> = [
   {
     intent: 'chitchat',
     pattern: /^(hi|hello|hey|thanks|thank you|bye|good morning|good afternoon|good evening|how are you|what's up|yo|sup)\b/i,
   },
   {
-    // Specific ticket/work-item ID lookups — high confidence routing to ADO
+    // Specific ticket/work-item ID lookups (either tracker's id shape) — high confidence
     intent: 'lookup',
-    pattern: /\b\d{5,}\b|\b[A-Z]{2,10}-\d+\b/,
+    pattern: new RegExp(`${ADO_ID_RE.source}|${JIRA_KEY_RE.source}`),
   },
   {
     intent: 'aggregation',
@@ -76,21 +86,30 @@ function detectSources(
 
   const lower = query.toLowerCase();
 
-  // Numeric/ticket ID lookups default to ADO — but if the query also asks to
-  // investigate/implement code (e.g. "find the code it affects, propose a
-  // plan"), route to the live tool-calling agent loop instead. That loop's
-  // toolset already includes get_ticket, so it fetches the ticket itself
-  // before exploring code — a plain ADO-only RAG turn has no tools at all
-  // and can only describe a plan, never execute one.
-  if (intent === 'lookup' && /\b\d{5,}\b|\b[A-Z]{2,10}-\d+\b/.test(query)) {
+  // Ticket ID lookups default to whichever tracker's id shape the query
+  // used (a bare number is ADO's, `PROJ-123` is Jira's — only one of them is
+  // ever connected at a time, so this rarely has to choose) — but if the
+  // query also asks to investigate/implement code (e.g. "find the code it
+  // affects, propose a plan"), route to the live tool-calling agent loop
+  // instead. That loop's toolset already includes get_ticket, so it fetches
+  // the ticket itself before exploring code — a plain tracker-only RAG turn
+  // has no tools at all and can only describe a plan, never execute one.
+  const isJiraKeyLookup = JIRA_KEY_RE.test(query);
+  const isAdoIdLookup = ADO_ID_RE.test(query);
+  if (intent === 'lookup' && (isJiraKeyLookup || isAdoIdLookup)) {
     const hasCodebaseKeyword = CODEBASE_KEYWORDS.some((kw) => lower.includes(kw));
     if (hasCodebaseKeyword && availableSources.includes('CODEBASE')) {
       return { sources: ['CODEBASE'], confidence: 'high' };
     }
-    const adoAvailable = availableSources.includes('ADO');
+    const trackerSource: DataSource | undefined =
+      isJiraKeyLookup && availableSources.includes('JIRA')
+        ? 'JIRA'
+        : isAdoIdLookup && availableSources.includes('ADO')
+          ? 'ADO'
+          : undefined;
     return {
-      sources: adoAvailable ? ['ADO'] : availableSources.filter((s) => s !== 'CODEBASE'),
-      confidence: adoAvailable ? 'high' : 'low',
+      sources: trackerSource ? [trackerSource] : availableSources.filter((s) => s !== 'CODEBASE'),
+      confidence: trackerSource ? 'high' : 'low',
     };
   }
 
@@ -102,7 +121,7 @@ function detectSources(
     return { sources: ['CODEBASE'], confidence: 'high' };
   }
 
-  const hasAdoKeyword = ADO_KEYWORDS.some((kw) => lower.includes(kw));
+  const hasTicketKeyword = TICKET_KEYWORDS.some((kw) => lower.includes(kw));
   const hasConfluenceKeyword = CONFLUENCE_KEYWORDS.some((kw) => lower.includes(kw));
 
   // Codebase is opt-in only via an explicit keyword match above — none of the
@@ -110,17 +129,17 @@ function detectSources(
   // would let chatService's exclusivity rule hijack every ambiguous query.
   const nonCodebaseSources = availableSources.filter((s) => s !== 'CODEBASE');
 
-  if (hasAdoKeyword && !hasConfluenceKeyword) {
-    const sources = nonCodebaseSources.filter((s) => s === 'ADO');
+  if (hasTicketKeyword && !hasConfluenceKeyword) {
+    const sources = nonCodebaseSources.filter((s) => s === 'ADO' || s === 'JIRA');
     return { sources: sources.length ? sources : nonCodebaseSources, confidence: sources.length ? 'high' : 'low' };
   }
 
-  if (hasConfluenceKeyword && !hasAdoKeyword) {
+  if (hasConfluenceKeyword && !hasTicketKeyword) {
     const sources = nonCodebaseSources.filter((s) => s === 'CONFLUENCE');
     return { sources: sources.length ? sources : nonCodebaseSources, confidence: sources.length ? 'high' : 'low' };
   }
 
-  if (hasAdoKeyword && hasConfluenceKeyword) {
+  if (hasTicketKeyword && hasConfluenceKeyword) {
     return { sources: nonCodebaseSources, confidence: 'high' };
   }
 

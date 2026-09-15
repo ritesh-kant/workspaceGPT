@@ -116,18 +116,28 @@ export function refsFromTicket(ticket: {
   return refs;
 }
 
-/** Work items out of a `search_tickets` result — the id lives in the ADO url, or in the `ADO-<id>` item name. */
-function refsFromTicketSearch(result: unknown): RunRef[] {
+/**
+ * Work items out of a `search_tickets` result — the id lives in the ticket's
+ * own url, or in the RAG index's `<KIND>-<id>` filename convention. Since
+ * P5, `search_tickets` can come back from either tracker (chatService.ts
+ * routes it to whichever one is active), so the patterns are the active
+ * provider's own — falling back to ADO's only when none is connected (a
+ * search result seen after a mid-run disconnect, which still deserves a
+ * best-effort link rather than none).
+ */
+function refsFromTicketSearch(result: unknown, idPatterns?: { url: RegExp; filename: RegExp }): RunRef[] {
   const rows = (result as { results?: unknown })?.results;
   if (!Array.isArray(rows)) return [];
+  const urlRe = idPatterns?.url ?? ADO_URL_ID_RE;
+  const filenameRe = idPatterns?.filename ?? ADO_FILENAME_ID_RE;
   const refs: RunRef[] = [];
   for (const row of rows) {
     const { url, title, source } = (row ?? {}) as { url?: string; title?: string; source?: string };
-    const fromUrl = url ? ADO_URL_ID_RE.exec(url) : null;
+    const fromUrl = url ? urlRe.exec(url) : null;
     const id =
       fromUrl?.[1] ??
       fromUrl?.[2] ??
-      ADO_FILENAME_ID_RE.exec(`${title ?? ''} ${source ?? ''}`)?.[1];
+      filenameRe.exec(`${title ?? ''} ${source ?? ''}`)?.[1];
     if (id) refs.push({ id, kind: 'work-item', url, label: title });
   }
   return refs;
@@ -141,7 +151,7 @@ function refsFromTicketSearch(result: unknown): RunRef[] {
 export function collectRefs(
   toolName: string,
   result: unknown,
-  opts: { prUrlTemplate?: string } = {}
+  opts: { prUrlTemplate?: string; ticketIdPatterns?: { url: RegExp; filename: RegExp } } = {}
 ): RunRef[] {
   switch (toolName) {
     case 'git_log':
@@ -150,7 +160,7 @@ export function collectRefs(
     case 'get_ticket':
       return refsFromTicket(result as Parameters<typeof refsFromTicket>[0]);
     case 'search_tickets':
-      return refsFromTicketSearch(result);
+      return refsFromTicketSearch(result, opts.ticketIdPatterns);
     default:
       return [];
   }
