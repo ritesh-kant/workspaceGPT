@@ -20,7 +20,7 @@ export interface EmbeddingSearchResult {
   text: string;
   score: number;
   data: {
-    sourceName: 'CONFLUENCE' | 'ADO';
+    sourceName: 'CONFLUENCE' | 'ADO' | 'JIRA';
     source: string;
     fileName: string;
   };
@@ -43,7 +43,7 @@ export interface EmbeddingProgress {
 
 export type QueryIntent = 'lookup' | 'semantic' | 'aggregation' | 'comparison' | 'chitchat';
 
-export type DataSource = 'CONFLUENCE' | 'ADO' | 'CODEBASE';
+export type DataSource = 'CONFLUENCE' | 'ADO' | 'JIRA' | 'CODEBASE';
 
 export interface QueryClassification {
   intent: QueryIntent;

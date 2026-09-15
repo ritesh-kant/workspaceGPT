@@ -5,13 +5,13 @@ import { MESSAGE_TYPES, SYNC_INTERVAL_MS } from '../../constants';
 import { clearStatusMessageAfterDelay } from '../../store/statusMessage';
 import { formatRelativeTime } from './utils';
 
-export type SyncSection = 'confluence' | 'ado';
+export type SyncSection = 'confluence' | 'ado' | 'jira';
 
 /**
  * Per-section wire protocol and progress field names. Everything else about
  * syncing — the buttons, the progress line, the "next auto-sync" footer, the
- * optimistic status updates — is identical between the two integrations, and
- * used to exist as two copies that quietly drifted apart.
+ * optimistic status updates — is identical between the integrations, and used
+ * to exist as separate copies that quietly drifted apart.
  */
 const SECTIONS: Record<
   SyncSection,
@@ -20,8 +20,8 @@ const SECTIONS: Record<
     start: string;
     resume: string;
     stop: string;
-    syncProgress: 'confluenceSyncProgress' | 'adoSyncProgress';
-    indexProgress: 'confluenceIndexProgress' | 'adoIndexProgress';
+    syncProgress: 'confluenceSyncProgress' | 'adoSyncProgress' | 'jiraSyncProgress';
+    indexProgress: 'confluenceIndexProgress' | 'adoIndexProgress' | 'jiraIndexProgress';
   }
 > = {
   confluence: {
@@ -39,6 +39,14 @@ const SECTIONS: Record<
     stop: MESSAGE_TYPES.STOP_ADO_SYNC,
     syncProgress: 'adoSyncProgress',
     indexProgress: 'adoIndexProgress',
+  },
+  jira: {
+    check: MESSAGE_TYPES.CHECK_JIRA_CONNECTION,
+    start: MESSAGE_TYPES.START_JIRA_SYNC,
+    resume: MESSAGE_TYPES.RESUME_JIRA_SYNC,
+    stop: MESSAGE_TYPES.STOP_JIRA_SYNC,
+    syncProgress: 'jiraSyncProgress',
+    indexProgress: 'jiraIndexProgress',
   },
 };
 

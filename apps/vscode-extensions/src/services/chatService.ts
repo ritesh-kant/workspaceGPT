@@ -12,6 +12,7 @@ import {
   ChatAttachment,
 } from '../../constants';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
+import { JiraEmbeddingService } from './jira/jiraEmbeddingService';
 import { AnalyticsService } from './analyticsService';
 import { getLlmSettings } from 'src/utils/getLlmSettings';
 import { getMode } from 'src/utils/getModeSettings';
@@ -92,7 +93,7 @@ import {
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
-import { readLastSyncTime } from 'src/utils/syncStateStore';
+import { readLastSyncTime, SyncSection } from 'src/utils/syncStateStore';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -216,6 +217,7 @@ function toTicketPromptContext(t: TicketDetail): TicketPromptContext {
 const SOURCE_LABELS: Record<DataSource, string> = {
   CONFLUENCE: 'Confluence',
   ADO: 'Azure DevOps',
+  JIRA: 'Jira',
   CODEBASE: 'Codebase',
 };
 
@@ -376,6 +378,7 @@ interface SessionRun {
 export class ChatService {
   private embeddingService: ConfluenceEmbeddingService;
   private adoEmbeddingService: AdoEmbeddingService;
+  private jiraEmbeddingService: JiraEmbeddingService;
   private webviewView: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private currentModel: string;
@@ -405,6 +408,7 @@ export class ChatService {
     this.context = context;
     this.embeddingService = new ConfluenceEmbeddingService(webviewView, context);
     this.adoEmbeddingService = new AdoEmbeddingService(webviewView, context);
+    this.jiraEmbeddingService = new JiraEmbeddingService(webviewView, context);
     this.currentModel = MODEL.DEFAULT_CHAT_MODEL;
     // Housekeeping, once per activation: an interrupted run the user never
     // came back to would otherwise keep its transcript in global storage
@@ -426,12 +430,18 @@ export class ChatService {
     const isAdoConnected =
       settings?.state?.config?.ado?.isAuthenticated &&
       settings?.state?.config?.ado?.isIndexingCompleted;
+    const isJiraConnected =
+      settings?.state?.config?.jira?.isAuthenticated &&
+      settings?.state?.config?.jira?.isIndexingCompleted;
 
     if (isConfluenceConnected) {
       this.embeddingService.eagerInit();
     }
     if (isAdoConnected) {
       this.adoEmbeddingService.eagerInit();
+    }
+    if (isJiraConnected) {
+      this.jiraEmbeddingService.eagerInit();
     }
   }
 
@@ -444,6 +454,7 @@ export class ChatService {
     this.stopMessage();
     this.embeddingService.dispose();
     this.adoEmbeddingService.dispose();
+    this.jiraEmbeddingService.dispose();
   }
 
   public async initializeModel(
@@ -1481,6 +1492,9 @@ export class ChatService {
       // it to the live tool-calling loop instead (see useCodebaseTools).
       return [];
     }
+    if (source === 'JIRA') {
+      return this.jiraEmbeddingService.searchEmbeddings(query, topK);
+    }
     return this.adoEmbeddingService.searchEmbeddings(query, topK);
   }
 
@@ -1534,7 +1548,10 @@ export class ChatService {
       case 'search_docs':
         return this.searchKnowledge('CONFLUENCE', args);
       case 'search_tickets':
-        return this.searchKnowledge('ADO', args);
+        // Whichever tracker is active owns the index namespace to search —
+        // same registry lookup get_ticket below uses, so the two tools never
+        // disagree about which tracker is "the" one.
+        return this.searchKnowledge(getActiveTicketProvider(this.context)?.kind === 'jira' ? 'JIRA' : 'ADO', args);
       case 'get_ticket': {
         const provider = getActiveTicketProvider(this.context);
         if (!provider) throw new Error('No ticket tracker is connected. Connect one in Settings.');
@@ -1818,13 +1835,19 @@ export class ChatService {
   ): Promise<unknown> {
     if (!args?.query?.trim()) throw new Error('query must be non-empty.');
     const topK = Math.min(Math.max(args.topK ?? 5, 1), 10);
+    // The sync-state section this source's index lives under, and the live
+    // per-id tool that beats a possibly-stale search hit — three-way rather
+    // than the CONFLUENCE/else binary this was before Jira, since "else" no
+    // longer means only ADO.
+    const syncSection: SyncSection = source === 'CONFLUENCE' ? 'confluence' : source === 'JIRA' ? 'jira' : 'ado';
+    const liveTool = source === 'CONFLUENCE' ? 'get_confluence_page' : 'get_ticket';
+
     let results: SearchResult[];
     try {
       results = await this.searchSource(source, args.query, topK);
     } catch (e) {
-      const label = source === 'CONFLUENCE' ? 'Confluence' : 'Azure DevOps';
       throw new Error(
-        `${label} search unavailable: ${e instanceof Error ? e.message : String(e)}. ` +
+        `${SOURCE_LABELS[source]} search unavailable: ${e instanceof Error ? e.message : String(e)}. ` +
           'The source may not be connected/synced — answer from the codebase alone or tell the user.'
       );
     }
@@ -1832,15 +1855,11 @@ export class ChatService {
     // of the answer: anything created or edited since is simply not searchable,
     // and zero hits for it means nothing (#1536998 — a design doc written the
     // day of the run, against an index a week old).
-    const lastSync = readLastSyncTime(this.context, source === 'CONFLUENCE' ? 'confluence' : 'ado');
+    const lastSync = readLastSyncTime(this.context, syncSection);
     const staleNote = lastSync
       ? `This index was last synced ${lastSync.slice(0, 10)} — anything created or edited after that date is NOT in it. ` +
-        `For a page or ticket you can name (a URL or id in the ticket, or one the user gave), fetch it live with ${
-          source === 'CONFLUENCE' ? 'get_confluence_page' : 'get_ticket'
-        } instead of relying on these results.`
-      : `This index's last sync time is unknown — it may predate recent pages. Fetch anything you can name by URL or id with ${
-          source === 'CONFLUENCE' ? 'get_confluence_page' : 'get_ticket'
-        }.`;
+        `For a page or ticket you can name (a URL or id in the ticket, or one the user gave), fetch it live with ${liveTool} instead of relying on these results.`
+      : `This index's last sync time is unknown — it may predate recent pages. Fetch anything you can name by URL or id with ${liveTool}.`;
     return {
       indexedThrough: lastSync ?? 'unknown',
       note: staleNote,
@@ -2069,7 +2088,11 @@ export class ChatService {
       case 'search_docs':
         return { kind: 'search', title: 'Searched Confluence', detail: args?.query ?? '' };
       case 'search_tickets':
-        return { kind: 'search', title: 'Searched Azure DevOps', detail: args?.query ?? '' };
+        return {
+          kind: 'search',
+          title: `Searched ${getActiveTicketProvider(this.context)?.label ?? 'Azure DevOps'}`,
+          detail: args?.query ?? '',
+        };
       case 'get_ticket':
         return { kind: 'read', title: 'Read ticket', detail: String(args?.id ?? '') };
       case 'get_confluence_page':
@@ -2213,7 +2236,7 @@ export class ChatService {
       case 'search_docs':
         return `Searching Confluence for "${args?.query ?? ''}"...`;
       case 'search_tickets':
-        return `Searching Azure DevOps for "${args?.query ?? ''}"...`;
+        return `Searching ${getActiveTicketProvider(this.context)?.label ?? 'Azure DevOps'} for "${args?.query ?? ''}"...`;
       case 'get_ticket':
         return `Reading ticket ${args?.id ?? ''}...`;
       case 'get_confluence_page':
@@ -2329,6 +2352,7 @@ export class ChatService {
       const sourceDescriptions: Record<DataSource, string> = {
         CONFLUENCE: 'CONFLUENCE: the team\'s Confluence wiki (documentation, guides, processes)',
         ADO: 'ADO: Azure DevOps (tickets, work items, sprints, bugs)',
+        JIRA: 'JIRA: Jira (issues, tickets, sprints, bugs)',
         CODEBASE: 'CODEBASE: the source code repository currently open in the editor (files, components, features, implementation details)',
       };
       const sourceList = availableSources.map((s) => `- ${sourceDescriptions[s]}`).join('\n');

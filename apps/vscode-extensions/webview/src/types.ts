@@ -67,11 +67,7 @@ export interface AdoConfig {
   isConnecting?: boolean;
 }
 
-/**
- * Sized to what's actually built (JIRA-INTEGRATION-DESIGN.md §5 P2/P4): auth
- * + project discovery + get_ticket/addComment. No lookback/sync/indexing/
- * sprint fields — those belong to P5/P6 and don't exist yet.
- */
+/** Auth + discovery (P2/P4) + sync/indexing (P5) fields — sized like AdoConfig, minus sprint (that's P6, computed per-item rather than stored here). */
 export interface JiraConfig {
   isJiraEnabled?: boolean;
   isAuthenticated: boolean;
@@ -82,8 +78,18 @@ export interface JiraConfig {
   availableProjects: { id: string; key: string; name: string }[];
   accountId?: string;
   displayName?: string;
+  lookbackMonths: number;
+  jiraSyncProgress: number;
+  jiraIndexProgress: number;
+  isSyncing: boolean;
+  isIndexing: boolean;
+  isSyncCompleted: boolean;
+  isIndexingCompleted: boolean;
   messageType: 'success' | 'error';
   statusMessage: string;
+  canResume: boolean;
+  canResumeIndexing: boolean;
+  lastSyncTime?: string;
   isConnecting?: boolean;
 }
 

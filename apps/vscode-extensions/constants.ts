@@ -217,11 +217,9 @@ export const MESSAGE_TYPES = {
   GET_MY_WORK_ITEMS_RESPONSE: 'get-my-work-items-response',
   SAVE_ADO_USER_DISPLAY_NAME: 'save-ado-user-display-name',
 
-  // Jira messages (JIRA-INTEGRATION-DESIGN.md §5 P7). Deliberately a smaller
-  // set than ADO's: v1 has one auth mode (API token, not three), and no
-  // sync/indexing or My Work yet (§5 P5/P6) — so there is no
-  // START/STOP/RESUME_*_SYNC, INDEXING_JIRA_*, or GET_MY_WORK_ITEMS
-  // equivalent here. Add those alongside their backing feature, not before.
+  // Jira messages (JIRA-INTEGRATION-DESIGN.md §5 P7, sync/indexing added P5,
+  // My Work added P6). One auth mode (API token, not ADO's three), otherwise
+  // the same shape as ADO's equivalent block below.
   SAVE_JIRA_CREDENTIALS: 'save-jira-credentials',
   JIRA_CREDENTIALS_SUCCESS: 'jira-credentials-success',
   JIRA_CREDENTIALS_ERROR: 'jira-credentials-error',
@@ -231,6 +229,19 @@ export const MESSAGE_TYPES = {
   FETCH_JIRA_PROJECTS_ERROR: 'fetch-jira-projects-error',
   CHECK_JIRA_CONNECTION: 'check-jira-connection',
   JIRA_CONNECTION_STATUS: 'jira-connection-status',
+
+  START_JIRA_SYNC: 'start-jira-sync',
+  STOP_JIRA_SYNC: 'stop-jira-sync',
+  SYNC_JIRA_IN_PROGRESS: 'sync-jira-progress',
+  SYNC_JIRA_COMPLETE: 'sync-jira-complete',
+  SYNC_JIRA_ERROR: 'sync-jira-error',
+  SYNC_JIRA_STOP: 'sync-jira-stop',
+  RESUME_JIRA_SYNC: 'resume-jira-sync',
+
+  INDEXING_JIRA_ERROR: 'indexing-jira-error',
+  INDEXING_JIRA_IN_PROGRESS: 'indexing-jira-progress',
+  INDEXING_JIRA_COMPLETE: 'indexing-jira-complete',
+  RESUME_INDEXING_JIRA: 'resume-indexing-jira',
 
   MODEL_DOWNLOAD_IN_PROGRESS: 'model-download-in-progress',
   MODEL_DOWNLOAD_COMPLETE: 'model-download-complete',
@@ -441,6 +452,16 @@ export const STORAGE_KEYS = {
    * only the token itself is a secret.
    */
   JIRA_API_TOKEN: 'jira-api-token',
+  JIRA_SYNC_PROGRESS: 'jira-sync-progress',
+  /**
+   * Deliberately its OWN key, not the shared STORAGE_KEYS.EMBEDDING_PROGRESS
+   * that AdoEmbeddingService and ConfluenceEmbeddingService both already use.
+   * That sharing looks like a pre-existing bug (two sources' progress can
+   * clobber each other's resume state) — not fixed here since it predates
+   * this integration and touches already-shipped code, but not worth
+   * compounding into a three-way collision either.
+   */
+  JIRA_EMBEDDING_PROGRESS: 'jira-embedding-progress',
   // Deployment automation — write-scoped creds (SecretStorage), never shared to Chrome
   GITHUB_OAUTH_TOKENS: 'github-oauth-tokens',
   // (Optional GitHub App mode — see GitHubAppAuthService)

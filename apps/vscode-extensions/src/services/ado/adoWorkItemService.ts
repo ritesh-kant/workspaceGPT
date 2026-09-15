@@ -271,6 +271,31 @@ const TERMINAL_STATES = ['Closed', 'Removed', 'Done', 'Completed', 'Resolved'];
 const MY_WORK_ITEMS_LIMIT = 50;
 
 /**
+ * The sprint's own display name out of an ADO iteration path.
+ *
+ * Paths are project-rooted and can nest (`D2C\\Release 1\\Sprint 24`), so the
+ * leaf is the sprint the item is actually in. A single-segment path is the
+ * project root — the item is in no sprint at all — and returns undefined
+ * rather than labelling the row with the project name.
+ *
+ * This used to be computed in the webview (MyWorkPanel.tsx's sprintLabel),
+ * which meant TicketSummary.sprint carried a raw ADO path the UI had to know
+ * how to parse — a leaked ADO assumption a Jira provider couldn't honour: a
+ * Jira sprint is a bare name with no path to parse, and the old function's
+ * "one segment means no sprint" rule would have swallowed every real Jira
+ * sprint name (JIRA-INTEGRATION-DESIGN.md §5 P6, discovered during that
+ * phase). Resolving it here means TicketSummary.sprint is always
+ * already-a-display-name, whichever provider set it.
+ */
+function sprintDisplayName(iterationPath?: string): string | undefined {
+  const segments = String(iterationPath ?? '')
+    .split(/[\\/]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return segments.length > 1 ? segments[segments.length - 1] : undefined;
+}
+
+/**
  * Is `iterationPath` the current sprint, or a sub-iteration of it?
  *
  * Plain `startsWith` is wrong here: with a current sprint of `Proj\\Sprint 2`,
@@ -413,7 +438,7 @@ export async function listMyWorkItems(
       title: f['System.Title'] ?? '(untitled)',
       type: f['System.WorkItemType'] ?? 'Work Item',
       state: f['System.State'] ?? 'Unknown',
-      sprint: iteration,
+      sprint: sprintDisplayName(iteration),
       changedDate: f['System.ChangedDate'],
       url: `https://dev.azure.com/${encodeURIComponent(ctx.orgName)}/${encodeURIComponent(ctx.projectName)}/_workitems/edit/${item.id}`,
       inCurrentSprint: isInCurrentSprint(iteration, sprintPath),

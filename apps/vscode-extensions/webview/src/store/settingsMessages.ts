@@ -465,6 +465,77 @@ function handleJiraMessage(message: any): void {
       });
       clearStatusMessageAfterDelay('jira');
       break;
+
+    // Sync
+    case MESSAGE_TYPES.SYNC_JIRA_IN_PROGRESS:
+      batchUpdateConfig('jira', {
+        jiraSyncProgress: message.progress,
+        messageType: 'success',
+        isSyncing: message.progress < 100,
+        canResume: true,
+      });
+      break;
+
+    case MESSAGE_TYPES.SYNC_JIRA_COMPLETE:
+      batchUpdateConfig('jira', {
+        messageType: 'success',
+        statusMessage: 'Sync completed successfully',
+        jiraSyncProgress: 100,
+        isSyncing: false,
+        canResume: false,
+        isSyncCompleted: true,
+        lastSyncTime: message.lastSyncTime || new Date().toISOString(),
+      });
+      clearStatusMessageAfterDelay('jira');
+      break;
+
+    case MESSAGE_TYPES.SYNC_JIRA_ERROR:
+      batchUpdateConfig('jira', {
+        isSyncing: false,
+        messageType: 'error',
+        statusMessage: 'Sync error: Please verify your connection and try again.',
+        canResume: true,
+      });
+      break;
+
+    case MESSAGE_TYPES.SYNC_JIRA_STOP:
+      batchUpdateConfig('jira', {
+        isSyncing: false,
+        messageType: 'error',
+        statusMessage: 'Sync stopped',
+        canResume: true,
+      });
+      break;
+
+    // Indexing
+    case MESSAGE_TYPES.INDEXING_JIRA_IN_PROGRESS:
+      batchUpdateConfig('jira', {
+        jiraIndexProgress: message.progress,
+        messageType: 'success',
+        isIndexing: true,
+      });
+      break;
+
+    case MESSAGE_TYPES.INDEXING_JIRA_COMPLETE:
+      batchUpdateConfig('jira', {
+        messageType: 'success',
+        jiraIndexProgress: 100,
+        isIndexing: false,
+        canResumeIndexing: false,
+        isIndexingCompleted: true,
+      });
+      clearStatusMessageAfterDelay('jira');
+      break;
+
+    case MESSAGE_TYPES.INDEXING_JIRA_ERROR:
+      batchUpdateConfig('jira', {
+        isSyncing: false,
+        isIndexing: false,
+        messageType: 'error',
+        statusMessage: `Indexing error: ${message.message}`,
+        canResumeIndexing: true,
+      });
+      break;
   }
 }
 
@@ -478,7 +549,7 @@ let registered = false;
  */
 function handleBackgroundSyncState(message: any): void {
   if (message?.type !== MESSAGE_TYPES.BACKGROUND_SYNC_STATE) return;
-  if (message.section !== 'confluence' && message.section !== 'ado') return;
+  if (message.section !== 'confluence' && message.section !== 'ado' && message.section !== 'jira') return;
 
   const patch: Record<string, unknown> = {};
   for (const field of ['lastSyncTime', 'isSyncing', 'isIndexing'] as const) {

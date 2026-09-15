@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../../constants';
 import { postToWebview } from './webviewBroadcast';
 
-export type SyncSection = 'confluence' | 'ado';
+export type SyncSection = 'confluence' | 'ado' | 'jira';
 
-export const SYNC_SECTIONS: readonly SyncSection[] = ['confluence', 'ado'];
+export const SYNC_SECTIONS: readonly SyncSection[] = ['confluence', 'ado', 'jira'];
 
 /** The subset of a section's config that describes sync progress over time. */
 export interface SyncStatePatch {

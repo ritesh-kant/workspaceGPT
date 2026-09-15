@@ -7,6 +7,7 @@ import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { AnalyticsService } from './services/analyticsService';
 import { ConfluenceSyncScheduler } from './services/confluence/confluenceSyncScheduler';
 import { AdoSyncScheduler } from './services/ado/adoSyncScheduler';
+import { JiraSyncScheduler } from './services/jira/jiraSyncScheduler';
 import { McpUiManager } from './utils/mcpUiManager';
 import { syncContextKeys } from './utils/syncContextKeys';
 import { migrateModeSettings } from './utils/migrateModeSettings';
@@ -16,6 +17,7 @@ import { RemoteSignInService, describeRemoteAuthError, webviewFieldsFromProfile 
 let analyticsService: AnalyticsService;
 let syncScheduler: ConfluenceSyncScheduler;
 let adoSyncScheduler: AdoSyncScheduler;
+let jiraSyncScheduler: JiraSyncScheduler;
 let mcpUiManager: McpUiManager;
 let updateChecker: UpdateChecker;
 
@@ -33,6 +35,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize and start ADO sync scheduler
   adoSyncScheduler = new AdoSyncScheduler(context);
   adoSyncScheduler.start();
+  jiraSyncScheduler = new JiraSyncScheduler(context);
+  jiraSyncScheduler.start();
 
   // These three are independent of each other (session token cache, settings
   // migration, context-key sync) but all must finish before the webview below
@@ -278,7 +282,10 @@ export async function activate(context: vscode.ExtensionContext) {
         if (adoSyncScheduler) {
           adoSyncScheduler.stop();
         }
-        
+        if (jiraSyncScheduler) {
+          jiraSyncScheduler.stop();
+        }
+
         // If webview is active, tell it to reset (handles explicit stop of embedding process and auth disconnection)
         const webviewView = webViewProvider.getWebviewView();
         if (webviewView) {
@@ -385,6 +392,10 @@ export async function deactivate() {
 
   if (adoSyncScheduler) {
     adoSyncScheduler.stop();
+  }
+
+  if (jiraSyncScheduler) {
+    jiraSyncScheduler.stop();
   }
 
   // Chat search workers are owned by the webview and disposed on its onDidDispose.

@@ -6,13 +6,13 @@ import { JiraConfig } from '../../types';
 import { MESSAGE_TYPES } from '../../constants';
 import SearchableDropdown from './SearchableDropdown';
 import SectionShell from './SectionShell';
+import SyncControls, { SyncStatusMessage } from './SyncControls';
 import StatusDot from './StatusDot';
 
 /**
- * Sized to what's built (JIRA-INTEGRATION-DESIGN.md §5 P2/P4/P7): one auth
- * mode (API token — OAuth is deferred), project discovery, no sync controls
- * — there is nothing to sync yet (P5), so there is no progress bar or resume
- * button to show. AdoSettings.tsx is the fuller pattern this is cut down from.
+ * One auth mode (API token — OAuth is deferred, JIRA-INTEGRATION-DESIGN.md
+ * §5 P2), otherwise the same shape as AdoSettings.tsx: connect, project
+ * picker, lookback, sync controls (§5 P5).
  */
 const JiraSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
@@ -96,6 +96,7 @@ const JiraSettings: React.FC = () => {
   };
 
   const isEnabled = !!jiraConfig?.isJiraEnabled;
+  const isBusy = !!jiraConfig?.isSyncing || !!jiraConfig?.isIndexing;
   const hasError = jiraConfig?.messageType === 'error' && !!jiraConfig?.statusMessage;
 
   const summary = !isEnabled
@@ -104,12 +105,16 @@ const JiraSettings: React.FC = () => {
       ? 'Not connected'
       : !hasProjectSelected
         ? 'Connected · no project selected'
-        : (
-            <>
-              <StatusDot tone='ok' />
-              {jiraConfig.projectName}
-            </>
-          );
+        : isBusy
+          ? jiraConfig.isSyncing
+            ? `Syncing… ${jiraConfig.jiraSyncProgress || 0}%`
+            : `Indexing… ${jiraConfig.jiraIndexProgress || 0}%`
+          : (
+              <>
+                <StatusDot tone='ok' />
+                {jiraConfig.projectName}
+              </>
+            );
 
   return (
     <SectionShell
@@ -240,13 +245,29 @@ const JiraSettings: React.FC = () => {
                   </>
                 )}
               </div>
+
+              <div className='form-group'>
+                <label>Sync tickets from</label>
+                <select
+                  value={jiraConfig.lookbackMonths ?? 24}
+                  onChange={(e) => handleInputChange('jira', 'lookbackMonths', Number(e.target.value))}
+                  className='settings-select'
+                >
+                  <option value={1}>Last 1 month</option>
+                  <option value={3}>Last 3 months</option>
+                  <option value={6}>Last 6 months</option>
+                  <option value={12}>Last 1 year</option>
+                  <option value={18}>Last 18 months</option>
+                  <option value={24}>Last 2 years</option>
+                  <option value={36}>Last 3 years</option>
+                </select>
+              </div>
+
+              {hasProjectSelected && <SyncControls section='jira' />}
             </>
           )}
 
-          {hasError && <p className='status-message error'>{jiraConfig.statusMessage}</p>}
-          {!hasError && jiraConfig?.statusMessage && (
-            <p className='status-message success'>{jiraConfig.statusMessage}</p>
-          )}
+          <SyncStatusMessage section='jira' />
         </div>
       )}
     </SectionShell>

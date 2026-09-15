@@ -21,7 +21,7 @@ interface SearchResult {
   text: string;
   score: number;
   data: {
-    sourceName: 'CONFLUENCE' | 'ADO';
+    sourceName: 'CONFLUENCE' | 'ADO' | 'JIRA';
     source: string;
     fileName: string;
   };
@@ -75,7 +75,7 @@ let embeddingsMatrix: Float32Array = new Float32Array(0); // flat array: N embed
 let embeddingNorms: Float32Array = new Float32Array(0);   // pre-computed norms
 let dimensions: number = 0;
 let currentEmbeddingDirPath: string = '';
-let currentNamespace: 'CONFLUENCE' | 'ADO' = 'CONFLUENCE';
+let currentNamespace: 'CONFLUENCE' | 'ADO' | 'JIRA' = 'CONFLUENCE';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -438,7 +438,7 @@ process.on('message', async (msg: WorkerMessage) => {
     case 'init': {
       try {
         if (msg.namespace) {
-          currentNamespace = msg.namespace as 'CONFLUENCE' | 'ADO';
+          currentNamespace = msg.namespace as 'CONFLUENCE' | 'ADO' | 'JIRA';
         }
         await initializeProvider(msg.provider ?? 'local', msg.apiKey, msg.embeddingDirPath, msg.apiKeys);
         vectorStore = buildVectorStore(msg.vectorStore);

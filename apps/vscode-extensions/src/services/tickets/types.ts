@@ -55,7 +55,7 @@ export interface TicketSummary {
   title: string;
   type: string;
   state: string;
-  /** Full sprint/iteration path, however the provider spells it. */
+  /** The sprint's DISPLAY NAME, already resolved by the provider — never a raw path for the UI to parse (see adoWorkItemService.ts's sprintDisplayName for why). */
   sprint?: string;
   url: string;
   changedDate?: string;

@@ -36,22 +36,6 @@ interface MyWorkPanelProps {
  */
 const VISIBLE_LIMIT = 3;
 
-/**
- * The sprint's own name out of an ADO iteration path.
- *
- * Paths are project-rooted and can nest (`D2C\\Release 1\\Sprint 24`), so the
- * leaf is the sprint the item is actually in. A single-segment path is the
- * project root — the item is in no sprint at all — and returns undefined
- * rather than labelling the row with the project name.
- */
-export function sprintLabel(iterationPath?: string): string | undefined {
-  const segments = String(iterationPath ?? '')
-    .split(/[\\/]/)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-  return segments.length > 1 ? segments[segments.length - 1] : undefined;
-}
-
 const RefreshIcon: React.FC<{ spinning?: boolean }> = ({ spinning }) => (
   <svg
     className={spinning ? 'my-work-refresh-icon my-work-refresh-icon--spinning' : 'my-work-refresh-icon'}
@@ -126,9 +110,11 @@ const MyWorkPanel: React.FC<MyWorkPanelProps> = ({
       ) : (
         <div className={`my-work-list${expanded ? ' my-work-list--expanded' : ''}`}>
           {visible.map((item) => {
-            const itemSprint = sprintLabel(item.sprint);
-            // The header already names the current sprint; only a ticket that
-            // sits elsewhere needs its sprint spelled out on the row.
+            // item.sprint is already a resolved display name, whichever
+            // provider set it (see tickets/types.ts). The header already
+            // names the current sprint; only a ticket that sits elsewhere
+            // needs its sprint spelled out on the row.
+            const itemSprint = item.sprint;
             const showSprint = itemSprint && itemSprint !== currentSprintName;
             return (
               <button
