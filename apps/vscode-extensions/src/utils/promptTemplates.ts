@@ -333,7 +333,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; ado: boolean }; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; implementMandate?: boolean; autonomous?: boolean; planMode?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; implementMandate?: boolean; autonomous?: boolean; planMode?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -365,16 +365,16 @@ export function createStructuredPrompt(
   // has no `get_ticket` invites a failed call and costs prompt tokens on every
   // turn of the run. An absent availability (older host) keeps the full text.
   const avail = options?.toolAvailability;
-  const adoTools = !avail || avail.ado;
+  const ticketTools = !avail || avail.tickets;
   const docTools = !avail || avail.confluence;
   const orgKnowledgeBlock =
-    adoTools || docTools
+    ticketTools || docTools
       ? 'Org knowledge — this is what you have that a repo-only assistant does not; use it. ' +
-        (adoTools
+        (ticketTools
           ? '`get_ticket` reads ONE Azure DevOps work item by ID, live and complete: whenever the user names a ticket ("1234", "TKT-1234", "#1234"), call it FIRST, before touching code. `search_tickets` finds work items by description instead, over a local synced index that may be stale — use it only when you have no ID. '
           : '') +
         (docTools ? '`search_docs` searches Confluence design docs/architecture/runbooks. ' : '') +
-        (adoTools
+        (ticketTools
           ? 'When implementing a ticket: `get_ticket` for the acceptance criteria → ' +
             (docTools ? '`search_docs` for the design doc behind it → ' : '') +
             'then explore the code. Treat the acceptance criteria as the definition of done and check your work against each one. Cite the ticket' +

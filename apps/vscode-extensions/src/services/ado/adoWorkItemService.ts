@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ATTACHMENT_LIMITS, STORAGE_KEYS } from '../../../constants';
 import { AdoAuthService } from './adoAuthService';
+import { MyTicketsResult, TicketComment, TicketDetail, TicketImage, TicketSummary } from '../tickets/types';
 
 /**
  * Live, by-ID work-item reads for the agent loop.
@@ -14,41 +15,11 @@ import { AdoAuthService } from './adoAuthService';
  * ID in hand it should read the real thing.
  */
 
-export interface TicketComment {
-  author: string;
-  date?: string;
-  text: string;
-}
-
-export interface TicketDetail {
-  /** Canonical id as a string ("1234") — see parseWorkItemId for why. */
-  id: string;
-  title: string;
-  type: string;
-  state: string;
-  assignedTo?: string;
-  sprint?: string;
-  area?: string;
-  tags?: string[];
-  priority?: number;
-  createdDate?: string;
-  changedDate?: string;
-  url: string;
-  description?: string;
-  acceptanceCriteria?: string;
-  /** Parent work item (epic/feature) when the item is part of a hierarchy. */
-  parentId?: string;
-  /** Only populated when `includeComments` was requested. */
-  comments?: TicketComment[];
-  /** Screenshots/diagrams embedded in the description, base64-encoded for vision models. */
-  images?: TicketImage[];
-}
-
-export interface TicketImage {
-  name: string;
-  mimeType: string;
-  dataUrl: string;
-}
+// TicketComment/TicketImage/TicketDetail moved to ../tickets/types.ts (they were
+// never ADO-specific in shape) — re-exported here so every existing
+// `from '../ado/adoWorkItemService'` import keeps working unchanged. See
+// JIRA-INTEGRATION-DESIGN.md §4.
+export type { TicketComment, TicketImage, TicketDetail };
 
 interface AdoRequestContext {
   authHeader: string;
@@ -307,26 +278,11 @@ export async function fetchWorkItem(
 
 // ── "Your work": the tickets assigned to the signed-in user ──────────────────
 
-export interface WorkItemSummary {
-  id: string;
-  title: string;
-  type: string;
-  state: string;
-  /** Full iteration path, e.g. `MyProject\\Sprint 24`. */
-  sprint?: string;
-  url: string;
-  changedDate?: string;
-  /** True when this item sits in (or under) the team's current sprint. */
-  inCurrentSprint: boolean;
-}
-
-export interface MyWorkItemsResult {
-  items: WorkItemSummary[];
-  /** Display name of the current sprint, when one could be detected. */
-  currentSprintName?: string;
-  /** ISO timestamp of the fetch that produced these items. */
-  fetchedAt: string;
-}
+// TicketSummary/MyTicketsResult moved to ../tickets/types.ts; kept here under
+// their original names (ADO calls a ticket a "work item") so every existing
+// import of WorkItemSummary/MyWorkItemsResult keeps working unchanged.
+export type WorkItemSummary = TicketSummary;
+export type MyWorkItemsResult = MyTicketsResult;
 
 /**
  * Terminal states, excluded from "your work".

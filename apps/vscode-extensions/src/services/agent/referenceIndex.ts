@@ -58,10 +58,14 @@ const PR_PATTERNS: RegExp[] = [
 /** `git log --format=%h …` and `git blame` both put the abbreviated hash first on the line. */
 const LEADING_HASH_RE = /^\^?([0-9a-f]{7,40})\b/;
 
-/** Azure DevOps work-item urls, for lifting the id back out of a search hit. */
-const ADO_URL_ID_RE = /_workitems\/edit\/(\d+)|_apis\/wit\/workItems\/(\d+)/i;
+/**
+ * Azure DevOps work-item urls, for lifting the id back out of a search hit.
+ * Exported so AdoTicketProvider.idPatterns can point at these instead of
+ * keeping its own copy — one regex, one place it can go stale.
+ */
+export const ADO_URL_ID_RE = /_workitems\/edit\/(\d+)|_apis\/wit\/workItems\/(\d+)/i;
 /** The ADO index names each item `ADO-<id>` (see adoWorker). */
-const ADO_FILENAME_ID_RE = /\bADO-(\d+)\b/;
+export const ADO_FILENAME_ID_RE = /\bADO-(\d+)\b/;
 
 /** Text of a tool result, whatever shape the tool returns it in. */
 function resultText(result: unknown): string {

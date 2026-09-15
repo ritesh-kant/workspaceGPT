@@ -63,7 +63,8 @@ import { shipChanges, ShipInput } from './agent/shipService';
 import { deriveShipTitle } from './agent/shipHelpers';
 import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
 import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
-import { fetchWorkItem, TicketDetail } from './ado/adoWorkItemService';
+import { TicketDetail } from './ado/adoWorkItemService';
+import { getActiveTicketProvider } from './tickets/registry';
 import { collectRefs, mergeRefs, refsFromTicket, RunRef } from './agent/referenceIndex';
 import { getPrUrlTemplate } from './agent/gitStatusService';
 import { fetchConfluencePage, ConfluencePageDetail } from './confluence/confluencePageService';
@@ -910,7 +911,7 @@ export class ChatService {
       const toolAvailability = {
         codebase: isCodebaseAvailable,
         confluence: !!settings?.state?.config?.confluence?.isAuthenticated,
-        ado: !!settings?.state?.config?.ado?.isAuthenticated,
+        tickets: !!getActiveTicketProvider(this.context),
       };
 
       // Read the @-mentioned files/folders while retrieval runs — they are
@@ -1167,12 +1168,12 @@ export class ChatService {
       // criteria as the definition of done. Failure degrades silently: the
       // model can still call get_ticket itself mid-loop.
       let ticketContext: TicketDetail | null = null;
-      const adoAuthenticated = !!settings?.state?.config?.ado?.isAuthenticated;
-      const ticketId = adoAuthenticated ? detectTicketId(message) : null;
+      const ticketProvider = getActiveTicketProvider(this.context);
+      const ticketId = ticketProvider ? detectTicketId(message) : null;
       // Sticky across the session, so a resume record written by a later
       // continuation turn still names the ticket the run is about.
       if (ticketId) run.lastTicketId = ticketId;
-      if (ticketId) {
+      if (ticketId && ticketProvider) {
         const stepId = randomUUID();
         this.postStatus(run, `Reading ticket ${ticketId}...`);
         this.post(run, {
@@ -1181,7 +1182,7 @@ export class ChatService {
           step: { kind: 'read', title: 'Read ticket', detail: `#${ticketId}`, status: 'running' },
         });
         try {
-          ticketContext = await fetchWorkItem(this.context, { id: ticketId, includeComments: true });
+          ticketContext = await ticketProvider.fetchTicket(ticketId, { includeComments: true });
           mergeRefs(run.turnRefs, refsFromTicket(ticketContext));
           this.post(run, {
             type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
@@ -1534,8 +1535,11 @@ export class ChatService {
         return this.searchKnowledge('CONFLUENCE', args);
       case 'search_tickets':
         return this.searchKnowledge('ADO', args);
-      case 'get_ticket':
-        return fetchWorkItem(this.context, args);
+      case 'get_ticket': {
+        const provider = getActiveTicketProvider(this.context);
+        if (!provider) throw new Error('No ticket tracker is connected. Connect one in Settings.');
+        return provider.fetchTicket(String(args?.id ?? ''), { includeComments: !!args?.includeComments });
+      }
       case 'get_confluence_page':
         return fetchConfluencePage(this.context, args?.pageId ?? '');
       case 'search_web':
@@ -2407,7 +2411,7 @@ Query: "${query}"`;
     /** Plan mode: deliverable is the plan; writes forbidden, anti-plan gates off. */
     planMode = false,
     /** Tool groups the worker may offer, from what is connected (see toolScope.ts). */
-    toolAvailability?: { codebase: boolean; confluence: boolean; ado: boolean }
+    toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }
   ): Promise<string> {
     try {
       run.lastAnswerStallShaped = false;

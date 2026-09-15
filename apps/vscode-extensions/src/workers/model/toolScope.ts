@@ -20,8 +20,8 @@ export interface ToolAvailability {
   codebase: boolean;
   /** Confluence is authenticated: `search_docs`, `get_confluence_page`. */
   confluence: boolean;
-  /** Azure DevOps is authenticated: `search_tickets`, `get_ticket`. */
-  ado: boolean;
+  /** A ticket tracker (Azure DevOps, Jira, …) is authenticated: `search_tickets`, `get_ticket`. See tickets/registry.ts. */
+  tickets: boolean;
 }
 
 /**
@@ -50,8 +50,8 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   delete_file: 'codebase',
   search_docs: 'confluence',
   get_confluence_page: 'confluence',
-  search_tickets: 'ado',
-  get_ticket: 'ado',
+  search_tickets: 'tickets',
+  get_ticket: 'tickets',
 };
 
 interface NamedToolDef {
