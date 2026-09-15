@@ -333,7 +333,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; implementMandate?: boolean; autonomous?: boolean; planMode?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; implementMandate?: boolean; autonomous?: boolean; planMode?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -367,11 +367,16 @@ export function createStructuredPrompt(
   const avail = options?.toolAvailability;
   const ticketTools = !avail || avail.tickets;
   const docTools = !avail || avail.confluence;
+  // Whichever tracker is actually connected (Azure DevOps, Jira, …) — an
+  // absent label (older host, or no availability object at all) keeps the
+  // original ADO-only wording, since that is what a pre-provider-seam host
+  // always meant.
+  const trackerLabel = options?.ticketTrackerLabel ?? 'Azure DevOps';
   const orgKnowledgeBlock =
     ticketTools || docTools
       ? 'Org knowledge — this is what you have that a repo-only assistant does not; use it. ' +
         (ticketTools
-          ? '`get_ticket` reads ONE Azure DevOps work item by ID, live and complete: whenever the user names a ticket ("1234", "TKT-1234", "#1234"), call it FIRST, before touching code. `search_tickets` finds work items by description instead, over a local synced index that may be stale — use it only when you have no ID. '
+          ? `\`get_ticket\` reads ONE ${trackerLabel} ticket by ID, live and complete: whenever the user names a ticket ("1234", "TKT-1234", "#1234"), call it FIRST, before touching code. \`search_tickets\` finds tickets by description instead, over a local synced index that may be stale — use it only when you have no ID. `
           : '') +
         (docTools ? '`search_docs` searches Confluence design docs/architecture/runbooks. ' : '') +
         (ticketTools

@@ -2810,7 +2810,7 @@ console.log('\npromptTemplates with-context regime (retrieval rides into a tool 
     codebaseToolsEnabled: true,
     repoOrientation: 'ORIENTATION_MARKER src/ README.md',
     workspaceRules: 'RULES_MARKER always run tests',
-    toolAvailability: { codebase: true, confluence: true, ado: false },
+    toolAvailability: { codebase: true, confluence: true, tickets: false },
   };
 
   await t('a tool turn WITH pre-fetched context carries the context AND the workspace rules/orientation', () => {
@@ -2842,7 +2842,7 @@ console.log('\npromptTemplates with-context regime (retrieval rides into a tool 
     const adoOff = createStructuredPrompt([], 'q', '', undefined, null, base);
     assert.ok(!/`get_ticket` reads ONE Azure DevOps/.test(adoOff), 'ADO disconnected: do not advertise get_ticket');
     assert.ok(/`search_docs` searches Confluence/.test(adoOff), 'Confluence connected: search_docs advertised');
-    const none = createStructuredPrompt([], 'q', '', undefined, null, { ...base, toolAvailability: { codebase: true, confluence: false, ado: false } });
+    const none = createStructuredPrompt([], 'q', '', undefined, null, { ...base, toolAvailability: { codebase: true, confluence: false, tickets: false } });
     assert.ok(!/Org knowledge —/.test(none), 'nothing connected: the whole paragraph goes');
     const legacy = createStructuredPrompt([], 'q', '', undefined, null, { codebaseToolsEnabled: true });
     assert.ok(/`get_ticket` reads ONE Azure DevOps/.test(legacy) && /`search_docs` searches Confluence/.test(legacy), 'older host (no availability): full text');
@@ -2874,18 +2874,18 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
   });
 
   await t('codebase only: org tools drop, web stays (it degrades keyless on its own)', () => {
-    const got = names(scopeToolDefs(ALL, { codebase: true, confluence: false, ado: false }));
+    const got = names(scopeToolDefs(ALL, { codebase: true, confluence: false, tickets: false }));
     assert.deepEqual(got, ['read_file', 'edit_file', 'explore', 'search_web']);
   });
 
-  await t('ADO without Confluence: ticket tools stay, doc tools drop', () => {
-    const got = names(scopeToolDefs(ALL, { codebase: true, confluence: false, ado: true }));
+  await t('a ticket tracker without Confluence: ticket tools stay, doc tools drop', () => {
+    const got = names(scopeToolDefs(ALL, { codebase: true, confluence: false, tickets: true }));
     assert.ok(got.includes('get_ticket') && got.includes('search_tickets'));
     assert.ok(!got.includes('search_docs') && !got.includes('get_confluence_page'));
   });
 
   await t('no folder open: every codebase tool drops, org tools stay', () => {
-    const got = names(scopeToolDefs(ALL, { codebase: false, confluence: true, ado: true }));
+    const got = names(scopeToolDefs(ALL, { codebase: false, confluence: true, tickets: true }));
     assert.deepEqual(got, ['search_docs', 'get_confluence_page', 'search_tickets', 'get_ticket', 'search_web']);
   });
 
@@ -3473,7 +3473,7 @@ console.log('\nprompt-cache friendliness (block order is a cost decision)');
     codebaseToolsEnabled: true,
     repoOrientation: 'ORIENTATION_MARKER src/ README.md',
     workspaceRules: 'RULES_MARKER always run tests',
-    toolAvailability: { codebase: true, confluence: true, ado: true },
+    toolAvailability: { codebase: true, confluence: true, tickets: true },
   };
   const build = (q, opts = {}) => createStructuredPrompt([], q, '', undefined, null, { ...base, ...opts });
 

@@ -304,5 +304,77 @@
       "duplicate",
       "reconnect|websocket"
     ]
+  },
+  {
+    "id": "q27",
+    "query": "tell me about ENG-4903",
+    "expected": [
+      "JIRA-ENG-4903"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "10,000|10k",
+      "truncat"
+    ]
+  },
+  {
+    "id": "q28",
+    "query": "what is ENG-4821 about",
+    "expected": [
+      "JIRA-ENG-4821"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "refresh",
+      "race condition|concurrent"
+    ]
+  },
+  {
+    "id": "q29",
+    "query": "ENG-5088",
+    "expected": [
+      "JIRA-ENG-5088"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "memory leak",
+      "websocket"
+    ]
+  },
+  {
+    "id": "q30",
+    "query": "details on ticket ENG-5140",
+    "expected": [
+      "JIRA-ENG-5140"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "weekend",
+      "digest"
+    ]
+  },
+  {
+    "id": "q31",
+    "query": "ENG-5203",
+    "expected": [
+      "JIRA-ENG-5203"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "autocomplete",
+      "stale|cache"
+    ]
+  },
+  {
+    "id": "q32",
+    "query": "ENG-5012",
+    "expected": [
+      "JIRA-ENG-5012"
+    ],
+    "kind": "id-lookup",
+    "expectedFacts": [
+      "dark mode",
+      "toggle"
+    ]
   }
 ]

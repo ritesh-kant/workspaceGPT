@@ -132,7 +132,7 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
         ws,
         q.query,
         () => {},
-        { searchResults: results, toolAvailability: { codebase: true, confluence: true, ado: false } },
+        { searchResults: results, toolAvailability: { codebase: true, confluence: true, tickets: false } },
         {
           // Real, same-index search — so a model that re-searches gets a real
           // answer and the re-search shows up as a counted tool call.

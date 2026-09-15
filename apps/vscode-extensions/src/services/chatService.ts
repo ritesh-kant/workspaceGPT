@@ -1349,7 +1349,8 @@ export class ChatService {
           ticketContext,
           autonomous,
           planMode,
-          toolAvailability
+          toolAvailability,
+          getActiveTicketProvider(this.context)?.label
         );
 
       let modelResponse: string;
@@ -2439,7 +2440,9 @@ Query: "${query}"`;
     /** Plan mode: deliverable is the plan; writes forbidden, anti-plan gates off. */
     planMode = false,
     /** Tool groups the worker may offer, from what is connected (see toolScope.ts). */
-    toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }
+    toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean },
+    /** Display label of whichever tracker is active ('Azure DevOps', 'Jira') — see tickets/registry.ts. */
+    ticketTrackerLabel?: string
   ): Promise<string> {
     try {
       run.lastAnswerStallShaped = false;
@@ -2501,6 +2504,7 @@ Query: "${query}"`;
           currentSprint: currentSprint || undefined,
           codebaseTools: codebaseRoots ? { enabled: true } : undefined,
           toolAvailability,
+          ticketTrackerLabel,
           // Text attachments are inlined into the prompt template; images are
           // sent to the model as multimodal image_url parts (vision models).
           textAttachments: attachments

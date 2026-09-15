@@ -86,6 +86,8 @@ interface WorkerData {
    * (folder open, source authenticated). Absent on an older host: every tool.
    */
   toolAvailability?: ToolAvailability;
+  /** Display label of whichever tracker is active ('Azure DevOps', 'Jira') — see tickets/registry.ts. Absent: the older, ADO-only prompt text. */
+  ticketTrackerLabel?: string;
   /** Text files the user attached — inlined into the structured prompt. */
   textAttachments?: { name: string; content: string }[];
   /** Image files the user attached — sent as multimodal image_url parts (vision models). */
@@ -110,8 +112,8 @@ interface WorkerData {
    */
   resumeTranscript?: unknown[];
   /**
-   * The work item this turn is about, pre-fetched live from Azure DevOps by
-   * the host (the message named a ticket ID). Grounds BOTH the exploration
+   * The ticket this turn is about, pre-fetched live from whichever tracker is
+   * active by the host (the message named a ticket ID). Grounds BOTH the exploration
    * phase's scout (the ticket body carries the discriminating vocabulary the
    * prompt lacks) and the prompt itself (acceptance criteria = definition of
    * done). Images from the ticket ride separately in imageAttachments.
@@ -165,6 +167,7 @@ const {
   currentSprint,
   codebaseTools,
   toolAvailability,
+  ticketTrackerLabel,
   textAttachments,
   imageAttachments,
   mentionedFiles,
@@ -1051,6 +1054,7 @@ async function generateResponse(): Promise<void> {
       {
         codebaseToolsEnabled: !!codebaseTools?.enabled,
         toolAvailability,
+        ticketTrackerLabel,
         // Drops the weak-model scaffolding from every turn of a strong-model
         // run, paired with the phrase gates PHRASE_GATES disables.
         harnessProfile: HARNESS_PROFILE,
