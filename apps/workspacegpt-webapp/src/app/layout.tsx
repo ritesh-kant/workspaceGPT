@@ -121,7 +121,7 @@ export default function RootLayout({
     <html lang="en">
       <Analytics/>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#030712] text-slate-100 min-h-screen selection:bg-[#1ff2b4] selection:text-black`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground min-h-screen selection:bg-[#1ff2b4] selection:text-black`}
       >
         <script
           type="application/ld+json"

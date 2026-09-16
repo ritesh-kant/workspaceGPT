@@ -1,36 +1,74 @@
 @import "tailwindcss";
 
+/**
+ * Dark, but restrained. The premium reference sites (Linear, Vercel, Cline)
+ * share one habit: almost no effects. No gradient text, no blurred colour
+ * blobs, no glowing shadows, one accent used sparingly, and a headline set in
+ * a *regular* weight rather than extrabold. The surface ramp below is the
+ * whole palette — reach for it instead of inventing another slate-800.
+ */
 :root {
-  --background: #030712;
-  --foreground: #f8fafc;
+  --background: #08090c;      /* page ground */
+  --surface: #0e1014;         /* cards */
+  --surface-2: #131620;       /* raised / hover */
+  --border: #1e222b;          /* hairline */
+  --border-strong: #2a2f3a;   /* hover hairline */
+  --foreground: #e8eaed;      /* primary text */
+  --muted: #9aa1ad;           /* secondary text */
+  --faint: #6b7280;           /* tertiary text */
+  --brand: #1ff2b4;
 }
 
 @theme inline {
-  --color-brand: #1ff2b4;
+  --color-brand: var(--brand);
   --color-brand-blue: #3b82f6;
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-  
-  --animate-pulse-slow: pulse 6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  --animate-float: float 6s ease-in-out infinite;
-  --animate-glow: glow 2s ease-in-out infinite alternate;
-}
-
-@keyframes float {
-  0% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
-  100% { transform: translateY(0px); }
-}
-
-@keyframes glow {
-  from { box-shadow: 0 0 10px -5px #1ff2b4; }
-  to { box-shadow: 0 0 20px 5px #1ff2b4; }
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans);
+  /* `@theme inline` substitutes theme values into utilities instead of emitting
+     them as custom properties, so `var(--font-sans)` is undefined here and the
+     page silently fell back to the system UI stack. Reference Geist's own
+     variable — next/font defines it on <body> — rather than the theme key. */
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Headlines carry size and tight tracking, never weight. */
+h1, h2, h3 {
+  letter-spacing: -0.022em;
+}
+
+/**
+ * Scroll reveal. Both reference sites fade sections in as they enter view;
+ * it is the one piece of motion that reads as considered rather than busy.
+ * Content is visible by default so it survives no-JS and reduced-motion.
+ */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+[data-reveal].is-visible {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
 }
