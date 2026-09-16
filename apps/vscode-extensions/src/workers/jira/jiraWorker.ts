@@ -19,9 +19,12 @@ import { adfToText } from '../../services/jira/adf';
  */
 
 interface WorkerData {
-  siteUrl: string; // normalized, no trailing slash
+  /** The site's real domain — used only for the synced markdown's `/browse/{key}` urls. */
+  siteUrl: string;
+  /** `https://api.atlassian.com/ex/jira/{cloudId}` — every REST call in this worker goes here, not siteUrl. */
+  apiBase: string;
   projectKey: string;
-  authHeader: string; // Pre-built `Basic` Authorization value
+  authHeader: string; // Pre-built `Bearer` Authorization value (OAuth 3LO)
   resume?: boolean;
   lastProcessedId?: string;
   processedItems?: number;
@@ -56,7 +59,7 @@ interface JiraComment {
   body: unknown; // ADF
 }
 
-const { siteUrl, projectKey, resume, lastProcessedId, processedItems, isIncremental, lastSyncTime, lookbackMonths } =
+const { siteUrl, apiBase, projectKey, resume, lastProcessedId, processedItems, isIncremental, lastSyncTime, lookbackMonths } =
   workerData as WorkerData;
 
 // Mutable for the same reason adoWorker.ts's is: a sync can run well past a
@@ -188,7 +191,7 @@ async function fetchAllIssues(): Promise<Issue[]> {
   let nextPageToken: string | undefined;
 
   for (;;) {
-    const result = await jiraPost(`${siteUrl}/rest/api/3/search/jql`, {
+    const result = await jiraPost(`${apiBase}/rest/api/3/search/jql`, {
       jql,
       maxResults: 100,
       fields: ISSUE_FIELDS,
@@ -204,7 +207,7 @@ async function fetchAllIssues(): Promise<Issue[]> {
 
 async function fetchComments(key: string): Promise<JiraComment[]> {
   try {
-    const url = `${siteUrl}/rest/api/3/issue/${encodeURIComponent(key)}/comment?maxResults=50&orderBy=-created`;
+    const url = `${apiBase}/rest/api/3/issue/${encodeURIComponent(key)}/comment?maxResults=50&orderBy=-created`;
     const result = await jiraGet(url);
     return (result.comments ?? []) as JiraComment[];
   } catch {

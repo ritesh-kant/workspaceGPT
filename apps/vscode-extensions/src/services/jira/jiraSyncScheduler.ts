@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { JiraService, JiraSyncConfig } from './jiraService';
-import { JiraAuthService } from './jiraAuthService';
+import { JiraAuthService, jiraApiBase } from './jiraAuthService';
 import { JiraEmbeddingService } from './jiraEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
@@ -121,20 +121,19 @@ export class JiraSyncScheduler {
     try {
       const authService = new JiraAuthService(this.context);
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      const siteUrl = config?.state?.config?.jira?.siteUrl;
-      const email = config?.state?.config?.jira?.email;
       const projectKey = config?.state?.config?.jira?.projectKey;
       const lookbackMonths = config?.state?.config?.jira?.lookbackMonths || 24;
+      const site = authService.getStoredSite();
 
-      if (!siteUrl || !email || !projectKey) {
+      if (!site || !projectKey) {
         throw new Error('Jira config incomplete');
       }
-      const authHeader = await authService.getValidAuthHeader(email);
+      const authHeader = await authService.getValidAuthHeader();
 
       await persistSyncState(this.context, 'jira', { isSyncing: true });
       this.syncStartedAt = Date.now();
 
-      const jiraSyncConfig: JiraSyncConfig = { siteUrl, projectKey, authHeader, lookbackMonths };
+      const jiraSyncConfig: JiraSyncConfig = { siteUrl: site.url, apiBase: jiraApiBase(site.id), projectKey, authHeader, lookbackMonths };
 
       const jiraService = new JiraService(undefined, this.context);
       const embeddingService = new JiraEmbeddingService(undefined, this.context);
@@ -162,7 +161,7 @@ export class JiraSyncScheduler {
           console.error('❌ Auto-sync Jira: worker error:', error.message);
           this.resetSyncFlags();
         },
-        () => authService.getValidAuthHeader(email)
+        () => authService.getValidAuthHeader()
       );
     } catch (e) {
       console.error('Automated Jira background sync failed:', e);

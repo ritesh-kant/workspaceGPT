@@ -218,11 +218,13 @@ export const MESSAGE_TYPES = {
   SAVE_ADO_USER_DISPLAY_NAME: 'save-ado-user-display-name',
 
   // Jira messages (JIRA-INTEGRATION-DESIGN.md §5 P7, sync/indexing added P5,
-  // My Work added P6). One auth mode (API token, not ADO's three), otherwise
-  // the same shape as ADO's equivalent block below.
-  SAVE_JIRA_CREDENTIALS: 'save-jira-credentials',
-  JIRA_CREDENTIALS_SUCCESS: 'jira-credentials-success',
-  JIRA_CREDENTIALS_ERROR: 'jira-credentials-error',
+  // My Work added P6, OAuth 3LO added post-P9 — replaced the original
+  // API-token connect flow, mirroring Confluence's START/CANCEL/SUCCESS/ERROR
+  // shape below rather than ADO's token-form one).
+  START_JIRA_OAUTH: 'start-jira-oauth',
+  CANCEL_JIRA_OAUTH: 'cancel-jira-oauth',
+  JIRA_OAUTH_SUCCESS: 'jira-oauth-success',
+  JIRA_OAUTH_ERROR: 'jira-oauth-error',
   DISCONNECT_JIRA: 'disconnect-jira',
   FETCH_JIRA_PROJECTS: 'fetch-jira-projects',
   FETCH_JIRA_PROJECTS_SUCCESS: 'fetch-jira-projects-success',
@@ -446,12 +448,12 @@ export const STORAGE_KEYS = {
   /** Last successful "assigned to me" fetch, so the panel renders instantly. */
   ADO_MY_WORK_ITEMS_CACHE: 'ado-my-work-items-cache',
   /**
-   * Jira Cloud API token — v1 auth is API-token only (Basic email:token), see
-   * JIRA-INTEGRATION-DESIGN.md §5 P2. Site URL/email/project live in the
-   * ordinary settings blob (config.jira.*), same as ADO's org/project names;
-   * only the token itself is a secret.
+   * Jira Cloud OAuth 3LO tokens (access + refresh) — replaced the original
+   * API-token auth post-P9, mirroring Confluence's identical Atlassian OAuth
+   * flow (CONFLUENCE_OAUTH_TOKENS above). Project/site display info lives in
+   * the ordinary settings blob (config.jira.*); only the tokens are secret.
    */
-  JIRA_API_TOKEN: 'jira-api-token',
+  JIRA_OAUTH_TOKENS: 'jira-oauth-tokens',
   JIRA_SYNC_PROGRESS: 'jira-sync-progress',
   /**
    * Deliberately its OWN key, not the shared STORAGE_KEYS.EMBEDDING_PROGRESS
@@ -665,6 +667,33 @@ export const ATLASSIAN_OAUTH = {
     'offline_access',
   ],
   CALLBACK_PORT: 32323,
+  CALLBACK_PATH: '/callback',
+};
+
+/**
+ * Jira Cloud OAuth 2.0 (3LO) — the same Atlassian app as ATLASSIAN_OAUTH
+ * above (one client_id, one token-exchange proxy that never sees which
+ * product the code was issued for), scoped for Jira's platform REST API
+ * instead of Confluence's. The Atlassian app registration itself must also
+ * have these scopes added (developer.atlassian.com → the app's Permissions
+ * tab) or the consent screen will not grant them.
+ */
+export const JIRA_OAUTH = {
+  ATLASSIAN_CLIENT_ID: ATLASSIAN_OAUTH.ATLASSIAN_CLIENT_ID,
+  TOKEN_PROXY_URL: ATLASSIAN_OAUTH.TOKEN_PROXY_URL,
+  AUTH_URL: ATLASSIAN_OAUTH.AUTH_URL,
+  ACCESSIBLE_RESOURCES_URL: ATLASSIAN_OAUTH.ACCESSIBLE_RESOURCES_URL,
+  SCOPES: [
+    'read:jira-work',
+    'read:jira-user',
+    'write:jira-work',
+    'offline_access',
+  ],
+  // A different port from ATLASSIAN_OAUTH's 32323: both flows are triggered
+  // one at a time by the user, never concurrently, but a stray dangling
+  // Confluence callback server (e.g. one left over from a crashed prior
+  // flow) must never collide with a fresh Jira one.
+  CALLBACK_PORT: 32331,
   CALLBACK_PATH: '/callback',
 };
 

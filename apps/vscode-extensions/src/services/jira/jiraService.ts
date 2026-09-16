@@ -6,7 +6,6 @@ import { promisify } from 'util';
 import { MESSAGE_TYPES, WORKER_STATUS, STORAGE_KEYS } from '../../../constants';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
-import { normalizeSiteUrl } from './jiraAuthService';
 
 /**
  * Sync orchestration — spawns jiraWorker.ts, tracks resumable progress,
@@ -22,7 +21,10 @@ interface ProcessedJiraItem {
 }
 
 export interface JiraSyncConfig {
+  /** The site's real domain, e.g. `https://yourcompany.atlassian.net` — used only for the synced markdown's `/browse/{key}` urls. */
   siteUrl: string;
+  /** `https://api.atlassian.com/ex/jira/{cloudId}` — every REST call the worker makes goes here. */
+  apiBase: string;
   projectKey: string;
   authHeader: string;
   lookbackMonths: number;
@@ -36,10 +38,11 @@ interface SyncProgress {
   lastSyncTime: string;
 }
 
-// Same interval as ADO's — comfortably under an API token's effective
-// lifetime (Jira API tokens don't expire on a fixed clock the way a Bearer
-// access token does, but refreshing periodically costs nothing and keeps the
-// two sync paths symmetric).
+// Same interval as ADO's. Now load-bearing rather than cosmetic: the OAuth
+// access token this header carries expires on a real clock (Atlassian's
+// tokens live about an hour), and getValidAuthHeader() only renews it when
+// asked — 20 minutes keeps a multi-hour sync comfortably ahead of expiry
+// without every call needing its own refresh check.
 const AUTH_REFRESH_INTERVAL_MS = 20 * 60 * 1000;
 
 export class JiraService {
@@ -112,7 +115,8 @@ export class JiraService {
 
       this.worker = new Worker(workerPath, {
         workerData: {
-          siteUrl: normalizeSiteUrl(config.siteUrl),
+          siteUrl: config.siteUrl,
+          apiBase: config.apiBase,
           projectKey: config.projectKey,
           authHeader: config.authHeader,
           resume,

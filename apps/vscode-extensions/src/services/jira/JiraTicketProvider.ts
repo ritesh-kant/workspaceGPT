@@ -1,14 +1,13 @@
 import * as vscode from 'vscode';
-import { STORAGE_KEYS } from '../../../constants';
 import { TicketProvider } from '../tickets/TicketProvider';
 import { MyTicketsResult, TicketDetail } from '../tickets/types';
-import { JiraAuthService, normalizeSiteUrl } from './jiraAuthService';
+import { JiraAuthService } from './jiraAuthService';
 import { addJiraComment, fetchJiraIssue, parseIssueKey } from './jiraIssueService';
 import { listMyJiraTickets } from './jiraMyWorkService';
 
 /** Jira issue urls, for lifting the key back out of a search hit — mirrors ADO_URL_ID_RE's role in referenceIndex.ts. */
 const JIRA_URL_ID_RE = /\/browse\/([A-Za-z][A-Za-z0-9_]*-\d+)/i;
-/** A future Jira sync's index would name each item this way — mirrors ADO_FILENAME_ID_RE (see adoWorker.ts); nothing produces these yet (design doc P5). */
+/** jiraWorker.ts's sync index names each item this way (`JIRA-${issue.key}`) — mirrors ADO_FILENAME_ID_RE. */
 const JIRA_FILENAME_ID_RE = /\bJIRA-([A-Za-z][A-Za-z0-9_]*-\d+)\b/;
 
 /**
@@ -43,10 +42,9 @@ export class JiraTicketProvider implements TicketProvider {
   }
 
   ticketUrl(id: string): string | null {
-    const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-    const siteUrl = settings?.state?.config?.jira?.siteUrl;
-    if (!siteUrl) return null;
-    return `${normalizeSiteUrl(siteUrl)}/browse/${encodeURIComponent(id)}`;
+    const site = new JiraAuthService(this.context).getStoredSite();
+    if (!site) return null;
+    return `${site.url}/browse/${encodeURIComponent(id)}`;
   }
 
   /** Jira's smart-commit syntax takes the bare key, unlike ADO's `AB#123`. */

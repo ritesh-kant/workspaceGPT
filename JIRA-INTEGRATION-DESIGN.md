@@ -212,10 +212,20 @@ comes from `/rest/api/3/myself` (`accountId`), replacing
 strictly better, because the ADO path notes that filtering on a stored display
 name opens a WIQL-injection seam.
 
-> **OAuth 2.0 3LO is deferred.** It needs a registered Atlassian app, a callback
-> server, refresh-token rotation, and `cloudid` resolution via
-> `accessible-resources`. That is **+5–8 d** and it is not needed for a design
-> partner. Revisit when someone's security review demands it.
+> **Update, post-P9: OAuth 2.0 3LO shipped, replacing this API-token flow.**
+> The +5–8 d estimate below assumed building the callback server, token
+> exchange, and `accessible-resources` discovery from scratch — but
+> Confluence's own OAuth flow (confluenceAuthService.ts) already had all of
+> it, against the *same* Atlassian app and the *same* token-exchange proxy
+> (confluence-auth-proxy), which turned out to be product-agnostic. Actual
+> cost was closer to 1 day: mirror the flow, add Jira scopes, and switch every
+> Jira REST call from `Basic` auth against the site's own domain to `Bearer`
+> auth against `api.atlassian.com/ex/jira/{cloudId}` (OAuth-authenticated
+> Atlassian calls are proxied, not sent to the site directly). See
+> jiraAuthService.ts. The one manual step this doesn't cover: the shared
+> Atlassian app's registration needs Jira's scopes
+> (`read:jira-work`/`read:jira-user`/`write:jira-work`/`offline_access`)
+> added in developer.atlassian.com, or the consent screen won't grant them.
 
 ### P3 · ADF renderer + attachments — 3–4 d
 
@@ -365,7 +375,7 @@ pole on the critical path for P4 — start it the moment P1 lands.
 ## 9. Out of scope (v1)
 
 - Jira Server / Data Center (§0)
-- OAuth 2.0 3LO (§P2)
+- ~~OAuth 2.0 3LO (§P2)~~ — shipped post-P9, see the update in §5 P2.
 - Two trackers connected simultaneously — needs namespace collision rules and
   ref disambiguation (`#123` in a repo with both) before it is safe
 - Writing Jira issues (create/transition). Read + comment only, matching ADO

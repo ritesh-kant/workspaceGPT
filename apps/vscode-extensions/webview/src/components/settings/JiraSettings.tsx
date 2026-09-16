@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useSettingsStore } from '../../store';
 import { VSCodeAPI } from '../../vscode';
 import { handleJiraActions, handleInputChange } from './utils';
@@ -10,9 +10,10 @@ import SyncControls, { SyncStatusMessage } from './SyncControls';
 import StatusDot from './StatusDot';
 
 /**
- * One auth mode (API token — OAuth is deferred, JIRA-INTEGRATION-DESIGN.md
- * §5 P2), otherwise the same shape as AdoSettings.tsx: connect, project
- * picker, lookback, sync controls (§5 P5).
+ * OAuth 3LO connect (replaced the original API-token form post-P9) — a
+ * near-clone of ConfluenceSettings.tsx's "Connect with Atlassian" flow,
+ * otherwise the same shape as AdoSettings.tsx: project picker, lookback,
+ * sync controls (§5 P5).
  */
 const JiraSettings: React.FC = () => {
   const { config, batchUpdateConfig, updateConfig } = useSettingsStore();
@@ -23,11 +24,6 @@ const JiraSettings: React.FC = () => {
   // store/settingsMessages.ts — this panel unmounts on every trip back to
   // chat, and connect/disconnect completions are sent exactly once.
 
-  const [showEmail, setShowEmail] = useState(false);
-  const [siteInput, setSiteInput] = useState('');
-  const [emailInput, setEmailInput] = useState('');
-  const [tokenInput, setTokenInput] = useState('');
-
   // Fetch projects as soon as connected but none picked yet — same
   // self-healing fallback AdoSettings uses, covering both a fresh connect and
   // a session authenticated before a project was ever chosen.
@@ -37,33 +33,22 @@ const JiraSettings: React.FC = () => {
       !jiraConfig?.projectKey &&
       (!jiraConfig?.availableProjects || jiraConfig.availableProjects.length === 0)
     ) {
-      vscode.postMessage({
-        type: MESSAGE_TYPES.FETCH_JIRA_PROJECTS,
-        siteUrl: jiraConfig.siteUrl,
-        email: jiraConfig.email,
-      });
+      vscode.postMessage({ type: MESSAGE_TYPES.FETCH_JIRA_PROJECTS });
     }
-  }, [jiraConfig?.isAuthenticated, jiraConfig?.projectKey, jiraConfig?.availableProjects, jiraConfig?.siteUrl, jiraConfig?.email]);
+  }, [jiraConfig?.isAuthenticated, jiraConfig?.projectKey, jiraConfig?.availableProjects]);
 
-  const submitCredentials = () => {
-    const site = siteInput.trim();
-    const email = emailInput.trim();
-    const token = tokenInput.trim();
-    if (!site || !email || !token) return;
+  const startOAuth = () => {
     batchUpdateConfig('jira', {
-      siteUrl: site,
-      email,
       isConnecting: true,
-      statusMessage: 'Verifying credentials…',
+      statusMessage: 'Opening browser for authentication...',
       messageType: 'success',
     });
-    vscode.postMessage({
-      type: MESSAGE_TYPES.SAVE_JIRA_CREDENTIALS,
-      siteUrl: site,
-      email,
-      apiToken: token,
-    });
-    setTokenInput('');
+    handleJiraActions.startOAuth(vscode);
+  };
+
+  const cancelOAuth = () => {
+    handleJiraActions.cancelOAuth(vscode);
+    // State will be updated via the response from extension
   };
 
   const fetchProjects = () => {
@@ -72,11 +57,7 @@ const JiraSettings: React.FC = () => {
       statusMessage: 'Fetching available projects...',
       messageType: 'success',
     });
-    vscode.postMessage({
-      type: MESSAGE_TYPES.FETCH_JIRA_PROJECTS,
-      siteUrl: jiraConfig.siteUrl,
-      email: jiraConfig.email,
-    });
+    vscode.postMessage({ type: MESSAGE_TYPES.FETCH_JIRA_PROJECTS });
   };
 
   const selectProject = (key: string) => {
@@ -133,45 +114,22 @@ const JiraSettings: React.FC = () => {
         <div className='settings-form'>
           {/* Not Authenticated State */}
           {!isAuthenticated && (
-            <div className='pat-connect'>
+            <div className='oauth-connect'>
               <p className='description-text'>
-                Connect Jira with an API token from your Atlassian account
-                (id.atlassian.com → Security → API tokens).
+                Connect your Atlassian account to sync Jira issues.
               </p>
-              <div className='form-group'>
-                <label>Jira site URL</label>
-                <input
-                  type='text'
-                  value={siteInput}
-                  onChange={(e) => setSiteInput(e.target.value)}
-                  placeholder='yourcompany.atlassian.net'
-                />
-              </div>
-              <div className='form-group'>
-                <label>Email</label>
-                <input
-                  type='email'
-                  value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder='you@yourcompany.com'
-                />
-              </div>
-              <div className='form-group'>
-                <label>API token</label>
-                <input
-                  type='password'
-                  value={tokenInput}
-                  onChange={(e) => setTokenInput(e.target.value)}
-                  placeholder='Paste your Jira API token'
-                />
-              </div>
               <button
+                onClick={startOAuth}
+                disabled={jiraConfig?.isConnecting}
                 className='primary-button-full'
-                onClick={submitCredentials}
-                disabled={!siteInput.trim() || !emailInput.trim() || !tokenInput.trim() || jiraConfig?.isConnecting}
               >
-                {jiraConfig?.isConnecting ? 'Verifying…' : 'Connect'}
+                {jiraConfig?.isConnecting ? 'Connecting…' : 'Connect to Jira'}
               </button>
+              {jiraConfig?.isConnecting && (
+                <button onClick={cancelOAuth} className='secondary-button button-full mt-8'>
+                  Cancel
+                </button>
+              )}
             </div>
           )}
 
@@ -187,29 +145,6 @@ const JiraSettings: React.FC = () => {
                 <button type='button' onClick={disconnect} className='disconnect-link'>
                   Disconnect
                 </button>
-              </div>
-
-              <div className='form-group'>
-                <label>Site</label>
-                <div className='password-input-container'>
-                  <input
-                    type={showEmail ? 'text' : 'password'}
-                    value={jiraConfig.siteUrl || ''}
-                    readOnly
-                  />
-                  <button
-                    type='button'
-                    className='password-toggle-btn'
-                    onClick={() => setShowEmail(!showEmail)}
-                    title={showEmail ? 'Hide site URL' : 'Show site URL'}
-                  >
-                    {showEmail ? (
-                      <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'><path d='M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49'/><path d='M14.084 14.158a3 3 0 0 1-4.242-4.242'/><path d='M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143'/><path d='m2 2 20 20'/></svg>
-                    ) : (
-                      <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'><path d='M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0'/><circle cx='12' cy='12' r='3'/></svg>
-                    )}
-                  </button>
-                </div>
               </div>
 
               <div className='form-group'>

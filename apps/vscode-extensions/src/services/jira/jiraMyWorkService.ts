@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { STORAGE_KEYS } from '../../../constants';
 import { MyTicketsResult, TicketSummary } from '../tickets/types';
-import { JiraAuthService, normalizeSiteUrl } from './jiraAuthService';
+import { JiraAuthService, jiraApiBase } from './jiraAuthService';
 
 /**
  * "Your work" for Jira — JIRA-INTEGRATION-DESIGN.md §5 P6.
@@ -18,18 +18,20 @@ import { JiraAuthService, normalizeSiteUrl } from './jiraAuthService';
 
 interface JiraRequestContext {
   authHeader: string;
-  site: string;
+  /** `https://api.atlassian.com/ex/jira/{cloudId}` — every REST call goes here, not the site's own domain. */
+  apiBase: string;
+  /** The site's real domain — for building `/browse/{key}` links only. */
+  siteUrl: string;
 }
 
 async function getRequestContext(context: vscode.ExtensionContext): Promise<JiraRequestContext> {
-  const settings: any = context.globalState.get(STORAGE_KEYS.SETTINGS);
-  const siteUrl = settings?.state?.config?.jira?.siteUrl;
-  const email = settings?.state?.config?.jira?.email;
-  if (!siteUrl || !email) {
-    throw new Error('Jira is not configured (missing site URL/email). Connect it in Settings → Jira.');
+  const authService = new JiraAuthService(context);
+  const site = authService.getStoredSite();
+  if (!site) {
+    throw new Error('Jira is not connected. Connect it in Settings → Jira.');
   }
-  const authHeader = await new JiraAuthService(context).getValidAuthHeader(email);
-  return { authHeader, site: normalizeSiteUrl(siteUrl) };
+  const authHeader = await authService.getValidAuthHeader();
+  return { authHeader, apiBase: jiraApiBase(site.id), siteUrl: site.url };
 }
 
 async function jiraGet(ctx: JiraRequestContext, url: string, what: string): Promise<any> {
@@ -55,7 +57,7 @@ async function resolveSprintFieldId(context: vscode.ExtensionContext, ctx: JiraR
   if (cached) return cached;
 
   try {
-    const fields = await jiraGet(ctx, `${ctx.site}/rest/api/3/field`, 'resolve the Sprint field');
+    const fields = await jiraGet(ctx, `${ctx.apiBase}/rest/api/3/field`, 'resolve the Sprint field');
     const sprintField = (fields ?? []).find(
       (f: any) => f?.schema?.custom === 'com.pyxis.greenhopper.jira:gh-sprint'
     );
@@ -82,14 +84,14 @@ async function fetchActiveSprint(ctx: JiraRequestContext, projectKey: string): P
   try {
     const boards = await jiraGet(
       ctx,
-      `${ctx.site}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(projectKey)}`,
+      `${ctx.apiBase}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(projectKey)}`,
       'list boards'
     );
     for (const board of boards?.values ?? []) {
       try {
         const sprints = await jiraGet(
           ctx,
-          `${ctx.site}/rest/agile/1.0/board/${board.id}/sprint?state=active`,
+          `${ctx.apiBase}/rest/agile/1.0/board/${board.id}/sprint?state=active`,
           'fetch active sprint'
         );
         const active = sprints?.values?.[0];
@@ -141,7 +143,7 @@ export async function listMyJiraTickets(context: vscode.ExtensionContext): Promi
 
   const result = await jiraGet(
     ctx,
-    `${ctx.site}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${MY_WORK_ITEMS_LIMIT}&fields=${fields.join(',')}`,
+    `${ctx.apiBase}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${MY_WORK_ITEMS_LIMIT}&fields=${fields.join(',')}`,
     'query your Jira issues'
   );
 
@@ -155,7 +157,7 @@ export async function listMyJiraTickets(context: vscode.ExtensionContext): Promi
       state: f.status?.name ?? 'Unknown',
       sprint: sprint?.name,
       changedDate: f.updated,
-      url: `${ctx.site}/browse/${issue.key}`,
+      url: `${ctx.siteUrl}/browse/${issue.key}`,
       inCurrentSprint: !!(activeSprint && sprint && sprint.id === activeSprint.id),
     };
   });

@@ -71,8 +71,8 @@ export interface AdoConfig {
 export interface JiraConfig {
   isJiraEnabled?: boolean;
   isAuthenticated: boolean;
+  /** The connected site's real domain, discovered via OAuth — display only. */
   siteUrl: string;
-  email: string;
   projectKey: string;
   projectName: string;
   availableProjects: { id: string; key: string; name: string }[];

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { ATTACHMENT_LIMITS, STORAGE_KEYS } from '../../../constants';
-import { JiraAuthService, normalizeSiteUrl } from './jiraAuthService';
+import { ATTACHMENT_LIMITS } from '../../../constants';
+import { JiraAuthService, jiraApiBase } from './jiraAuthService';
 import { TicketComment, TicketDetail, TicketImage } from '../tickets/types';
 import { adfToText, markdownToAdf, mediaIdsFromAdf } from './adf';
 import { sniffImageMime } from '../tickets/imageSniff';
@@ -17,21 +17,22 @@ import { sniffImageMime } from '../tickets/imageSniff';
 
 interface JiraRequestContext {
   authHeader: string;
-  /** Normalized, no trailing slash. */
-  site: string;
+  /** `https://api.atlassian.com/ex/jira/{cloudId}` — every REST call goes here, not the site's own domain (OAuth-authenticated calls are proxied). */
+  apiBase: string;
+  /** The site's real domain, e.g. `https://yourcompany.atlassian.net` — for building `/browse/{key}` links only. */
+  siteUrl: string;
 }
 
 const MAX_TICKET_IMAGES = 5;
 
 async function getRequestContext(context: vscode.ExtensionContext): Promise<JiraRequestContext> {
-  const settings: any = context.globalState.get(STORAGE_KEYS.SETTINGS);
-  const siteUrl = settings?.state?.config?.jira?.siteUrl;
-  const email = settings?.state?.config?.jira?.email;
-  if (!siteUrl || !email) {
-    throw new Error('Jira is not configured (missing site URL/email). Connect it in Settings → Jira.');
+  const authService = new JiraAuthService(context);
+  const site = authService.getStoredSite();
+  if (!site) {
+    throw new Error('Jira is not connected. Connect it in Settings → Jira.');
   }
-  const authHeader = await new JiraAuthService(context).getValidAuthHeader(email);
-  return { authHeader, site: normalizeSiteUrl(siteUrl) };
+  const authHeader = await authService.getValidAuthHeader();
+  return { authHeader, apiBase: jiraApiBase(site.id), siteUrl: site.url };
 }
 
 async function jiraGet(ctx: JiraRequestContext, url: string, what: string): Promise<any> {
@@ -42,7 +43,7 @@ async function jiraGet(ctx: JiraRequestContext, url: string, what: string): Prom
     }
     if (response.status === 401 || response.status === 403) {
       throw new Error(
-        'Jira rejected the request — the email/API token may be expired or missing permission. Reconnect Jira in Settings.'
+        'Jira rejected the request — the connection may have expired or lost permission. Reconnect Jira in Settings.'
       );
     }
     const body = await response.text().catch(() => '');
@@ -88,7 +89,7 @@ async function fetchAttachmentImages(ctx: JiraRequestContext, ids: string[]): Pr
   const images: TicketImage[] = [];
   for (const id of ids.slice(0, MAX_TICKET_IMAGES)) {
     try {
-      const url = `${ctx.site}/rest/api/3/attachment/content/${encodeURIComponent(id)}`;
+      const url = `${ctx.apiBase}/rest/api/3/attachment/content/${encodeURIComponent(id)}`;
       const resp = await fetch(url, { headers: { Authorization: ctx.authHeader } });
       if (!resp.ok) continue;
       const buf = await resp.arrayBuffer();
@@ -108,7 +109,7 @@ async function fetchAttachmentImages(ctx: JiraRequestContext, ids: string[]): Pr
 /** Comments are supplementary — never fail the whole read because they errored. */
 async function fetchComments(ctx: JiraRequestContext, key: string): Promise<TicketComment[]> {
   try {
-    const url = `${ctx.site}/rest/api/3/issue/${encodeURIComponent(key)}/comment?maxResults=50&orderBy=-created`;
+    const url = `${ctx.apiBase}/rest/api/3/issue/${encodeURIComponent(key)}/comment?maxResults=50&orderBy=-created`;
     const data = await jiraGet(ctx, url, `#${key} comments`);
     return (data.comments ?? []).map((c: any) => ({
       author: c.author?.displayName || 'Unknown',
@@ -135,7 +136,7 @@ export async function fetchJiraIssue(
   const key = parseIssueKey(String(args?.id ?? ''));
   const ctx = await getRequestContext(context);
 
-  const item = await jiraGet(ctx, `${ctx.site}/rest/api/3/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS}`, key);
+  const item = await jiraGet(ctx, `${ctx.apiBase}/rest/api/3/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS}`, key);
   const f = item.fields ?? {};
 
   const description = f.description ? adfToText(f.description) : undefined;
@@ -153,7 +154,7 @@ export async function fetchJiraIssue(
     priority: f.priority?.name,
     createdDate: f.created,
     changedDate: f.updated,
-    url: `${ctx.site}/browse/${item.key ?? key}`,
+    url: `${ctx.siteUrl}/browse/${item.key ?? key}`,
     description,
     // Jira has no separate "acceptance criteria" field — teams that use one
     // do it as a custom field, whose id varies per site (design doc §8 risk
@@ -168,7 +169,7 @@ export async function fetchJiraIssue(
 /** Post a comment on an issue (the agent's run report, after "Create PR"). `markdown` is rendered to ADF, mirroring shipHelpers.ts's reportToHtml for ADO. */
 export async function addJiraComment(context: vscode.ExtensionContext, key: string, markdown: string): Promise<void> {
   const ctx = await getRequestContext(context);
-  const response = await fetch(`${ctx.site}/rest/api/3/issue/${encodeURIComponent(key)}/comment`, {
+  const response = await fetch(`${ctx.apiBase}/rest/api/3/issue/${encodeURIComponent(key)}/comment`, {
     method: 'POST',
     headers: { Authorization: ctx.authHeader, Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ body: markdownToAdf(markdown) }),
@@ -176,7 +177,7 @@ export async function addJiraComment(context: vscode.ExtensionContext, key: stri
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
       throw new Error(
-        'Jira rejected the request — the email/API token may be expired or missing permission. Reconnect Jira in Settings.'
+        'Jira rejected the request — the connection may have expired or lost permission. Reconnect Jira in Settings.'
       );
     }
     const text = await response.text().catch(() => '');

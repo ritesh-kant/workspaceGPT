@@ -401,10 +401,11 @@ function handleJiraMessage(message: any): void {
   const batchUpdateConfig = useSettingsStore.getState().batchUpdateConfig;
 
   switch (message.type) {
-    case MESSAGE_TYPES.JIRA_CREDENTIALS_SUCCESS:
+    case MESSAGE_TYPES.JIRA_OAUTH_SUCCESS:
       batchUpdateConfig('jira', {
         isAuthenticated: true,
         isConnecting: false,
+        siteUrl: message.site?.url || '',
         accountId: message.accountId || '',
         displayName: message.displayName || '',
         messageType: 'success',
@@ -413,11 +414,11 @@ function handleJiraMessage(message: any): void {
       clearStatusMessageAfterDelay('jira');
       break;
 
-    case MESSAGE_TYPES.JIRA_CREDENTIALS_ERROR:
+    case MESSAGE_TYPES.JIRA_OAUTH_ERROR:
       batchUpdateConfig('jira', {
         isConnecting: false,
         messageType: 'error',
-        statusMessage: message.message || 'Could not verify Jira credentials',
+        statusMessage: message.message || 'Authentication failed',
       });
       clearStatusMessageAfterDelay('jira');
       break;
@@ -446,7 +447,6 @@ function handleJiraMessage(message: any): void {
       batchUpdateConfig('jira', {
         isAuthenticated: false,
         siteUrl: '',
-        email: '',
         projectKey: '',
         projectName: '',
         availableProjects: [],

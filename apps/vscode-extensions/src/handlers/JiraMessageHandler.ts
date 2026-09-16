@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
-import { JiraAuthService } from '../services/jira/jiraAuthService';
+import { JiraAuthService, jiraApiBase } from '../services/jira/jiraAuthService';
 import { JiraService, JiraSyncConfig } from '../services/jira/jiraService';
 import { JiraEmbeddingService } from '../services/jira/jiraEmbeddingService';
 import { EmbeddingConfig } from '../types/types';
@@ -15,6 +15,9 @@ import { deleteDirectory } from 'src/utils/deleteDirectory';
  * equivalent cases; still no My Work fetch here (§5 P6) — see
  * ticketsMessageHandler.ts for that, which is provider-neutral rather than
  * living in either tracker's own handler.
+ *
+ * Connect is OAuth 3LO (post-P9), mirroring ConfluenceMessageHandler's
+ * START/CANCEL/SUCCESS/ERROR shape rather than the original API-token form.
  */
 export class JiraMessageHandler {
   private jiraAuthService: JiraAuthService;
@@ -39,15 +42,20 @@ export class JiraMessageHandler {
 
   public async handleMessage(data: any): Promise<boolean> {
     switch (data.type) {
-      case MESSAGE_TYPES.SAVE_JIRA_CREDENTIALS:
-        await this.handleSaveCredentials(data.siteUrl, data.email, data.apiToken);
+      case MESSAGE_TYPES.START_JIRA_OAUTH:
+        this.analyticsService.trackEvent('jira_oauth_started');
+        await this.handleStartJiraOAuth();
+        return true;
+      case MESSAGE_TYPES.CANCEL_JIRA_OAUTH:
+        this.analyticsService.trackEvent('jira_oauth_cancelled');
+        await this.handleCancelJiraOAuth();
         return true;
       case MESSAGE_TYPES.DISCONNECT_JIRA:
         this.analyticsService.trackEvent('jira_disconnected');
         await this.handleDisconnect();
         return true;
       case MESSAGE_TYPES.FETCH_JIRA_PROJECTS:
-        await this.handleFetchProjects(data.siteUrl, data.email);
+        await this.handleFetchProjects();
         return true;
       case MESSAGE_TYPES.CHECK_JIRA_CONNECTION:
         await this.handleCheckConnection();
@@ -69,25 +77,51 @@ export class JiraMessageHandler {
     }
   }
 
-  private async handleSaveCredentials(siteUrl: string, email: string, apiToken: string): Promise<void> {
+  private async handleStartJiraOAuth(): Promise<void> {
     try {
-      const identity = await this.jiraAuthService.connectWithApiToken(siteUrl, email, apiToken);
+      const result = await this.jiraAuthService.startOAuthFlow();
       this.analyticsService.trackEvent('jira_connected');
+
+      // Mirror the discovered site/identity into settings so the rest of the
+      // UI (the read-only "Site" field, the sync scheduler's "is configured"
+      // gate) keeps reading config.jira.* the same way it always did — only
+      // how these fields get POPULATED changed, not who reads them.
+      const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+      if (settings?.state?.config?.jira) {
+        settings.state.config.jira.siteUrl = result.site.url;
+        settings.state.config.jira.accountId = result.identity.accountId;
+        settings.state.config.jira.displayName = result.identity.displayName;
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, settings);
+      }
+
       this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.JIRA_CREDENTIALS_SUCCESS,
-        accountId: identity.accountId,
-        displayName: identity.displayName,
+        type: MESSAGE_TYPES.JIRA_OAUTH_SUCCESS,
+        site: { id: result.site.id, name: result.site.name, url: result.site.url },
+        accountId: result.identity.accountId,
+        displayName: result.identity.displayName,
       });
-      await this.handleFetchProjects(siteUrl, email);
+      await this.handleFetchProjects();
     } catch (error) {
-      console.error('Error saving Jira credentials:', error);
-      this.analyticsService.trackEvent('jira_connect_error', {
+      console.error('Error in Jira OAuth:', error);
+      this.analyticsService.trackEvent('jira_oauth_error', {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
       this.webviewView.webview.postMessage({
-        type: MESSAGE_TYPES.JIRA_CREDENTIALS_ERROR,
+        type: MESSAGE_TYPES.JIRA_OAUTH_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private async handleCancelJiraOAuth(): Promise<void> {
+    try {
+      await this.jiraAuthService.cancelOAuthFlow();
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.JIRA_OAUTH_ERROR,
+        message: 'Authentication cancelled.',
+      });
+    } catch (error) {
+      console.error('Error cancelling Jira OAuth:', error);
     }
   }
 
@@ -114,7 +148,6 @@ export class JiraMessageHandler {
           ...settings.state.config.jira,
           isAuthenticated: false,
           siteUrl: '',
-          email: '',
           projectKey: '',
           projectName: '',
           availableProjects: [],
@@ -147,17 +180,18 @@ export class JiraMessageHandler {
   /**
    * Lists projects so the settings panel can offer a dropdown instead of a
    * typed key. Called both on explicit request and automatically right after
-   * a successful connect — a soft failure here (e.g. a token that can't read
-   * project/search) just leaves the dropdown empty and falls back to manual
-   * entry, never blocks connecting. Mirrors AdoMessageHandler's
-   * handleFetchAdoOrganizations for the same reason.
+   * a successful connect — a soft failure here (e.g. missing permission)
+   * just leaves the dropdown empty and falls back to manual entry, never
+   * blocks connecting. Mirrors AdoMessageHandler's handleFetchAdoOrganizations
+   * for the same reason.
    */
-  private async handleFetchProjects(siteUrl: string, email: string): Promise<void> {
+  private async handleFetchProjects(): Promise<void> {
     try {
-      if (!siteUrl || !email) {
-        throw new Error('Jira site URL and email are required to fetch projects.');
+      const site = this.jiraAuthService.getStoredSite();
+      if (!site) {
+        throw new Error('No Jira site connected. Please connect first.');
       }
-      const projects = await this.jiraAuthService.fetchProjects(siteUrl, email);
+      const projects = await this.jiraAuthService.fetchProjects(site.id);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.FETCH_JIRA_PROJECTS_SUCCESS,
         projects: projects.map((p) => ({ id: p.id, key: p.key, name: p.name })),
@@ -173,13 +207,7 @@ export class JiraMessageHandler {
 
   private async handleCheckConnection(): Promise<void> {
     try {
-      const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-      const siteUrl = settings?.state?.config?.jira?.siteUrl;
-      const email = settings?.state?.config?.jira?.email;
-      if (!siteUrl || !email) {
-        throw new Error('Jira configuration is incomplete. Please connect.');
-      }
-      const identity = await this.jiraAuthService.checkConnection(siteUrl, email);
+      const identity = await this.jiraAuthService.checkConnection();
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.JIRA_CONNECTION_STATUS,
         status: true,
@@ -197,20 +225,18 @@ export class JiraMessageHandler {
     }
   }
 
-  /** Also returns `email` — needed by the callers below to build the auth-refresh callback, but not part of JiraSyncConfig itself (jiraService/jiraWorker only ever see the pre-built header). */
-  private async getJiraSyncConfig(): Promise<JiraSyncConfig & { email: string }> {
+  private async getJiraSyncConfig(): Promise<JiraSyncConfig> {
     const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-    const siteUrl = settings?.state?.config?.jira?.siteUrl;
-    const email = settings?.state?.config?.jira?.email;
     const projectKey = settings?.state?.config?.jira?.projectKey;
     const lookbackMonths = settings?.state?.config?.jira?.lookbackMonths ?? 24;
+    const site = this.jiraAuthService.getStoredSite();
 
-    if (!siteUrl || !email || !projectKey) {
+    if (!site || !projectKey) {
       throw new Error('Jira configuration is incomplete. Please connect.');
     }
-    const authHeader = await this.jiraAuthService.getValidAuthHeader(email);
+    const authHeader = await this.jiraAuthService.getValidAuthHeader();
 
-    return { siteUrl, projectKey, authHeader, lookbackMonths, email };
+    return { siteUrl: site.url, apiBase: jiraApiBase(site.id), projectKey, authHeader, lookbackMonths };
   }
 
   /**
@@ -258,7 +284,7 @@ export class JiraMessageHandler {
           console.error('Jira sync worker error:', error.message);
           this.clearSyncFlags().catch((e) => console.error('Failed to clear Jira sync flags:', e));
         },
-        () => this.jiraAuthService.getValidAuthHeader(jiraConfig.email)
+        () => this.jiraAuthService.getValidAuthHeader()
       );
     } catch (error) {
       console.error('Error in Jira sync:', error);
@@ -294,7 +320,7 @@ export class JiraMessageHandler {
           console.error('Jira sync worker error:', error.message);
           this.clearSyncFlags().catch((e) => console.error('Failed to clear Jira sync flags:', e));
         },
-        () => this.jiraAuthService.getValidAuthHeader(jiraConfig.email)
+        () => this.jiraAuthService.getValidAuthHeader()
       );
     } catch (error) {
       console.error('Error resuming Jira sync:', error);

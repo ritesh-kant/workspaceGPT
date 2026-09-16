@@ -74,7 +74,6 @@ export const settingsDefaultConfig: SettingsConfig = {
     isJiraEnabled: false,
     isAuthenticated: false,
     siteUrl: '',
-    email: '',
     projectKey: '',
     projectName: '',
     availableProjects: [],

@@ -68,6 +68,17 @@ export const handleAdoActions = {
 };
 
 export const handleJiraActions = {
+  startOAuth: (vscode: ReturnType<typeof VSCodeAPI>) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.START_JIRA_OAUTH,
+    });
+  },
+
+  cancelOAuth: (vscode: ReturnType<typeof VSCodeAPI>) => {
+    vscode.postMessage({
+      type: MESSAGE_TYPES.CANCEL_JIRA_OAUTH,
+    });
+  },
 
   disconnect: (vscode: ReturnType<typeof VSCodeAPI>) => {
     vscode.postMessage({
