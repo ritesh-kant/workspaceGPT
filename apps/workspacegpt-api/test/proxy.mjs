@@ -183,7 +183,7 @@ const PROMPT = {
 };
 
 function weeklyRow(db) {
-  return db.prepare('SELECT requests, credits, tokens FROM usage_weekly WHERE user_id = ?').get(USER_ID) ?? null;
+  return db.prepare('SELECT requests, credits, credit_units, tokens FROM usage_weekly WHERE user_id = ?').get(USER_ID) ?? null;
 }
 
 // ── Harness ──────────────────────────────────────────────────────────────────
@@ -260,7 +260,11 @@ await t('client receives the upstream SSE bytes unchanged while the tee meters t
   assert.equal(await res.text(), upstreamText, 'byte-identical passthrough');
   assert.equal(weeklyRow(db), null, 'nothing charged until the metering branch has run');
   await ctx.settle();
-  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 3, tokens: 2100 }, 'ceil(2100/1000) = 3 credits');
+  assert.deepEqual(
+    weeklyRow(db),
+    { requests: 1, credits: 3, credit_units: 2_100_000, tokens: 2100 },
+    'ceil(2100/1000) = 3 displayed credits'
+  );
 });
 
 await t('metering completes even if the client never reads its copy', async ({ db, env, ctx }) => {
@@ -268,7 +272,21 @@ await t('metering completes even if the client never reads its copy', async ({ d
   const res = await worker.fetch(chatRequest(PROMPT), env, ctx);
   await res.body.cancel(); // client disconnected mid-stream
   await ctx.settle();
-  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 1, tokens: 600 });
+  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 1, credit_units: 600_000, tokens: 600 });
+});
+
+await t('small agent calls accumulate before rounding to credits', async ({ db, env, ctx }) => {
+  scriptUpstream(() => sseResponse(sseBody(['x'], { prompt_tokens: 150, completion_tokens: 50, total_tokens: 200 })));
+  for (let n = 0; n < 5; n++) {
+    const res = await worker.fetch(chatRequest(PROMPT), env, ctx);
+    await res.text();
+    await ctx.settle();
+  }
+  assert.deepEqual(
+    weeklyRow(db),
+    { requests: 5, credits: 1, credit_units: 1_000_000, tokens: 1000 },
+    'five 0.2-credit calls cost one credit, not five'
+  );
 });
 
 await t('the second request is admitted against the first request\'s charge and the headers show it', async ({ env, ctx }) => {
@@ -310,7 +328,7 @@ await t('a JSON (non-stream) completion is charged from usage.total_tokens and s
   const body = await res.json();
   assert.equal(body.choices[0].message.content, 'ok');
   await ctx.settle();
-  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 3, tokens: 3000 });
+  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 3, credit_units: 3_000_000, tokens: 3000 });
 });
 
 await t('a cache-hit prompt is charged the rebated total, and the row keeps the raw one', async ({ db, env, ctx }) => {
@@ -336,7 +354,7 @@ await t('a cache-hit prompt is charged the rebated total, and the row keeps the 
   await ctx.settle();
   // 9 credits, not the 36 the unrebated total would have cost; `tokens` stays
   // the vendor's own number so the row still reconciles against their bill.
-  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 9, tokens: 35_400 });
+  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 9, credit_units: 9_000_000, tokens: 35_400 });
 });
 
 await t('a stream with no usage chunk charges the estimated prompt size and warns', async ({ db, env, ctx, logs }) => {
@@ -395,7 +413,7 @@ await t('weekly allowance exhausted → 429 weekly_limit_reached, vendor never c
   const calls = scriptUpstream(() => sseResponse(sseBody(['x'], { total_tokens: 1 })));
   // Seed exactly at the limit through the real charge path.
   const { chargeCredits } = await bundleUsage();
-  await chargeCredits(env, USER_ID, { credits: 100, tokens: 100_000 });
+  await chargeCredits(env, USER_ID, { creditUnits: 100_000_000, tokens: 100_000 });
   const res = await worker.fetch(chatRequest(PROMPT), env, ctx);
   assert.equal(res.status, 429);
   const body = await res.json();
@@ -405,7 +423,11 @@ await t('weekly allowance exhausted → 429 weekly_limit_reached, vendor never c
   assert.ok(Number(res.headers.get('Retry-After')) <= 7 * 86400);
   assert.equal(res.headers.get('X-WorkspaceGPT-Credits-Used'), '100');
   assert.equal(calls.length, 0);
-  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 100, tokens: 100_000 }, 'a refusal is not charged');
+  assert.deepEqual(
+    weeklyRow(db),
+    { requests: 1, credits: 100, credit_units: 100_000_000, tokens: 100_000 },
+    'a refusal is not charged'
+  );
 });
 
 await t('a burst that would have blown the old 5-hour window is admitted', async ({ db, env, ctx }) => {
@@ -414,7 +436,7 @@ await t('a burst that would have blown the old 5-hour window is admitted', async
   // hours; now only the week's 100 matter, and this is request 21 of many.
   const calls = scriptUpstream(() => sseResponse(sseBody(['x'], { total_tokens: 1000 })));
   const { chargeCredits } = await bundleUsage();
-  await chargeCredits(env, USER_ID, { credits: 40, tokens: 40_000 });
+  await chargeCredits(env, USER_ID, { creditUnits: 40_000_000, tokens: 40_000 });
   const res = await worker.fetch(chatRequest(PROMPT), env, ctx);
   assert.equal(res.status, 200, 'no short-term throttle exists any more');
   assert.equal(res.headers.get('X-WorkspaceGPT-Credits-Used'), '40', 'the week still remembers');

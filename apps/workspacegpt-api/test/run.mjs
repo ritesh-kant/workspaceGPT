@@ -67,6 +67,15 @@ await t('rounds up and never charges less than one credit for a real call', () =
   assert.equal(m.creditsForTokens(47147 + 3468, 1000), 51, 'the s2 agent run from the eval harness');
   assert.equal(m.creditsForTokens(6655 + 500, 1000), 8, 'a doc answer from the eval harness');
 });
+await t('accumulates fractional credit units so small calls are not each rounded to one credit', () => {
+  const units = [200, 200, 200, 200, 200].reduce(
+    (sum, tokens) => sum + m.creditUnitsForTokens(tokens, 1000),
+    0
+  );
+  assert.equal(units, m.CREDIT_UNIT_SCALE, 'five 0.2-credit calls sum to one credit');
+  assert.equal(Math.ceil(units / m.CREDIT_UNIT_SCALE), 1);
+  assert.equal(m.creditsForTokens(200, 1000) * 5, 5, 'the old per-call rounding charged five times too much');
+});
 await t('zero or garbage tokens charge nothing, garbage divisor falls back to 1000', () => {
   assert.equal(m.creditsForTokens(0, 1000), 0);
   assert.equal(m.creditsForTokens(-5, 1000), 0);
@@ -131,6 +140,11 @@ await t('reads cached_tokens from prompt_tokens_details, and from a bare field',
     m.usageFromObject({ prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, cached_tokens: 60 }).cachedPromptTokens,
     60,
     'providers that report it without the details wrapper'
+  );
+  assert.equal(
+    m.usageFromObject({ prompt_tokens: 100, total_tokens: 100, prompt_tokens_details: {}, cached_tokens: 60 }).cachedPromptTokens,
+    60,
+    'an empty details wrapper does not hide a provider\'s bare cache count'
   );
   assert.equal(m.usageFromObject({ prompt_tokens: 100, total_tokens: 100 }).cachedPromptTokens, 0, 'absent → nothing rebated');
   assert.equal(

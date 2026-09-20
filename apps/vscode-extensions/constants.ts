@@ -689,11 +689,9 @@ export const JIRA_OAUTH = {
     'write:jira-work',
     'offline_access',
   ],
-  // A different port from ATLASSIAN_OAUTH's 32323: both flows are triggered
-  // one at a time by the user, never concurrently, but a stray dangling
-  // Confluence callback server (e.g. one left over from a crashed prior
-  // flow) must never collide with a fresh Jira one.
-  CALLBACK_PORT: 32331,
+  // Same port as ATLASSIAN_OAUTH: both share one Atlassian app registration,
+  // which only has 32323 registered as an allowed callback URL.
+  CALLBACK_PORT: ATLASSIAN_OAUTH.CALLBACK_PORT,
   CALLBACK_PATH: '/callback',
 };
 

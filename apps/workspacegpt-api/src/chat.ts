@@ -3,7 +3,7 @@ import { bearerToken, getSession } from './auth';
 import { loadAccount } from './db';
 import {
   billableTokens,
-  creditsForTokens,
+  creditUnitsForTokens,
   decideAdmission,
   describeRefusal,
   estimateTokensFromChars,
@@ -298,6 +298,6 @@ async function meterAndCharge(
       estimatedTokens: tokens,
     });
   }
-  const credits = creditsForTokens(tokens, tokensPerCredit);
-  await chargeCredits(env, userId, { credits, tokens: rawTokens });
+  const creditUnits = creditUnitsForTokens(tokens, tokensPerCredit);
+  await chargeCredits(env, userId, { creditUnits, tokens: rawTokens });
 }

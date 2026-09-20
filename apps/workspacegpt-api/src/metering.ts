@@ -11,8 +11,11 @@
  *
  *   · METER tokens — precise, tracks the vendor bill, cannot be gamed by
  *     splitting or merging calls.
- *   · DISPLAY credits — `ceil(total_tokens / tokensPerCredit)`, one small
- *     integer per call that a person can reason about.
+ *   · DISPLAY credits — `ceil(total_billable_tokens / tokensPerCredit)`, one
+ *     small integer for the accumulated weekly total that a person can reason
+ *     about. Rounding every individual call up would turn a hundred tiny
+ *     agent follow-ups into a hundred credits even when they add up to only a
+ *     few thousand tokens.
  *   · ONE allowance — the ISO-week cap, and nothing else.
  *
  * There was briefly a second, rolling five-hour allowance (as Codex and Claude
@@ -60,10 +63,14 @@ export function usageFromObject(raw: unknown): TokenUsage | null {
   const promptTokens = prompt ?? 0;
   const completionTokens = completion ?? 0;
   const details = o.prompt_tokens_details;
-  const cachedRaw =
+  // Prefer the structured OpenRouter field, but fall back to the legacy bare
+  // field if the wrapper is present without a value. Some compatible proxies
+  // emit an empty details object and the bare count together.
+  const cachedFromDetails =
     details && typeof details === 'object'
       ? n((details as Record<string, unknown>).cached_tokens)
-      : n(o.cached_tokens);
+      : null;
+  const cachedRaw = cachedFromDetails ?? n(o.cached_tokens);
   return {
     promptTokens,
     completionTokens,
@@ -151,6 +158,25 @@ export function creditsForTokens(totalTokens: number, tokensPerCredit: number): 
   if (!Number.isFinite(totalTokens) || totalTokens <= 0) return 0;
   const per = Number.isFinite(tokensPerCredit) && tokensPerCredit > 0 ? tokensPerCredit : 1000;
   return Math.max(1, Math.ceil(totalTokens / per));
+}
+
+/**
+ * Credits are stored as fixed-point units so a call does not have to consume a
+ * whole credit by itself. Six decimal places keep the cumulative rounding
+ * error below one millionth of a credit while staying well within SQLite's
+ * integer range for realistic weekly usage.
+ */
+export const CREDIT_UNIT_SCALE = 1_000_000;
+
+/**
+ * Convert one call's cache-rebated token cost into fixed-point credit units.
+ * The weekly bucket sums these units and rounds once when it is displayed or
+ * admitted, avoiding per-call rounding inflation.
+ */
+export function creditUnitsForTokens(totalTokens: number, tokensPerCredit: number): number {
+  if (!Number.isFinite(totalTokens) || totalTokens <= 0) return 0;
+  const per = Number.isFinite(tokensPerCredit) && tokensPerCredit > 0 ? tokensPerCredit : 1000;
+  return Math.ceil((Math.max(0, totalTokens) * CREDIT_UNIT_SCALE) / per);
 }
 
 /**

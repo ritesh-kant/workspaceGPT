@@ -1,4 +1,5 @@
 import type { Env } from './env';
+import { CREDIT_UNIT_SCALE } from './metering';
 
 /**
  * The D1 half of usage accounting: reading what an account has spent and
@@ -50,39 +51,46 @@ export interface UsageSnapshot {
  * number that is enforced.
  */
 export async function readUsageSnapshot(env: Env, userId: string): Promise<UsageSnapshot> {
-  const row = await env.DB.prepare('SELECT credits FROM usage_weekly WHERE user_id = ? AND week = ?')
+  const row = await env.DB.prepare(
+    `SELECT CAST((credit_units + ${CREDIT_UNIT_SCALE - 1}) / ${CREDIT_UNIT_SCALE} AS INTEGER) AS credits
+       FROM usage_weekly WHERE user_id = ? AND week = ?`
+  )
     .bind(userId, utcWeek())
     .first<{ credits?: number }>();
   return { weeklyCredits: row?.credits ?? 0 };
 }
 
 /**
- * Record one served request's cost: credits and tokens accumulate into the
- * week's bucket, and the per-call count is kept alongside as a statistic.
+ * Record one served request's cost: fractional credit units and tokens
+ * accumulate into the week's bucket, and the per-call count is kept alongside
+ * as a statistic. Credits are rounded once from the accumulated fixed-point
+ * balance; never once per model call.
  *
  * Called AFTER the upstream response has been fully read (tokens are only
  * known then), off the response path via `ctx.waitUntil`, so a slow D1 write
  * never delays the user's stream.
  *
  * `tokens` is the vendor's RAW total, so the column stays reconcilable against
- * the provider's dashboard; `credits` is computed from the cache-rebated total
- * (see metering.ts `billableTokens`). The two therefore no longer satisfy
- * `credits === ceil(tokens / tokensPerCredit)`, and nothing should assume they
- * do — on a long agent run the credits are several times smaller.
+ * the provider's dashboard; `creditUnits` is computed from the cache-rebated
+ * total (see metering.ts `billableTokens`). The two therefore no longer
+ * satisfy `credits === ceil(tokens / tokensPerCredit)`, and nothing should
+ * assume they do — on a long agent run the credits are several times smaller.
  */
 export async function chargeCredits(
   env: Env,
   userId: string,
-  charge: { credits: number; tokens: number }
+  charge: { creditUnits: number; tokens: number }
 ): Promise<void> {
-  if (charge.credits <= 0) return;
+  if (charge.creditUnits <= 0) return;
   await env.DB.prepare(
-    `INSERT INTO usage_weekly (user_id, week, requests, credits, tokens) VALUES (?, ?, 1, ?, ?)
+    `INSERT INTO usage_weekly (user_id, week, requests, credits, credit_units, tokens)
+     VALUES (?, ?, 1, CAST((? + ${CREDIT_UNIT_SCALE - 1}) / ${CREDIT_UNIT_SCALE} AS INTEGER), ?, ?)
      ON CONFLICT(user_id, week) DO UPDATE SET
        requests = requests + 1,
-       credits  = credits + excluded.credits,
+       credit_units = credit_units + excluded.credit_units,
+       credits  = CAST((credit_units + excluded.credit_units + ${CREDIT_UNIT_SCALE - 1}) / ${CREDIT_UNIT_SCALE} AS INTEGER),
        tokens   = tokens + excluded.tokens`
   )
-    .bind(userId, utcWeek(), charge.credits, charge.tokens)
+    .bind(userId, utcWeek(), charge.creditUnits, charge.creditUnits, charge.tokens)
     .run();
 }
