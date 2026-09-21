@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
  *    primary-sidebar container (one activity-bar icon). Restore reveals chat.
  */
 const LAYOUT = {
-  NEW_GROUP_RIGHT: 'workbench.action.newEditorGroupRight',
+  NEW_GROUP_RIGHT: 'workbench.action.newGroupRight',
   MAXIMIZE_HIDE_SIDEBARS: 'workbench.action.maximizeEditorHideSidebar',
   TOGGLE_MAXIMIZE_GROUP: 'workbench.action.toggleMaximizeEditorGroup',
   CLOSE_PANEL: 'workbench.action.closePanel',
