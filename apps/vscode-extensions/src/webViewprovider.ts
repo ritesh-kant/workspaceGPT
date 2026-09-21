@@ -358,6 +358,10 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       this.sessionsView?.setActiveSession(data.sessionId ?? null);
       return;
     }
+    if (data?.type === MESSAGE_TYPES.ASSISTANT_MODE_CHANGED) {
+      this.sessionsView?.setAssistantMode(data.assistantMode === 'chat' ? 'chat' : 'work');
+      return;
+    }
     if (data?.type === MESSAGE_TYPES.SESSIONS_RUNNING_STATE) {
       this.sessionsView?.setRunningState(
         Array.isArray(data.runningSessionIds) ? data.runningSessionIds : [],

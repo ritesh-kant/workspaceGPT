@@ -1,5 +1,14 @@
 import React from 'react';
 
+interface HomeGreetingProps {
+  /**
+   * Chat mode leaves docs, tickets and the codebase out of reach, so the
+   * usual "knows your whole org" line would be advertising something this
+   * session genuinely cannot do.
+   */
+  chatOnly?: boolean;
+}
+
 /**
  * One-line greeting strip for the chat empty state.
  *
@@ -8,7 +17,7 @@ import React from 'react';
  * acts on. The mark is an inline SVG rather than an emoji so it renders the
  * same on every platform and sits in the theme's accent colour.
  */
-const HomeGreeting: React.FC = () => (
+const HomeGreeting: React.FC<HomeGreetingProps> = ({ chatOnly = false }) => (
   <div className='home-greeting'>
     <span className='home-greeting-mark' aria-hidden='true'>
       <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
@@ -22,7 +31,9 @@ const HomeGreeting: React.FC = () => (
     <div className='home-greeting-text'>
       <span className='home-greeting-title'>Hello</span>
       <span className='home-greeting-subtitle'>
-        The coding agent that knows your whole org — docs, tickets, and code.
+        {chatOnly
+          ? 'A plain chat — your docs, tickets and code stay out of it. Switch to Work when you need them.'
+          : 'The coding agent that knows your whole org — docs, tickets, and code.'}
       </span>
     </div>
   </div>

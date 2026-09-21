@@ -127,6 +127,8 @@ interface ChatSessionPreview {
   id: string;
   title: string;
   updatedAt: number;
+  /** Which mode the chat was held in. Absent on sessions saved before the Chat/Work switch — those read as 'work'. */
+  assistantMode?: 'chat' | 'work';
 }
 
 /**
@@ -324,6 +326,13 @@ interface ChatState {
   currentSessionId: string | null;
   historyList: ChatSessionPreview[];
   contextSelection: string;
+  /**
+   * Chat/Work switch. 'work' (default) can draw on Confluence, Azure DevOps
+   * and the codebase; 'chat' is a plain conversation that touches none of
+   * them. Persisted the same way as `contextSelection` — a session-wide
+   * choice, not per-message.
+   */
+  assistantMode: 'chat' | 'work';
   statusText: string;
   /** Steps accumulated for the in-flight turn; attached to the next assistant message. */
   agentSteps: AgentStep[];
@@ -403,6 +412,7 @@ interface ChatState {
   setCurrentSessionId: (id: string | null) => void;
   setHistoryList: (list: ChatSessionPreview[]) => void;
   setContextSelection: (selection: string) => void;
+  setAssistantMode: (mode: 'chat' | 'work') => void;
   setStatusText: (text: string) => void;
   setWriteReviewDecision: (reviewId: string, decision: 'approved' | 'rejected') => void;
   closeAllPendingWriteReviews: () => void;
@@ -438,6 +448,7 @@ export const chatDefaultState = {
   currentSessionId: null,
   historyList: [],
   contextSelection: 'Auto',
+  assistantMode: 'work' as const,
   statusText: '',
   agentSteps: [],
   pendingTurnSummary: null,
@@ -612,6 +623,7 @@ export const useChatStore = create<ChatState>()(
       setCurrentSessionId: (currentSessionId) => set({ currentSessionId }),
       setHistoryList: (historyList) => set({ historyList }),
       setContextSelection: (contextSelection) => set({ contextSelection }),
+      setAssistantMode: (assistantMode) => set({ assistantMode }),
       setStatusText: (statusText) => set({ statusText }),
       setWriteReviewDecision: (reviewId, decision) => set((state) => ({
         messages: state.messages.map((m) =>
@@ -665,6 +677,7 @@ export function collectChatSnapshot() {
     currentSessionId: s.currentSessionId,
     historyList: s.historyList,
     contextSelection: s.contextSelection,
+    assistantMode: s.assistantMode,
     statusText: s.statusText,
     agentSteps: s.agentSteps,
     pendingTurnSummary: s.pendingTurnSummary,
@@ -686,6 +699,7 @@ export function applyChatSnapshot(
     currentSessionId: snapshot.currentSessionId ?? null,
     historyList: snapshot.historyList ?? [],
     contextSelection: snapshot.contextSelection ?? 'Auto',
+    assistantMode: snapshot.assistantMode ?? 'work',
     statusText: snapshot.statusText ?? '',
     agentSteps: snapshot.agentSteps ?? [],
     pendingTurnSummary: snapshot.pendingTurnSummary ?? null,

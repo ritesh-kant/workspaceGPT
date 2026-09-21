@@ -88,6 +88,12 @@ interface WorkerData {
   toolAvailability?: ToolAvailability;
   /** Display label of whichever tracker is active ('Azure DevOps', 'Jira') — see tickets/registry.ts. Absent: the older, ADO-only prompt text. */
   ticketTrackerLabel?: string;
+  /**
+   * Chat mode: the user asked for a plain conversation, so this turn has no
+   * tools and no retrieval by their choice. Distinct from a Work-mode turn
+   * with nothing connected, which is why it is passed rather than inferred.
+   */
+  chatOnly?: boolean;
   /** Text files the user attached — inlined into the structured prompt. */
   textAttachments?: { name: string; content: string }[];
   /** Image files the user attached — sent as multimodal image_url parts (vision models). */
@@ -168,6 +174,7 @@ const {
   codebaseTools,
   toolAvailability,
   ticketTrackerLabel,
+  chatOnly,
   textAttachments,
   imageAttachments,
   mentionedFiles,
@@ -1055,6 +1062,7 @@ async function generateResponse(): Promise<void> {
         codebaseToolsEnabled: !!codebaseTools?.enabled,
         toolAvailability,
         ticketTrackerLabel,
+        chatOnly,
         // Drops the weak-model scaffolding from every turn of a strong-model
         // run, paired with the phrase gates PHRASE_GATES disables.
         harnessProfile: HARNESS_PROFILE,

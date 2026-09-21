@@ -619,49 +619,44 @@
 }
 
 /* Mode selector — two cards, active one highlighted */
-.mode-card-row {
+.mode-toggle {
   display: flex;
-  gap: 10px;
-}
-
-.mode-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 12px;
+  gap: 2px;
+  padding: 2px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 8px;
+  border-radius: 6px;
+}
+
+.mode-toggle-option {
+  flex: 1;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
   cursor: pointer;
-  text-align: left;
-  transition: border-color 0.2s ease, background 0.2s ease;
+  color: var(--vscode-foreground);
+  transition: background 0.15s ease;
 }
 
-.mode-card:hover:not(:disabled) {
-  border-color: var(--vscode-focusBorder);
+.mode-toggle-option:hover:not(:disabled):not(.mode-toggle-option--active) {
+  background: var(--vscode-list-hoverBackground);
 }
 
-.mode-card:disabled {
+.mode-toggle-option:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.mode-card--active {
-  border-color: var(--vscode-focusBorder);
+.mode-toggle-option--active {
   background: var(--vscode-list-activeSelectionBackground, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--vscode-focusBorder);
 }
 
-.mode-card-title {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.mode-card-desc {
-  font-size: 0.75rem;
-  opacity: 0.75;
-  line-height: 1.4;
+.mode-toggle-desc {
+  margin-top: 6px;
 }
 
 /* Mode-switch confirmation */

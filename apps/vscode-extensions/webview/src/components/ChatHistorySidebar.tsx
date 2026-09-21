@@ -6,6 +6,8 @@ interface ChatSessionPreview {
     id: string;
     title: string;
     updatedAt: number;
+    /** Which mode the chat was held in. The caller passes only the current mode's sessions. */
+    assistantMode?: 'chat' | 'work';
 }
 
 /** Ticket id → title, from the "Your work" cache, to repair truncated legacy group headers. */

@@ -333,7 +333,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; implementMandate?: boolean; autonomous?: boolean; planMode?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; implementMandate?: boolean; autonomous?: boolean; planMode?: boolean; chatOnly?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -359,6 +359,12 @@ export function createStructuredPrompt(
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   const toolsEnabled = !!options?.codebaseToolsEnabled;
+  // Chat mode: the user asked for a plain conversation, so this turn has no
+  // tools and nothing was retrieved. It is NOT the same state as a Work-mode
+  // turn that happens to have nothing connected — that user should be told
+  // their sources are unindexed, this one should be told to switch modes —
+  // so it is carried as its own fact rather than inferred from empty inputs.
+  const chatOnly = !!options?.chatOnly;
 
   // Only describe the org tools the worker will actually offer (see
   // scopeToolDefs): telling the model about `get_ticket` when its tool list
@@ -410,7 +416,13 @@ export function createStructuredPrompt(
   // workspace when it does not, and never lose the ability to do either.
   const withContext = toolsEnabled && !!formattedContext;
 
-  const groundingRules = withContext
+  const groundingRules = chatOnly
+    ? `## CRITICAL GROUNDING RULES (MUST FOLLOW):
+  1. **This turn is a plain conversation.** You have NO access to the user's Confluence, their ticket tracker (Azure DevOps / Jira), or the code in their workspace — no tools, no search, no retrieved context. Answer from your own general knowledge.
+  2. **Never answer an org-specific question from guesswork.** If the user asks about one of their tickets, a sprint, an internal doc, or their own repository and its files, you cannot look any of it up. Say plainly that you are in **Chat mode**, which has no access to Confluence, Azure DevOps or the codebase, and that switching to **Work mode** — the Chat/Work switch at the top of a new chat — lets you actually look it up. Do not then guess at an answer anyway.
+  3. **NEVER invent ticket IDs, URLs, statuses, sprint names, file paths, or repository details.** You have seen none of them this turn.
+  4. **General questions are fully in scope** — a language or framework, an algorithm, a public library, code the user pasted into the conversation. Answer those normally and well; there is no reason to mention modes for them.`
+    : withContext
     ? `## CRITICAL GROUNDING RULES (MUST FOLLOW):
   1. **Ground every claim in the Context below or in a tool result from THIS turn.** The Context was retrieved from Confluence/Azure DevOps before you started — treat it as evidence you already hold.
   2. **If the Context answers the question, answer from it directly and cite its Provided Sources.** Do not re-run search_docs/search_tickets for what is already in front of you.
@@ -429,7 +441,7 @@ export function createStructuredPrompt(
   5. **Do NOT combine information from different tickets** to create a fabricated answer. Each piece of information must come from a single, identifiable source in the context.`;
 
   const personalityPrompt = `
-  You are **WorkspaceGPT**, a local, privacy-first AI assistant for developers, designed to run entirely within Visual Studio Code. ${toolsEnabled ? 'You explore the open workspace live with tools to provide intelligent, verified answers about the codebase.' : "You use Retrieval-Augmented Generation (RAG) to provide intelligent, context-aware responses based on the user's codebase and integrated documentation."}
+  You are **WorkspaceGPT**, a local, privacy-first AI assistant for developers, designed to run entirely within Visual Studio Code. ${chatOnly ? 'The user has put you in **Chat mode**: an ordinary conversation, with their docs, tickets and codebase deliberately left out of reach for this turn.' : toolsEnabled ? 'You explore the open workspace live with tools to provide intelligent, verified answers about the codebase.' : "You use Retrieval-Augmented Generation (RAG) to provide intelligent, context-aware responses based on the user's codebase and integrated documentation."}
 
   ${groundingRules}
 
@@ -437,7 +449,7 @@ export function createStructuredPrompt(
   - Sound like a senior engineer — helpful, concise, and confident.
   - Always format responses in Markdown for readability.
   - Avoid small talk. Be to-the-point and helpful.
-  - **ADO Tickets**: When answering about Azure DevOps tickets, ALWAYS explicitly mention its Status, assigned Sprint (Iteration), and any notable callouts from its Comments/Description — but ONLY if this information exists in the provided context.
+${chatOnly ? '' : `  - **ADO Tickets**: When answering about Azure DevOps tickets, ALWAYS explicitly mention its Status, assigned Sprint (Iteration), and any notable callouts from its Comments/Description — but ONLY if this information exists in the provided context.`}
   `;
 
   // Everything above this point is identical for every question asked from
@@ -465,6 +477,8 @@ export function createStructuredPrompt(
 
   const contextInstruction = isGreeting
     ? 'The user greeted you. Respond with a warm, friendly greeting. **Do NOT use any context.**'
+    : chatOnly
+    ? 'Nothing was retrieved for this turn and you have no tools — answer from your own knowledge, the way any capable assistant would. The moment the question turns on something only this user\'s org or workspace could tell you (a ticket or its status, a sprint, an internal design doc, how THEIR repository is laid out, what is in one of THEIR files), stop and say you are in Chat mode without access to Confluence, Azure DevOps or the codebase, and that Work mode can look it up. Offer what general help you honestly can alongside that, but never present a guess about their org as fact. '
     : codebaseToolsEnabled
       ? (withContext
           ? 'Context from Confluence/Azure DevOps was retrieved for this question and appears under **Context** below. If it answers the question, answer from it directly and cite its Provided Sources — do not re-search for what is already there. Reach for your tools when the Context is insufficient, or when the user asks for a change to the code. '
@@ -617,7 +631,9 @@ ${prompt}
 
 **Answer (formatted in Markdown):**
 ${
-  codebaseToolsEnabled
+  chatOnly
+    ? 'Answer the question directly. If it depends on the user\'s tickets, docs or codebase, say you are in Chat mode without access to them and point them to Work mode instead of guessing. Do not add a Sources section — nothing was retrieved this turn.'
+    : codebaseToolsEnabled
     ? options?.executeMandate
       ? 'Make the approved changes now with your write tools, then report what you changed and the result of `get_diagnostics`. Do not ask whether to proceed, and do not restate the plan.'
       : withContext

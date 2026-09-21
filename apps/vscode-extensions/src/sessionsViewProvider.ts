@@ -15,6 +15,12 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   private completedSessionIds: string[] = [];
   /** Sessions whose last run just finished with an error, not yet opened. */
   private erroredSessionIds: string[] = [];
+  /**
+   * The mode the chat panel is currently showing. Chat and Work keep separate
+   * histories, and this panel is the other place that lists them — so it hides
+   * the sessions belonging to the mode the user is not in.
+   */
+  private assistantMode: 'chat' | 'work' = 'work';
   private htmlTemplate = new SessionsHtmlTemplate();
   private watcher?: vscode.FileSystemWatcher;
   private watchTimer?: ReturnType<typeof setTimeout>;
@@ -122,9 +128,16 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     void this.postList();
   }
 
+  public setAssistantMode(mode: 'chat' | 'work'): void {
+    if (this.assistantMode === mode) return;
+    this.assistantMode = mode;
+    void this.postList();
+  }
+
   private async postList(): Promise<void> {
     if (!this._view) return;
-    const sessions = await this.historyService.getHistoryList();
+    const all = await this.historyService.getHistoryList();
+    const sessions = all.filter((session) => session.assistantMode === this.assistantMode);
     await this._view.webview.postMessage({
       type: MESSAGE_TYPES.SESSIONS_LIST,
       sessions,

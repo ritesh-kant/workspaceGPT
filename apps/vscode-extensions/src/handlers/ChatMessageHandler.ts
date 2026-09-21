@@ -146,8 +146,8 @@ export class ChatMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
-      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, autonomous, planMode } = data;
-      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, !!autonomous, !!planMode);
+      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, autonomous, planMode, assistantMode } = data;
+      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, !!autonomous, !!planMode, assistantMode === 'chat' ? 'chat' : 'work');
     } catch (error) {
       this.analyticsService.trackEvent('message_send_error', {
         modelId: data.modelId,
@@ -369,7 +369,16 @@ export class ChatMessageHandler {
 
   private async handleSaveChatHistory(data: any): Promise<void> {
     try {
-      await this.historyService.saveHistory(data.sessionId, data.messages);
+      // Taken from the run, not from the message: the webview's switch shows
+      // the mode of whatever chat is on screen, which is not necessarily the
+      // one being saved (a backgrounded session saves itself while the user
+      // is elsewhere). Only used when the file has no mode yet — see
+      // saveHistory, where the first stored value wins.
+      await this.historyService.saveHistory(
+        data.sessionId,
+        data.messages,
+        this.chatService?.assistantModeFor(data.sessionId)
+      );
     } catch (error) {
       console.error('Error saving chat history:', error);
     }
@@ -389,7 +398,8 @@ export class ChatMessageHandler {
 
   private async handleGetChatSession(data: any): Promise<void> {
     try {
-      const messages = await this.historyService.getChatSession(data.sessionId);
+      const session = await this.historyService.getChatSession(data.sessionId);
+      const messages = session?.messages ?? null;
       // Seed the opened session's model-facing context from its transcript.
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
@@ -399,6 +409,10 @@ export class ChatMessageHandler {
         type: MESSAGE_TYPES.GET_CHAT_SESSION_RESPONSE,
         sessionId: data.sessionId,
         messages,
+        // Reopening puts the UI back in the mode the conversation was held in,
+        // so continuing it does not silently run the next turn with a
+        // different set of sources than the turns above it.
+        assistantMode: session?.assistantMode ?? 'work',
       });
       // Restore the context meter for the chat being opened. Without this the
       // webview has nothing to show for a session it did not run this

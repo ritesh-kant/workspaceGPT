@@ -6,6 +6,13 @@ export interface ChatSessionPreview {
   id: string;
   title: string;
   updatedAt: number;
+  /**
+   * Which mode this chat was held in. Sessions written before the Chat/Work
+   * switch existed have no stored value and read as 'work' — that is what
+   * they actually were, since docs, tickets and the codebase were always in
+   * play back then.
+   */
+  assistantMode: 'chat' | 'work';
   /** Sum of agent turn diffs in this session; omitted when there were no edits. */
   added?: number;
   removed?: number;
@@ -94,7 +101,11 @@ export class HistoryService {
     await ensureDirectoryExists(this.historyDir.fsPath);
   }
 
-  public async saveHistory(sessionId: string, messages: ChatMessage[]): Promise<void> {
+  public async saveHistory(
+    sessionId: string,
+    messages: ChatMessage[],
+    assistantMode?: 'chat' | 'work'
+  ): Promise<void> {
     if (deletedSessionIds.has(sessionId)) return;
     await this.initializeDirectory();
     const filePath = vscode.Uri.file(path.join(this.historyDir.fsPath, `${sessionId}.json`));
@@ -103,9 +114,16 @@ export class HistoryService {
     const title = firstUserMessage ? deriveSessionTitle(firstUserMessage.content) : 'New Chat';
 
     let updatedAt = Date.now();
+    // A session belongs to the mode it was STARTED in, so the first stored
+    // value wins: re-filing a finished conversation because the switch was
+    // flipped afterwards would move it out from under the user.
+    let mode: 'chat' | 'work' = assistantMode === 'chat' ? 'chat' : 'work';
     try {
       const existingBytes = await vscode.workspace.fs.readFile(filePath);
       const existingData = JSON.parse(new TextDecoder().decode(existingBytes));
+      if (existingData.assistantMode === 'chat' || existingData.assistantMode === 'work') {
+        mode = existingData.assistantMode;
+      }
       
       // If the number of messages hasn't changed, and the last message content is the same,
       // it's a spurious save (e.g., from just viewing the chat). Preserve the old updatedAt.
@@ -130,6 +148,7 @@ export class HistoryService {
       id: sessionId,
       title,
       updatedAt,
+      assistantMode: mode,
       messages,
     };
 
@@ -166,6 +185,7 @@ export class HistoryService {
               id: data.id,
               title,
               updatedAt: data.updatedAt,
+              assistantMode: data.assistantMode === 'chat' ? 'chat' : 'work',
               ...(diffs ?? {}),
             });
           } catch (e) {
@@ -182,7 +202,9 @@ export class HistoryService {
     }
   }
 
-  public async getChatSession(sessionId: string): Promise<ChatMessage[] | null> {
+  public async getChatSession(
+    sessionId: string
+  ): Promise<{ messages: ChatMessage[]; assistantMode: 'chat' | 'work' } | null> {
     await this.initializeDirectory();
     const filePath = vscode.Uri.file(path.join(this.historyDir.fsPath, `${sessionId}.json`));
     
@@ -190,7 +212,10 @@ export class HistoryService {
       const dataBytes = await vscode.workspace.fs.readFile(filePath);
       const dataString = new TextDecoder().decode(dataBytes);
       const data = JSON.parse(dataString);
-      return data.messages || [];
+      return {
+        messages: data.messages || [],
+        assistantMode: data.assistantMode === 'chat' ? 'chat' : 'work',
+      };
     } catch (e) {
       // It's possible the file doesn't exist yet, which is fine
       return null;

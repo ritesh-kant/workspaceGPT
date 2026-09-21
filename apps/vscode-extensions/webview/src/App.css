@@ -763,6 +763,15 @@ input:focus {
   transform: none;
 }
 
+/* Controls at the TOP of the panel have no room above them — upward is the
+   right default for the composer, but here it opens off-panel and all the
+   user sees is a clipped empty box. */
+[data-tooltip][data-tooltip-side='bottom']:hover::after,
+[data-tooltip][data-tooltip-side='bottom']:focus-visible::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+
 /* Mode indicator chip — click to jump to Settings */
 .mode-chip {
   display: flex;
@@ -803,6 +812,53 @@ input:focus {
 
 .mode-chip-dot--remote {
   background-color: var(--vscode-testing-iconPassed, #2cbb5d);
+}
+
+/* Chat/Work switch — a row at the top of the new-chat page, above the
+   greeting. It sits outside the page's centred content so it stays at the
+   top edge instead of floating in the middle of an empty panel, and the row
+   is rendered only on that page, so it never holds height away from the
+   transcript or the composer. A two-segment pill rather than a dropdown:
+   both states are visible at once and a single click swaps them, no menu to
+   open. */
+.mode-bar {
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 10px 12px 4px;
+}
+
+.assistant-mode-switch {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 2px;
+  border-radius: 7px;
+  border: 1px solid var(--vscode-editor-lineHighlightBorder, transparent);
+  background: var(--vscode-editorWidget-background, transparent);
+}
+
+.assistant-mode-option {
+  height: 100%;
+  padding: 0 14px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.assistant-mode-option:hover {
+  color: var(--vscode-foreground);
+}
+
+.assistant-mode-option.is-active {
+  background: var(--vscode-button-secondaryBackground, var(--vscode-toolbar-hoverBackground));
+  color: var(--vscode-foreground);
 }
 
 /* Chat-mode dropdown (Agent / Plan / Ask) — sits beside the context selector.

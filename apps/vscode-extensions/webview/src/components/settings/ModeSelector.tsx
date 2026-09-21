@@ -59,21 +59,23 @@ const ModeSelector: React.FC = () => {
       defaultOpen={isFreshInstall}
     >
       <div className='settings-form'>
-        <div className='mode-card-row'>
+        <div className='mode-toggle' role='tablist'>
           {(Object.keys(MODE_COPY) as WorkspaceMode[]).map((m) => (
             <button
               type='button'
               key={m}
-              className={`mode-card${mode === m ? ' mode-card--active' : ''}`}
+              role='tab'
+              aria-selected={mode === m}
+              className={`mode-toggle-option${mode === m ? ' mode-toggle-option--active' : ''}`}
               onClick={() => requestSwitch(m)}
               disabled={syncBusy && mode !== m}
               data-tooltip={syncBusy && mode !== m ? 'Wait for the current sync to finish' : undefined}
             >
-              <span className='mode-card-title'>{MODE_COPY[m].title}</span>
-              <span className='mode-card-desc'>{MODE_COPY[m].description}</span>
+              {MODE_COPY[m].title}
             </button>
           ))}
         </div>
+        <p className='description-text mode-toggle-desc'>{MODE_COPY[mode].description}</p>
       </div>
 
       {pendingMode && (

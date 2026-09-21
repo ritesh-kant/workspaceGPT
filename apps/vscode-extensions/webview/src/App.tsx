@@ -375,6 +375,8 @@ const App: React.FC = () => {
     setMessages,
     contextSelection,
     setContextSelection,
+    assistantMode,
+    setAssistantMode,
     statusText,
     setStatusText,
     setWriteReviewDecision,
@@ -430,10 +432,19 @@ const App: React.FC = () => {
   // downgrades the run to Ask mode (observed live: an Agent-mode ticket run
   // came back with slow-mode degradation and a command approval card, both of
   // which autonomous runs skip, because the send site omitted the flag).
-  const modeFlags = () => ({
-    ...(chatMode === 'agent' ? { autonomous: true } : {}),
-    ...(chatMode === 'plan' ? { planMode: true } : {}),
-  });
+  //
+  // Chat mode is the one case that sends no dial at all: it has no tools and
+  // no writes for the dial to govern, and its picker is hidden, so carrying a
+  // stale 'agent' would apply a setting the user cannot see — on a local
+  // model that surfaces as an "autonomous runs need a cloud model" notice on
+  // a turn that was never going to write anything.
+  const modeFlags = () =>
+    assistantMode === 'chat'
+      ? {}
+      : {
+          ...(chatMode === 'agent' ? { autonomous: true } : {}),
+          ...(chatMode === 'plan' ? { planMode: true } : {}),
+        };
   const CHAT_MODE_META: Record<ChatMode, { label: string; title: string }> = {
     agent: {
       label: 'Agent',
@@ -446,6 +457,21 @@ const App: React.FC = () => {
     ask: {
       label: 'Ask',
       title: 'Ask: every edit is shown as a diff for you to approve first.',
+    },
+  };
+  // Chat/Work switch — the one place a turn's facts (Confluence connected,
+  // ADO connected, folder open) are deliberately overridden wholesale, rather
+  // than read as-is (see isWorkMode in chatService.sendMessage). Everything
+  // else in the composer (context picker, chat-mode dial) keeps working within
+  // whichever side is selected.
+  const ASSISTANT_MODE_META: Record<'chat' | 'work', { label: string; title: string }> = {
+    work: {
+      label: 'Work',
+      title: 'Work: answers can draw on Confluence, Azure DevOps and the open codebase.',
+    },
+    chat: {
+      label: 'Chat',
+      title: "Chat: a plain conversation — Confluence, Azure DevOps and the codebase aren't consulted.",
     },
   };
   const isConfluenceConnected = config.confluence?.isAuthenticated || false;
@@ -1244,6 +1270,13 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.GET_CHAT_SESSION_RESPONSE:
           if (message.messages) {
+            // Follow the stored conversation back into its own mode: its turns
+            // were answered with (or without) org context, and continuing it
+            // under the other mode would change the sources mid-thread while
+            // the switch is hidden.
+            if (message.assistantMode === 'chat' || message.assistantMode === 'work') {
+              setAssistantMode(message.assistantMode);
+            }
             setMessages(message.messages);
             setCurrentSessionId(message.sessionId);
             currentSessionIdRef.current = message.sessionId;
@@ -1620,6 +1653,7 @@ const App: React.FC = () => {
       provider: selectedModelProvider.provider, // Use the provider string from the selectedModelProvider object
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      assistantMode,
       ...modeFlags(),
       ...(pendingAttachments.length > 0 ? { attachments: pendingAttachments } : {}),
       ...(mentions.length > 0 ? { mentions } : {}),
@@ -1922,6 +1956,7 @@ const App: React.FC = () => {
       provider: selectedModelProvider.provider,
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      assistantMode,
       autonomous: true,
     });
   };
@@ -1965,6 +2000,7 @@ const App: React.FC = () => {
         provider: selectedModelProvider.provider,
         apiKey: selectedModelProvider?.apiKey,
         contextSelection: contextSelection,
+        assistantMode,
         ...modeFlags(),
       });
     }, 0);
@@ -2065,6 +2101,7 @@ const App: React.FC = () => {
       provider: selectedModelProvider.provider,
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      assistantMode,
       ...modeFlags(),
       ...(attachments?.length ? { attachments } : {}),
       ...(mentions?.length ? { mentions } : {}),
@@ -2095,6 +2132,7 @@ const App: React.FC = () => {
       provider: selectedModelProvider.provider,
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      assistantMode,
       // The mode dial as it stands now, matching what typing "continue" would
       // do — a resume must not silently re-grant autonomy the user has since
       // switched off.
@@ -2146,6 +2184,7 @@ const App: React.FC = () => {
       provider: selectedModelProvider.provider,
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
+      assistantMode,
       historyOverride,
       ...modeFlags(),
       ...(original.attachments?.length ? { attachments: original.attachments } : {}),
@@ -2159,6 +2198,54 @@ const App: React.FC = () => {
   const ticketTitles = useMemo(
     () => new Map(myWorkItems.map((item) => [item.id, item.title] as const)),
     [myWorkItems]
+  );
+
+  // Pinned to the top of the new-chat page, above the greeting, and rendered
+  // only there: the row is dropped entirely once a conversation starts, so it
+  // never holds height away from the transcript or the composer. Switching
+  // mid-conversation is deliberately not offered — the turns already on
+  // screen were answered under the other mode.
+  const modeSwitch = (
+    <div
+      className={`assistant-mode-switch assistant-mode-switch--${assistantMode}`}
+      data-tooltip={ASSISTANT_MODE_META[assistantMode].title}
+      data-tooltip-side='bottom'
+      role='group'
+      aria-label='Chat or Work mode'
+    >
+      <button
+        type='button'
+        className={`assistant-mode-option${assistantMode === 'chat' ? ' is-active' : ''}`}
+        onClick={() => setAssistantMode('chat')}
+        aria-pressed={assistantMode === 'chat'}
+      >
+        {ASSISTANT_MODE_META.chat.label}
+      </button>
+      <button
+        type='button'
+        className={`assistant-mode-option${assistantMode === 'work' ? ' is-active' : ''}`}
+        onClick={() => setAssistantMode('work')}
+        aria-pressed={assistantMode === 'work'}
+      >
+        {ASSISTANT_MODE_META.work.label}
+      </button>
+    </div>
+  );
+  // Chat mode is a plain conversation, so everything that exists to put org
+  // context in front of the user — assigned tickets, ticket-derived prompts,
+  // the connect-your-docs tip, the composer's context and autonomy pickers —
+  // has nothing to offer and is left out.
+  const isWorkMode = assistantMode === 'work';
+  // Chat and Work keep separate histories. The Sessions panel (shown when the
+  // chat is opened in an editor tab) lists them from the host, which has no
+  // other way to know which mode is on screen.
+  useEffect(() => {
+    vscode.postMessage({ type: MESSAGE_TYPES.ASSISTANT_MODE_CHANGED, assistantMode });
+  }, [assistantMode, vscode]);
+  // Only the chats held in the mode the user is currently in.
+  const modeHistoryList = useMemo(
+    () => historyList.filter((session) => (session.assistantMode ?? 'work') === assistantMode),
+    [historyList, assistantMode]
   );
 
   // Wait for the persisted settings blob before rendering anything — otherwise
@@ -2175,11 +2262,12 @@ const App: React.FC = () => {
   return (
     <div className='app-container'>
       <div className='chat-container'>
+        {showTips && messages.length === 0 && <div className='mode-bar'>{modeSwitch}</div>}
         {showTips && messages.length === 0 ? (
           isConfluenceConnected ? (
             <div className='recent-chats-container'>
-                <HomeGreeting />
-                {isAdoConnected && (
+                <HomeGreeting chatOnly={!isWorkMode} />
+                {isWorkMode && isAdoConnected && (
                   <MyWorkPanel
                     items={myWorkItems}
                     currentSprintName={myWorkSprint}
@@ -2204,12 +2292,12 @@ const App: React.FC = () => {
                 </button>
               </div>
               <div className='recent-chats-list'>
-                {historyList.length === 0 ? (
+                {modeHistoryList.length === 0 ? (
                   <div className='no-recent-chats'>
                     <p>No recent chats yet. Start a conversation below!</p>
                   </div>
                 ) : (
-                  historyList.slice(0, 3).map((session) => (
+                  modeHistoryList.slice(0, 3).map((session) => (
                     <div
                       key={session.id}
                       className='recent-chat-card'
@@ -2229,26 +2317,28 @@ const App: React.FC = () => {
                   ))
                 )}
               </div>
-              <div className='prompt-suggestions recent-chats-prompts'>
-                <h2 className='prompt-suggestions-title'>Try asking</h2>
-                <div className='prompt-suggestions-list'>
-                  {suggestions.map((suggestion) => (
-                    <button
-                      key={suggestion.label}
-                      className='prompt-item'
-                      onClick={() => handleStarterPrompt(suggestion.prompt)}
-                    >
-                      <span className='prompt-item-text'>{suggestion.label}</span>
-                      <SuggestionArrow />
-                    </button>
-                  ))}
+              {isWorkMode && (
+                <div className='prompt-suggestions recent-chats-prompts'>
+                  <h2 className='prompt-suggestions-title'>Try asking</h2>
+                  <div className='prompt-suggestions-list'>
+                    {suggestions.map((suggestion) => (
+                      <button
+                        key={suggestion.label}
+                        className='prompt-item'
+                        onClick={() => handleStarterPrompt(suggestion.prompt)}
+                      >
+                        <span className='prompt-item-text'>{suggestion.label}</span>
+                        <SuggestionArrow />
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : (
             <div className='welcome-container'>
-              <HomeGreeting />
-              {isAdoConnected && (
+              <HomeGreeting chatOnly={!isWorkMode} />
+              {isWorkMode && isAdoConnected && (
                 <MyWorkPanel
                   items={myWorkItems}
                   currentSprintName={myWorkSprint}
@@ -2260,26 +2350,30 @@ const App: React.FC = () => {
                   onAutoRun={handleAutoRunWorkItem}
                 />
               )}
-              <div className='prompt-suggestions'>
-                <h2 className='prompt-suggestions-title'>Try asking</h2>
-                <div className='prompt-suggestions-list'>
-                  {suggestions.map((suggestion) => (
-                    <button
-                      key={suggestion.label}
-                      className='prompt-item'
-                      onClick={() => handleStarterPrompt(suggestion.prompt)}
-                    >
-                      <span className='prompt-item-text'>{suggestion.label}</span>
-                      <SuggestionArrow />
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <QuickTipsSection
-                isConfluenceConnected={isConfluenceConnected}
-                sessionCount={historyList.length}
-                onOpenSettings={() => setActiveView('settings')}
-              />
+              {isWorkMode && (
+                <>
+                  <div className='prompt-suggestions'>
+                    <h2 className='prompt-suggestions-title'>Try asking</h2>
+                    <div className='prompt-suggestions-list'>
+                      {suggestions.map((suggestion) => (
+                        <button
+                          key={suggestion.label}
+                          className='prompt-item'
+                          onClick={() => handleStarterPrompt(suggestion.prompt)}
+                        >
+                          <span className='prompt-item-text'>{suggestion.label}</span>
+                          <SuggestionArrow />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <QuickTipsSection
+                    isConfluenceConnected={isConfluenceConnected}
+                    sessionCount={modeHistoryList.length}
+                    onOpenSettings={() => setActiveView('settings')}
+                  />
+                </>
+              )}
             </div>
           )
         ) : (
@@ -2548,35 +2642,43 @@ const App: React.FC = () => {
                       carries the privacy note in its tooltip. */}
                   <span className={`mode-chip-dot mode-chip-dot--${mode}`} />
                 </button>
-                <div
-                  className={`chat-mode-selector chat-mode-selector--${chatMode}`}
-                  data-tooltip={CHAT_MODE_META[chatMode].title}
-                >
-                  <SearchableDropdown
-                    value={chatMode}
-                    searchable={false}
-                    onChange={(value) => setChatModePersisted(value as ChatMode)}
-                    options={CHAT_MODE_ORDER.map((m) => ({
-                      value: m,
-                      label: CHAT_MODE_META[m].label,
-                    }))}
-                  />
-                </div>
-                <div
-                  className='context-selector-bottom'
-                  data-tooltip={
-                    contextSelection === 'Auto'
-                      ? 'Where answers are grounded. Auto picks between your docs, tickets and code per question.'
-                      : `Answers are grounded in ${contextSelection} only.`
-                  }
-                >
-                  <SearchableDropdown
-                    value={contextSelection}
-                    onChange={setContextSelection}
-                    searchable={false}
-                    options={contextOptions}
-                  />
-                </div>
+                {/* Both steer a Work-mode turn — how much autonomy to run
+                    with, and which context to ground in. Chat mode has
+                    neither tools nor retrieval, so they are left out rather
+                    than shown inert. */}
+                {isWorkMode && (
+                  <>
+                    <div
+                      className={`chat-mode-selector chat-mode-selector--${chatMode}`}
+                      data-tooltip={CHAT_MODE_META[chatMode].title}
+                    >
+                      <SearchableDropdown
+                        value={chatMode}
+                        searchable={false}
+                        onChange={(value) => setChatModePersisted(value as ChatMode)}
+                        options={CHAT_MODE_ORDER.map((m) => ({
+                          value: m,
+                          label: CHAT_MODE_META[m].label,
+                        }))}
+                      />
+                    </div>
+                    <div
+                      className='context-selector-bottom'
+                      data-tooltip={
+                        contextSelection === 'Auto'
+                          ? 'Where answers are grounded. Auto picks between your docs, tickets and code per question.'
+                          : `Answers are grounded in ${contextSelection} only.`
+                      }
+                    >
+                      <SearchableDropdown
+                        value={contextSelection}
+                        onChange={setContextSelection}
+                        searchable={false}
+                        options={contextOptions}
+                      />
+                    </div>
+                  </>
+                )}
                 {mode === 'local' && (
                   <div className='model-selector-bottom'>
                     <SearchableDropdown
@@ -2651,7 +2753,7 @@ const App: React.FC = () => {
         />
         <ChatHistorySidebar
           isVisible={activeView === 'history'}
-          historyList={historyList}
+          historyList={modeHistoryList}
           ticketTitles={ticketTitles}
           currentSessionId={currentSessionId}
           runningSessionIds={runningSessionIds}

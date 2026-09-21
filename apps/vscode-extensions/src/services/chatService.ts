@@ -346,6 +346,13 @@ interface SessionRun {
    */
   autonomous: boolean;
   /**
+   * Chat or Work, as of this session's last turn. The host is the authority on
+   * this — the webview's live switch reflects whichever chat is on screen, so
+   * a background session saved while the user is looking at a different mode
+   * would be filed under the wrong one if the save carried the UI's value.
+   */
+  assistantMode: 'chat' | 'work';
+  /**
    * Model-facing transcript (tool calls and their results included) of an agent
    * turn that was interrupted before it delivered an answer — a provider error,
    * a crashed/stalled worker, or the user pressing stop. Streamed up from the
@@ -700,6 +707,7 @@ export class ChatService {
         checkRuns: new Map(),
         missingExecutables: new Map(),
         autonomous: false,
+        assistantMode: 'work',
         agentTranscript: null,
         lastAnswerStallShaped: false,
         lastTicketId: null,
@@ -784,6 +792,15 @@ export class ChatService {
     return this.runs.get(sessionId)?.lastContext ?? null;
   }
 
+  /**
+   * Which mode this session's turns ran under, for filing its history. Absent
+   * for a session this host has not run a turn for (a transcript restored from
+   * disk keeps whatever it was already saved with).
+   */
+  public assistantModeFor(sessionId: string): 'chat' | 'work' | undefined {
+    return this.runs.get(sessionId)?.assistantMode;
+  }
+
   public async newChat(): Promise<void> {
     // Session state is per-sessionId — a new chat simply starts under a fresh
     // id on its first send. Just tell the webview to show a fresh chat.
@@ -820,7 +837,15 @@ export class ChatService {
      * prompt forbids writes and the anti-plan gates are disarmed. The user's
      * approving reply then runs as the executeMandate turn.
      */
-    planMode = false
+    planMode = false,
+    /**
+     * The Chat/Work switch. 'work' (default) behaves exactly as before —
+     * Confluence, Azure DevOps and the codebase are all in play per the usual
+     * facts-based gating. 'chat' is a plain conversation: this turn's facts
+     * are forced false below so no retrieval runs and no codebase/Confluence/
+     * ticket tools are offered, regardless of what's connected or open.
+     */
+    assistantMode: 'chat' | 'work' = 'work'
   ): Promise<void> {
     const run = this.runFor(sessionId);
     if (run.worker) {
@@ -885,6 +910,7 @@ export class ChatService {
         autonomous = false;
       }
       run.autonomous = autonomous;
+      run.assistantMode = assistantMode;
 
       // All configured keys for the selected provider, tried in failover order
       // on 429. Local mode: the webview's selected model + its stored keys.
@@ -899,13 +925,21 @@ export class ChatService {
       const baseUrl = chatLlm.baseUrl;
 
       const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+      // Chat mode is the one deliberate, session-level override of "capability
+      // is a fact": the user asked for a plain conversation, so Confluence, ADO
+      // and the codebase are facts that read as false for this turn — same
+      // mechanism the fact-based gates below already use, not a text guess.
+      const isWorkMode = assistantMode !== 'chat';
       const isConfluenceConnected =
+        isWorkMode &&
         settings?.state?.config?.confluence?.isAuthenticated &&
         settings?.state?.config?.confluence?.isIndexingCompleted;
       const isAdoConnected =
+        isWorkMode &&
         settings?.state?.config?.ado?.isAuthenticated &&
         settings?.state?.config?.ado?.isIndexingCompleted;
       const isJiraConnected =
+        isWorkMode &&
         settings?.state?.config?.jira?.isAuthenticated &&
         settings?.state?.config?.jira?.isIndexingCompleted;
 
@@ -914,7 +948,7 @@ export class ChatService {
 
       // Codebase tools need no auth/indexing — only an open workspace folder.
       const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
-      const isCodebaseAvailable = workspaceFolders.length > 0;
+      const isCodebaseAvailable = isWorkMode && workspaceFolders.length > 0;
 
       // What the worker may be OFFERED this turn, from facts only. Gated on
       // authentication rather than index completion: `get_ticket` and
@@ -924,8 +958,8 @@ export class ChatService {
       // see toolScope.ts for why.
       const toolAvailability = {
         codebase: isCodebaseAvailable,
-        confluence: !!settings?.state?.config?.confluence?.isAuthenticated,
-        tickets: !!getActiveTicketProvider(this.context),
+        confluence: isWorkMode && !!settings?.state?.config?.confluence?.isAuthenticated,
+        tickets: isWorkMode && !!getActiveTicketProvider(this.context),
       };
 
       // Read the @-mentioned files/folders while retrieval runs — they are
@@ -1037,7 +1071,11 @@ export class ChatService {
         isCodebaseAvailable,
         availableSources,
         classification,
-        contextSelection,
+        // Chat mode already zeroed availableSources above; forcing 'Auto' here
+        // stops a stale Confluence/ADO picker choice (made before switching to
+        // Chat) from reporting itself as "unhonored" for a source that was
+        // never in play this turn.
+        contextSelection: isWorkMode ? contextSelection : 'Auto',
       });
       const { useCodebaseTools } = routing;
       classification = routing.classification;
@@ -1271,6 +1309,12 @@ export class ChatService {
         intent: classification.intent,
         sources: classification.sources.join(',') || 'none',
         contextSelection,
+        // Chat-mode turns zero out availableSources and retrieve nothing BY
+        // REQUEST, so without this the flags below ('hasNoSources',
+        // 'zeroResults') would read as "this install cannot do its core job"
+        // for users who simply wanted a plain conversation. Split on this
+        // before drawing any conclusion from them.
+        assistantMode,
         // The user picked a specific context and it wasn't available, so the
         // turn ran against something else. Silent before this was surfaced —
         // and still worth counting, since the fix is a setup step they have
@@ -1350,7 +1394,8 @@ export class ChatService {
           autonomous,
           planMode,
           toolAvailability,
-          getActiveTicketProvider(this.context)?.label
+          getActiveTicketProvider(this.context)?.label,
+          !isWorkMode
         );
 
       let modelResponse: string;
@@ -2442,7 +2487,9 @@ Query: "${query}"`;
     /** Tool groups the worker may offer, from what is connected (see toolScope.ts). */
     toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean },
     /** Display label of whichever tracker is active ('Azure DevOps', 'Jira') — see tickets/registry.ts. */
-    ticketTrackerLabel?: string
+    ticketTrackerLabel?: string,
+    /** Chat mode: plain conversation, so the worker prompt drops retrieval/tool framing. */
+    chatOnly = false
   ): Promise<string> {
     try {
       run.lastAnswerStallShaped = false;
@@ -2505,6 +2552,7 @@ Query: "${query}"`;
           codebaseTools: codebaseRoots ? { enabled: true } : undefined,
           toolAvailability,
           ticketTrackerLabel,
+          chatOnly,
           // Text attachments are inlined into the prompt template; images are
           // sent to the model as multimodal image_url parts (vision models).
           textAttachments: attachments

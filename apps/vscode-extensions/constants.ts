@@ -135,6 +135,9 @@ export const MESSAGE_TYPES = {
   // Chat webview → host: which sessions currently have a run in flight or
   // just finished with an error (Sessions panel status dot).
   SESSIONS_RUNNING_STATE: 'sessions-running-state',
+  // Chat webview → host: the Chat/Work switch moved. The Sessions panel lists
+  // history too, so it has to filter by the same mode the chat is showing.
+  ASSISTANT_MODE_CHANGED: 'assistant-mode-changed',
 
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',
