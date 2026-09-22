@@ -73,7 +73,9 @@ import { detectTicketId } from 'src/utils/ticketDetection';
 import { detectConfluenceUrl } from 'src/utils/confluenceUrlDetection';
 import { decideTurnRouting } from 'src/utils/turnRouting';
 import { TicketPromptContext } from 'src/utils/promptTemplates';
-import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE } from 'src/workers/model/answerGates';
+import { formatModelHistory } from 'src/utils/chatHistory';
+import { classifyIntentWithJev } from './jevIntentClassifier';
+import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE, hasWriteIntent, IMPLEMENT_MANDATE_RE } from 'src/workers/model/answerGates';
 import { randomUUID } from 'crypto';
 import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/inspectTools';
 import {
@@ -1164,7 +1166,7 @@ export class ChatService {
             )
           ),
           needsLLM
-            ? this.classifyIntentWithLLM(run, message, classification, modelId, failoverKeys, provider, availableSources, baseUrl)
+            ? this.classifyIntent(run, message, classification, modelId, failoverKeys, provider, availableSources, baseUrl)
             : Promise.resolve({ intent: classification.intent, sources: undefined as DataSource[] | undefined }),
         ]);
 
@@ -2368,6 +2370,45 @@ export class ChatService {
    * In remote mode, ignores the passed-through webview model and resolves its
    * own model via the 'classification' task route instead.
    */
+  /**
+   * Picks intent (and, when useful, sources) for a query. Prefers Jev — a
+   * dedicated structured-decision model reached via OpenRouter's Decisions
+   * endpoint — over spending a full chat completion on a 5-way pick, but
+   * only when the configured provider actually holds a usable OpenRouter
+   * key: remote mode's key lives server-side in the Worker, not here, and
+   * every other provider is a different vendor entirely, so neither can
+   * reach Jev at all. Everyone else, and any Jev failure, falls through to
+   * the existing full-model classifier unchanged.
+   */
+  private async classifyIntent(
+    run: SessionRun,
+    query: string,
+    fallback: QueryClassification,
+    modelId: string,
+    apiKeys: string[],
+    provider: string,
+    availableSources: DataSource[] = [],
+    baseUrl?: string
+  ): Promise<{ intent: QueryClassification['intent']; sources?: DataSource[] }> {
+    let effProvider = provider;
+    let effApiKeys = apiKeys;
+    if (getMode(this.context) === 'remote') {
+      const llm = getLlmSettings(this.context);
+      effProvider = llm.provider ?? effProvider;
+      effApiKeys = llm.apiKeys.length ? llm.apiKeys : effApiKeys;
+    }
+
+    if (effProvider === 'OpenRouter' && effApiKeys.length) {
+      try {
+        return await classifyIntentWithJev(query, availableSources, effApiKeys[0]);
+      } catch (error) {
+        console.warn('Jev intent classification failed, falling back to full-model classification:', error);
+      }
+    }
+
+    return this.classifyIntentWithLLM(run, query, fallback, modelId, apiKeys, provider, availableSources, baseUrl);
+  }
+
   private async classifyIntentWithLLM(
     run: SessionRun,
     query: string,
@@ -2501,24 +2542,26 @@ Query: "${query}"`;
         'modelWorker.js'
       );
 
-      // Format chat history for the prompt
-      const formattedChatHistory = run.chatHistory
-        .map(
-          (msg) =>
-            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-        )
-        .join('\n\n');
+      // Persist the complete transcript for the UI/history while bounding only
+      // the copy sent to the model on each new request.
+      const formattedChatHistory = formatModelHistory(run.chatHistory);
 
       // Give codebase turns an upfront map of the workspace (file tree +
       // README head) so the model doesn't burn its first tool-call rounds on
       // basic discovery.
+      const resumeTranscript =
+        codebaseRoots?.length && run.agentTranscript?.length ? run.agentTranscript : undefined;
+      const shouldIncludeRepoOrientation =
+        !!codebaseRoots?.length && resolvedMentions.length === 0 && !resumeTranscript?.length;
       let repoOrientation: string | undefined;
-      if (codebaseRoots?.length) {
+      if (shouldIncludeRepoOrientation && codebaseRoots?.length) {
         try {
           repoOrientation = await buildRepoOrientation(codebaseRoots);
         } catch (e) {
           console.warn('Failed to build repo orientation (continuing without):', e);
         }
+      }
+      if (codebaseRoots?.length) {
         // Which repo this turn's pull-request references belong to. Resolved
         // once, and stamped onto each ref, so a message re-read from history
         // still points at the right repository.
@@ -2530,8 +2573,14 @@ Query: "${query}"`;
       // meaningful for a tool turn — the transcript IS a tool conversation.
       // Deliberately not cleared here: if this worker dies before its first
       // sync, the host copy is still the only record of the work.
-      const resumeTranscript =
-        codebaseRoots?.length && run.agentTranscript?.length ? run.agentTranscript : undefined;
+      // Mirrors modelWorker's TICKET_IMPLEMENT_MANDATE check exactly — a
+      // mismatch here (e.g. checking only hasWriteIntent) lets the worker
+      // decide this IS an implement turn (full write-workflow prompt) while
+      // the ticket block here still gets trimmed to lookup-only, stripping
+      // the acceptance criteria the model was just told to implement against.
+      const ticketImplementIntent =
+        executeMandate || IMPLEMENT_MANDATE_RE.test(message) || hasWriteIntent(message);
+      const ticketLookupOnly = !!ticketContext && !autonomous && !planMode && !ticketImplementIntent;
 
       const modelWorker = new Worker(workerPath, {
         workerData: {
@@ -2572,12 +2621,14 @@ Query: "${query}"`;
           // Contents of the files/folders the user @-mentioned in this message.
           mentionedFiles: resolvedMentions,
           repoOrientation,
+          promptProfile: shouldIncludeRepoOrientation ? 'full' : 'narrow',
           workspaceRules: codebaseRoots?.length
             ? [loadWorkspaceRules(codebaseRoots), verificationRecipesBlock(this.context)].filter(Boolean).join('\n\n') || undefined
             : undefined,
           executeMandate,
           resumeTranscript,
           ticketContext: ticketContext ? toTicketPromptContext(ticketContext) : undefined,
+          ticketLookupOnly,
           autonomous,
           planMode,
           // Read BEFORE this turn's own writes land, so it counts only earlier

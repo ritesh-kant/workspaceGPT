@@ -38,6 +38,7 @@ const { withKeyFailover, isRateLimitError, isTransientServerError, TRANSIENT_RET
 const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, INCOMPLETE_ANSWER_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer, isUnbackedCompletionClaim, claimsFileChanges, REPORT_CLAIMS_DONE_RE, ROOT_CAUSE_NARRATION_RE, isUnfinishedWriteRun, writeWasExpected: answerGatesWriteWasExpected, commitNudgeTriggers, hasWriteIntent, resolveHarnessProfile, phraseGatesEnabled, SMALL_MODEL_HINT_RE } = await import(path.join(outDir, 'answerGates.mjs'));
 const filePathDisplay = await import(path.join(outDir, 'filePathDisplay.mjs'));
 const ticketRefs = await import(path.join(outDir, 'ticketRefs.mjs'));
+const { formatModelHistory, MODEL_HISTORY_MAX_CHARS } = await import(path.join(outDir, 'chatHistory.mjs'));
 const referenceIndex = await import(path.join(outDir, 'referenceIndex.mjs'));
 
 // ── tiny runner ──
@@ -1009,6 +1010,83 @@ console.log('\npromptTemplates (operating norms — ticket #1534774 read-forever
     assert.ok(auto.includes('"## No change needed"'), 'no-change-needed heading not taught');
     assert.ok(auto.includes('"## Blocked"'), 'blocked heading not taught');
     assert.ok(auto.includes('FINAL REPORT FORMAT'), 'report format not attached');
+  });
+}
+
+console.log('\nprompt efficiency (lean context without weaker grounding)');
+{
+  const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
+  const ticket = {
+    id: '12345',
+    title: 'Read-only ticket',
+    type: 'Bug',
+    state: 'Active',
+    url: 'https://dev.azure.com/example/_workitems/edit/12345',
+    assignedTo: 'Ada',
+    sprint: 'Sprint 1',
+    description: 'A'.repeat(1_500),
+    acceptanceCriteria: 'Must not appear in a lookup prompt.',
+    comments: [{ author: 'Ada', text: 'Must not appear in a lookup prompt.' }],
+  };
+
+  await t('Chat mode has one compact no-guessing boundary', () => {
+    const prompt = createStructuredPrompt([], 'Explain this error', '', undefined, null, { chatOnly: true });
+    assert.ok(prompt.includes('## CHAT MODE'));
+    assert.ok(prompt.includes('cannot inspect this workspace'));
+    assert.ok(!prompt.includes('## CRITICAL GROUNDING RULES'), 'legacy repeated grounding block survived');
+  });
+
+  await t('narrow read-only work turns use the compact instruction pack', () => {
+    const prompt = createStructuredPrompt([], 'Explain @src/app.ts', '', undefined, null, {
+      codebaseToolsEnabled: true,
+      mentionedFiles: [{ name: 'src/app.ts', content: 'export const answer = 42;' }],
+      promptProfile: 'narrow',
+      workspaceRules: 'RULES_MARKER',
+      harnessProfile: 'strong-model',
+    });
+    assert.ok(prompt.includes('RULES_MARKER'), 'workspace rules must remain');
+    assert.ok(prompt.includes('`read_file` inspects a known file'), 'core tool guidance missing');
+    assert.ok(!prompt.includes('Pick the right tool for the job:'), 'broad investigation pack leaked');
+    assert.ok(!prompt.includes('After edits are applied, call `get_diagnostics`'), 'write pack leaked');
+  });
+
+  await t('broad and write work turns retain the complete instruction pack', () => {
+    const broad = createStructuredPrompt([], 'Investigate the service', '', undefined, null, {
+      codebaseToolsEnabled: true,
+      repoOrientation: 'src/',
+    });
+    const write = createStructuredPrompt([], 'Fix the service', '', undefined, null, {
+      codebaseToolsEnabled: true,
+      writeExpected: true,
+    });
+    assert.ok(broad.includes('Pick the right tool for the job:'));
+    assert.ok(write.includes('After edits are applied, call `get_diagnostics`'));
+  });
+
+  await t('read-only ticket context excludes implementation-only payload', () => {
+    const prompt = createStructuredPrompt([], 'What is ticket 12345?', '', undefined, null, {
+      codebaseToolsEnabled: true,
+      ticketContext: ticket,
+      ticketLookupOnly: true,
+    });
+    assert.ok(prompt.includes('## Ticket #12345: Read-only ticket'));
+    assert.ok(prompt.includes('A'.repeat(1_000)));
+    assert.ok(!prompt.includes('Must not appear in a lookup prompt.'));
+    assert.ok(!prompt.includes('FINAL REPORT FORMAT'));
+  });
+
+  await t('model history preserves recent complete messages and marks omitted context', () => {
+    const short = formatModelHistory([{ role: 'user', content: 'hello' }]);
+    assert.equal(short, 'User: hello');
+
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      role: index % 2 ? 'assistant' : 'user',
+      content: `${index}:${'x'.repeat(Math.ceil(MODEL_HISTORY_MAX_CHARS / 4))}`,
+    }));
+    const compacted = formatModelHistory(messages);
+    assert.ok(compacted.startsWith('[Earlier conversation omitted'), 'missing compaction marker');
+    assert.ok(compacted.includes(`9:${'x'.repeat(Math.ceil(MODEL_HISTORY_MAX_CHARS / 4))}`), 'latest complete message missing');
+    assert.ok(!compacted.includes('0:'), 'old message unexpectedly retained');
   });
 }
 

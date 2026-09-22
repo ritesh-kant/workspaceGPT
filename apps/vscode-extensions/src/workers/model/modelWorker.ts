@@ -102,6 +102,8 @@ interface WorkerData {
   mentionedFiles?: { name: string; content: string }[];
   /** Pre-built workspace file tree + README head, injected into codebase prompts. */
   repoOrientation?: string;
+  /** Whether this is a narrow, file-anchored or resumed codebase turn. */
+  promptProfile?: 'full' | 'narrow';
   /** Merged project rules files (.workspacegpt/rules.md, CLAUDE.md, …). */
   workspaceRules?: string;
   /**
@@ -125,6 +127,8 @@ interface WorkerData {
    * done). Images from the ticket ride separately in imageAttachments.
    */
   ticketContext?: TicketPromptContext;
+  /** A live ticket was fetched for a read-only lookup, not an implementation run. */
+  ticketLookupOnly?: boolean;
   /**
    * Click-to-run mode: no human is watching. Writes are auto-applied host-side,
    * permission-seeking is a failure, and the code-enforced verification gate
@@ -179,11 +183,13 @@ const {
   imageAttachments,
   mentionedFiles,
   repoOrientation,
+  promptProfile,
   workspaceRules,
   contextWindowOverride,
   executeMandate,
   resumeTranscript,
   ticketContext,
+  ticketLookupOnly,
   autonomous,
   planMode,
   priorWrites,
@@ -779,7 +785,10 @@ const MAX_TOOL_ITERATIONS = SAFETY_ITERATION_CEILING;
 // this run asks for the implementation too (#1536998 asked for both).
 const TICKET_RESEARCH_RUN = !!ticketContext && isResearchWorkItem(ticketContext.type);
 const TICKET_IMPLEMENT_MANDATE = !!executeMandate || IMPLEMENT_MANDATE_RE.test(prompt) || hasWriteIntent(prompt);
-const TICKET_IMPLEMENT_RUN = !!ticketContext && (!TICKET_RESEARCH_RUN || TICKET_IMPLEMENT_MANDATE);
+const TICKET_IMPLEMENT_RUN =
+  !!ticketContext && !ticketLookupOnly && (!TICKET_RESEARCH_RUN || TICKET_IMPLEMENT_MANDATE);
+const WRITE_GUIDANCE_NEEDED =
+  !!executeMandate || !!autonomous || (!planMode && TICKET_IMPLEMENT_MANDATE);
 // Is CHANGING the workspace this turn's job? Now only feeds the commit NUDGE
 // (prose the model may ignore) and the exploration-phase skip — positions
 // where a miss costs a reminder or a little context, never a capability or a
@@ -1067,13 +1076,16 @@ async function generateResponse(): Promise<void> {
         // run, paired with the phrase gates PHRASE_GATES disables.
         harnessProfile: HARNESS_PROFILE,
         repoOrientation,
+        promptProfile,
         workspaceRules,
         textAttachments,
         imageAttachmentNames: imageAttachments?.map((img) => img.name),
         mentionedFiles,
         executeMandate,
         ticketContext,
+        ticketLookupOnly,
         implementMandate: TICKET_IMPLEMENT_MANDATE,
+        writeExpected: WRITE_GUIDANCE_NEEDED,
         autonomous,
         planMode,
       }

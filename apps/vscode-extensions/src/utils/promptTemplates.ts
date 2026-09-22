@@ -274,7 +274,11 @@ function buildTicketLinks(t: TicketPromptContext): string {
   );
 }
 
-function buildTicketBlock(t?: TicketPromptContext, implementMandate = false): string {
+function buildTicketBlock(
+  t?: TicketPromptContext,
+  implementMandate = false,
+  lookupOnly = false,
+): string {
   if (!t) return '';
   const lines: string[] = [
     `## Ticket #${t.id}: ${t.title}`,
@@ -282,6 +286,12 @@ function buildTicketBlock(t?: TicketPromptContext, implementMandate = false): st
     `- ${t.type} · State: ${t.state}${t.assignedTo ? ` · Assigned to: ${t.assignedTo}` : ''}${t.sprint ? ` · Sprint: ${t.sprint}` : ''}`,
     `- URL: ${t.url}${t.parentId ? ` · Parent: #${t.parentId}` : ''}`,
   ];
+  if (lookupOnly) {
+    if (t.description) {
+      lines.push(`\n**Description:**\n${clip(t.description, 1_000)}`);
+    }
+    return lines.join('\n');
+  }
   if (t.description) {
     lines.push(`\n**Description:**\n${clip(t.description, TICKET_DESCRIPTION_MAX_CHARS)}`);
   }
@@ -333,7 +343,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; implementMandate?: boolean; autonomous?: boolean; planMode?: boolean; chatOnly?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; planMode?: boolean; chatOnly?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -417,11 +427,8 @@ export function createStructuredPrompt(
   const withContext = toolsEnabled && !!formattedContext;
 
   const groundingRules = chatOnly
-    ? `## CRITICAL GROUNDING RULES (MUST FOLLOW):
-  1. **This turn is a plain conversation.** You have NO access to the user's Confluence, their ticket tracker (Azure DevOps / Jira), or the code in their workspace — no tools, no search, no retrieved context. Answer from your own general knowledge.
-  2. **Never answer an org-specific question from guesswork.** If the user asks about one of their tickets, a sprint, an internal doc, or their own repository and its files, you cannot look any of it up. Say plainly that you are in **Chat mode**, which has no access to Confluence, Azure DevOps or the codebase, and that switching to **Work mode** — the Chat/Work switch at the top of a new chat — lets you actually look it up. Do not then guess at an answer anyway.
-  3. **NEVER invent ticket IDs, URLs, statuses, sprint names, file paths, or repository details.** You have seen none of them this turn.
-  4. **General questions are fully in scope** — a language or framework, an algorithm, a public library, code the user pasted into the conversation. Answer those normally and well; there is no reason to mention modes for them.`
+    ? `## CHAT MODE
+Answer general questions directly. You cannot inspect this workspace, internal documents, or tickets; never guess their facts. Only when the answer depends on them, say that Work mode can look them up.`
     : withContext
     ? `## CRITICAL GROUNDING RULES (MUST FOLLOW):
   1. **Ground every claim in the Context below or in a tool result from THIS turn.** The Context was retrieved from Confluence/Azure DevOps before you started — treat it as evidence you already hold.
@@ -474,12 +481,14 @@ ${chatOnly ? '' : `  - **ADO Tickets**: When answering about Azure DevOps ticket
     : '';
 
   const codebaseToolsEnabled = toolsEnabled;
+  const broadInvestigation = options?.promptProfile !== 'narrow';
+  const writeWorkflow = !!options?.writeExpected;
 
   const contextInstruction = isGreeting
     ? 'The user greeted you. Respond with a warm, friendly greeting. **Do NOT use any context.**'
     : chatOnly
-    ? 'Nothing was retrieved for this turn and you have no tools — answer from your own knowledge, the way any capable assistant would. The moment the question turns on something only this user\'s org or workspace could tell you (a ticket or its status, a sprint, an internal design doc, how THEIR repository is laid out, what is in one of THEIR files), stop and say you are in Chat mode without access to Confluence, Azure DevOps or the codebase, and that Work mode can look it up. Offer what general help you honestly can alongside that, but never present a guess about their org as fact. '
-    : codebaseToolsEnabled
+    ? 'Answer directly from general knowledge or material the user supplied. For workspace-, ticket-, or internal-document-specific questions, state that Chat mode cannot inspect those sources and recommend Work mode; do not guess.'
+    : codebaseToolsEnabled && (broadInvestigation || writeWorkflow)
       ? (withContext
           ? 'Context from Confluence/Azure DevOps was retrieved for this question and appears under **Context** below. If it answers the question, answer from it directly and cite its Provided Sources — do not re-search for what is already there. Reach for your tools when the Context is insufficient, or when the user asks for a change to the code. '
           : 'Answer the user\'s question about this codebase. ') +
@@ -504,6 +513,15 @@ ${chatOnly ? '' : `  - **ADO Tickets**: When answering about Azure DevOps ticket
         '`run_checks` runs the tests / lint / typecheck that cover ONE FILE — it derives the package, package manager, runner, sibling test file and working directory itself, so it never picks the wrong directory or an unapproved command. After your edits, call it with kind "lint", "typecheck" and "test" for every file you changed, and FIX failures before declaring the task done — if you skip it the run runs those checks itself before accepting your answer, so the failures reach you either way. `run_command` executes an arbitrary shell command (with user approval) — use it only when run_checks reports it cannot find a runner. Keep commands non-interactive (no watch modes, no prompts). ' +
         orgKnowledgeBlock +
         '`search_web` is a live internet search — use it the moment a task names something you don\'t actually know (an unfamiliar library, API, product, or service — e.g. "add ZenMux as a provider") instead of guessing at its shape from a similar-sounding name. Also reach for it when the answer depends on something that can change after your training (current docs, pricing, version numbers, breaking changes) — the codebase and org docs cannot tell you that. Do NOT use it for anything answerable from THIS workspace or from Confluence/ADO — those are cheaper and authoritative for org-internal facts. It may be unconfigured (no API key) — if so it reports that plainly; fall back to your own knowledge and say so, don\'t stall the task on it. When you do use its results, cite the source URLs.'
+    : codebaseToolsEnabled
+      ? (withContext
+          ? 'Use the retrieved Context when it answers the question; otherwise use your tools to verify the workspace. '
+          : 'Use tools to verify the codebase before answering; never guess. ') +
+        '`read_file` inspects a known file, `find_symbol` finds a known symbol, `search_codebase` finds text, and `explore` handles a question that spans several unread files. ' +
+        (smallModelHarness ? 'Invoke tools directly rather than narrating a plan. ' : '') +
+        'Do not repeat earlier factual claims without verifying them against the current workspace. ' +
+        orgKnowledgeBlock +
+        'Use `search_web` only for unfamiliar or time-sensitive external facts, and cite its URLs when used.'
       : 'Answer the user\'s question using ONLY the context provided below. If the context does not contain relevant information, clearly state that you don\'t have the data rather than guessing.';
 
   // The user approved a plan the previous turn proposed (see APPROVAL_RE in
@@ -591,7 +609,13 @@ This run was started with a single click and nobody will answer questions mid-ta
   const attachmentsBlock = buildAttachmentsBlock(options);
   const mentionsBlock = buildMentionsBlock(options);
 
-  const ticketBlock = codebaseToolsEnabled ? buildTicketBlock(options?.ticketContext, !!options?.implementMandate) : '';
+  const ticketBlock = codebaseToolsEnabled
+    ? buildTicketBlock(
+        options?.ticketContext,
+        !!options?.implementMandate,
+        !!options?.ticketLookupOnly,
+      )
+    : '';
 
   // ── Block order is a caching decision as much as a prompt one ──
   // Every round of an agent run resends this whole string, and so does every

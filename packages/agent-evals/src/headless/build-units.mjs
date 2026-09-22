@@ -25,6 +25,7 @@ const UNITS = [
   'src/services/codebase/lineNumbers.ts',
   'src/utils/apiKeyFailover.ts',
   'src/utils/continuationIntent.ts',
+  'src/utils/chatHistory.ts',
   'src/utils/reranker.ts',
   'src/utils/queryPlanner.ts',
   'src/utils/queryClassifier.ts',
