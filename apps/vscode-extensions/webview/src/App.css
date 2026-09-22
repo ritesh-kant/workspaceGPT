@@ -621,6 +621,14 @@
   opacity: 0.75;
 }
 
+/* Estimated credit cost, trailing the duration on the same row (remote mode only). */
+.message-credits {
+  margin-left: 0.5rem;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+}
+
 /* Input container styles */
 .input-container {
   display: flex;

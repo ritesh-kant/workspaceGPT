@@ -385,6 +385,7 @@ const App: React.FC = () => {
     addAgentStep,
     updateAgentStep,
     setTurnSummary,
+    setTokensPerCredit,
     finalizeAgentTurn,
     resetTurnState,
     liveSessions,
@@ -870,6 +871,8 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.AGENT_TURN_SUMMARY:
           store.bgSetTurnSummary(sessionId, {
             durationMs: message.durationMs || 0,
+            promptTokens: message.promptTokens,
+            completionTokens: message.completionTokens,
             filesChanged: message.filesChanged || [],
             checkpointSha: message.checkpointSha,
             ticketId: message.ticketId,
@@ -1032,6 +1035,8 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.AGENT_TURN_SUMMARY:
           setTurnSummary({
             durationMs: message.durationMs || 0,
+            promptTokens: message.promptTokens,
+            completionTokens: message.completionTokens,
             filesChanged: message.filesChanged || [],
             checkpointSha: message.checkpointSha,
             ticketId: message.ticketId,
@@ -1111,11 +1116,13 @@ const App: React.FC = () => {
                   }
                 : null
             );
+            setTokensPerCredit(typeof message.tokensPerCredit === 'number' ? message.tokensPerCredit : null);
           }
           break;
         case MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS:
           setRemoteSignedIn(false);
           setRemoteUsage(null);
+          setTokensPerCredit(null);
           break;
         case MESSAGE_TYPES.NEW_CHAT:
           handleNewChatRef.current();

@@ -12,7 +12,7 @@ import { useSettingsStore } from '../store';
 import { useGitStatusStore } from '../store/gitStatusStore';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { AgentStep, RunRef, TurnSummary } from '../store/chatStore';
+import { AgentStep, RunRef, TurnSummary, useChatStore } from '../store/chatStore';
 import type { ChatAttachment } from '../constants';
 import { copyToClipboard } from '../utils/clipboard';
 
@@ -44,6 +44,19 @@ const ChatLink: React.FC<AnchorProps> = ({ href, children, className, title, nod
     </a>
   );
 };
+
+/**
+ * Estimated credit cost of a turn, mirroring the server's own
+ * `creditsForTokens` (apps/workspacegpt-api/src/metering.ts) — at least one
+ * credit for any call that produced tokens. This is an estimate: the server
+ * additionally rebates cache-hit prompt tokens, a number only it knows.
+ */
+function formatCredits(promptTokens: number | undefined, completionTokens: number | undefined, tokensPerCredit: number): string | null {
+  const total = (promptTokens || 0) + (completionTokens || 0);
+  if (total <= 0) return null;
+  const credits = Math.max(1, Math.ceil(total / tokensPerCredit));
+  return `${credits} credit${credits === 1 ? '' : 's'}`;
+}
 
 /** Plain text of a hast subtree — react-markdown hands each renderer its `node`. */
 function hastText(node: unknown): string {
@@ -322,6 +335,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   // Azure DevOps coordinates for turning `#1516750` in the answer into a link.
   // Absent (not connected yet) → ids stay plain text.
   const ado = useSettingsStore((s) => s.config.ado);
+  // Credits are a remote-mode concept only — local inference has no account to meter.
+  const remoteMode = useSettingsStore((s) => s.config.mode === 'remote');
+  const tokensPerCredit = useChatStore((s) => s.tokensPerCredit);
   const prUrlTemplate = useGitStatusStore((s) => s.status?.prUrlTemplate);
   const [draft, setDraft] = useState<string | null>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
@@ -591,6 +607,14 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
               {turnSummary?.durationMs != null && (
                 <span className="message-duration">{formatDuration(turnSummary.durationMs)}</span>
               )}
+              {remoteMode && tokensPerCredit != null && (() => {
+                const credits = formatCredits(turnSummary?.promptTokens, turnSummary?.completionTokens, tokensPerCredit);
+                return credits ? (
+                  <span className="message-credits" title="Estimated credit cost of this response">
+                    {credits}
+                  </span>
+                ) : null;
+              })()}
             </div>
           )}
         </>

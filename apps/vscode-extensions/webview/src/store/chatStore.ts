@@ -62,6 +62,9 @@ export interface RunRef {
 /** End-of-turn rollup: how long the agent worked and which files changed. */
 export interface TurnSummary {
   durationMs: number;
+  /** Tokens this turn spent, when known (remote mode only) — used to estimate the credits it cost. */
+  promptTokens?: number;
+  completionTokens?: number;
   filesChanged: { path: string; kind: 'edit' | 'create' | 'delete'; added: number; removed: number }[];
   /** Sha of the checkpoint taken before this turn's first change — undo target for the triggering user message. */
   checkpointSha?: string;
@@ -351,6 +354,9 @@ interface ChatState {
    * opened, but the meter must survive switching back and forth.
    */
   sessionContext: Record<string, ContextUsage>;
+  /** `tokens_per_credit` from the signed-in account's profile — null until sign-in resolves. Used to turn a turn's tokens into an estimated credit cost. */
+  tokensPerCredit: number | null;
+  setTokensPerCredit: (tokensPerCredit: number | null) => void;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
   /** Drop one message by index — used to clear a failed turn's error bubble before retrying it. */
@@ -454,6 +460,7 @@ export const chatDefaultState = {
   pendingTurnSummary: null,
   liveSessions: {},
   sessionContext: {},
+  tokensPerCredit: null,
 };
 
 export const useChatStore = create<ChatState>()(
@@ -625,6 +632,7 @@ export const useChatStore = create<ChatState>()(
       setContextSelection: (contextSelection) => set({ contextSelection }),
       setAssistantMode: (assistantMode) => set({ assistantMode }),
       setStatusText: (statusText) => set({ statusText }),
+      setTokensPerCredit: (tokensPerCredit) => set({ tokensPerCredit }),
       setWriteReviewDecision: (reviewId, decision) => set((state) => ({
         messages: state.messages.map((m) =>
           m.writeReview?.id === reviewId ? { ...m, writeReview: { ...m.writeReview, decision } } : m

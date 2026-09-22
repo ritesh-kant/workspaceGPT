@@ -259,6 +259,9 @@ interface SessionRun {
   /** Set on stop: everything the dying run still emits is dropped host-side. */
   cancelled: boolean;
   turnStartMs: number;
+  /** Tokens the current turn has spent so far, from the worker's 'metrics' message — carried onto the turn summary to estimate its credit cost. */
+  turnPromptTokens: number;
+  turnCompletionTokens: number;
   /** File-change rollup for the current agent turn (path → cumulative counts). */
   turnFilesChanged: Map<string, TurnFileChange>;
   /**
@@ -696,6 +699,8 @@ export class ChatService {
         writeGate: new AgentWriteGate(),
         cancelled: false,
         turnStartMs: 0,
+        turnPromptTokens: 0,
+        turnCompletionTokens: 0,
         turnFilesChanged: new Map(),
         turnRefs: [],
         turnStepsPosted: 0,
@@ -883,6 +888,8 @@ export class ChatService {
       // turn-scoped (see resolvedMentions below).
       run.chatHistory.push({ role: 'user', content: historyContent });
       run.turnStartMs = Date.now();
+      run.turnPromptTokens = 0;
+      run.turnCompletionTokens = 0;
       run.userAskedRepoWide = REPO_WIDE_REQUEST_RE.test(message);
       run.turnFilesChanged.clear();
       run.turnRefs.length = 0;
@@ -2721,6 +2728,8 @@ Query: "${query}"`;
               this.post(run, {
                 type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
                 durationMs: Date.now() - run.turnStartMs,
+                promptTokens: run.turnPromptTokens,
+                completionTokens: run.turnCompletionTokens,
                 filesChanged: [...run.turnFilesChanged.values()],
                 checkpointSha: shippable ? run.turnFirstCheckpointSha ?? undefined : undefined,
                 ticketId: ticketContext?.id,
@@ -2843,6 +2852,9 @@ Query: "${query}"`;
             toolMsByName?: Record<string, { ms: number; calls: number }>;
             turns?: number;
             toolCallsExecuted?: number;
+            /** metrics: this turn's token spend, carried onto the turn summary. */
+            promptTokens?: number;
+            completionTokens?: number;
             /** agent_transcript: the worker's model-facing messages — full replacement, or an append. */
             reset?: unknown[];
             append?: unknown[];
@@ -3064,6 +3076,10 @@ Query: "${query}"`;
                 // up in the extension host output for real chats too. Consumed
                 // properly by packages/agent-evals.
                 console.log('[agent-metrics]', JSON.stringify(result));
+                // Stashed on the run so the turn summary below can carry the
+                // token count out to the webview for an estimated credit cost.
+                run.turnPromptTokens = Number(result.promptTokens) || 0;
+                run.turnCompletionTokens = Number(result.completionTokens) || 0;
                 // Where the run's wall clock went, in the same channel as the
                 // command log — so the next "why did that take twenty minutes"
                 // is one line to read instead of an audit-log reconstruction.
