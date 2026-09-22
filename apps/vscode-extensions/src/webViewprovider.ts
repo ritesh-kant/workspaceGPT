@@ -9,6 +9,7 @@ import {
 import { ChatWebviewHub } from './utils/chatWebviewHub';
 import { registerWebviewPoster } from './utils/webviewBroadcast';
 import {
+  closeEmptyEditorGroups,
   maximizeChatWorkbench,
   openEmptyEditorGroup,
   unmaximizeChatWorkbench,
@@ -196,6 +197,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       this.hub.setActive('sidebar');
       void this.setChatInEditorContext(false);
       this.maybeDisposeHandler();
+      void closeEmptyEditorGroups();
       if (!this._restoringToSidebar) {
         void vscode.commands.executeCommand(
           `workbench.view.extension.${EXTENSION.VIEW_CONTAINER}`
@@ -277,6 +279,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     }
 
     this._editorPanel.dispose();
+    await closeEmptyEditorGroups();
   }
 
   /**

@@ -50,3 +50,20 @@ export async function maximizeChatWorkbench(): Promise<void> {
 export async function unmaximizeChatWorkbench(): Promise<void> {
   await tryExecuteCommand(LAYOUT.TOGGLE_MAXIMIZE_GROUP);
 }
+
+/**
+ * Closes any editor groups that have no open tabs, so a temporary group created
+ * for the chat webview doesn't linger as an empty split screen after restore.
+ */
+export async function closeEmptyEditorGroups(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const groups = vscode.window.tabGroups.all;
+  const emptyGroups = groups.filter((g) => g.tabs.length === 0);
+  if (emptyGroups.length > 0 && groups.length > emptyGroups.length) {
+    try {
+      await vscode.window.tabGroups.close(emptyGroups);
+    } catch {
+      await tryExecuteCommand('workbench.action.closeGroup');
+    }
+  }
+}
