@@ -516,10 +516,11 @@ ${chatOnly ? '' : `  - **ADO Tickets**: When answering about Azure DevOps ticket
     : codebaseToolsEnabled
       ? (withContext
           ? 'Use the retrieved Context when it answers the question; otherwise use your tools to verify the workspace. '
-          : 'Use tools to verify the codebase before answering; never guess. ') +
+          : 'If the question needs workspace facts you have not already established in this conversation, use tools to verify them; never guess. ') +
+        'If the conversation, tool results already in it, or the files attached to this message answer the question — or it is not about this workspace at all — answer directly without calling tools. ' +
         '`read_file` inspects a known file, `find_symbol` finds a known symbol, `search_codebase` finds text, and `explore` handles a question that spans several unread files. ' +
         (smallModelHarness ? 'Invoke tools directly rather than narrating a plan. ' : '') +
-        'Do not repeat earlier factual claims without verifying them against the current workspace. ' +
+        'Re-check a file only when the user says it changed or you edited it since you last read it. ' +
         orgKnowledgeBlock +
         'Use `search_web` only for unfamiliar or time-sensitive external facts, and cite its URLs when used.'
       : 'Answer the user\'s question using ONLY the context provided below. If the context does not contain relevant information, clearly state that you don\'t have the data rather than guessing.';
