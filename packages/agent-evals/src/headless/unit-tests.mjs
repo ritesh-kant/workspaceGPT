@@ -34,7 +34,7 @@ const { runAgent } = await import('./agent-smoke.mjs');
 const resumeStore = await import(path.join(outDir, 'resumeStore.mjs'));
 const continuation = await import(path.join(outDir, 'continuationIntent.mjs'));
 const { startMockModel } = await import('./mock-model.mjs');
-const { withKeyFailover, isRateLimitError, isTransientServerError, TRANSIENT_RETRY_DELAYS_MS } = await import(path.join(outDir, 'apiKeyFailover.mjs'));
+const { withKeyFailover, isRateLimitError, isTransientServerError, isAllowanceExhaustedError, TRANSIENT_RETRY_DELAYS_MS } = await import(path.join(outDir, 'apiKeyFailover.mjs'));
 const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, INCOMPLETE_ANSWER_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer, isUnbackedCompletionClaim, claimsFileChanges, REPORT_CLAIMS_DONE_RE, ROOT_CAUSE_NARRATION_RE, isUnfinishedWriteRun, writeWasExpected: answerGatesWriteWasExpected, commitNudgeTriggers, hasWriteIntent, resolveHarnessProfile, phraseGatesEnabled, SMALL_MODEL_HINT_RE } = await import(path.join(outDir, 'answerGates.mjs'));
 const filePathDisplay = await import(path.join(outDir, 'filePathDisplay.mjs'));
 const ticketRefs = await import(path.join(outDir, 'ticketRefs.mjs'));
@@ -2175,6 +2175,26 @@ console.log('\napiKeyFailover (overload retry — regression for the turn-18 run
       /429/,
     );
     assert.deepEqual(waits, [10, 20], 'bounded — it does not wait forever on real exhaustion');
+  });
+
+  await t('a spent weekly allowance surfaces at once — no wait, no rotation', async () => {
+    // 2026-09-23: the server's weekly-cap refusal was treated as a transient
+    // 429 and retried twice (5s + 15s) before the error card appeared.
+    const waits = [];
+    let calls = 0;
+    const capped = Object.assign(
+      new Error('429 Weekly credit limit reached (606 of 600 credits used). It resets Monday at 00:00 UTC.'),
+      { status: 429, code: 'weekly_limit_reached', type: 'weekly_limit_reached' },
+    );
+    assert.ok(isAllowanceExhaustedError(capped));
+    assert.ok(!isAllowanceExhaustedError(err(429)), 'an ordinary 429 is still a rate limit');
+    await rejects(
+      withKeyFailover(['k1', 'k2'], async () => { calls++; throw capped; }, undefined,
+        { sleep: async (ms) => void waits.push(ms), retryDelaysMs: [10, 20] }),
+      /Weekly credit limit reached/,
+    );
+    assert.equal(calls, 1);
+    assert.deepEqual(waits, []);
   });
 
   await t('with MORE keys a 429 still rotates immediately rather than waiting', async () => {

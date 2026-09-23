@@ -147,6 +147,9 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
   if (!decision.allowed) {
     return errorResponse(429, describeRefusal(decision), 'weekly_limit_reached', {
       'Retry-After': String(decision.retryAfterSec),
+      // The OpenAI SDK retries a 429 on its own (4× with backoff) unless told
+      // not to; a spent weekly allowance cannot clear in seconds.
+      'x-should-retry': 'false',
       ...allowanceHeaders,
     });
   }

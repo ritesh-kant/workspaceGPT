@@ -244,7 +244,14 @@ export class DeploymentMessageHandler {
         pageUrl: resolved.pageUrl,
       });
     } catch (error) {
-      notConfigured(errMessage(error));
+      const message = errMessage(error);
+      // A dead/revoked refresh token surfaces here as a fetch failure, not as
+      // `!confluenceConnected` above — steer the user back to the same "Connect
+      // Confluence" action instead of printing the raw OAuth error.
+      if (/refresh access token|refresh_token/i.test(message)) {
+        return notConfigured('Your Confluence connection expired. Reconnect to see today’s release.', 'confluence');
+      }
+      notConfigured(message);
     }
   }
 

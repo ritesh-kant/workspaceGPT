@@ -77,6 +77,19 @@ function listKey(list: string[]): string {
  */
 export const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [5_000, 15_000];
 
+/**
+ * True when the WorkspaceGPT server refused the call because the account's
+ * weekly credit allowance is spent. It arrives as a 429, but it cannot clear
+ * in seconds — waiting and retrying only delays the error card. Identified by
+ * the server's own error code (chat.ts `weekly_limit_reached`), which the
+ * OpenAI SDK copies onto the error as `code`/`type`.
+ */
+export function isAllowanceExhaustedError(err: any): boolean {
+  const code = err?.code ?? err?.error?.code;
+  const type = err?.type ?? err?.error?.type;
+  return code === 'weekly_limit_reached' || type === 'weekly_limit_reached';
+}
+
 /** True when an error represents an HTTP 429 (rate limit / over quota). */
 export function isRateLimitError(err: any): boolean {
   const status = err?.status ?? err?.statusCode ?? err?.response?.status;
@@ -170,6 +183,10 @@ export async function withKeyFailover<T>(
         return result;
       } catch (err) {
         lastErr = err;
+
+        // A spent weekly allowance is per account, not per key or per minute:
+        // neither rotating nor waiting can help, so surface it at once.
+        if (isAllowanceExhaustedError(err)) throw err;
 
         if (isRateLimitError(err)) {
           const isLastKey = i >= list.length - 1;

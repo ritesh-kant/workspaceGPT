@@ -13,6 +13,10 @@ export class ConfluenceSyncScheduler {
   // extension start, which is how we distinguish a post-restart stale flag from an
   // in-flight sync started by the current process.
   private syncStartedAt?: number;
+  // True once we've shown the "reconnect Confluence" prompt for the current outage, so a
+  // dead refresh token doesn't re-notify on every 15-minute retry. Cleared as soon as a
+  // sync gets a valid token again.
+  private authFailureNotified = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.confluenceAuthService = new ConfluenceAuthService(context);
@@ -145,6 +149,7 @@ export class ConfluenceSyncScheduler {
   private async runSync(resume: boolean = false) {
     try {
       const accessToken = await this.confluenceAuthService.getValidAccessToken();
+      this.authFailureNotified = false;
       const site = this.confluenceAuthService.getStoredSite();
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       const spaceKey = config?.state?.config?.confluence?.spaceKey;
@@ -199,6 +204,26 @@ export class ConfluenceSyncScheduler {
     } catch (e) {
       console.error('Automated background sync failed:', e);
       await this.resetSyncFlags();
+      this.notifyIfAuthFailure(e);
     }
+  }
+
+  /** Surface a dead Confluence refresh token to the user — auto-sync runs with no
+   * webview open, so a console.error here is invisible and the user has no idea
+   * their content has stopped syncing until they notice stale search results. */
+  private notifyIfAuthFailure(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/refresh access token|refresh_token|not authenticated with confluence/i.test(message)) {
+      return;
+    }
+    if (this.authFailureNotified) {
+      return;
+    }
+    this.authFailureNotified = true;
+    vscode.window.showErrorMessage('Your Confluence connection expired — background sync is paused until you reconnect.', 'Reconnect Confluence').then((choice) => {
+      if (choice === 'Reconnect Confluence') {
+        vscode.commands.executeCommand('workspacegpt.settings');
+      }
+    });
   }
 }

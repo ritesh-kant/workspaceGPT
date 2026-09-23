@@ -342,6 +342,15 @@ function buildSuggestions(
   return suggestions.slice(0, 4);
 }
 
+/** "Thinking... 47s" / "Thinking... 1m 12s" — never shows 0s, a fresh turn just omits the suffix. */
+function formatElapsed(sec: number): string {
+  if (sec <= 0) return '';
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${s}s`;
+}
+
 const SuggestionArrow: React.FC = () => (
   <span className='prompt-item-arrow' aria-hidden='true'>
     <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
@@ -682,6 +691,15 @@ const App: React.FC = () => {
   const streamDoneRef = useRef(false);
   const pumpRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Elapsed time for the run currently in flight — the only thing that told
+  // the user a static "Thinking..." label was still alive, rather than a
+  // hung UI, was watching the composer for a spinner that never changed.
+  // Ticks once a second for the lifetime of isLoading/isStreaming and resets
+  // as soon as both go false, so a stopped/finished turn doesn't leave a
+  // stale number on screen for the next one.
+  const [turnElapsedSec, setTurnElapsedSec] = useState(0);
+  const turnStartRef = useRef<number | null>(null);
+
   const vscode = VSCodeAPI(); // This will now use the singleton instance
 
   // Debounced save: to avoid writing to disk on every keystroke / rapid message
@@ -792,6 +810,29 @@ const App: React.FC = () => {
 
   // Clean up the pump on unmount.
   useEffect(() => () => resetStreamBuffer(), [resetStreamBuffer]);
+
+  // Drives turnElapsedSec: starts the moment a turn goes live and ticks every
+  // second until it ends. A run whose only host-side activity is a single
+  // model call with no tool calls can sit on a static "Thinking..." label for
+  // a minute or more — this is what tells the user that's still progress,
+  // not a hang.
+  useEffect(() => {
+    if (!isLoading && !isStreaming) {
+      turnStartRef.current = null;
+      setTurnElapsedSec(0);
+      return;
+    }
+    if (turnStartRef.current === null) {
+      turnStartRef.current = Date.now();
+      setTurnElapsedSec(0);
+    }
+    const id = setInterval(() => {
+      if (turnStartRef.current !== null) {
+        setTurnElapsedSec(Math.floor((Date.now() - turnStartRef.current) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isLoading, isStreaming]);
 
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
@@ -2445,12 +2486,27 @@ const App: React.FC = () => {
                 />
               );
             })}
-            {isLoading && (
+            {/*
+              Was gated on isLoading alone, so the row unmounted the instant the
+              first chunk arrived (isLoading -> false, isStreaming -> true) and
+              every status the host posted after that — a provider-outage wait,
+              an auto-resume, a mid-stream tool call — was written into
+              statusText and never shown. Now: stays up through isLoading
+              (nothing on screen yet) and through isStreaming too, but only
+              when there's an actual message to show — a bare "Thinking..."
+              floating under text that's already streaming would just be noise.
+            */}
+            {(isLoading || (isStreaming && statusText)) && (
               <div className='loading-indicator'>
                 {agentSteps.length > 0 && <AgentTimeline steps={agentSteps} live />}
                 <div className='loading-indicator-row'>
                   <span className='loading-pulse' />
-                  <span>{statusText || 'Thinking...'}</span>
+                  <span>
+                    {statusText || 'Thinking...'}
+                    {turnElapsedSec > 0 && (
+                      <span className='loading-indicator-elapsed'> · {formatElapsed(turnElapsedSec)}</span>
+                    )}
+                  </span>
                 </div>
               </div>
             )}
@@ -2526,6 +2582,24 @@ const App: React.FC = () => {
           </div>
         )}
         <div className='composer-status-bars'>
+          {/*
+            Lives outside the scrolling message list on purpose: the in-list
+            indicator further up is invisible whenever the user has scrolled
+            away from the bottom (e.g. rereading the previous answer while the
+            next turn runs), which is exactly when a silent multi-second gap
+            reads as "it died" instead of "it's working".
+          */}
+          {(isLoading || isStreaming) && (
+            <div className='composer-run-status'>
+              <span className='loading-pulse' />
+              <span>
+                {statusText || (isStreaming ? 'Streaming response…' : 'Thinking...')}
+                {turnElapsedSec > 0 && (
+                  <span className='loading-indicator-elapsed'> · {formatElapsed(turnElapsedSec)}</span>
+                )}
+              </span>
+            </div>
+          )}
           {mode === 'remote' && remoteSignedIn && remoteUsage && (
             <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
           )}

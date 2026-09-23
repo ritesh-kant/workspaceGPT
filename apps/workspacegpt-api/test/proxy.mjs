@@ -421,6 +421,7 @@ await t('weekly allowance exhausted → 429 weekly_limit_reached, vendor never c
   assert.match(body.error.message, /week/i);
   assert.ok(Number(res.headers.get('Retry-After')) > 0, 'Retry-After is set');
   assert.ok(Number(res.headers.get('Retry-After')) <= 7 * 86400);
+  assert.equal(res.headers.get('x-should-retry'), 'false', 'the SDK must not silently retry a spent week');
   assert.equal(res.headers.get('X-WorkspaceGPT-Credits-Used'), '100');
   assert.equal(calls.length, 0);
   assert.deepEqual(

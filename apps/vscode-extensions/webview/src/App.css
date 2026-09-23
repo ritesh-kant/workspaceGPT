@@ -942,6 +942,23 @@ button:disabled {
   gap: 0.5rem;
 }
 
+.loading-indicator-elapsed {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Composer-row run status: same indicator as .loading-indicator but pinned
+   above the textarea, outside the scrolling message list, so it stays
+   visible while the user is scrolled up reading an earlier message. */
+.composer-run-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 3px 0.4rem;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.75rem;
+}
+
 /* ── Agent step timeline (Antigravity-style) ─────────────────────────── */
 .agent-timeline {
   margin: 0 0 0.5rem 0;
