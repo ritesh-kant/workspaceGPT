@@ -45,11 +45,13 @@ const MAX_READ_ONLY_OPEN = 20;
 const PENDING_GIVE_UP_MS = 45_000;
 const REQUEST_TIMEOUT_MS = 60_000;
 /**
- * tsserver holds every loaded project in memory (measured: ~880 MB for this
- * repo's extension + webview projects), so it is stopped after this long with
- * no calls. The next call starts it again and re-reports files as pending.
+ * tsserver holds every loaded project in memory (measured on this repo, only
+ * the sidecar's children: ~500 MB after a definition lookup, ~680 MB once
+ * find_symbol has loaded the extension + webview projects), so it is stopped
+ * after this long with no calls. The next call starts it again (~1.5–2.5 s)
+ * and re-reports files as pending.
  */
-const IDLE_SHUTDOWN_MS = 10 * 60_000;
+const IDLE_SHUTDOWN_MS = Number(process.env.WGPT_DESKTOP_LSP_IDLE_MS) || 5 * 60_000;
 /** tsserver needs a project loaded before workspace/symbol answers; one file per tsconfig/jsconfig loads it. */
 const MAX_SEED_PROJECTS = 8;
 /** With no tsconfig/jsconfig anywhere, tsserver only has inferred projects of open files: open this many sources. */
@@ -224,9 +226,9 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
     if (idleTimer) return;
     idleTimer = setInterval(() => {
       if (Date.now() - lastUse < IDLE_SHUTDOWN_MS) return;
-      console.log(`[desktop:lsp] idle for ${IDLE_SHUTDOWN_MS / 60_000} min; stopping the TypeScript server`);
+      console.log(`[desktop:lsp] idle for ${Math.round(IDLE_SHUTDOWN_MS / 1000)} s; stopping the TypeScript server`);
       stop();
-    }, 60_000);
+    }, Math.min(60_000, IDLE_SHUTDOWN_MS));
     idleTimer.unref();
   }
 
@@ -283,8 +285,19 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
         },
         initializationOptions: {
           hostInfo: 'workspacegpt-desktop',
-          // The workspace's own typescript wins (the server looks there first); this is for repos without one.
-          ...(fallbackTsserver ? { tsserver: { fallbackPath: fallbackTsserver } } : {}),
+          tsserver: {
+            // The workspace's own typescript wins (the server looks there first); this is for repos without one.
+            ...(fallbackTsserver ? { fallbackPath: fallbackTsserver } : {}),
+            // A second tsserver that keeps an editor responsive while typing (~200-250 MB here). No editor, no typing.
+            useSyntaxServer: 'never',
+          },
+          // typingsInstaller (~100 MB) downloads @types from npm for JS projects: a network side effect the
+          // user never asked for, for type detail the agent's lookups don't need.
+          disableAutomaticTypingAcquisition: true,
+          preferences: {
+            // An extra hidden project built from every package.json dependency, used only for completions.
+            includePackageJsonAutoImports: 'off',
+          },
         },
       });
       if (ready !== attempt) {

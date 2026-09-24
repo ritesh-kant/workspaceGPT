@@ -126,10 +126,26 @@ the desktop's `typescript` dependency is the fallback.
   their extension: lookups return nothing and the tool tells the model to use
   text search. No ESLint diagnostics (VS Code gets those from the ESLint
   extension); `run_checks` / auto-verify still run the linter.
-- **Memory:** tsserver peaked at **~880 MB** with this repo's extension +
-  webview projects loaded. It starts on first use and stops after 10 min
-  idle; a product call remains whether that's acceptable against the 250 MB
-  idle target (it is idle-only, but a long agent session holds it).
+- **Memory** (only the sidecar's own child processes; an earlier "~880 MB"
+  also counted the IDE's tsservers running on the same machine). Before, on
+  this repo after one definition lookup: ~890 MB = semantic tsserver 440 +
+  syntax tsserver 250 + typingsInstaller 100 + the language server 75.
+  The desktop now turns off the syntax server (it keeps an editor
+  responsive while typing; there is no editor), automatic type acquisition
+  (it downloads @types from npm) and package.json auto-imports (a hidden
+  project of every dependency, for completions only):
+
+  | After | before | now |
+  |---|---|---|
+  | go_to_definition (extension project) | ~890 MB | **~500 MB** |
+  | find_symbol (extension + webview projects) | ~990 MB | **~680 MB** |
+  | 5 min with no calls | ~890 MB until 10 min | **0 MB** |
+
+  What remains is the loaded TypeScript program, which VS Code holds too.
+  The server starts on first use and stops after 5 min idle
+  (`WGPT_DESKTOP_LSP_IDLE_MS` overrides); a restart costs ~1.5–2.5 s on the
+  next lookup. The 250 MB idle target holds; during an agent run that uses
+  code intelligence it does not, by design.
 - `node scripts/lsp-smoke.mjs [<repo> <symbol>]`: 11 checks on a throwaway
   project (+1 on a real repo) through the extension's real tool functions.
   All pass; cold `find_symbol` 0.5–0.9 s on the fixture, 2–6 s on
@@ -476,6 +492,7 @@ The window is now a two-pane app rather than the chat panel alone:
 | `WGPT_DESKTOP_TRACE_WORKERS=1` | logs every worker_thread message (type and size only) |
 | `WGPT_DESKTOP_ANALYTICS=1` / `=0` | force PostHog on / off (default: on in `NODE_ENV=production` builds, off in dev); events are tagged `surface: desktop`, extension events `surface: extension` |
 | `WGPT_DESKTOP_DEBUG_TOKEN_FILE=<path>` | writes the socket link (0600) so a browser tab can join a Tauri-run sidecar |
+| `WGPT_DESKTOP_LSP_IDLE_MS=<ms>` | how long the TypeScript server may sit unused before it is stopped (default 5 min) |
 | `WGPT_DESKTOP_TEST_DIFF=<file>` | records `<file>`'s current text as the agent's pre-edit original, so a hand edit shows in the files-changed review (diff-panel test) |
 | `WGPT_DESKTOP_TEST_COMMAND=<cmd>` | starts `<cmd>` through `commandTools.executeCommand` at startup (orphan test) |
 | `WGPT_EDITOR=<cmd>` | editor used for "open file" hand-off (`<cmd> file:line`) |
