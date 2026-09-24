@@ -286,20 +286,22 @@ console.log('\ncheckpointService (shadow git lifecycle)');
   const shadowDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-shadow-'));
   const svc = new CheckpointService(path.join(shadowDir, 'cp'), ws);
 
+  // checkpoint() takes the files it snapshots (production scopes each one to
+  // the file about to be written, see chatService.applyPreparedWrite).
   let cp1, cp2;
   await t('checkpoint captures initial state', async () => {
-    cp1 = await svc.checkpoint('before agent run');
+    cp1 = await svc.checkpoint('before agent run', ['a.txt', 'b.txt']);
     assert.match(cp1.sha, /^[0-9a-f]{40}$/);
   });
   await t('idempotent: no changes → same sha, no empty commit', async () => {
-    const again = await svc.checkpoint('noop');
+    const again = await svc.checkpoint('noop', ['a.txt']);
     assert.strictEqual(again.sha, cp1.sha);
   });
   await t('revert restores modify+delete+create atomically', async () => {
     fs.writeFileSync(path.join(ws, 'a.txt'), 'A v2 (agent)\n'); // modified
     fs.unlinkSync(path.join(ws, 'b.txt')); // deleted
     fs.writeFileSync(path.join(ws, 'agent-new.txt'), 'created by agent\n'); // created
-    cp2 = await svc.checkpoint('after agent edits');
+    cp2 = await svc.checkpoint('after agent edits', ['a.txt', 'b.txt', 'agent-new.txt']);
     assert.notStrictEqual(cp2.sha, cp1.sha);
 
     await svc.revertTo(cp1.sha);
@@ -308,18 +310,19 @@ console.log('\ncheckpointService (shadow git lifecycle)');
     assert.strictEqual(fs.existsSync(path.join(ws, 'agent-new.txt')), false, 'agent-created file removed');
   });
   await t('untracked user file survives revert', async () => {
-    const cp = await svc.checkpoint('base');
+    const cp = await svc.checkpoint('base', ['a.txt']);
     fs.writeFileSync(path.join(ws, 'user-notes.txt'), 'never checkpointed\n');
     await svc.revertTo(cp.sha);
     assert.strictEqual(fs.existsSync(path.join(ws, 'user-notes.txt')), true);
     fs.unlinkSync(path.join(ws, 'user-notes.txt'));
   });
   await t('gitignore respected — ignored dir never snapshotted', async () => {
-    await svc.checkpoint('check-ignore');
+    const cp = await svc.checkpoint('check-ignore', ['a.txt']);
     fs.writeFileSync(path.join(ws, 'ignored-dir/cache.txt'), 'changed\n');
-    const cp = await svc.checkpoint('post-ignore-change');
+    // Naming an ignored file explicitly is refused (git add won't stage it)…
+    await assert.rejects(svc.checkpoint('post-ignore-change', ['ignored-dir/cache.txt']), /ignored/);
     await svc.revertTo(cp.sha);
-    // If ignored-dir were tracked, content would have reverted.
+    // …and a revert leaves it alone. If ignored-dir were tracked, content would have reverted.
     assert.strictEqual(fs.readFileSync(path.join(ws, 'ignored-dir/cache.txt'), 'utf8'), 'changed\n');
   });
   await t('user repo untouched (HEAD, no shadow noise in status)', () => {
@@ -352,9 +355,14 @@ console.log('\ncheckpointService (shadow git lifecycle)');
     assert.strictEqual(byPath['b.txt'], 'deleted');
     assert.strictEqual(byPath['agent-new.txt'], 'added');
   });
+  await t('an unscoped or escaping checkpoint is refused', async () => {
+    await assert.rejects(svc.checkpoint('unscoped', []), /explicitly scoped/);
+    await assert.rejects(svc.checkpoint('escape', ['../outside.txt']), /Invalid checkpoint path/);
+    await assert.rejects(svc.checkpoint('absolute', ['/etc/hosts']), /Invalid checkpoint path/);
+  });
   await t('concurrent checkpoints serialize without index corruption', async () => {
     fs.writeFileSync(path.join(ws, 'c1.txt'), '1');
-    const results = await Promise.all([svc.checkpoint('r1'), svc.checkpoint('r2'), svc.list()]);
+    const results = await Promise.all([svc.checkpoint('r1', ['c1.txt']), svc.checkpoint('r2', ['c1.txt']), svc.list()]);
     assert.ok(results[0].sha && results[1].sha);
   });
 }
