@@ -23,7 +23,11 @@ export class PostHog {
     if (enabled) this.real = new Real(key, options);
     else if (!announced) {
       announced = true;
-      console.log('[desktop] analytics off in dev (set WGPT_DESKTOP_ANALYTICS=1 to send, tagged surface=desktop)');
+      console.log(
+        override === '0'
+          ? '[desktop] analytics off (WGPT_DESKTOP_ANALYTICS=0)'
+          : '[desktop] analytics off in dev (set WGPT_DESKTOP_ANALYTICS=1 to send, tagged surface=desktop)'
+      );
     }
   }
   capture(event: { properties?: Record<string, unknown> } & Record<string, unknown>): void {

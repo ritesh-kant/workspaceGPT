@@ -175,6 +175,74 @@ horizontal page scroll.
 Not done: a live refresh when the agent writes the file while the panel is
 open (the next button press re-reads it), and no side-by-side view.
 
+## Phase 3 — packaging (started 2026-09-24, macOS)
+
+```
+pnpm --filter desktop release                      # this Mac's target: stage + tauri build + checks
+node scripts/build-release.mjs --target darwin-x64 # the other Mac
+node scripts/stage-runtime.mjs [--skip-build]      # just dist/runtime/
+```
+
+- **`scripts/fetch-node.mjs`** downloads the pinned Node (**v24.21.0**, Active
+  LTS) for a target from nodejs.org and checks it against `SHASUMS256.txt`.
+  Cached in `.cache/node/`.
+- **`scripts/stage-runtime.mjs`** builds the extension with `VSCODE_TARGET`
+  (its own onnxruntime/ripgrep pruning) and the sidecar with
+  `NODE_ENV=production` (analytics on), then assembles `dist/runtime/`:
+  `node`, `sidecar/` (main.js, workers, models, mcp-server.js, pruned native
+  `node_modules` + keyring/typescript/typescript-language-server),
+  `bridge/`, `extension/` (package.json, resources, webview/dist,
+  dist/mcp-server.js), `manifest.json`. Source maps are dropped. darwin-arm64:
+  717 files, **376 MB** (models 186, node 128, typescript 24, onnxruntime 20).
+- **Signing:** every Mach-O file but `node` is ad-hoc signed (4: rg, the
+  keyring addon, onnxruntime's binding + dylib). `node` keeps Node's
+  Developer ID signature (team HX7739G8FX); its hardened-runtime entitlements
+  include `disable-library-validation`, which is what lets it load
+  ad-hoc-signed addons. Tauri ad-hoc signs the shell and the bundle, and
+  `codesign --verify --deep --strict` passes on the `.app`.
+- **Shell:** `sidecar.rs` finds `runtime/` in the bundle's resources (macOS
+  `Contents/Resources/runtime`, Windows next to the exe, Linux
+  `../lib/WorkspaceGPT/runtime`) and runs `runtime/node runtime/sidecar/main.js`;
+  `WGPT_NODE` / `WGPT_SIDECAR_MAIN` still win (dev). `main.ts` uses
+  `../extension` when it exists. `tauri.release.conf.json` adds the resource,
+  so `tauri dev` needs no staged runtime.
+- **`scripts/build-release.mjs`** runs the stage, `tauri build --config
+  src-tauri/tauri.release.conf.json --target <triple> --bundles app,dmg`, and
+  checks the bundle. darwin-arm64: DMG **195 MB**, updater `.app.tar.gz` 193 MB
+  + `.sig`. Uses `TAURI_SIGNING_PRIVATE_KEY`, else the local key.
+- **`install.sh`** (published on the rolling `desktop-latest` release): reads
+  the updater's `latest.json`, downloads this Mac's `.app.tar.gz` with curl
+  (no quarantine flag), checks it against the release's `SHA256SUMS.txt`,
+  installs to /Applications (or ~/Applications), verifies the signature.
+- **`.github/workflows/desktop-publish.yml`**: tag `desktop-vX.Y.Z` → both Mac
+  targets built on one macos-14 runner (x64 cross-compiles), release
+  `desktop-vX.Y.Z` with DMGs, updater bundles, `.sig`s and `SHA256SUMS.txt`
+  (`--latest=false`, so the repo's Latest stays the extension's), then
+  `latest.json` + `install.sh` onto `desktop-latest`. A manual run only builds.
+  Needs the `TAURI_SIGNING_PRIVATE_KEY` secret.
+
+**Verified here (arm64):** the staged runtime copied outside the repo and
+started with an emptied environment (no node on PATH, no WGPT_* dev vars)
+loads onnxruntime-node, the keychain addon, ripgrep and the language server,
+and the sidecar activates (2.3 s). The built `.app`, copied elsewhere and
+launched the same way, starts its own `Contents/Resources/runtime/node`, the
+extension activates (4.4 s), and a quit stops everything with nothing left.
+`install.sh` against a local copy of a release: fresh install and
+reinstall work and the installed app verifies; a tampered bundle is refused
+(checksum) and nothing is installed. darwin-x64 staging: every native binary is
+x86_64 and signed correctly, but it was **not run** (no Rosetta here).
+
+**Not done / open:**
+- A clean-Mac run (no Node, no Homebrew) of install → sign in → connect
+  Confluence → index → grounded answer, and an updater vN → vN+1 through the
+  published release. Needs a first real release (secret + tag).
+- Keychain prompts after an update: the item's owner is `runtime/node`, whose
+  signature is Node's own and doesn't change between our releases, so updates
+  that keep the Node version should not re-prompt. Untested; a Node upgrade
+  probably will.
+- Windows (NSIS) and Linux (AppImage): the scripts know the targets, the
+  workflow doesn't build them.
+
 ## Findings from Phase 0 (and what was done)
 
 1. **Title-bar actions don't exist outside VS Code.** Settings, History and New
@@ -577,7 +645,7 @@ built with `--config '{"version":"0.0.2",…}'` and served by
 **Not verified / open:**
 - Windows (NSIS, which exits the app to run its installer; Restart Now
   relaunches, a quit doesn't) and Linux AppImage were not run.
-- A release build still finds the sidecar and Node through dev paths
+- ~~A release build still finds the sidecar and Node through dev paths~~ (fixed in Phase 3: the runtime is bundled)
   (`sidecar_entry()`, `WGPT_NODE`). Until Phase 3 bundles them, an update
   replaces only the shell. The mechanism is the same once they're inside the
   `.app`.
