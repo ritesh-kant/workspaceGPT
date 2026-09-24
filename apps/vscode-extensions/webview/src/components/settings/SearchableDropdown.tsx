@@ -13,6 +13,12 @@ export interface DropdownOption {
   disabled?: boolean;
   /** 0–100. When set, a thin bar is drawn under the subtitle. */
   progress?: number;
+  /**
+   * What a click on a disabled row does instead of picking it — e.g. open the
+   * Settings page where the reason in the subtitle can be fixed. The row stays
+   * unpickable but becomes clickable and keyboard-reachable.
+   */
+  disabledAction?: () => void;
 }
 
 interface SearchableDropdownProps {
@@ -35,6 +41,8 @@ interface SearchableDropdownProps {
   clearable?: boolean;
   clearLabel?: string;
   emptyLabel?: string;
+  /** A quiet row under the list that runs a command rather than picking a value. */
+  footer?: { label: string; onClick: () => void };
 }
 
 /**
@@ -55,6 +63,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   clearable = false,
   clearLabel = '-- Clear selection --',
   emptyLabel = 'No matches found...',
+  footer,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -86,8 +95,10 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   const navOptions: DropdownOption[] = clearable
     ? [{ value: '', label: clearLabel }, ...filtered]
     : filtered;
-  // Opening onto a disabled row would make the first Enter do nothing.
-  const firstEnabledIndex = Math.max(0, navOptions.findIndex((o) => !o.disabled));
+  // A disabled row with nothing to do on click is skipped by the keyboard.
+  const inert = (o: DropdownOption) => !!o.disabled && !o.disabledAction;
+  // Opening onto an inert row would make the first Enter do nothing.
+  const firstEnabledIndex = Math.max(0, navOptions.findIndex((o) => !inert(o)));
 
   useEffect(() => {
     setHighlightedIndex(firstEnabledIndex);
@@ -107,16 +118,27 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
     setSearchQuery('');
   };
 
-  /** Picking a disabled row is a no-op — the menu stays open so the reason in its subtitle can be read. */
+  /**
+   * A disabled row is never picked. With a `disabledAction` the click runs
+   * that instead and closes the menu; without one it is a no-op and the menu
+   * stays open so the reason in its subtitle can be read.
+   */
   const chooseOption = (o: DropdownOption) => {
-    if (o.disabled) return;
+    if (o.disabled) {
+      if (o.disabledAction) {
+        o.disabledAction();
+        setIsOpen(false);
+        setSearchQuery('');
+      }
+      return;
+    }
     choose(o.value);
   };
 
-  /** Next selectable index in `direction`, or `from` when every remaining row is disabled. */
+  /** Next reachable index in `direction`, or `from` when every remaining row is inert. */
   const nextEnabled = (from: number, direction: 1 | -1) => {
     for (let i = from + direction; i >= 0 && i < navOptions.length; i += direction) {
-      if (!navOptions[i].disabled) return i;
+      if (!inert(navOptions[i])) return i;
     }
     return from;
   };
@@ -212,7 +234,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
                   onClick={() => chooseOption(o)}
                   className={`searchable-dropdown-item${o.value === value ? ' selected' : ''}${
                     highlightedIndex === navIndex ? ' highlighted' : ''
-                  }${o.disabled ? ' disabled' : ''}${
+                  }${o.disabled ? ' disabled' : ''}${o.disabled && o.disabledAction ? ' actionable' : ''}${
                     typeof o.progress === 'number' ? ' has-progress' : ''
                   }`}
                   role="option"
@@ -241,6 +263,20 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
             })}
             {filtered.length === 0 && <li className="searchable-dropdown-empty">{emptyLabel}</li>}
           </ul>
+          {footer && (
+            <button
+              type="button"
+              className="searchable-dropdown-footer"
+              onClick={() => {
+                footer.onClick();
+                setIsOpen(false);
+                setSearchQuery('');
+              }}
+            >
+              {footer.label}
+              <span aria-hidden="true"> ›</span>
+            </button>
+          )}
         </div>
       )}
     </div>

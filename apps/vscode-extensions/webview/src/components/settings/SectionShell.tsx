@@ -1,4 +1,22 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
+
+/**
+ * How Settings lays its sections out.
+ *
+ * - `stack`: every section is a collapsible card in one scrolling column (the
+ *   VS Code sidebar).
+ * - `page`: the desktop app. A nav column on the left picks a page; a page
+ *   shows one or more sections as always-open cards under its own heading
+ *   and description (Settings.tsx). `pageTitle` is that heading: a section
+ *   with the same title is the page's only subject, so its card repeats
+ *   neither the name nor the description and keeps just its status row.
+ */
+export type SettingsLayout = 'stack' | 'page';
+export interface SettingsLayoutValue {
+  layout: SettingsLayout;
+  pageTitle?: string;
+}
+export const SettingsLayoutContext = React.createContext<SettingsLayoutValue>({ layout: 'stack' });
 
 interface SectionShellProps {
   /** Stable key for remembering this section's open state across sessions. */
@@ -86,6 +104,40 @@ const SectionShell: React.FC<SectionShellProps> = ({
       return !wasOpen;
     });
   };
+
+  const { layout, pageTitle } = useContext(SettingsLayoutContext);
+  if (layout === 'page') {
+    // The page heading already names a section titled like the page; its
+    // card then opens with the status row alone (or straight into the body).
+    const isPageSubject = pageTitle === title;
+    const hasHeader = !isPageSubject || summary || headerControl;
+    return (
+      <div className={`settings-section settings-section--page${className ? ` ${className}` : ''}`}>
+        {hasHeader && (
+          <div className={`section-header section-header--page${isPageSubject ? ' section-header--status' : ''}`}>
+            {isPageSubject ? (
+              <span className='section-status'>{summary}</span>
+            ) : (
+              <div className='section-page-heading'>
+                <h3>
+                  {title}
+                  {badge}
+                </h3>
+                {summary && <span className='section-summary section-summary--page'>{summary}</span>}
+              </div>
+            )}
+            {headerControl}
+          </div>
+        )}
+        {children}
+        {/* A switched-off source renders no body; say what the toggle does
+            rather than leave a status row alone in a card. */}
+        {!children && headerControl && (
+          <p className='section-empty'>Turn on {title} to connect an account and choose what to sync.</p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={`settings-section${className ? ` ${className}` : ''}`}>

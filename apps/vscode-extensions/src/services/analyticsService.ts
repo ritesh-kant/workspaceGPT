@@ -100,6 +100,10 @@ export class AnalyticsService {
           )?.packageJSON.version,
           vscodeVersion: vscode.version,
           mode: getMode(this.context),
+          // Which product sent this: the desktop app's posthog shim overwrites it
+          // with "desktop"; `host` tells VS Code / Cursor / Antigravity apart.
+          surface: 'extension',
+          host: vscode.env.appName,
         },
       });
     } catch (error) {

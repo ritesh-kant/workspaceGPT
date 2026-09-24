@@ -1,0 +1,182 @@
+/*
+ * The desktop palette, then every --vscode-* variable the webview reads
+ * (every var(--vscode-…) in apps/vscode-extensions/webview/src) mapped onto it.
+ *
+ * The palette is the desktop's own, not a VS Code theme: neutral greys with
+ * one accent, a slightly darker sidebar than the main pane, cards with a hair
+ * border — the look of a native chat app rather than an editor panel. The OS
+ * setting picks light or dark (challenge #5).
+ *
+ * --wgpt-d-* tokens are shared by the shell (shell.css) and the skin
+ * (skin.css); change a colour here and both follow.
+ */
+:root {
+  color-scheme: light;
+  --wgpt-d-bg: #ffffff;
+  --wgpt-d-sidebar: #f6f6f5;
+  --wgpt-d-card: #ffffff;
+  --wgpt-d-card-muted: #f8f8f7;
+  --wgpt-d-border: #e7e7e4;
+  --wgpt-d-border-strong: #d4d4d0;
+  --wgpt-d-fg: #1d1d1f;
+  --wgpt-d-muted: #6e6e73;
+  --wgpt-d-faint: #9a9a9f;
+  --wgpt-d-hover: rgba(0, 0, 0, 0.045);
+  --wgpt-d-active: rgba(0, 0, 0, 0.075);
+  --wgpt-d-bubble: #f1f1ef;
+  --wgpt-d-accent: #3d63dd;
+  --wgpt-d-accent-hover: #3455c4;
+  --wgpt-d-accent-soft: rgba(61, 99, 221, 0.1);
+  --wgpt-d-accent-fg: #ffffff;
+  --wgpt-d-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.04);
+  --wgpt-d-radius: 14px;
+  --wgpt-d-column: 820px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --wgpt-d-bg: #1b1b1d;
+    --wgpt-d-sidebar: #141416;
+    --wgpt-d-card: #222225;
+    --wgpt-d-card-muted: #1f1f22;
+    --wgpt-d-border: #2d2d31;
+    --wgpt-d-border-strong: #3b3b40;
+    --wgpt-d-fg: #ececef;
+    --wgpt-d-muted: #9d9da5;
+    --wgpt-d-faint: #6f6f77;
+    --wgpt-d-hover: rgba(255, 255, 255, 0.05);
+    --wgpt-d-active: rgba(255, 255, 255, 0.085);
+    --wgpt-d-bubble: #2a2a2e;
+    --wgpt-d-accent: #7091ff;
+    --wgpt-d-accent-hover: #86a2ff;
+    --wgpt-d-accent-soft: rgba(112, 145, 255, 0.14);
+    --wgpt-d-accent-fg: #0d1330;
+    --wgpt-d-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+  }
+}
+
+:root {
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Ubuntu, "Droid Sans", sans-serif;
+  --vscode-font-size: 13px;
+  --vscode-font-weight: normal;
+  --vscode-editor-font-family: "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+  --vscode-editor-font-size: 12px;
+
+  --vscode-editor-background: var(--wgpt-d-bg);
+  --vscode-editor-foreground: var(--wgpt-d-fg);
+  --vscode-foreground: var(--wgpt-d-fg);
+  --vscode-descriptionForeground: var(--wgpt-d-muted);
+  --vscode-icon-foreground: var(--wgpt-d-muted);
+  --vscode-focusBorder: var(--wgpt-d-accent);
+  --vscode-panel-border: var(--wgpt-d-border);
+  --vscode-widget-border: var(--wgpt-d-border);
+  --vscode-sideBar-background: var(--wgpt-d-sidebar);
+  --vscode-sideBar-border: var(--wgpt-d-border);
+  --vscode-toolbar-hoverBackground: var(--wgpt-d-hover);
+  --vscode-editor-lineHighlightBorder: var(--wgpt-d-border);
+  --vscode-editorWidget-background: var(--wgpt-d-card-muted);
+  --vscode-editorWidget-border: var(--wgpt-d-border-strong);
+  --vscode-editorHoverWidget-background: var(--wgpt-d-card);
+  --vscode-editorHoverWidget-foreground: var(--wgpt-d-fg);
+  --vscode-editorHoverWidget-border: var(--wgpt-d-border-strong);
+
+  --vscode-button-background: var(--wgpt-d-accent);
+  --vscode-button-foreground: var(--wgpt-d-accent-fg);
+  --vscode-button-hoverBackground: var(--wgpt-d-accent-hover);
+  --vscode-button-secondaryBackground: var(--wgpt-d-active);
+  --vscode-button-secondaryForeground: var(--wgpt-d-fg);
+  --vscode-button-secondaryHoverBackground: var(--wgpt-d-border-strong);
+
+  --vscode-input-background: var(--wgpt-d-card);
+  --vscode-input-foreground: var(--wgpt-d-fg);
+  --vscode-input-border: var(--wgpt-d-border-strong);
+  --vscode-input-placeholderForeground: var(--wgpt-d-faint);
+  --vscode-dropdown-background: var(--wgpt-d-card);
+  --vscode-dropdown-border: var(--wgpt-d-border-strong);
+
+  --vscode-list-hoverBackground: var(--wgpt-d-hover);
+  --vscode-list-focusBackground: var(--wgpt-d-active);
+  --vscode-list-activeSelectionBackground: var(--wgpt-d-active);
+  --vscode-list-activeSelectionForeground: var(--wgpt-d-fg);
+
+  --vscode-textLink-foreground: var(--wgpt-d-accent);
+  --vscode-textLink-activeForeground: var(--wgpt-d-accent-hover);
+  --vscode-textBlockQuote-background: var(--wgpt-d-card-muted);
+  --vscode-textBlockQuote-border: var(--wgpt-d-border-strong);
+  --vscode-textBlockQuote-foreground: var(--wgpt-d-fg);
+  --vscode-textCodeBlock-background: var(--wgpt-d-card-muted);
+
+  --vscode-progressBar-background: var(--wgpt-d-accent);
+  --vscode-progressBar-foreground: var(--wgpt-d-accent);
+
+  --vscode-scrollbarSlider-background: rgba(128, 128, 128, 0.22);
+  --vscode-scrollbarSlider-hoverBackground: rgba(128, 128, 128, 0.36);
+}
+
+/* Status colours: VS Code's own values, which read fine on the neutral palette. */
+:root {
+  --vscode-errorForeground: #d93a2f;
+  --vscode-errorBackground: #fbe9e7;
+  --vscode-editorWarning-foreground: #b07d00;
+  --vscode-editorError-foreground: #d93a2f;
+  --vscode-inputValidation-errorBackground: #fbe9e7;
+  --vscode-inputValidation-errorBorder: #d93a2f;
+  --vscode-inputValidation-errorForeground: var(--wgpt-d-fg);
+  --vscode-inputValidation-warningBackground: #fbf4dc;
+  --vscode-inputValidation-warningBorder: #b89500;
+  --vscode-list-dropBackground: var(--wgpt-d-accent-soft);
+  --vscode-badge-background: var(--wgpt-d-active);
+  --vscode-badge-foreground: var(--wgpt-d-fg);
+  --vscode-notificationsWarningIcon-foreground: #b07d00;
+  --vscode-testing-iconPassed: #2f8a4c;
+  --vscode-testing-iconFailed: #d93a2f;
+
+  --vscode-charts-red: #d93a2f;
+  --vscode-charts-blue: #3d63dd;
+  --vscode-charts-orange: #c46f12;
+  --vscode-charts-purple: #7a4bc2;
+  --vscode-charts-green: #2f8a4c;
+  --vscode-charts-yellow: #b07d00;
+
+  --vscode-symbolIcon-variableForeground: #3d63dd;
+  --vscode-symbolIcon-stringForeground: var(--wgpt-d-fg);
+  --vscode-symbolIcon-numberForeground: var(--wgpt-d-fg);
+  --vscode-symbolIcon-keywordForeground: var(--wgpt-d-fg);
+  --vscode-symbolIcon-functionForeground: #7a4bc2;
+  --vscode-symbolIcon-classForeground: #c46f12;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --vscode-errorForeground: #f47067;
+    --vscode-errorBackground: #3a1d1b;
+    --vscode-editorWarning-foreground: #d9a82e;
+    --vscode-editorError-foreground: #f47067;
+    --vscode-inputValidation-errorBackground: #3a1d1b;
+    --vscode-inputValidation-errorBorder: #be1100;
+    --vscode-inputValidation-warningBackground: #352a05;
+    --vscode-notificationsWarningIcon-foreground: #d9a82e;
+    --vscode-testing-iconPassed: #57c27a;
+    --vscode-testing-iconFailed: #f47067;
+
+    --vscode-charts-red: #f47067;
+    --vscode-charts-blue: #7091ff;
+    --vscode-charts-orange: #e0923a;
+    --vscode-charts-purple: #b48bf0;
+    --vscode-charts-green: #57c27a;
+    --vscode-charts-yellow: #d9a82e;
+
+    --vscode-symbolIcon-variableForeground: #7091ff;
+    --vscode-symbolIcon-functionForeground: #b48bf0;
+    --vscode-symbolIcon-classForeground: #e0923a;
+  }
+}
+
+html,
+body {
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}

@@ -1,0 +1,513 @@
+/*
+ * Desktop skin for the unchanged extension views.
+ *
+ * VS Code gives the chat a narrow sidebar; the desktop gives it a whole
+ * window. These rules restyle the same markup for that: one centred reading
+ * column, a composer card, quiet assistant turns, neutral user bubbles. They
+ * only apply under html[data-wgpt-desktop], which the bridge sets before
+ * first paint, and win over the view's own rules by specificity — no
+ * !important unless the view's rule already uses it.
+ *
+ * Selectors here are the webview's class names (apps/vscode-extensions/
+ * webview/src/App.css, ChatMessage.tsx, templates/SessionsHtmlTemplate.ts).
+ * A rename there just drops the matching tweak; nothing breaks.
+ */
+
+html[data-wgpt-desktop] body {
+  background: var(--wgpt-d-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Chat: one reading column ────────────────────────────────────────── */
+
+html[data-wgpt-desktop="chat"] {
+  /* Side padding that centres a --wgpt-d-column wide column; % resolves
+     against the chat's width wherever it is used as padding or margin. */
+  --wgpt-gutter: max(16px, calc((100% - var(--wgpt-d-column)) / 2));
+}
+
+html[data-wgpt-desktop="chat"] .messages-container {
+  padding: 1.75rem var(--wgpt-gutter) 1rem;
+  gap: 0.75rem;
+}
+
+html[data-wgpt-desktop="chat"] .message {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Assistant turns read as the page, not as cards. */
+html[data-wgpt-desktop="chat"] .assistant-message {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* User turns: a neutral bubble on the right, not a primary-button slab. */
+html[data-wgpt-desktop="chat"] .user-message {
+  max-width: min(80%, 640px);
+  padding: 0.6rem 0.9rem;
+  border-radius: 16px;
+  background-color: var(--wgpt-d-bubble);
+  color: var(--wgpt-d-fg);
+}
+
+/* ── Chat: the composer is a card in the same column ─────────────────── */
+
+html[data-wgpt-desktop="chat"] .composer-affordances,
+html[data-wgpt-desktop="chat"] .composer-status-bars {
+  padding-left: var(--wgpt-gutter);
+  padding-right: var(--wgpt-gutter);
+}
+
+html[data-wgpt-desktop="chat"] .input-container {
+  margin: 0.35rem var(--wgpt-gutter) 16px;
+  padding: 0.85rem 0.85rem 0.6rem;
+  border-radius: var(--wgpt-d-radius);
+  border: 1px solid var(--wgpt-d-border-strong);
+  background-color: var(--wgpt-d-card);
+  box-shadow: var(--wgpt-d-shadow);
+}
+html[data-wgpt-desktop="chat"] .input-container:focus-within {
+  transform: none;
+  border-color: color-mix(in srgb, var(--wgpt-d-accent) 45%, var(--wgpt-d-border-strong));
+  box-shadow: 0 0 0 3px var(--wgpt-d-accent-soft), var(--wgpt-d-shadow);
+}
+
+html[data-wgpt-desktop="chat"] .input-container textarea {
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+/* The branch strip becomes the card's header row, as one piece with it. */
+html[data-wgpt-desktop="chat"] .composer-status-bars:has(> .git-status-bar:last-child) {
+  padding-bottom: 0;
+}
+html[data-wgpt-desktop="chat"] .composer-status-bars > .git-status-bar:last-child {
+  border-color: var(--wgpt-d-border-strong);
+  border-bottom: 0;
+  border-radius: var(--wgpt-d-radius) var(--wgpt-d-radius) 0 0;
+  background: var(--wgpt-d-card-muted);
+}
+html[data-wgpt-desktop="chat"] .composer-status-bars:has(> .git-status-bar:last-child) + .input-container {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+html[data-wgpt-desktop="chat"] .git-status-row {
+  padding: 7px 8px 7px 12px;
+}
+
+/* ── Chat: home screen ───────────────────────────────────────────────── */
+
+/* The sidebar already lists every session; keep only "Try asking". */
+html[data-wgpt-desktop="chat"][data-wgpt-sessions-docked] .recent-chats-header,
+html[data-wgpt-desktop="chat"][data-wgpt-sessions-docked] .recent-chats-list {
+  display: none;
+}
+
+html[data-wgpt-desktop="chat"] .welcome-container,
+html[data-wgpt-desktop="chat"] .recent-chats-container {
+  max-width: var(--wgpt-d-column);
+  padding: 0.5rem 16px;
+}
+
+html[data-wgpt-desktop="chat"] .home-greeting-title {
+  font-size: 1.35rem;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .home-greeting-mark {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--wgpt-d-accent-fg);
+  background: var(--wgpt-d-accent);
+}
+
+html[data-wgpt-desktop="chat"] .prompt-item {
+  padding: 0.65rem 0.9rem;
+  border-radius: 10px;
+  border-color: var(--wgpt-d-border);
+  background-color: var(--wgpt-d-card);
+  font-size: 13px;
+}
+html[data-wgpt-desktop="chat"] .prompt-item:hover {
+  background-color: var(--wgpt-d-card-muted);
+  border-color: var(--wgpt-d-border-strong);
+}
+
+html[data-wgpt-desktop="chat"] .assistant-mode-switch {
+  height: 30px;
+  border-radius: 9px;
+  border-color: var(--wgpt-d-border);
+  background: var(--wgpt-d-card-muted);
+}
+html[data-wgpt-desktop="chat"] .assistant-mode-option {
+  border-radius: 7px;
+  font-size: 12.5px;
+}
+html[data-wgpt-desktop="chat"] .assistant-mode-option.is-active {
+  background: var(--wgpt-d-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* Greeting knowledge line: the subtitle's tone, sources in the foreground. */
+html[data-wgpt-desktop="chat"] .home-knowledge {
+  font-size: 13px;
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .home-knowledge-lead:hover,
+html[data-wgpt-desktop="chat"] .home-knowledge-source:hover {
+  background: var(--wgpt-d-hover);
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .home-knowledge-source--ok {
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .home-knowledge-meta {
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .home-knowledge-next,
+html[data-wgpt-desktop="chat"] .home-knowledge--empty .home-knowledge-source {
+  color: var(--wgpt-d-accent);
+  font-weight: 500;
+}
+
+/* Secondary labels that dim muted text again with opacity fall under 3:1 on
+   the light palette (scripts/contrast-audit.js); keep them at the muted tone. */
+html[data-wgpt-desktop="chat"] .agent-step-summary,
+html[data-wgpt-desktop="chat"] .trigger-arrow,
+html[data-wgpt-desktop="chat"] .next-sync-time {
+  opacity: 1;
+  color: var(--wgpt-d-muted);
+}
+
+/* An unusable choice in a dropdown (e.g. an unconnected source): the view
+   fades the whole row to 55%, which takes its warning subtitle below 2:1 on
+   the light palette. Say "unavailable" with the muted tone instead. */
+html[data-wgpt-desktop] .searchable-dropdown-item.disabled {
+  opacity: 1;
+  color: var(--wgpt-d-muted);
+}
+
+/* Settings: the same reading column as the chat. */
+html[data-wgpt-desktop="chat"] .settings-panel {
+  width: 100%;
+  max-width: calc(var(--wgpt-d-column) + 32px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── Settings: nav column + one section (the desktop's `page` layout) ──
+   The shell hides its sessions sidebar while Settings is up (shell.ts), so
+   this nav takes the sidebar's exact place: same width, same surface. */
+html[data-wgpt-desktop="chat"] .settings-panel--nav {
+  max-width: none;
+}
+html[data-wgpt-desktop="chat"] .settings-nav {
+  gap: 1px;
+  padding: 10px 8px;
+  background: var(--wgpt-d-sidebar);
+  border-right-color: var(--wgpt-d-border);
+  border-bottom-color: var(--wgpt-d-border);
+}
+/* Below 600px Settings.css turns the nav into a chip row; the sidebar width
+   only applies while it is a column. */
+@media (min-width: 600px) {
+  html[data-wgpt-desktop="chat"] .settings-nav {
+    width: 264px;
+  }
+}
+html[data-wgpt-desktop="chat"] .settings-nav-head {
+  height: 32px;
+  padding: 0 4px 0 2px;
+  margin-bottom: 4px;
+}
+html[data-wgpt-desktop="chat"] .settings-nav-head h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
+html[data-wgpt-desktop="chat"] .settings-nav-head .back-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 7px;
+  font-size: 15px;
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .settings-nav-head .back-button:hover {
+  color: var(--wgpt-d-fg);
+  background: var(--wgpt-d-hover);
+}
+html[data-wgpt-desktop="chat"] .settings-nav-group {
+  padding: 14px 10px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .settings-nav-item {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .settings-nav-item:hover {
+  background: var(--wgpt-d-hover);
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .settings-nav-item--active,
+html[data-wgpt-desktop="chat"] .settings-nav-item--active:hover {
+  background: var(--wgpt-d-active);
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .settings-page {
+  padding: 28px 36px 40px;
+}
+html[data-wgpt-desktop="chat"] .settings-page-inner {
+  max-width: 720px;
+  margin: 0;
+}
+html[data-wgpt-desktop="chat"] .settings-nav-item--sub {
+  min-height: 28px;
+  padding-left: 24px;
+  font-size: 12.5px;
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .settings-nav-item--sub.settings-nav-item--active {
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .settings-page-back {
+  color: var(--wgpt-d-muted);
+  font-size: 12.5px;
+}
+html[data-wgpt-desktop="chat"] .settings-page-back:hover {
+  color: var(--wgpt-d-fg);
+  background: var(--wgpt-d-hover);
+}
+html[data-wgpt-desktop="chat"] .sources-group-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .sources-list {
+  border-color: var(--wgpt-d-border);
+  border-radius: var(--wgpt-d-radius);
+  background: var(--wgpt-d-card);
+}
+html[data-wgpt-desktop="chat"] .source-row {
+  padding: 14px 16px;
+}
+html[data-wgpt-desktop="chat"] .source-row + .source-row {
+  border-top-color: var(--wgpt-d-border);
+}
+html[data-wgpt-desktop="chat"] .source-icon {
+  background: var(--wgpt-d-active);
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .source-name {
+  font-size: 13.5px;
+}
+html[data-wgpt-desktop="chat"] .source-desc,
+html[data-wgpt-desktop="chat"] .source-status {
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .source-action {
+  border-radius: 8px;
+  font-size: 12.5px;
+  background: var(--wgpt-d-accent);
+  color: var(--wgpt-d-accent-fg);
+}
+html[data-wgpt-desktop="chat"] .source-action--quiet {
+  background: transparent;
+  border-color: var(--wgpt-d-border-strong);
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .source-action--quiet:hover {
+  background: var(--wgpt-d-hover);
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .settings-page-head h2 {
+  font-size: 22px;
+  letter-spacing: -0.015em;
+}
+html[data-wgpt-desktop="chat"] .settings-page-head p {
+  font-size: 13px;
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .settings-section--page {
+  padding: 16px 18px;
+  border-color: var(--wgpt-d-border);
+  border-radius: var(--wgpt-d-radius);
+  background: var(--wgpt-d-card);
+}
+html[data-wgpt-desktop="chat"] .section-header--page {
+  border-bottom-color: var(--wgpt-d-border);
+}
+html[data-wgpt-desktop="chat"] .section-page-heading h3 {
+  font-size: 14px;
+}
+html[data-wgpt-desktop="chat"] .section-summary--page,
+html[data-wgpt-desktop="chat"] .section-empty,
+html[data-wgpt-desktop="chat"] .section-status {
+  color: var(--wgpt-d-muted);
+}
+/* Mode cards are <button>s: reset the webview's white button text. */
+html[data-wgpt-desktop="chat"] .mode-card {
+  border-color: var(--wgpt-d-border-strong);
+  border-radius: 10px;
+  background: var(--wgpt-d-bg);
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="chat"] .mode-card:hover:not(:disabled) {
+  background: var(--wgpt-d-card-muted);
+}
+html[data-wgpt-desktop="chat"] .mode-card--active,
+html[data-wgpt-desktop="chat"] .mode-card--active:hover:not(:disabled) {
+  border-color: var(--wgpt-d-accent);
+  background: var(--wgpt-d-accent-soft);
+  color: var(--wgpt-d-fg);
+  box-shadow: 0 0 0 1px var(--wgpt-d-accent);
+}
+html[data-wgpt-desktop="chat"] .mode-card-current {
+  background: var(--wgpt-d-accent);
+  color: var(--wgpt-d-accent-fg);
+}
+html[data-wgpt-desktop="chat"] .mode-card-desc {
+  opacity: 1;
+  color: var(--wgpt-d-muted);
+}
+
+html[data-wgpt-desktop="chat"] .jump-to-bottom {
+  background: var(--wgpt-d-card);
+  box-shadow: var(--wgpt-d-shadow);
+}
+
+/* ── First-run setup (onboarding) ────────────────────────────────────── */
+
+/* The shell hides its own chrome meanwhile (shell.ts watchChatScreen), so
+   this is the whole window: a centred startup card. */
+html[data-wgpt-desktop="chat"] .onboarding-overlay {
+  align-items: center;
+  padding: 32px 20px 48px;
+  background: var(--wgpt-d-bg);
+}
+html[data-wgpt-desktop="chat"] .onboarding-card {
+  max-width: 520px;
+  gap: 14px;
+  padding: 32px;
+  border: 1px solid var(--wgpt-d-border);
+  border-radius: 18px;
+  background: var(--wgpt-d-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 40px rgba(0, 0, 0, 0.07);
+}
+/* The brand mark, drawn above the step label. */
+html[data-wgpt-desktop="chat"] .onboarding-card::before {
+  content: '';
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--wgpt-d-accent) no-repeat center / 20px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9L12 3z' fill='white'/%3E%3Cpath d='M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z' fill='white' opacity='.7'/%3E%3C/svg%3E");
+}
+html[data-wgpt-desktop="chat"] .onboarding-progress {
+  font-weight: 600;
+  color: var(--wgpt-d-accent);
+}
+html[data-wgpt-desktop="chat"] .onboarding-title {
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+html[data-wgpt-desktop="chat"] .onboarding-subtitle {
+  font-size: 13.5px;
+}
+/* The mode cards are <button>s: the webview's base button rule gives them
+   white text, and they only change the background. */
+html[data-wgpt-desktop="chat"] .onboarding-mode-card {
+  color: var(--wgpt-d-fg);
+  background: var(--wgpt-d-card);
+  border-color: var(--wgpt-d-border-strong);
+  padding: 16px 18px;
+  border-radius: 12px;
+}
+html[data-wgpt-desktop="chat"] .onboarding-mode-card:hover {
+  background: var(--wgpt-d-card-muted);
+}
+html[data-wgpt-desktop="chat"] .onboarding-mode-card--active {
+  border-color: var(--wgpt-d-accent);
+  background: var(--wgpt-d-accent-soft);
+  box-shadow: 0 0 0 1px var(--wgpt-d-accent);
+}
+html[data-wgpt-desktop="chat"] .onboarding-mode-desc {
+  opacity: 1;
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="chat"] .onboarding-footer {
+  margin-top: 10px;
+}
+
+/* ── Sessions list (sidebar) ─────────────────────────────────────────── */
+
+html[data-wgpt-desktop="sessions"] body {
+  background: var(--wgpt-d-sidebar);
+}
+html[data-wgpt-desktop="sessions"] .wrap { padding-top: 2px; }
+html[data-wgpt-desktop="sessions"] .nav,
+html[data-wgpt-desktop="sessions"] .list { padding-left: 8px; padding-right: 8px; }
+html[data-wgpt-desktop="sessions"] .nav-item {
+  height: 32px;
+  border-radius: 8px;
+}
+html[data-wgpt-desktop="sessions"] .sep { margin: 8px 14px 2px; background: var(--wgpt-d-border); }
+html[data-wgpt-desktop="sessions"] .group-header {
+  padding: 14px 8px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--wgpt-d-muted);
+}
+html[data-wgpt-desktop="sessions"] .row {
+  min-height: 32px;
+  border-radius: 8px;
+}
+html[data-wgpt-desktop="sessions"] .row.active {
+  background: var(--wgpt-d-active);
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="sessions"] .row.active .title { font-weight: 500; }
+/* Rows from Chat mode (the desktop lists both modes; bridge/shell.ts tags them). */
+html[data-wgpt-desktop="sessions"] .row[data-wgpt-mode="chat"] .meta::before {
+  content: 'Chat';
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--wgpt-d-muted);
+  background: var(--wgpt-d-active);
+}
+html[data-wgpt-desktop="sessions"] .search {
+  height: 30px;
+  border-radius: 8px;
+  margin: 4px 8px 2px;
+}
+
+/* ── Scrollbars: thin, and only on hover ─────────────────────────────── */
+
+html[data-wgpt-desktop] ::-webkit-scrollbar { width: 10px; height: 10px; }
+html[data-wgpt-desktop] ::-webkit-scrollbar-track { background: transparent; }
+html[data-wgpt-desktop] ::-webkit-scrollbar-thumb {
+  background: transparent;
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 5px;
+}
+html[data-wgpt-desktop] :hover::-webkit-scrollbar-thumb {
+  background-color: var(--vscode-scrollbarSlider-background);
+}
+html[data-wgpt-desktop] ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--vscode-scrollbarSlider-hoverBackground);
+}

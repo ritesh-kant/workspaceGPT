@@ -14,6 +14,7 @@ import ChatHistorySidebar from './components/ChatHistorySidebar';
 import MentionPicker from './components/MentionPicker';
 import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
 import HomeGreeting from './components/HomeGreeting';
+import { KNOWLEDGE_SOURCES } from './components/settings/knowledgeSources';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
 import UsageLimitBar from './components/UsageLimitBar';
@@ -61,70 +62,8 @@ function generateSessionId(): string {
 /** File extensions we confidently treat as inline-able text when the browser reports no mime type. */
 const TEXT_FILE_EXTENSIONS = /\.(txt|md|markdown|json|jsonc|yaml|yml|xml|html|htm|css|scss|less|js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|c|h|cpp|hpp|cs|swift|php|sql|sh|bash|zsh|ps1|bat|toml|ini|cfg|conf|env|log|csv|tsv|properties|gradle|tf|proto|graphql|vue|svelte|dockerfile|makefile|lock)$/i;
 
-/**
- * Context-picker row for Confluence / Azure DevOps. Uses the same live
- * sync/index fields Settings already receives, so the menu updates while open.
- */
-function knowledgeContextOption(
-  value: string,
-  label: string,
-  source: {
-    isAuthenticated?: boolean;
-    isSyncing?: boolean;
-    isIndexing?: boolean;
-    isIndexingCompleted?: boolean;
-    canResume?: boolean;
-    canResumeIndexing?: boolean;
-    syncProgress: number;
-    indexProgress: number;
-  }
-): DropdownOption {
-  const canQuery = !!(source.isAuthenticated && source.isIndexingCompleted);
-  if (!source.isAuthenticated) {
-    return {
-      value,
-      label,
-      disabled: true,
-      subtitle: 'Not connected — connect it in Settings',
-    };
-  }
-
-  if (source.isSyncing) {
-    const progress = Math.max(0, Math.min(100, Math.round(source.syncProgress || 0)));
-    return {
-      value,
-      label,
-      disabled: !canQuery,
-      subtitle: `Syncing… ${progress}%`,
-      progress,
-    };
-  }
-
-  if (source.isIndexing) {
-    const progress = Math.max(0, Math.min(100, Math.round(source.indexProgress || 0)));
-    return {
-      value,
-      label,
-      disabled: !canQuery,
-      subtitle: `Indexing… ${progress}%`,
-      progress,
-    };
-  }
-
-  if (canQuery) {
-    return { value, label };
-  }
-
-  return {
-    value,
-    label,
-    disabled: true,
-    subtitle:
-      source.canResume || source.canResumeIndexing
-        ? 'Paused — finish the sync in Settings'
-        : 'Indexing unfinished — finish the sync in Settings',
-  };
-}
+/** The Context menu's value for each source it can narrow to (the host reads these names). */
+const CONTEXT_VALUE_BY_SOURCE: Record<string, string> = { confluence: 'Confluence', ado: 'Azure DevOps' };
 
 const isTextLike = (file: File): boolean =>
   file.type.startsWith('text/') ||
@@ -410,7 +349,7 @@ const App: React.FC = () => {
     setConfig: setSettingsConfig,
   } = useSettingsStore();
 
-  const { activeView, setActiveView, settingsHydrated, setSettingsHydrated } = useUiStore();
+  const { activeView, setActiveView, openSettings, settingsHydrated, setSettingsHydrated } = useUiStore();
 
   const mode = config.mode;
   // Chat mode dial, cycled by the composer chip. Persisted per webview.
@@ -508,25 +447,21 @@ const App: React.FC = () => {
    */
   const contextOptions: DropdownOption[] = [
     { value: 'Auto', label: 'Context: Auto' },
-    knowledgeContextOption('Confluence', 'Confluence', {
-      isAuthenticated: config.confluence?.isAuthenticated,
-      isSyncing: config.confluence?.isSyncing,
-      isIndexing: config.confluence?.isIndexing,
-      isIndexingCompleted: config.confluence?.isIndexingCompleted,
-      canResume: config.confluence?.canResume,
-      canResumeIndexing: config.confluence?.canResumeIndexing,
-      syncProgress: config.confluence?.confluenceSyncProgress ?? 0,
-      indexProgress: config.confluence?.confluenceIndexProgress ?? 0,
-    }),
-    knowledgeContextOption('Azure DevOps', 'Azure DevOps', {
-      isAuthenticated: config.ado?.isAuthenticated,
-      isSyncing: config.ado?.isSyncing,
-      isIndexing: config.ado?.isIndexing,
-      isIndexingCompleted: config.ado?.isIndexingCompleted,
-      canResume: config.ado?.canResume,
-      canResumeIndexing: config.ado?.canResumeIndexing,
-      syncProgress: config.ado?.adoSyncProgress ?? 0,
-      indexProgress: config.ado?.adoIndexProgress ?? 0,
+    // Each source's row is its registry status (settings/knowledgeSources.tsx),
+    // the same judgement the Knowledge page and the greeting show. A source
+    // that can't be picked yet says why, and a click on it opens the Settings
+    // page where that is fixed.
+    ...KNOWLEDGE_SOURCES.filter((source) => source.id in CONTEXT_VALUE_BY_SOURCE).map((source): DropdownOption => {
+      const status = source.status(config);
+      const quiet = status.ready && status.progress === undefined;
+      return {
+        value: CONTEXT_VALUE_BY_SOURCE[source.id],
+        label: source.label,
+        disabled: !status.ready,
+        subtitle: quiet ? undefined : !status.ready && status.action ? `${status.text} · ${status.action} ›` : status.text,
+        progress: status.progress,
+        disabledAction: () => openSettings(source.id),
+      };
     }),
     {
       value: 'Codebase',
@@ -1131,7 +1066,8 @@ const App: React.FC = () => {
           break;
         }
         case MESSAGE_TYPES.SHOW_SETTINGS:
-          setActiveView('settings');
+          // `page` (optional) names a Settings page to land on.
+          openSettings(typeof message.page === 'string' ? message.page : undefined);
           break;
         case MESSAGE_TYPES.WORKSPACE_PATH:
           // Answer to the GET_WORKSPACE_PATH sent on mount. Empty path means no
@@ -2314,7 +2250,7 @@ const App: React.FC = () => {
         {showTips && messages.length === 0 ? (
           isConfluenceConnected ? (
             <div className='recent-chats-container'>
-                <HomeGreeting chatOnly={!isWorkMode} />
+                <HomeGreeting chatOnly={!isWorkMode} onOpenSettings={openSettings} />
                 {isWorkMode && isAdoConnected && (
                   <MyWorkPanel
                     items={myWorkItems}
@@ -2385,7 +2321,7 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className='welcome-container'>
-              <HomeGreeting chatOnly={!isWorkMode} />
+              <HomeGreeting chatOnly={!isWorkMode} onOpenSettings={openSettings} />
               {isWorkMode && isAdoConnected && (
                 <MyWorkPanel
                   items={myWorkItems}
@@ -2756,6 +2692,7 @@ const App: React.FC = () => {
                         onChange={setContextSelection}
                         searchable={false}
                         options={contextOptions}
+                        footer={{ label: 'Manage knowledge', onClick: () => openSettings('knowledge') }}
                       />
                     </div>
                   </>

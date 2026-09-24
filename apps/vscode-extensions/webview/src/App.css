@@ -3418,3 +3418,60 @@ button:disabled {
   color: var(--vscode-editorError-foreground, #f14c4c);
 }
 
+
+/* ── Greeting knowledge line: what the agent knows right now ──────────── */
+
+/* Replaces the subtitle's claim ("knows your whole org") with the evidence:
+   one source per item, inline, no heading of its own. */
+.home-knowledge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem 0.6rem;
+  font-size: 0.85rem;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Text-like buttons: every property the base button rule sets is reset. */
+.home-knowledge-lead,
+.home-knowledge-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0.1rem 0.25rem;
+  margin: 0 -0.25rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.home-knowledge-lead:hover,
+.home-knowledge-source:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.home-knowledge-lead:focus-visible,
+.home-knowledge-source:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.home-knowledge-source--ok {
+  color: var(--vscode-foreground);
+}
+
+.home-knowledge-meta {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 400;
+}
+
+/* The next step for a source that is not connected yet reads as a link. */
+.home-knowledge-next,
+.home-knowledge--empty .home-knowledge-source {
+  color: var(--vscode-textLink-foreground);
+}

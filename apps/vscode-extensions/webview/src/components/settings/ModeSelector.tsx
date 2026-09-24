@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import { useSettingsStore } from '../../store';
 import { WorkspaceMode } from '../../constants';
-import SectionShell from './SectionShell';
+import SectionShell, { SettingsLayoutContext } from './SectionShell';
 
 const MODE_COPY: Record<WorkspaceMode, { title: string; description: string }> = {
   local: {
@@ -51,6 +51,32 @@ const ModeSelector: React.FC = () => {
   const isFreshInstall =
     !config.confluence?.isAuthenticated && !config.ado?.isAuthenticated;
 
+  // With a whole page to itself (desktop), the choice reads better as two
+  // cards that each say what they mean than as a two-word segmented control.
+  const { layout } = useContext(SettingsLayoutContext);
+  const modeCards = (
+    <div className='mode-cards' role='radiogroup' aria-label='Mode'>
+      {(Object.keys(MODE_COPY) as WorkspaceMode[]).map((m) => (
+        <button
+          type='button'
+          key={m}
+          role='radio'
+          aria-checked={mode === m}
+          className={`mode-card${mode === m ? ' mode-card--active' : ''}`}
+          onClick={() => requestSwitch(m)}
+          disabled={syncBusy && mode !== m}
+          data-tooltip={syncBusy && mode !== m ? 'Wait for the current sync to finish' : undefined}
+        >
+          <span className='mode-card-title'>
+            {MODE_COPY[m].title}
+            {mode === m && <span className='mode-card-current'>Current</span>}
+          </span>
+          <span className='mode-card-desc'>{MODE_COPY[m].description}</span>
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <SectionShell
       storageKey='mode'
@@ -59,6 +85,7 @@ const ModeSelector: React.FC = () => {
       defaultOpen={isFreshInstall}
     >
       <div className='settings-form'>
+        {layout === 'page' ? modeCards : (
         <div className='mode-toggle' role='tablist'>
           {(Object.keys(MODE_COPY) as WorkspaceMode[]).map((m) => (
             <button
@@ -75,7 +102,10 @@ const ModeSelector: React.FC = () => {
             </button>
           ))}
         </div>
-        <p className='description-text mode-toggle-desc'>{MODE_COPY[mode].description}</p>
+        )}
+        {layout !== 'page' && (
+          <p className='description-text mode-toggle-desc'>{MODE_COPY[mode].description}</p>
+        )}
       </div>
 
       {pendingMode && (
