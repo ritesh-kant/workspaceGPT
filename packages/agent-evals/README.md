@@ -85,6 +85,26 @@ Requesty | OpenRouter | NVIDIA | Custom), `WGPT_BENCH_API_KEY`
 its source, the script warns — rebuild with
 `cd apps/vscode-extensions && node esbuild.config.js` first.
 
+### Symbol tools — scenario `s4` (opt-in)
+
+```bash
+node src/headless/agent-smoke.mjs --scenarios s4 --runs 3                 # harness stubs
+node src/headless/agent-smoke.mjs --scenarios s4 --runs 3 --host desktop  # desktop language service
+```
+
+s1–s3 run on a 3-file fixture a model simply reads, so they never exercise
+`find_symbol` / `go_to_definition` / `find_references`. s4 generates a
+~40-file TypeScript project (`src/headless/fixtures/symbol-rename.mjs`,
+seeded) where `Account`, `Connection` and `FileHandle` all have `close()`,
+called through same-named fields (`this.target.close(...)`) whose type sits
+elsewhere: 65 `.close(` text hits, 17 of them Account's. The task renames
+only `Account.close` → `archive`. Pass = Account renamed, the others
+untouched, the exact call counts, and real `tsc --noEmit` (the repo's
+typescript is linked into the fixture, no network). A text-search rename
+fails with 48 type errors; a definition-only rename with 17. The log line
+per run reports how many symbol-tool calls the model made; they don't gate
+the pass. Budget: ~2–5 min and ~150–300k prompt tokens per run.
+
 ### Chat-response quality + latency — `bench:chat`
 
 ```bash
