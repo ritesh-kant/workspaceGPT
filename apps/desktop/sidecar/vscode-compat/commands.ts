@@ -102,8 +102,12 @@ export const BUILTIN_COMMANDS: Record<string, BuiltinCommand> = {
     why: 'no formatter providers; format-on-save is off by default so this is only reached if the user enables it',
   },
   'vscode.diff': {
-    kind: 'unsupported',
-    why: 'no diff editor (Phase 2: React diff panel)',
+    kind: 'implemented',
+    why: 'the review panel drawn over the chat (host/diffPanel.ts), with the hunk lenses’ keep/revert buttons',
+    run: async (left: Uri, right: Uri, title?: string) => {
+      if (!runtime.showDiff) throw new NotSupportedInDesktop("command 'vscode.diff'", 'the desktop host did not provide a diff panel');
+      await runtime.showDiff(left, right, title);
+    },
   },
 };
 

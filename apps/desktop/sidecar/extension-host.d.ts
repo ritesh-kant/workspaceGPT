@@ -17,4 +17,11 @@ declare module 'workspacegpt-extension-history' {
     getHistoryList(): Promise<Array<{ id: string; title: string; updatedAt: number; assistantMode: 'chat' | 'work' }>>;
   }
 }
+declare module 'workspacegpt-extension-hunks' {
+  /** Line ranges are [start, end), 0-based. */
+  export function computeHunks(original: string, current: string): Array<{ origStart: number; origEnd: number; curStart: number; curEnd: number }>;
+}
+declare module 'workspacegpt-extension-diff' {
+  export function recordOriginalContent(fsPath: string, content: string): void;
+}
 declare module 'posthog-node-real';

@@ -16,6 +16,7 @@ import type { WebSocket } from 'ws';
 import * as path from 'node:path';
 import { EventEmitter, Uri } from '../vscode-compat/types';
 import type { DesktopUi, InputBoxRequest, QuickPickRequest, ShowMessageRequest } from '../vscode-compat/runtime';
+import type { DiffAction, DiffFrame } from './diffPanel';
 
 export const WS_CLOSE_SUPERSEDED = 4001;
 
@@ -26,12 +27,14 @@ export type HostToPage =
   | { t: 'ui'; id: number; kind: 'quickpick'; req: QuickPickRequest }
   | { t: 'ui'; id: number; kind: 'inputbox'; req: InputBoxRequest }
   | { t: 'ui-cancel'; id: number }
-  | { t: 'toolbar'; items: unknown[] };
+  | { t: 'toolbar'; items: unknown[] }
+  | DiffFrame;
 export type PageToHost =
   | { t: 'msg'; d: unknown }
   | { t: 'ui-result'; id: number; value: unknown }
   | { t: 'command'; id: string }
-  | { t: 'page-log'; level: 'error' | 'info'; text: string };
+  | { t: 'page-log'; level: 'error' | 'info'; text: string }
+  | { t: 'diff-action'; file: string; action: DiffAction; idx?: number };
 
 const MAX_QUEUED = 2000;
 /** How long a question asked with no page connected waits for one. */
@@ -53,6 +56,8 @@ export class ViewSurface {
   readonly asked = new EventEmitter<string>();
   /** Title-bar button clicks from the page; the host decides which ids it honours. */
   readonly commandRequested = new EventEmitter<string>();
+  /** A button on the diff review panel (host/diffPanel.ts). */
+  readonly diffActionRequested = new EventEmitter<{ file: string; action: DiffAction; idx?: number }>();
   private uiSeq = 0;
   private pendingUi = new Map<number, (value: unknown) => void>();
   /**
@@ -206,6 +211,8 @@ export class ViewSurface {
       resolve?.(frame.value);
     } else if (frame.t === 'command' && typeof frame.id === 'string') {
       this.commandRequested.fire(frame.id);
+    } else if (frame.t === 'diff-action' && typeof frame.file === 'string' && typeof frame.action === 'string') {
+      this.diffActionRequested.fire({ file: frame.file, action: frame.action, idx: frame.idx });
     } else if (frame.t === 'page-log' && typeof frame.text === 'string') {
       (frame.level === 'error' ? console.warn : console.log)(`[page ${this.viewType}] ${frame.text.slice(0, 2000)}`);
     }

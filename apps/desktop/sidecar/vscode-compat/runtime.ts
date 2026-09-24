@@ -7,6 +7,8 @@
  * defaults below make the gap visible instead of hiding it.
  */
 
+import type { Uri } from './types';
+
 export type MessageSeverity = 'info' | 'warning' | 'error';
 
 export interface ShowMessageRequest {
@@ -100,6 +102,8 @@ export interface DesktopRuntime {
   clipboardRead(): Promise<string>;
   /** Undefined until the host provides one; the compat APIs that need it then report the gap. */
   languageService?: DesktopLanguageService;
+  /** `vscode.diff`: the desktop's review panel (host/diffPanel.ts). */
+  showDiff?(left: Uri, right: Uri, title?: string): Promise<void>;
 }
 
 const logOnlyUi: DesktopUi = {

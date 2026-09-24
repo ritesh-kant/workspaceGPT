@@ -90,7 +90,6 @@ written at shutdown).
 | `window.createWebviewPanel` | throws | "Open chat in editor" (hidden from the desktop toolbar: the window is already full-size) |
 | `vscode.McpStdioServerDefinition` / `vscode.lm` | `lm` is `undefined` | Copilot MCP-server registration is skipped (VS Code-only feature) |
 | command `vscode.executeFormatDocumentProvider` | throws | only reached if a user turns on `editor.formatOnSave` in the desktop settings; the error is caught and logged |
-| command `vscode.diff` | throws | "open diff" from the Files Changed bar (Phase 2: React diff panel) |
 | command `workbench.extensions.installExtension` | throws | the extension's update prompt "Install" button (desktop uses its own updater, Phase 3) |
 | `languages.registerCodeLensProvider` | inert | agent hunk keep/revert lenses never render (no editor) |
 | `window.createStatusBarItem` | inert | MCP status-bar button has nowhere to show |
@@ -135,6 +134,30 @@ the desktop's `typescript` dependency is the fallback.
   project (+1 on a real repo) through the extension's real tool functions.
   All pass; cold `find_symbol` 0.5–0.9 s on the fixture, 2–6 s on
   apps/vscode-extensions.
+
+## Phase 2 — diff review panel (built 2026-09-24)
+
+`vscode.diff` opens `host/diffPanel.ts`: a full-pane review drawn by the
+chat frame's bridge over the conversation, replacing VS Code's diff editor
+and the hunk CodeLenses (`agentHunkLens.ts`), which have nowhere to render
+here. Hunks come from the extension's own `computeHunks`; every button runs
+the command the lens would have run (`workspacegpt.agent.keepHunk`,
+`revertHunk`, `keepAllHunks`, `revertAllHunks`), then both sides are re-read
+and the panel redraws. Keep/Revert only appear for agent diffs (left side is
+the `workspacegpt-original` scheme); the page can act only on files the host
+opened a diff for. Open in editor hands off to the user's editor; Escape or
+Close dismisses it.
+
+Verified in the browser pane with `WGPT_DESKTOP_TEST_DIFF` and a hand edit
+(one changed line, one deletion, one addition), sent through the Files
+Changed bar's own `open-diff-in-editor` message: 3 hunks with correct line
+numbers → Revert (deletion restored on disk) → Keep (folded into the
+baseline) → Revert all → "No changes left", and the file equalled the
+original plus exactly the kept hunk. Dark and light theme, 375 px wide with no
+horizontal page scroll.
+
+Not done: a live refresh when the agent writes the file while the panel is
+open (the next button press re-reads it), and no side-by-side view.
 
 ## Findings from Phase 0 (and what was done)
 
@@ -447,6 +470,7 @@ The window is now a two-pane app rather than the chat panel alone:
 | `WGPT_DESKTOP_TRACE_WORKERS=1` | logs every worker_thread message (type and size only) |
 | `WGPT_DESKTOP_ANALYTICS=1` / `=0` | force PostHog on / off (default: on in `NODE_ENV=production` builds, off in dev); events are tagged `surface: desktop`, extension events `surface: extension` |
 | `WGPT_DESKTOP_DEBUG_TOKEN_FILE=<path>` | writes the socket link (0600) so a browser tab can join a Tauri-run sidecar |
+| `WGPT_DESKTOP_TEST_DIFF=<file>` | records `<file>`'s current text as the agent's pre-edit original, so a hand edit shows in the files-changed review (diff-panel test) |
 | `WGPT_DESKTOP_TEST_COMMAND=<cmd>` | starts `<cmd>` through `commandTools.executeCommand` at startup (orphan test) |
 | `WGPT_EDITOR=<cmd>` | editor used for "open file" hand-off (`<cmd> file:line`) |
 

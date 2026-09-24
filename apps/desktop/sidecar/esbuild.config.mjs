@@ -51,6 +51,10 @@ const sidecar = {
     // Only for the WGPT_DESKTOP_TEST_COMMAND orphan test (the extension's own spawn path).
     'workspacegpt-extension-commands': path.join(extDir, 'src/services/agent/commandTools.ts'),
     'workspacegpt-extension-history': path.join(extDir, 'src/services/historyService.ts'),
+    // The diff panel shows the hunks the extension's own keep/revert commands act on.
+    'workspacegpt-extension-hunks': path.join(extDir, 'src/services/agent/agentHunkLens.ts'),
+    // Only for the WGPT_DESKTOP_TEST_DIFF review-panel test.
+    'workspacegpt-extension-diff': path.join(extDir, 'src/services/agent/agentDiffProvider.ts'),
     'posthog-node': path.join(here, 'host/posthogShim.ts'),
     'posthog-node-real': realPosthog,
   },

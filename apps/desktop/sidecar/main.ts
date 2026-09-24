@@ -29,6 +29,7 @@ import { configureRuntime } from './vscode-compat/runtime';
 import { onDidChangeWorkspaceFolders, setWorkspaceFolders } from './vscode-compat/workspace';
 import { runtime } from './vscode-compat/runtime';
 import { createLanguageService } from './host/languageService';
+import { createDiffPanel } from './host/diffPanel';
 import { webviewViewProviders, window as compatWindow } from './vscode-compat/window';
 import { apiHits, inertHits, notSupportedHits } from './vscode-compat/notSupported';
 import { contextKeys, contextKeysChanged } from './vscode-compat/commands';
@@ -42,6 +43,7 @@ import { createViewSurface, type ViewSurface } from './host/webviewHost';
 import { watchForAttention } from './host/notifier';
 // Aliased to apps/vscode-extensions/src/services/historyService.ts (the same module extension.ts uses).
 import { HistoryService } from 'workspacegpt-extension-history';
+import { recordOriginalContent } from 'workspacegpt-extension-diff';
 import { MESSAGE_TYPES } from '../../vscode-extensions/constants';
 import { startServer, type DesktopServer } from './host/server';
 import { mergeLoginShellPath, type ShellPathResult } from './host/shellEnv';
@@ -319,6 +321,14 @@ async function main(): Promise<void> {
     surfaces.delete(SESSIONS_VIEW_ID);
   }
   console.log(`[desktop] activated in ${activatedAt - startedAt} ms; chat view resolved${sessions ? ', sessions view resolved' : ''}`);
+  // Review-panel test only: record <file>'s current text as the agent's
+  // pre-edit original, as agentWriteTools does before its first write, so an
+  // edit made by hand afterwards shows up in the files-changed review.
+  if (process.env.WGPT_DESKTOP_TEST_DIFF) {
+    const file = path.resolve(process.env.WGPT_DESKTOP_TEST_DIFF);
+    recordOriginalContent(file, fs.readFileSync(file, 'utf8'));
+    console.warn(`[desktop] WGPT_DESKTOP_TEST_DIFF: recorded the original of ${file}`);
+  }
 
   // Approval waiting / question asked / run finished → the shell, which
   // posts a native notification when the window isn't in front. Headless
@@ -337,6 +347,13 @@ async function main(): Promise<void> {
     titleActions = computeTitleActions(extensionDir, CHAT_VIEW_ID, contextKeys);
     pushToolbar();
   });
+  // vscode.diff → the review panel the chat frame draws.
+  const diffPanel = createDiffPanel(surface, () => runtime.workspaceFolders);
+  configureRuntime({ showDiff: diffPanel.show });
+  surface.diffActionRequested.event(({ file, action, idx }) => {
+    diffPanel.act(file, action, idx).catch((err) => console.error(`[desktop] diff ${action} failed:`, err));
+  });
+
   surface.commandRequested.event((id) => {
     if (!titleActions.some((a) => a.command === id)) {
       console.warn(`[desktop] page asked for command ${id}, which is not a title action — ignored`);
