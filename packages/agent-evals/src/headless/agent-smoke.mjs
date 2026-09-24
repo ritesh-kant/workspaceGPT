@@ -371,6 +371,7 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
   const { tools: baseTools, audit, checkpoints } = makeToolHost(ws, log);
   const tools = { ...baseTools, ...extraTools };
   const toolCalls = [];
+  const modelCallIds = new Set();
   const toolTimings = [];
   const thoughtMs = [];
   let metrics = null;
@@ -410,9 +411,13 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
     const timer = setTimeout(() => finish({ ok: false, error: 'scenario timeout' }), SCENARIO_TIMEOUT_MS);
 
     worker.on('message', async (msg) => {
+      // The worker announces a call the MODEL made with tool_status before its
+      // tool_request (same id); its own pre-loop survey (explorationPhase
+      // scout) sends tool_request alone. That's how the two are told apart.
+      if (msg.type === 'tool_status') modelCallIds.add(msg.id);
       if (msg.type === 'tool_request') {
         const impl = tools[msg.name];
-        toolCalls.push({ name: msg.name, args: msg.arguments });
+        toolCalls.push({ name: msg.name, args: msg.arguments, fromModel: modelCallIds.has(msg.id) });
         log(`   -> ${msg.name} ${JSON.stringify(msg.arguments ?? {}).slice(0, 140)}`);
         const startedAt = Date.now();
         if (!impl) {
@@ -607,8 +612,10 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
     else checks = [['agent completed', false, r.error]];
     const passed = checks.every(([, ok]) => ok);
 
-    const symbolCalls = r.toolCalls.filter((c) => ['find_symbol', 'go_to_definition', 'find_references'].includes(c.name)).length;
-    log(`   ${passed ? 'PASS' : 'FAIL'} (${Math.round(wallMs / 1000)}s, ${r.toolCalls.length} tool calls, ${symbolCalls} symbol-tool)`);
+    const symbol = r.toolCalls.filter((c) => ['find_symbol', 'go_to_definition', 'find_references'].includes(c.name));
+    const symbolByModel = symbol.filter((c) => c.fromModel);
+    const byName = (cs) => cs.reduce((a, c) => ({ ...a, [c.name]: (a[c.name] ?? 0) + 1 }), {});
+    log(`   ${passed ? 'PASS' : 'FAIL'} (${Math.round(wallMs / 1000)}s, ${r.toolCalls.length} tool calls; symbol tools: model ${JSON.stringify(byName(symbolByModel))}, pre-loop survey ${symbol.length - symbolByModel.length})`);
     for (const [name, ok] of checks) log(`     ${ok ? '✓' : '✗'} ${name}`);
     if (r.answer) log(`   answer: ${r.answer.slice(0, 300).replace(/\n/g, ' ')}`);
     if (!r.metrics) log(`   ⚠️  no metrics message received from worker — dist bundle may be stale`);
@@ -628,6 +635,7 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
       metrics: r.metrics,
       toolTimings: r.toolTimings,
       toolCalls: r.toolCalls.map((c) => c.name),
+      modelToolCalls: r.toolCalls.filter((c) => c.fromModel).map((c) => c.name),
       answerHead: (r.answer ?? '').slice(0, 1500),
     });
   }
