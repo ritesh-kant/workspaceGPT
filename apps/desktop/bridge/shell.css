@@ -1,0 +1,250 @@
+/*
+ * The desktop shell's own chrome (bridge/shell.html). Colours come from the
+ * --wgpt-d-* palette in theme.css.
+ */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--wgpt-d-bg);
+  color: var(--wgpt-d-fg);
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+}
+button { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+
+.app {
+  --side-w: 264px;
+  --bar-h: 44px;
+  display: flex;
+  height: 100%;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+
+.side {
+  width: var(--side-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--wgpt-d-sidebar);
+  border-right: 1px solid var(--wgpt-d-border);
+}
+.app[data-sidebar="closed"] .side { display: none; }
+
+.side-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--bar-h);
+  padding: 0 8px 0 14px;
+  flex-shrink: 0;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--wgpt-d-accent-fg);
+  background: var(--wgpt-d-accent);
+}
+.brand-name {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The Sessions view already brings New Session, Search and the grouped list. */
+.side-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.view {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: transparent;
+}
+
+.side-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid var(--wgpt-d-border);
+  flex-shrink: 0;
+}
+.account {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.account:hover { background: var(--wgpt-d-hover); }
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--wgpt-d-muted);
+  background: var(--wgpt-d-active);
+}
+.avatar.on {
+  color: var(--wgpt-d-accent-fg);
+  background: var(--wgpt-d-accent);
+}
+.account-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.account-name,
+.account-sub {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-name { font-weight: 600; }
+.account-sub { font-size: 11.5px; color: var(--wgpt-d-muted); }
+
+/* ── Main pane ───────────────────────────────────────────────────────── */
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--wgpt-d-bg);
+}
+.bar {
+  height: var(--bar-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--wgpt-d-border);
+}
+.title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.main-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+#expandSide { display: none; margin-left: -6px; }
+.app[data-sidebar="closed"]:not(.no-sessions) #expandSide { display: flex; }
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--wgpt-d-muted);
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--wgpt-d-hover); color: var(--wgpt-d-fg); }
+.icon-btn:focus-visible,
+.account:focus-visible { outline: 2px solid var(--wgpt-d-accent); outline-offset: -2px; }
+.icon-btn img { width: 16px; height: 16px; opacity: 0.8; }
+.icon-btn.text-btn { width: auto; padding: 0 8px; font-size: 12px; }
+
+/* ── First-run setup: the chat's onboarding fills the window ────────── */
+
+.app.onboarding .side,
+.app.onboarding .scrim { display: none !important; }
+/* The header stays only as an empty strip: it is the window's drag area
+   and keeps the setup clear of the traffic lights. */
+.app.onboarding .bar { border-bottom-color: transparent; }
+.app.onboarding .bar > * { visibility: hidden; }
+
+/* ── Settings: the chat's own nav column replaces the sessions sidebar ── */
+
+.app.settings-open .side,
+.app.settings-open .scrim,
+.app.settings-open #expandSide { display: none !important; }
+/* The nav column carries the "Settings" heading; the header keeps only its
+   actions (and stays the window's drag strip). */
+.app.settings-open .title { visibility: hidden; }
+
+/* ── Narrow windows: the sidebar floats over the chat ────────────────── */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: rgba(0, 0, 0, 0.28);
+}
+@media (max-width: 719px) {
+  .side {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 10;
+    width: min(var(--side-w), 86vw);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.18);
+  }
+}
+
+/* ── Tauri on macOS: content runs under the transparent title bar ────── */
+
+/* Room for the traffic lights, which sit at the top-left of the window. */
+.overlay-titlebar .side-top { padding-left: 80px; }
+.overlay-titlebar .app[data-sidebar="closed"] .bar,
+.overlay-titlebar .app.settings-open .bar,
+.overlay-titlebar .no-sessions .bar { padding-left: 84px; }

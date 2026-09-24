@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-src 'self'; connect-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WorkspaceGPT</title>
+  <link rel="stylesheet" href="/__desktop/theme.css" />
+  <link rel="stylesheet" href="/__desktop/shell.css" />
+</head>
+<body>
+  <!--
+    The desktop shell: a sidebar with the extension's Sessions view and a main
+    pane with its chat view, each in its own same-origin iframe (/view/<id>).
+    Everything the shell draws itself — brand row, header, account footer —
+    is built from what those views already receive from the extension host.
+  -->
+  <div class="app" id="app" data-sidebar="open">
+    <aside class="side" id="side" aria-label="Sessions">
+      <div class="side-top" data-tauri-drag-region="deep">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9L12 3z" fill="currentColor" />
+              <path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z" fill="currentColor" opacity=".7" />
+            </svg>
+          </span>
+          <span class="brand-name">WorkspaceGPT</span>
+        </div>
+        <button class="icon-btn" id="collapseSide" type="button" title="Hide sidebar" aria-label="Hide sidebar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="3" stroke="currentColor" stroke-width="1.6" />
+            <path d="M9.5 4.5v15" stroke="currentColor" stroke-width="1.6" />
+          </svg>
+        </button>
+      </div>
+      <div class="side-body" id="sideBody"></div>
+      <div class="side-foot">
+        <button class="account" id="account" type="button" title="Account and settings">
+          <span class="avatar" id="avatar" aria-hidden="true">?</span>
+          <span class="account-text">
+            <span class="account-name" id="accountName">WorkspaceGPT</span>
+            <span class="account-sub" id="accountSub">Open settings to sign in</span>
+          </span>
+        </button>
+        <button class="icon-btn" id="settingsBtn" type="button" title="Settings" aria-label="Settings" hidden>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z" stroke="currentColor" stroke-width="1.6" />
+            <path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.5-2-3.4-2.4.9a7.5 7.5 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.5 7.5 0 0 0 7 6.5l-2.4-.9-2 3.4 2 1.5a7.6 7.6 0 0 0 0 3l-2 1.5 2 3.4 2.4-.9a7.5 7.5 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.5 7.5 0 0 0 2.6-1.5l2.4.9 2-3.4-2-1.5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
+    <main class="main">
+      <header class="bar" data-tauri-drag-region="deep">
+        <button class="icon-btn" id="expandSide" type="button" title="Show sidebar" aria-label="Show sidebar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="3" stroke="currentColor" stroke-width="1.6" />
+            <path d="M9.5 4.5v15" stroke="currentColor" stroke-width="1.6" />
+          </svg>
+        </button>
+        <h1 class="title" id="title">New session</h1>
+        <div class="bar-actions" id="actions"></div>
+      </header>
+      <div class="main-body" id="mainBody"></div>
+    </main>
+  </div>
+  <script src="/__desktop/shell.js"></script>
+</body>
+</html>

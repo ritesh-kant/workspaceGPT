@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Deliberately empty. The window loads the sidecar's loopback page, which talks to the sidecar over its WebSocket, not Tauri IPC; folder picker, menu, tray and opener are driven from Rust. The only IPC the page gets is window dragging (window-drag.json).",
+  "windows": ["main"],
+  "permissions": []
+}

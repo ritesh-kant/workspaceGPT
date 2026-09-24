@@ -15,6 +15,17 @@ declare global {
 let vscodeApi: any;
 let collapseWatchStarted = false;
 
+/**
+ * True when this bundle runs inside the desktop app rather than a VS Code
+ * webview. The desktop bridge (apps/desktop/bridge/desktop-bridge.ts) sets
+ * `data-wgpt-desktop` on <html> before the first paint; VS Code never does.
+ * The desktop gives the view a whole window, so a few screens (Settings) lay
+ * themselves out for that width instead of for a sidebar.
+ */
+export function isDesktopHost(): boolean {
+  return document.documentElement.hasAttribute('data-wgpt-desktop');
+}
+
 export function VSCodeAPI() {
   if (!vscodeApi) {
     vscodeApi = window.acquireVsCodeApi();

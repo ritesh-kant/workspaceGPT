@@ -14,7 +14,14 @@
  * into results/agent-smoke.json (merge-on-rerun, see run.mjs) so regressions
  * in modelWorker.ts's loop are visible instead of just pass/fail.
  *
- * Run: node src/headless/agent-smoke.mjs [--model M] [--provider P] [--scenarios s1,s2,s3] [--runs 5] [--timeout-min 10]
+ * Run: node src/headless/agent-smoke.mjs [--model M] [--provider P] [--scenarios s1,s2,s3] [--runs 5] [--timeout-min 10] [--host desktop]
+ *
+ * --host desktop: find_symbol / go_to_definition / find_references /
+ * get_diagnostics are served by the extension's real tool functions over the
+ * desktop app's compat module and typescript-language-server
+ * (apps/desktop/scripts/desktop-tools.mjs) instead of this file's regex
+ * stubs. Records carry `host: 'desktop'` and are kept apart from the default
+ * ones, so the two can be compared run for run (DESKTOP-TAURI-PLAN Phase 2 exit).
  * Model/provider/apiKey/baseUrl can also come from packages/agent-evals/.env
  * (see .env.example); precedence is CLI flag > shell env > .env > default.
  */
@@ -25,8 +32,10 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { buildUnits } from './build-units.mjs';
 import { loadEnv } from '../env.mjs';
+import { symbolRenameFixture } from './fixtures/symbol-rename.mjs';
 
 const pexecFile = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -47,8 +56,11 @@ const PROVIDER = argOf('provider', process.env.WGPT_BENCH_PROVIDER ?? 'Ollama');
 // requires a non-empty string. Comma-separated keys feed withKeyFailover.
 const API_KEY = argOf('api-key', process.env.WGPT_BENCH_API_KEY ?? 'DUMMY_API_KEY');
 const BASE_URL = argOf('base-url', process.env.WGPT_BENCH_BASE_URL); // Custom provider only
+// s4 (symbol tools, ~40-file TS project) is opt-in: --scenarios s1,s2,s3,s4.
 const ONLY = argOf('scenarios', 's1,s2,s3').split(',');
 const RUNS = Math.max(1, parseInt(argOf('runs', '1'), 10) || 1);
+const HOST = argOf('host', 'harness');
+if (!['harness', 'desktop'].includes(HOST)) throw new Error(`--host must be harness or desktop, got ${HOST}`);
 const SCENARIO_TIMEOUT_MS = Math.round(parseFloat(argOf('timeout-min', '10')) * 60 * 1000);
 
 // A stale dist bundle silently produces runs with no `metrics` message (the
@@ -104,9 +116,9 @@ uses them, \`test.js\` is the test suite (run with \`node test.js\`).
 `,
 };
 
-function makeWorkspace() {
+export function makeWorkspace(files = FIXTURE) {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-smoke-'));
-  for (const [rel, content] of Object.entries(FIXTURE)) {
+  for (const [rel, content] of Object.entries(files)) {
     const abs = path.join(ws, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
@@ -181,7 +193,17 @@ export function makeToolHost(ws, log) {
   const audit = [];
 
   async function applyPrepared(w) {
-    await checkpoints.checkpoint(`before: ${w.summary}`);
+    // As chatService.applyPreparedWrite does: a checkpoint scoped to the file
+    // being written (the service refuses an unscoped one), empty allowed for a
+    // create, and a checkpoint failure warns instead of blocking the write.
+    // Calling checkpoint(label) with no files made every edit_file throw, and
+    // models then did their edits with sed / node -e through run_command.
+    const rel = path.relative(ws, w.uri.fsPath);
+    try {
+      await checkpoints.checkpoint(`before: ${w.summary}`, [rel], w.kind === 'create');
+    } catch (e) {
+      log(`      checkpoint failed (continuing with the write): ${e.message}`);
+    }
     if (w.kind === 'delete') {
       fs.unlinkSync(w.uri.fsPath);
     } else {
@@ -349,6 +371,7 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
   const { tools: baseTools, audit, checkpoints } = makeToolHost(ws, log);
   const tools = { ...baseTools, ...extraTools };
   const toolCalls = [];
+  const modelCallIds = new Set();
   const toolTimings = [];
   const thoughtMs = [];
   let metrics = null;
@@ -388,9 +411,13 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
     const timer = setTimeout(() => finish({ ok: false, error: 'scenario timeout' }), SCENARIO_TIMEOUT_MS);
 
     worker.on('message', async (msg) => {
+      // The worker announces a call the MODEL made with tool_status before its
+      // tool_request (same id); its own pre-loop survey (explorationPhase
+      // scout) sends tool_request alone. That's how the two are told apart.
+      if (msg.type === 'tool_status') modelCallIds.add(msg.id);
       if (msg.type === 'tool_request') {
         const impl = tools[msg.name];
-        toolCalls.push({ name: msg.name, args: msg.arguments });
+        toolCalls.push({ name: msg.name, args: msg.arguments, fromModel: modelCallIds.has(msg.id) });
         log(`   -> ${msg.name} ${JSON.stringify(msg.arguments ?? {}).slice(0, 140)}`);
         const startedAt = Date.now();
         if (!impl) {
@@ -445,7 +472,16 @@ const run = (cmd, cwd) => pexecFile('/bin/bash', ['-lc', cmd], { cwd }).then(
   (e) => ({ code: e.code ?? 1, out: (e.stdout ?? '') + (e.stderr ?? '') }),
 );
 
-const SCENARIOS = [
+const S4 = symbolRenameFixture();
+/** s4 type-checks with the repo's own typescript, linked in, so `npx tsc` needs no network. */
+function linkTypescript(ws) {
+  const ts = fs.realpathSync(path.dirname(createRequire(path.join(repoRoot, 'apps/desktop/package.json')).resolve('typescript/package.json')));
+  fs.mkdirSync(path.join(ws, 'node_modules/.bin'), { recursive: true });
+  fs.symlinkSync(ts, path.join(ws, 'node_modules/typescript'));
+  fs.symlinkSync('../typescript/bin/tsc', path.join(ws, 'node_modules/.bin/tsc'));
+}
+
+export const SCENARIOS = [
   {
     id: 's1',
     title: 'read-only exploration',
@@ -495,6 +531,33 @@ const SCENARIOS = [
       return checks;
     },
   },
+  {
+    // Opt-in (--scenarios s4): the one scenario where reading everything
+    // isn't an option, so find_references / go_to_definition decide the
+    // outcome. Checks gate on correctness only; symbol-tool use is logged.
+    id: 's4',
+    title: 'type-aware method rename (symbol tools)',
+    fixture: () => S4.files,
+    setup: (ws) => linkTypescript(ws),
+    prompt:
+      'In this TypeScript project, rename the method `close` of the `Account` class (src/accounts/account.ts) to `archive`, ' +
+      'and update every call of that method. `Connection` and `FileHandle` also have a `close()` method: leave those alone. ' +
+      'When you are done, make sure the project type-checks with `npx tsc --noEmit`.',
+    verify: async (ws, r) => {
+      const read = (rel) => fs.readFileSync(path.join(ws, rel), 'utf8');
+      const src = walk(ws).filter((f) => f.startsWith('src/') && f.endsWith('.ts'));
+      const count = (re) => src.reduce((n, f) => n + (read(f).match(re) ?? []).length, 0);
+      const account = read('src/accounts/account.ts');
+      const tsc = await run('node_modules/.bin/tsc --noEmit -p .', ws);
+      const checks = [];
+      checks.push(['Account defines archive(reason) and no close()', /\barchive\(reason: string\)/.test(account) && !/\bclose\(/.test(account)]);
+      checks.push(['Connection.close and FileHandle.close untouched', /\bclose\(\): void/.test(read('src/net/connection.ts')) && /async close\(\): Promise<void>/.test(read('src/files/fileHandle.ts'))]);
+      checks.push([`every Account call renamed (${S4.expected.Account} .archive( calls)`, count(/\.archive\(/g) === S4.expected.Account]);
+      checks.push([`no other close() call renamed (${S4.expected.Connection + S4.expected.FileHandle} .close( calls left)`, count(/\.close\(/g) === S4.expected.Connection + S4.expected.FileHandle]);
+      checks.push(['project type-checks', tsc.code === 0, tsc.code ? tsc.out.split('\n').filter((l) => /error TS/.test(l)).slice(0, 3).join(' | ') : undefined]);
+      return checks;
+    },
+  },
 ];
 
 // ── aggregation helpers ──────────────────────────────────────────────────
@@ -527,7 +590,8 @@ if (isMain) {
 for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
   for (const sc of selected) {
     log(`\n━━ [run ${runIndex}/${RUNS}] ${sc.id}: ${sc.title}`);
-    const ws = makeWorkspace();
+    const ws = makeWorkspace(sc.fixture?.());
+    sc.setup?.(ws);
     await pexecFile('git', ['-C', ws, 'init', '--quiet']);
     await pexecFile('git', ['-C', ws, 'config', 'user.email', 't@t']);
     await pexecFile('git', ['-C', ws, 'config', 'user.name', 't']);
@@ -536,7 +600,11 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
 
     const startedAt = new Date().toISOString();
     const started = Date.now();
-    const r = await runAgent(ws, sc.prompt, log);
+    const desktopHost = HOST === 'desktop'
+      ? await (await import(path.join(repoRoot, 'apps/desktop/scripts/desktop-tools.mjs'))).createDesktopToolHost(ws)
+      : null;
+    const r = await runAgent(ws, sc.prompt, log, {}, desktopHost?.tools ?? {});
+    desktopHost?.dispose();
     const wallMs = Date.now() - started;
 
     let checks = [];
@@ -544,7 +612,10 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
     else checks = [['agent completed', false, r.error]];
     const passed = checks.every(([, ok]) => ok);
 
-    log(`   ${passed ? 'PASS' : 'FAIL'} (${Math.round(wallMs / 1000)}s, ${r.toolCalls.length} tool calls)`);
+    const symbol = r.toolCalls.filter((c) => ['find_symbol', 'go_to_definition', 'find_references'].includes(c.name));
+    const symbolByModel = symbol.filter((c) => c.fromModel);
+    const byName = (cs) => cs.reduce((a, c) => ({ ...a, [c.name]: (a[c.name] ?? 0) + 1 }), {});
+    log(`   ${passed ? 'PASS' : 'FAIL'} (${Math.round(wallMs / 1000)}s, ${r.toolCalls.length} tool calls; symbol tools: model ${JSON.stringify(byName(symbolByModel))}, pre-loop survey ${symbol.length - symbolByModel.length})`);
     for (const [name, ok] of checks) log(`     ${ok ? '✓' : '✗'} ${name}`);
     if (r.answer) log(`   answer: ${r.answer.slice(0, 300).replace(/\n/g, ' ')}`);
     if (!r.metrics) log(`   ⚠️  no metrics message received from worker — dist bundle may be stale`);
@@ -552,6 +623,7 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
     runRecords.push({
       model: MODEL,
       provider: PROVIDER,
+      ...(HOST === 'desktop' ? { host: 'desktop' } : {}),
       scenario: sc.id,
       title: sc.title,
       runIndex,
@@ -563,6 +635,7 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
       metrics: r.metrics,
       toolTimings: r.toolTimings,
       toolCalls: r.toolCalls.map((c) => c.name),
+      modelToolCalls: r.toolCalls.filter((c) => c.fromModel).map((c) => c.name),
       answerHead: (r.answer ?? '').slice(0, 1500),
     });
   }
@@ -575,7 +648,7 @@ fs.mkdirSync(resultsDir, { recursive: true });
 const jsonPath = path.join(resultsDir, 'agent-smoke.json');
 // Older records have no provider field — treat them as Ollama (the only
 // provider the harness supported before it became configurable).
-const keyOf = (r) => `${r.model}|${r.provider ?? 'Ollama'}|${r.scenario}`;
+const keyOf = (r) => `${r.model}|${r.provider ?? 'Ollama'}|${r.host ?? 'harness'}|${r.scenario}`;
 const ranKeys = new Set(runRecords.map(keyOf));
 let merged = runRecords;
 if (fs.existsSync(jsonPath)) {
@@ -586,7 +659,7 @@ fs.writeFileSync(jsonPath, JSON.stringify(merged, null, 2));
 
 // ── agent-smoke.md — per model×scenario summary + per-tool latency ────────
 
-const modelLabel = (r) => `${r.model}${r.provider && r.provider !== 'Ollama' ? ` (${r.provider})` : ''}`;
+const modelLabel = (r) => `${r.model}${r.provider && r.provider !== 'Ollama' ? ` (${r.provider})` : ''}${r.host === 'desktop' ? ' [desktop tools]' : ''}`;
 const reportModels = [...new Set(merged.map(modelLabel))];
 const reportScenarios = [...new Set(merged.map((r) => r.scenario))];
 

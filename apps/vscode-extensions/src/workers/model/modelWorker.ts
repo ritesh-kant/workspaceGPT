@@ -382,7 +382,7 @@ const TOOL_DEFS = [
     function: {
       name: 'find_references',
       description:
-        'Find every place a symbol is used, via the editor\'s language services. Point it at one known occurrence (file + line + symbol text) and it returns all reference sites. Use after locating a symbol to understand how/where it is consumed.',
+        'Find every place a symbol is used, via the editor\'s language services. Point it at one known occurrence (file + line + symbol text) and it returns all reference sites of THAT symbol, resolved by type — not other symbols that share its name. Use it before renaming a symbol or changing its signature, to get exactly the call sites to update, and to trace how/where a symbol is consumed. Returns up to 30 sites; `truncated: true` means there are more.',
       parameters: {
         type: 'object',
         properties: {

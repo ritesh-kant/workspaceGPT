@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "WorkspaceGPT",
+  "mainBinaryName": "WorkspaceGPT",
+  "version": "0.0.1",
+  "identifier": "dev.workspacegpt.desktop",
+  "build": {
+    "frontendDist": "splash"
+  },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": false,
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "12.0"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzNDk1NDRFMTA4RURBMDAKUldRQTJvNFFUbFJKWStWdW51Tk5ReG85OVp6TnZ2cERtUGlHbytrZWlrWWl2R3BiU3VMdUNRaEEK",
+      "endpoints": [
+        "https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/latest.json"
+      ]
+    }
+  }
+}

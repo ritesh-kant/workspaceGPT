@@ -16,13 +16,22 @@ interface UiState {
    *  Gates onboarding/mode-dependent rendering so a returning user never sees
    *  a flash of the first-run flow before their real config loads. */
   settingsHydrated: boolean;
+  /** A Settings page to land on the next time Settings opens (the desktop's
+   *  page layout, see components/Settings.tsx); consumed once it is shown. */
+  settingsPage: string | null;
   setActiveView: (view: ActiveView) => void;
   setSettingsHydrated: (hydrated: boolean) => void;
+  /** Open Settings, optionally on a given page. */
+  openSettings: (page?: string) => void;
+  clearSettingsPage: () => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
   activeView: 'chat',
   settingsHydrated: false,
+  settingsPage: null,
   setActiveView: (activeView) => set({ activeView }),
   setSettingsHydrated: (settingsHydrated) => set({ settingsHydrated }),
+  openSettings: (page) => set({ activeView: 'settings', settingsPage: page ?? null }),
+  clearSettingsPage: () => set({ settingsPage: null }),
 }));
