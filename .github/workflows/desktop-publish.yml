@@ -1,0 +1,135 @@
+name: Publish Desktop App
+
+# Builds and publishes the WorkspaceGPT desktop app (apps/desktop, Tauri) for
+# macOS arm64 and x64 (DESKTOP-TAURI-PLAN.md Phase 3). Windows and Linux are
+# not built yet: nothing has been run on them.
+#
+#   - Push a tag desktop-vX.Y.Z: build both targets, create release
+#     desktop-vX.Y.Z (DMGs, updater bundles + .sig, SHA256SUMS.txt), then point
+#     the rolling `desktop-latest` release's latest.json and install.sh at it.
+#     Installed apps poll that latest.json (src-tauri/tauri.conf.json).
+#   - Manual run: build only, artifacts attached to the run, nothing released.
+#
+# The tag's X.Y.Z must equal apps/desktop/package.json and tauri.conf.json
+# `version` (the updater compares the latter).
+# Requires the TAURI_SIGNING_PRIVATE_KEY repo secret: the minisign key whose
+# public half is plugins.updater.pubkey in tauri.conf.json. Without the same
+# key, installed apps reject every update.
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        # Both on Apple Silicon: the x64 build cross-compiles (rustup target),
+        # stages the x64 Node + native packages (pnpm supportedArchitectures
+        # installs them all), and codesign doesn't care which CPU it signs for.
+        target: [darwin-arm64, darwin-x64]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Check version
+        id: version
+        shell: bash
+        run: |
+          app=$(node -p "require('./apps/desktop/package.json').version")
+          tauri=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          [ "$app" = "$tauri" ] || { echo "package.json $app ≠ tauri.conf.json $tauri"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "desktop-v$app" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match version $app"; exit 1
+          fi
+          echo "version=$app" >> "$GITHUB_OUTPUT"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: node apps/desktop/scripts/build-release.mjs --target ${{ matrix.target }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+
+      - name: Name artifacts by version and target
+        shell: bash
+        run: |
+          v=${{ steps.version.outputs.version }}; t=${{ matrix.target }}
+          triple=$([ "$t" = darwin-arm64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)
+          b=apps/desktop/src-tauri/target/$triple/release/bundle
+          mkdir -p out
+          cp "$b"/dmg/*.dmg "out/WorkspaceGPT_${v}_${t}.dmg"
+          cp "$b/macos/WorkspaceGPT.app.tar.gz" "out/WorkspaceGPT_${v}_${t}.app.tar.gz"
+          cp "$b/macos/WorkspaceGPT.app.tar.gz.sig" "out/WorkspaceGPT_${v}_${t}.app.tar.gz.sig"
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: out
+          merge-multiple: true
+
+      - name: Release desktop-vX.Y.Z
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=${GITHUB_REF_NAME}; v=${tag#desktop-v}
+          cd out
+          sha256sum WorkspaceGPT_${v}_*.dmg WorkspaceGPT_${v}_*.app.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          # --latest=false: the repo's "Latest release" stays the extension's
+          # (installed apps and install.sh use the rolling desktop-latest release instead).
+          gh release create "$tag" --title "WorkspaceGPT Desktop $v" --latest=false \
+            --notes "WorkspaceGPT Desktop $v for macOS (Apple Silicon and Intel). Install: \`curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/desktop-latest/install.sh | sh\`. The DMG is not notarized: after dragging the app to Applications, open it once via System Settings → Privacy & Security → Open Anyway, or run \`xattr -dr com.apple.quarantine /Applications/WorkspaceGPT.app\`." \
+            WorkspaceGPT_${v}_*.dmg WorkspaceGPT_${v}_*.app.tar.gz WorkspaceGPT_${v}_*.app.tar.gz.sig SHA256SUMS.txt
+
+      - name: Point desktop-latest at it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=${GITHUB_REF_NAME}; v=${tag#desktop-v}
+          node apps/desktop/scripts/updater-manifest.mjs --version "$v" \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
+            --out out/latest.json \
+            darwin-aarch64=out/WorkspaceGPT_${v}_darwin-arm64.app.tar.gz \
+            darwin-x86_64=out/WorkspaceGPT_${v}_darwin-x64.app.tar.gz
+          gh release view desktop-latest >/dev/null 2>&1 || \
+            gh release create desktop-latest --title "WorkspaceGPT Desktop (latest)" --latest=false --prerelease \
+              --notes "Rolling pointer to the newest desktop release: latest.json (read by installed apps) and install.sh. Download builds from the versioned desktop-v* releases."
+          gh release upload desktop-latest out/latest.json apps/desktop/install.sh --clobber

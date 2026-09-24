@@ -72,15 +72,41 @@ pub fn new_token() -> String {
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The `runtime/` resource a release build carries (scripts/stage-runtime.mjs,
+/// bundled by tauri.release.conf.json): the pinned node, the sidecar and
+/// everything it loads. Where Tauri puts resources differs per platform:
+/// macOS `Foo.app/Contents/Resources/`, Windows next to the exe, Linux
+/// `/usr/lib/<product>/` (also inside an AppImage's mount).
+fn bundled_runtime() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let candidates = [
+        dir.join("../Resources/runtime"),
+        dir.join("runtime"),
+        dir.join("../lib/WorkspaceGPT/runtime"),
+    ];
+    candidates.into_iter().find(|c| c.join("sidecar/main.js").is_file())
+}
+
 fn node_binary() -> String {
-    // Dev: scripts/dev-tauri.mjs passes the node running pnpm. Phase 3 bundles one.
-    std::env::var("WGPT_NODE").unwrap_or_else(|_| "node".into())
+    // Dev: scripts/dev-tauri.mjs passes the node running pnpm. Release: the bundled one.
+    if let Ok(node) = std::env::var("WGPT_NODE") {
+        return node;
+    }
+    let exe = if cfg!(windows) { "node.exe" } else { "node" };
+    match bundled_runtime().map(|r| r.join(exe)).filter(|n| n.is_file()) {
+        Some(bundled) => bundled.to_string_lossy().into_owned(),
+        None => "node".into(),
+    }
 }
 
 fn sidecar_entry() -> PathBuf {
-    std::env::var("WGPT_SIDECAR_MAIN")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../dist/sidecar/main.js")))
+    if let Ok(main) = std::env::var("WGPT_SIDECAR_MAIN") {
+        return PathBuf::from(main);
+    }
+    bundled_runtime()
+        .map(|r| r.join("sidecar/main.js"))
+        .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../dist/sidecar/main.js")))
 }
 
 impl Supervisor {

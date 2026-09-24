@@ -233,7 +233,12 @@ async function main(): Promise<void> {
         : `[desktop] login-shell PATH not merged (${shellPath.error ?? 'n/a'}); using inherited PATH`
     );
   }
-  const extensionDir = args.extensionDir ?? process.env.WGPT_EXTENSION_DIR ?? path.resolve(__dirname, '../../../vscode-extensions');
+  // Packaged (scripts/stage-runtime.mjs): runtime/extension sits next to runtime/sidecar. Dev: the repo checkout.
+  const packagedExtension = path.resolve(__dirname, '../extension');
+  const extensionDir =
+    args.extensionDir ??
+    process.env.WGPT_EXTENSION_DIR ??
+    (fs.existsSync(path.join(packagedExtension, 'package.json')) ? packagedExtension : path.resolve(__dirname, '../../../vscode-extensions'));
   if (!fs.existsSync(path.join(extensionDir, 'package.json'))) {
     throw new Error(`extension package not found at ${extensionDir} (pass --extension-dir)`);
   }
