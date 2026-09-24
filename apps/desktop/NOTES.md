@@ -198,7 +198,13 @@ open (the next button press re-reads it), and no side-by-side view.
    `vscodeVersion` reads `desktop-<version>`. PostHog: the main dashboard breaks
    down by `surface`; "WorkspaceGPT Desktop" filters to `surface = desktop`.
 8. **Windows secrets:** Credential Manager caps a blob at 2560 bytes, and the
-   ADO MSAL cache is ~32 KB. Phase 2 needs chunking there.
+   ADO MSAL cache is ~32 KB. *Phase 2:* on Windows, values over 1200 UTF-16
+   units are split into generation-tagged chunks under a header entry
+   (`chunked()` in host/secrets.ts); values that fit, and entries written
+   before, are stored/read whole. `node scripts/secrets-chunk-test.mjs` checks
+   it against a fake Credential Manager with the real cap (12 checks, any OS;
+   `WGPT_DESKTOP_SECRETS_CHUNK=<units>` forces the path in a real run). Not run
+   on Windows itself yet.
 9. **Lockfile:** adding `ws@8.21.0` deduped puppeteer-core's `ws` 8.18.1 → 8.21.0
    (a patch bump in a dev tool). `@tauri-apps/cli@2.11.5` was added.
 
