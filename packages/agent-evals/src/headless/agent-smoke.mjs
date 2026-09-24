@@ -190,7 +190,17 @@ export function makeToolHost(ws, log) {
   const audit = [];
 
   async function applyPrepared(w) {
-    await checkpoints.checkpoint(`before: ${w.summary}`);
+    // As chatService.applyPreparedWrite does: a checkpoint scoped to the file
+    // being written (the service refuses an unscoped one), empty allowed for a
+    // create, and a checkpoint failure warns instead of blocking the write.
+    // Calling checkpoint(label) with no files made every edit_file throw, and
+    // models then did their edits with sed / node -e through run_command.
+    const rel = path.relative(ws, w.uri.fsPath);
+    try {
+      await checkpoints.checkpoint(`before: ${w.summary}`, [rel], w.kind === 'create');
+    } catch (e) {
+      log(`      checkpoint failed (continuing with the write): ${e.message}`);
+    }
     if (w.kind === 'delete') {
       fs.unlinkSync(w.uri.fsPath);
     } else {
