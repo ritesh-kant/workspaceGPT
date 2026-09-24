@@ -87,11 +87,8 @@ written at shutdown).
 
 | API | Desktop behaviour | What breaks |
 |---|---|---|
-| `languages.getDiagnostics` | throws NotSupportedInDesktop | `get_diagnostics` tool returns an error the model can read (Phase 2: tsc/eslint runner) |
 | `window.createWebviewPanel` | throws | "Open chat in editor" (hidden from the desktop toolbar: the window is already full-size) |
 | `vscode.McpStdioServerDefinition` / `vscode.lm` | `lm` is `undefined` | Copilot MCP-server registration is skipped (VS Code-only feature) |
-| command `vscode.executeWorkspaceSymbolProvider` | throws | `find_symbol` tool errors (Phase 2: ripgrep) |
-| commands `vscode.executeDefinitionProvider` / `executeReferenceProvider` | throw | `go_to_definition` / `find_references` error (Phase 2: typescript-language-server) |
 | command `vscode.executeFormatDocumentProvider` | throws | only reached if a user turns on `editor.formatOnSave` in the desktop settings; the error is caught and logged |
 | command `vscode.diff` | throws | "open diff" from the Files Changed bar (Phase 2: React diff panel) |
 | command `workbench.extensions.installExtension` | throws | the extension's update prompt "Install" button (desktop uses its own updater, Phase 3) |
@@ -100,6 +97,44 @@ written at shutdown).
 | `window.tabGroups`, `workbench.action.*` layout commands | inert | none — VS Code layout choreography with nothing to act on |
 | `window.showTextDocument` | hands off to `$WGPT_EDITOR`, `code -g`, `cursor -g`, else the OS default app | opening a cited file opens the user's editor, not an in-app view |
 | `openExternal` | http/https/mailto only | any other scheme is refused and logged |
+
+## Phase 2 — language service (built 2026-09-24)
+
+`host/languageService.ts` runs `typescript-language-server` (5.3.0, Node ≥ 20)
+as a child over stdio and fills `runtime.languageService`. The compat module
+turns its answers into `vscode.*` types, so the extension's own
+`find_symbol`, `go_to_definition`, `find_references` and `get_diagnostics`
+run unchanged. The workspace's own `typescript` is used when it has one;
+the desktop's `typescript` dependency is the fallback.
+
+- **Which files it knows** follows VS Code: whatever the extension opens with
+  `openTextDocument` or writes through `applyEdit`. Edited files stay open for
+  the session, read-only ones in a 20-file LRU.
+- **Diagnostics never say "0 problems" for an unchecked file.** Right after an
+  edit, or when a tracked file changed on disk behind our back (mtime check
+  on every read), `getDiagnostics` throws "still being computed … call
+  get_diagnostics again", which the model sees as the tool's error. After
+  45 s it says the server may be stuck and points at `run_checks`.
+- **`find_symbol` searches every loaded project**, like VS Code's default
+  `typescript.workspaceSymbols.scope: allOpenProjects`: `navto` is sent
+  without a file through `typescript.tsserverRequest`. The server's own
+  `workspace/symbol` passes the most recently used file, which limits the search to
+  that one project (it returned 0 hits for `ChatService` here). Projects are
+  loaded by opening one source file per `tsconfig.json` (depth 4, up to 8),
+  then waiting for their first diagnostics, since asking before a project
+  finishes loading also returns `[]`.
+- **JS/TS only.** Other languages have no provider, as in a VS Code without
+  their extension: lookups return nothing and the tool tells the model to use
+  text search. No ESLint diagnostics (VS Code gets those from the ESLint
+  extension); `run_checks` / auto-verify still run the linter.
+- **Memory:** tsserver peaked at **~880 MB** with this repo's extension +
+  webview projects loaded. It starts on first use and stops after 10 min
+  idle; a product call remains whether that's acceptable against the 250 MB
+  idle target (it is idle-only, but a long agent session holds it).
+- `node scripts/lsp-smoke.mjs [<repo> <symbol>]`: 11 checks on a throwaway
+  project (+1 on a real repo) through the extension's real tool functions.
+  All pass; cold `find_symbol` 0.5–0.9 s on the fixture, 2–6 s on
+  apps/vscode-extensions.
 
 ## Findings from Phase 0 (and what was done)
 

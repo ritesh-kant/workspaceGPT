@@ -6,7 +6,8 @@
  */
 import { runtime } from './runtime';
 import { NotSupportedInDesktop, noteInert, hit, recordNotSupported } from './notSupported';
-import { Disposable, EventEmitter, Uri } from './types';
+import { Disposable, EventEmitter, Location, Position, Range, Uri } from './types';
+import type { DesktopLanguageService, LspRange } from './runtime';
 
 type Handler = (...args: any[]) => any;
 
@@ -20,6 +21,22 @@ export interface BuiltinCommand {
 /** `when`-clause context keys — the desktop title bar (host/titleActions.ts) evaluates them. */
 export const contextKeys = new Map<string, unknown>();
 export const contextKeysChanged = new EventEmitter<string>();
+
+export function toRange(r: LspRange): Range {
+  return new Range(r.start.line, r.start.character, r.end.line, r.end.character);
+}
+
+function languageService(api: string): DesktopLanguageService {
+  if (!runtime.languageService) throw new NotSupportedInDesktop(`command '${api}'`, 'the desktop host did not start a language service');
+  return runtime.languageService;
+}
+
+async function locations(kind: 'definition' | 'references', uri: Uri, position: Position): Promise<Location[]> {
+  const ls = languageService(kind === 'definition' ? 'vscode.executeDefinitionProvider' : 'vscode.executeReferenceProvider');
+  if (uri.scheme !== 'file' || !ls.supports(uri.fsPath)) return [];
+  const found = await ls.locations(kind, uri.fsPath, { line: position.line, character: position.character });
+  return found.map((l) => new Location(Uri.file(l.fsPath), toRange(l.range)));
+}
 
 const workbenchLayout = (why: string): BuiltinCommand => ({ kind: 'inert', why });
 
@@ -58,16 +75,27 @@ export const BUILTIN_COMMANDS: Record<string, BuiltinCommand> = {
     why: 'the desktop app updates through its own updater (Phase 3)',
   },
   'vscode.executeWorkspaceSymbolProvider': {
-    kind: 'unsupported',
-    why: 'no language server yet — find_symbol falls back to an error the model can read (Phase 2: ripgrep)',
+    kind: 'implemented',
+    why: 'typescript-language-server (JS/TS); other languages have no provider, as in a VS Code without their extension',
+    run: async (query: string) => {
+      const ls = languageService('vscode.executeWorkspaceSymbolProvider');
+      return (await ls.workspaceSymbols(String(query ?? ''))).map((s) => ({
+        name: s.name,
+        kind: Math.max(0, s.kind - 1),
+        containerName: s.containerName ?? '',
+        location: new Location(Uri.file(s.fsPath), toRange(s.range)),
+      }));
+    },
   },
   'vscode.executeDefinitionProvider': {
-    kind: 'unsupported',
-    why: 'no language server yet (Phase 2: typescript-language-server client)',
+    kind: 'implemented',
+    why: 'typescript-language-server (JS/TS)',
+    run: (uri: Uri, position: Position) => locations('definition', uri, position),
   },
   'vscode.executeReferenceProvider': {
-    kind: 'unsupported',
-    why: 'no language server yet (Phase 2: typescript-language-server client)',
+    kind: 'implemented',
+    why: 'typescript-language-server (JS/TS)',
+    run: (uri: Uri, position: Position) => locations('references', uri, position),
   },
   'vscode.executeFormatDocumentProvider': {
     kind: 'unsupported',

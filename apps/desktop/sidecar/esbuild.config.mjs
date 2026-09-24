@@ -54,8 +54,9 @@ const sidecar = {
     'posthog-node': path.join(here, 'host/posthogShim.ts'),
     'posthog-node-real': realPosthog,
   },
-  // Same externals as the extension's own build, plus the sidecar's native keyring.
-  external: ['@xenova/transformers', 'onnxruntime-node', 'sharp', '@vscode/ripgrep', '@napi-rs/keyring', 'bufferutil', 'utf-8-validate'],
+  // Same externals as the extension's own build, plus the sidecar's native keyring and
+  // the language server it spawns (resolved from node_modules at run time).
+  external: ['@xenova/transformers', 'onnxruntime-node', 'sharp', '@vscode/ripgrep', '@napi-rs/keyring', 'bufferutil', 'utf-8-validate', 'typescript-language-server', 'typescript'],
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
     'process.env.WGPT_DESKTOP_VERSION': JSON.stringify(version),

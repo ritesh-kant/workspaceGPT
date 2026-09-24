@@ -41,6 +41,46 @@ export interface DesktopUi {
   showInputBox(req: InputBoxRequest): Promise<string | undefined>;
 }
 
+/** LSP shapes (0-based lines, UTF-16 columns — the same as VS Code's). */
+export interface LspPosition {
+  line: number;
+  character: number;
+}
+export interface LspRange {
+  start: LspPosition;
+  end: LspPosition;
+}
+export interface LspLocation {
+  fsPath: string;
+  range: LspRange;
+}
+export interface LspSymbol extends LspLocation {
+  name: string;
+  /** LSP SymbolKind (1-based; vscode.SymbolKind is this minus one). */
+  kind: number;
+  containerName?: string;
+}
+export interface LspDiagnostic {
+  range: LspRange;
+  message: string;
+  /** LSP DiagnosticSeverity (1 = error … 4 = hint; vscode's is this minus one). */
+  severity?: number;
+  source?: string;
+  code?: string | number;
+}
+
+/** What VS Code's language extensions provide; host/languageService.ts implements it for JS/TS. */
+export interface DesktopLanguageService {
+  /** Whether a language server covers this file. */
+  supports(fsPath: string): boolean;
+  /** A document was opened or written: the server should see its current text. */
+  touch(fsPath: string, edited: boolean): void;
+  workspaceSymbols(query: string): Promise<LspSymbol[]>;
+  locations(kind: 'definition' | 'references', fsPath: string, position: LspPosition): Promise<LspLocation[]>;
+  /** Synchronous, like languages.getDiagnostics; throws while a requested file is still being checked. */
+  diagnostics(fsPath?: string): { fsPath: string; items: LspDiagnostic[] }[];
+}
+
 export interface DesktopRuntime {
   appName: string;
   appVersion: string;
@@ -58,6 +98,8 @@ export interface DesktopRuntime {
   openInEditor(file: string, line?: number): Promise<void>;
   clipboardWrite(text: string): Promise<void>;
   clipboardRead(): Promise<string>;
+  /** Undefined until the host provides one; the compat APIs that need it then report the gap. */
+  languageService?: DesktopLanguageService;
 }
 
 const logOnlyUi: DesktopUi = {

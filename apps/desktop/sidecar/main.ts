@@ -26,7 +26,9 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import * as compat from './vscode-compat';
 import { configureRuntime } from './vscode-compat/runtime';
-import { setWorkspaceFolders } from './vscode-compat/workspace';
+import { onDidChangeWorkspaceFolders, setWorkspaceFolders } from './vscode-compat/workspace';
+import { runtime } from './vscode-compat/runtime';
+import { createLanguageService } from './host/languageService';
 import { webviewViewProviders, window as compatWindow } from './vscode-compat/window';
 import { apiHits, inertHits, notSupportedHits } from './vscode-compat/notSupported';
 import { contextKeys, contextKeysChanged } from './vscode-compat/commands';
@@ -245,7 +247,11 @@ async function main(): Promise<void> {
   if (folders[0]) void desktopPrefs.update('lastWorkspace', folders[0]);
 
   const settings = new JsonStore(paths.settingsFile);
+  // Starts typescript-language-server on first use, not here.
+  const languageService = createLanguageService({ nodePath: process.execPath, workspaceFolders: () => runtime.workspaceFolders });
+  onDidChangeWorkspaceFolders(() => languageService.restart());
   configureRuntime({
+    languageService,
     appName: 'WorkspaceGPT Desktop',
     appVersion: APP_VERSION,
     machineId: loadMachineId(paths),
@@ -374,6 +380,7 @@ async function main(): Promise<void> {
       console.error('[desktop] could not write diagnostics:', err);
     }
     for (const s of surfaces.values()) s.dispose();
+    languageService.dispose();
     await Promise.race([Promise.resolve(extension.deactivate?.()).catch(() => undefined), new Promise((r) => setTimeout(r, 3000))]);
     await Promise.race([ctx.dispose(), new Promise((r) => setTimeout(r, 2000))]);
     const reaped = await reapChildren();

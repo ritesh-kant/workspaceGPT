@@ -334,7 +334,10 @@ export async function openTextDocument(arg: Uri | string | { content?: string; l
   const st = await wrap(uri, () => fsp.stat(key));
   if (st.isDirectory()) throw FileSystemError.FileIsADirectory(key);
   const existing = documents.get(key);
-  if (existing && existing.mtimeMs === st.mtimeMs) return existing;
+  if (existing && existing.mtimeMs === st.mtimeMs) {
+    runtime.languageService?.touch(key, false);
+    return existing;
+  }
   const text = await fsp.readFile(key, 'utf8');
   const doc = existing ?? new TextDocument(uri, text);
   if (existing) {
@@ -343,6 +346,7 @@ export async function openTextDocument(arg: Uri | string | { content?: string; l
   }
   doc.mtimeMs = st.mtimeMs;
   documents.set(key, doc);
+  runtime.languageService?.touch(key, false);
   return doc;
 }
 
@@ -414,6 +418,7 @@ export async function applyEdit(edit: WorkspaceEdit): Promise<boolean> {
           doc.version++;
           doc.mtimeMs = (await fsp.stat(p)).mtimeMs;
         }
+        runtime.languageService?.touch(p, true);
       }
     }
     for (const r of renames) {
