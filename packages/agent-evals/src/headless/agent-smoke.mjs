@@ -14,7 +14,14 @@
  * into results/agent-smoke.json (merge-on-rerun, see run.mjs) so regressions
  * in modelWorker.ts's loop are visible instead of just pass/fail.
  *
- * Run: node src/headless/agent-smoke.mjs [--model M] [--provider P] [--scenarios s1,s2,s3] [--runs 5] [--timeout-min 10]
+ * Run: node src/headless/agent-smoke.mjs [--model M] [--provider P] [--scenarios s1,s2,s3] [--runs 5] [--timeout-min 10] [--host desktop]
+ *
+ * --host desktop: find_symbol / go_to_definition / find_references /
+ * get_diagnostics are served by the extension's real tool functions over the
+ * desktop app's compat module and typescript-language-server
+ * (apps/desktop/scripts/desktop-tools.mjs) instead of this file's regex
+ * stubs. Records carry `host: 'desktop'` and are kept apart from the default
+ * ones, so the two can be compared run for run (DESKTOP-TAURI-PLAN Phase 2 exit).
  * Model/provider/apiKey/baseUrl can also come from packages/agent-evals/.env
  * (see .env.example); precedence is CLI flag > shell env > .env > default.
  */
@@ -49,6 +56,8 @@ const API_KEY = argOf('api-key', process.env.WGPT_BENCH_API_KEY ?? 'DUMMY_API_KE
 const BASE_URL = argOf('base-url', process.env.WGPT_BENCH_BASE_URL); // Custom provider only
 const ONLY = argOf('scenarios', 's1,s2,s3').split(',');
 const RUNS = Math.max(1, parseInt(argOf('runs', '1'), 10) || 1);
+const HOST = argOf('host', 'harness');
+if (!['harness', 'desktop'].includes(HOST)) throw new Error(`--host must be harness or desktop, got ${HOST}`);
 const SCENARIO_TIMEOUT_MS = Math.round(parseFloat(argOf('timeout-min', '10')) * 60 * 1000);
 
 // A stale dist bundle silently produces runs with no `metrics` message (the
@@ -536,7 +545,11 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
 
     const startedAt = new Date().toISOString();
     const started = Date.now();
-    const r = await runAgent(ws, sc.prompt, log);
+    const desktopHost = HOST === 'desktop'
+      ? await (await import(path.join(repoRoot, 'apps/desktop/scripts/desktop-tools.mjs'))).createDesktopToolHost(ws)
+      : null;
+    const r = await runAgent(ws, sc.prompt, log, {}, desktopHost?.tools ?? {});
+    desktopHost?.dispose();
     const wallMs = Date.now() - started;
 
     let checks = [];
@@ -552,6 +565,7 @@ for (let runIndex = 1; runIndex <= RUNS; runIndex++) {
     runRecords.push({
       model: MODEL,
       provider: PROVIDER,
+      ...(HOST === 'desktop' ? { host: 'desktop' } : {}),
       scenario: sc.id,
       title: sc.title,
       runIndex,
@@ -575,7 +589,7 @@ fs.mkdirSync(resultsDir, { recursive: true });
 const jsonPath = path.join(resultsDir, 'agent-smoke.json');
 // Older records have no provider field — treat them as Ollama (the only
 // provider the harness supported before it became configurable).
-const keyOf = (r) => `${r.model}|${r.provider ?? 'Ollama'}|${r.scenario}`;
+const keyOf = (r) => `${r.model}|${r.provider ?? 'Ollama'}|${r.host ?? 'harness'}|${r.scenario}`;
 const ranKeys = new Set(runRecords.map(keyOf));
 let merged = runRecords;
 if (fs.existsSync(jsonPath)) {
@@ -586,7 +600,7 @@ fs.writeFileSync(jsonPath, JSON.stringify(merged, null, 2));
 
 // ── agent-smoke.md — per model×scenario summary + per-tool latency ────────
 
-const modelLabel = (r) => `${r.model}${r.provider && r.provider !== 'Ollama' ? ` (${r.provider})` : ''}`;
+const modelLabel = (r) => `${r.model}${r.provider && r.provider !== 'Ollama' ? ` (${r.provider})` : ''}${r.host === 'desktop' ? ' [desktop tools]' : ''}`;
 const reportModels = [...new Set(merged.map(modelLabel))];
 const reportScenarios = [...new Set(merged.map((r) => r.scenario))];
 

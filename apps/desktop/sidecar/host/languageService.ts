@@ -39,7 +39,7 @@ const LANGUAGE_BY_EXT: Record<string, string> = {
   '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript', '.jsx': 'javascriptreact',
 };
 
-/** Files only read (not edited) stay open in the server up to this many, least recently used first out. */
+/** Files only read (not edited, not project seeds) stay open in the server up to this many, least recently used first out. */
 const MAX_READ_ONLY_OPEN = 20;
 /** A first project load in a large monorepo can take this long; after it, a pending check is reported as stuck. */
 const PENDING_GIVE_UP_MS = 45_000;
@@ -50,8 +50,10 @@ const REQUEST_TIMEOUT_MS = 60_000;
  * no calls. The next call starts it again and re-reports files as pending.
  */
 const IDLE_SHUTDOWN_MS = 10 * 60_000;
-/** tsserver needs a project loaded before workspace/symbol answers; one file per tsconfig loads it. */
+/** tsserver needs a project loaded before workspace/symbol answers; one file per tsconfig/jsconfig loads it. */
 const MAX_SEED_PROJECTS = 8;
+/** With no tsconfig/jsconfig anywhere, tsserver only has inferred projects of open files: open this many sources. */
+const MAX_SEED_LOOSE_FILES = 20;
 const SEED_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'out', 'build', '.next', 'coverage', 'target']);
 
 /** tsserver ScriptElementKind → LSP SymbolKind, as typescript-language-server maps them. */
@@ -80,7 +82,8 @@ interface OpenDoc {
   version: number;
   text: string;
   mtimeMs: number;
-  edited: boolean;
+  /** Edited this session, or a project seed: never evicted (tsserver unloads a project once none of its files are open). */
+  keepOpen: boolean;
   lastUsed: number;
   /** When the server was last told about a change it hasn't reported diagnostics for; 0 when settled. */
   pendingSince: number;
@@ -313,7 +316,7 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
   }
 
   /** Make the server's copy of `fsPath` match the disk. Returns the connection once it's sent. */
-  async function sync(fsPath: string, edited: boolean): Promise<LspConnection | undefined> {
+  async function sync(fsPath: string, keepOpen: boolean): Promise<LspConnection | undefined> {
     if (!isServed(fsPath) || failure) return undefined;
     const c = await start();
     let st: fs.Stats;
@@ -327,7 +330,7 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
     const now = Date.now();
     if (existing) {
       existing.lastUsed = now;
-      existing.edited ||= edited;
+      existing.keepOpen ||= keepOpen;
       if (existing.mtimeMs === st.mtimeMs) return c;
       const text = fs.readFileSync(fsPath, 'utf8');
       existing.mtimeMs = st.mtimeMs;
@@ -339,7 +342,7 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
       return c;
     }
     const text = fs.readFileSync(fsPath, 'utf8');
-    const doc: OpenDoc = { uri: toUri(fsPath), version: 1, text, mtimeMs: st.mtimeMs, edited, lastUsed: now, pendingSince: now };
+    const doc: OpenDoc = { uri: toUri(fsPath), version: 1, text, mtimeMs: st.mtimeMs, keepOpen, lastUsed: now, pendingSince: now };
     docs.set(fsPath, doc);
     c.notify('textDocument/didOpen', {
       textDocument: { uri: doc.uri, languageId: LANGUAGE_BY_EXT[path.extname(fsPath).toLowerCase()], version: 1, text },
@@ -371,7 +374,7 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
   }
 
   function evictReadOnly(c: LspConnection): void {
-    const readOnly = [...docs.entries()].filter(([, d]) => !d.edited).sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    const readOnly = [...docs.entries()].filter(([, d]) => !d.keepOpen).sort((a, b) => a[1].lastUsed - b[1].lastUsed);
     for (let i = 0; i < readOnly.length - MAX_READ_ONLY_OPEN; i++) closeDoc(c, readOnly[i]![0]);
   }
 
@@ -388,7 +391,7 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
       } catch {
         return;
       }
-      if (entries.some((e) => e.isFile() && e.name === 'tsconfig.json')) {
+      if (entries.some((e) => e.isFile() && (e.name === 'tsconfig.json' || e.name === 'jsconfig.json'))) {
         const file = firstSource(dir);
         if (file) found.push(file);
       }
@@ -397,7 +400,28 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
       }
     };
     for (const root of opts.workspaceFolders()) walk(root, 0);
-    for (const f of found) await sync(f, false);
+    if (!found.length) {
+      // A plain JS repo: no config, so no project to load. VS Code would only
+      // know the files open in tabs; here, open the first sources found.
+      const loose = (dir: string, depth: number) => {
+        if (found.length >= MAX_SEED_LOOSE_FILES || depth > 4) return;
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const e of entries) {
+          if (found.length >= MAX_SEED_LOOSE_FILES) return;
+          if (e.isFile() && isServed(e.name) && !e.name.endsWith('.d.ts')) found.push(path.join(dir, e.name));
+        }
+        for (const e of entries) {
+          if (e.isDirectory() && !SEED_SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) loose(path.join(dir, e.name), depth + 1);
+        }
+      };
+      for (const root of opts.workspaceFolders()) loose(root, 0);
+    }
+    for (const f of found) await sync(f, true);
     await settled(found);
   }
 
@@ -513,7 +537,7 @@ export function createLanguageService(opts: LanguageServiceOptions): DesktopLang
         if (changed) {
           // Not open, or changed on disk behind our back (a run_command, a
           // formatter): hand the server the current text and report pending.
-          sync(p, doc?.edited ?? false).catch((err) => console.warn(`[desktop:lsp] could not sync ${p}: ${err.message}`));
+          sync(p, doc?.keepOpen ?? false).catch((err) => console.warn(`[desktop:lsp] could not sync ${p}: ${err.message}`));
           pending.push(p);
         } else if (doc!.pendingSince) {
           pending.push(p);

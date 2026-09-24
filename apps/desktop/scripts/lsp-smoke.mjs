@@ -9,46 +9,12 @@
  *
  * Exits 1 on the first wrong answer.
  */
-import * as esbuild from 'esbuild';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { loadDesktopTools } from './desktop-tools.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '..');
-const extDir = path.resolve(root, '../vscode-extensions');
-const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-lsp-smoke-'));
-
-const entry = path.join(outDir, 'entry.ts');
-fs.writeFileSync(
-  entry,
-  `
-import { configureRuntime, runtime } from ${JSON.stringify(path.join(root, 'sidecar/vscode-compat/runtime.ts'))};
-import { setWorkspaceFolders } from ${JSON.stringify(path.join(root, 'sidecar/vscode-compat/workspace.ts'))};
-import { createLanguageService } from ${JSON.stringify(path.join(root, 'sidecar/host/languageService.ts'))};
-import * as vscode from 'vscode';
-import { findSymbol, goToDefinition, findReferences } from ${JSON.stringify(path.join(extDir, 'src/services/codebase/codebaseTools.ts'))};
-import { getDiagnostics } from ${JSON.stringify(path.join(extDir, 'src/services/agent/inspectTools.ts'))};
-export { configureRuntime, runtime, setWorkspaceFolders, createLanguageService, vscode, findSymbol, goToDefinition, findReferences, getDiagnostics };
-`
-);
-
-await esbuild.build({
-  entryPoints: [entry],
-  bundle: true,
-  platform: 'node',
-  format: 'cjs',
-  outfile: path.join(outDir, 'bundle.cjs'),
-  logLevel: 'error',
-  nodePaths: [path.join(root, 'node_modules'), path.join(extDir, 'node_modules')],
-  alias: { vscode: path.join(root, 'sidecar/vscode-compat/index.ts') },
-  external: ['typescript-language-server', 'typescript'],
-});
-// The bundle resolves the language server from apps/desktop/node_modules, as the sidecar does.
-fs.symlinkSync(path.join(root, 'node_modules'), path.join(outDir, 'node_modules'));
-const m = createRequire(import.meta.url)(path.join(outDir, 'bundle.cjs'));
+const m = await loadDesktopTools();
 
 let failed = 0;
 const check = (name, ok, detail) => {
@@ -80,7 +46,7 @@ fs.writeFileSync(path.join(proj, 'src/math.ts'), 'export function addNumbers(a: 
 fs.writeFileSync(path.join(proj, 'src/main.ts'), "import { addNumbers } from './math';\n\nconst sum = addNumbers(1, 2);\nconsole.log(sum, addNumbers(3, 4));\n");
 
 const ls = m.createLanguageService({ nodePath: process.execPath, workspaceFolders: () => m.runtime.workspaceFolders });
-m.configureRuntime({ languageService: ls, extensionDir: extDir });
+m.configureRuntime({ languageService: ls });
 m.setWorkspaceFolders([proj]);
 const roots = [{ name: path.basename(proj), uri: m.vscode.Uri.file(proj) }];
 
@@ -142,7 +108,6 @@ try {
 } finally {
   ls.dispose();
   setTimeout(() => {
-    fs.rmSync(outDir, { recursive: true, force: true });
     fs.rmSync(proj, { recursive: true, force: true });
     console.log(failed ? `\n${failed} failed` : '\nall passed');
     process.exit(failed ? 1 : 0);
