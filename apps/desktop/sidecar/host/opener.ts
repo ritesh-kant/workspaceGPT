@@ -26,8 +26,36 @@ function launch(cmd: string, args: string[]): Promise<boolean> {
 
 function systemOpen(target: string): Promise<boolean> {
   if (process.platform === 'darwin') return launch('open', [target]);
-  if (process.platform === 'win32') return launch('rundll32', ['url.dll,FileProtocolHandler', target]);
+  if (process.platform === 'win32') return windowsShellOpen(target);
   return launch('xdg-open', [target]);
+}
+
+/**
+ * Windows: explorer.exe hands the URL to the running Windows shell and exits,
+ * so the browser (or editor) it starts is the shell's child. If the sidecar
+ * started it directly, it would join the sidecar's Job Object
+ * (src-tauri/src/sidecar.rs), and quitting WorkspaceGPT would close a browser
+ * it had cold-started. Only URLs come here (openExternal validates the scheme;
+ * the editor links are built below). The quotes are ours: explorer splits an
+ * unquoted argument on commas, and a serialized URL never contains `"`.
+ */
+function windowsShellOpen(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn('explorer.exe', [`"${new URL(url).href}"`], { stdio: 'ignore', windowsVerbatimArguments: true });
+      child.on('error', (err) => {
+        console.error('[desktop] explorer.exe failed:', err.message);
+        resolve(false);
+      });
+      child.on('spawn', () => {
+        child.unref();
+        resolve(true);
+      });
+    } catch (err) {
+      console.error('[desktop] explorer.exe failed:', err);
+      resolve(false);
+    }
+  });
 }
 
 const EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
@@ -77,7 +105,15 @@ export async function openInEditor(file: string, line?: number): Promise<void> {
   }
   for (const cli of ['code', 'cursor']) {
     if (onPath(cli)) {
-      await launch(cli, ['-g', target]);
+      if (process.platform === 'win32') {
+        // Through the editor's URL handler, so a cold-started editor isn't in
+        // the sidecar's job (see windowsShellOpen). `vscode://file/C:/a/b.ts:12`.
+        const scheme = cli === 'code' ? 'vscode' : 'cursor';
+        const filePath = encodeURI(file.replace(/\\/g, '/')).replace(/#/g, '%23').replace(/\?/g, '%3F');
+        await systemOpen(`${scheme}://file/${filePath}${line ? `:${line}` : ''}`);
+      } else {
+        await launch(cli, ['-g', target]);
+      }
       return;
     }
   }

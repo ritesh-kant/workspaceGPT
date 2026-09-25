@@ -77,6 +77,15 @@ if (platform === 'darwin') {
   execFileSync('codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' });
   console.log(`[release] codesign --verify --deep --strict: ok (${app})`);
 }
+if (platform === 'win32') {
+  // The NSIS installer is also the updater's bundle: tauri signs it (`-setup.exe.sig`).
+  const setup = found.find((p) => p.endsWith('-setup.exe'));
+  if (!setup) throw new Error(`no NSIS -setup.exe under ${bundleDir}`);
+  if (!fs.existsSync(`${setup}.sig`)) throw new Error(`${setup} has no .sig (is TAURI_SIGNING_PRIVATE_KEY set?)`);
+  for (const f of ['node.exe', 'sidecar/main.js']) {
+    if (!fs.existsSync(path.join(root, 'dist/runtime', f))) throw new Error(`the staged runtime has no ${f}`);
+  }
+}
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dist/runtime/manifest.json'), 'utf8'));
 console.log(`[release] ${target} v${manifest.app} (extension ${manifest.extension}, node ${manifest.node}):`);
 for (const p of found) console.log(`  ${path.relative(root, p)}  ${fs.statSync(p).isFile() ? `${(fs.statSync(p).size / 1024 / 1024).toFixed(0)} MB` : ''}`);

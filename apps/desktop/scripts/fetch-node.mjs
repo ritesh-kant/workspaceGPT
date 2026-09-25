@@ -64,7 +64,9 @@ export async function fetchNode(target = hostTarget()) {
   const archivePath = path.join(tmp, archive.file);
   fs.writeFileSync(archivePath, data);
   // bsdtar (macOS, Windows 10+) reads .zip and .tar.*; GNU tar (Linux CI) reads .tar.xz.
-  execFileSync('tar', ['-xf', archivePath, '-C', tmp, archive.bin], { stdio: 'inherit' });
+  // On Windows name System32's bsdtar: Git for Windows puts a GNU tar on PATH that can't read .zip.
+  const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+  execFileSync(tar, ['-xf', archivePath, '-C', tmp, archive.bin], { stdio: 'inherit' });
   fs.renameSync(path.join(tmp, archive.bin), binary);
   fs.rmSync(tmp, { recursive: true, force: true });
   if (process.platform !== 'win32') fs.chmodSync(binary, 0o755);
