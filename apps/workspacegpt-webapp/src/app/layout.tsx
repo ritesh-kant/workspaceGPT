@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "A coding agent that reads, edits and verifies your code — grounded in your Confluence docs and Azure DevOps tickets, not just your repo. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor, and Antigravity.",
+    "The coding agent that reads your Confluence docs and Azure DevOps tickets mid-task — not just your repo — then edits and verifies your code. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor, and Antigravity.",
   applicationName: "WorkspaceGPT",
   keywords: [
     "AI coding assistant",
@@ -32,8 +32,12 @@ export const metadata: Metadata = {
     "VS Code extension",
     "Cursor extension",
     "Ollama coding assistant",
-    "Confluence AI integration",
-    "Azure DevOps AI integration",
+    "Confluence AI assistant",
+    "Azure DevOps AI agent",
+    "AI for Azure DevOps work items",
+    "chat with Confluence in VS Code",
+    "Confluence knowledge base AI",
+    "coding agent with company knowledge",
     "Confluence grounded coding agent",
     "zero data retention AI",
     "on-device embeddings",

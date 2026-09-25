@@ -1,29 +1,31 @@
-# Workspace GPT 🧠🚀 (In Development)
+# WorkspaceGPT — the coding agent that knows your whole org
 
-> 🧭 **Where this project is headed:** [NORTH-STAR.md](NORTH-STAR.md) — *the
-> coding agent that knows your whole org, and can prove it never stores your
-> data.* Read it before proposing or building any feature.
+> 🧭 **Where this project is headed:** [NORTH-STAR.md](NORTH-STAR.md). Read it before proposing or building any feature.
 
-**Stop losing time searching for information!** Workspace GPT is an AI-powered knowledge assistant designed to break down data silos and make your organization's collective knowledge instantly accessible **from inside your IDE**. This **Retrieval-Augmented Generation (RAG)** system is **local-first**: by default it runs on a local model (**LLaMA 3.2** via [Ollama](https://ollama.com/)) with local embeddings and a local vector store, so your data can stay entirely on your machine. If you prefer, you can also plug in a cloud provider (OpenAI, Gemini, Groq, and others) — the tradeoff is yours to make.
+Other coding agents start from your repo and a prompt. The knowledge about *why* the code should change (the ticket, the design page, the runbook, the decision nobody wrote in a code comment) lives in **Confluence** and **Azure DevOps**, and you're expected to copy-paste it in.
 
-**Who is this for?** Workspace GPT is designed for developers, product owners, managers, and anyone in your organization who needs quick access to relevant information **without compromising data privacy**.
+**WorkspaceGPT reads it directly, mid-task.** Pick a work item and the agent pulls its acceptance criteria and the Confluence pages behind it, then searches your code, makes the edits, runs your lint, type-check and tests, and shows you every change as a diff before it touches disk.
 
-Workspace GPT helps your organization work smarter, not harder. **All while keeping your data under your control.**
+## 🧭 What makes it different
 
-## 🔒 Key Principle: Local-First & Private by Default
+- **It knows your org, not just your repo.** Your Confluence docs and ADO work items are first-class context the agent pulls mid-task, and its answers cite them.
+- **Privacy is architecture, not a promise.** Embeddings and the search index are always on your machine. In **Local mode** the model runs there too (Ollama or your own key), so nothing leaves it and no account is needed. In **Remote mode** we run the model; your documents and index still stay local.
+- **It participates in shipping.** Release config-sync and hotfix automation (plan → approve → apply) mean the work doesn't stop at "PR opened".
 
-**Workspace GPT is built with privacy in mind.** Data extraction, embedding, and storage happen on your machine, and when you use the default local model (Ollama) with a local vector store, **nothing leaves your environment.**
+## 🧠 The org knowledge it reads
 
-> ⚠️ **Privacy is a choice you control.** If you configure a cloud model or embedding provider (e.g. OpenAI, Gemini, Groq) or a hosted Qdrant instance, the relevant data is sent to that provider. For a fully local setup, use Ollama + a local vector store.
+*   **Atlassian Confluence** ✅: spaces and pages (design docs, runbooks, decisions).
+*   **Azure DevOps** ✅: work items and PR context; your assigned items open in the sidebar.
+*   **Jira** 🚧: planned.
+*   **Your open workspace**: live text search, file reads and language-server navigation. No codebase index is created or stored.
 
 ## 🚀 Try it
 
-The easiest way to use Workspace GPT is the **IDE extension** (VS Code, Cursor, and Antigravity via Open VSX):
+*   **IDE extension** (VS Code, Cursor, and Antigravity via Open VSX): search for `WorkspaceGPT` (`Riteshkant.workspacegpt-extension`).
+*   **Desktop app**: download from [Releases](https://github.com/ritesh-kant/workspaceGPT/releases/latest).
+*   Then open **Settings › Knowledge** and connect Confluence and Azure DevOps.
 
-*   **VS Code Marketplace:** search for `WorkspaceGPT` (`Riteshkant.workspacegpt-extension`)
-*   For a **100% local** setup, install [Ollama](https://ollama.com/) and pull a model (e.g. `ollama pull llama3.2`); embeddings and the vector store run locally by default.
-
-The instructions below cover running the monorepo from source for development.
+Homepage: [workspacegpt.in](https://www.workspacegpt.in). The instructions below cover running the monorepo from source for development.
 
 ## 🧰 Prerequisites:
 
@@ -35,29 +37,6 @@ Before you begin, ensure you have the following installed:
 *   **Conda:** (latest version) - [https://docs.conda.io/en/latest/](https://docs.conda.io/en/latest/)
 *   **Ollama:** (latest version) - [https://ollama.com/](https://ollama.com/)
 
-## 🔹 Supported Data Sources:
-
-*   **Atlassian Confluence:** ✅ (SUPPORTED) — Index Confluence spaces and pages.
-*   **Azure DevOps:** ✅ (SUPPORTED) — Index work items and query them in natural language.
-*   **Open workspace:** ✅ — Explore the repository currently open in the editor with live text search, file reads, and language-server navigation. No codebase index is created or stored.
-*   **Jira:** 🚧 (PLANNED) — Scaffolded, but not functional yet.
-
-## 🔹 Key Features:
-
--   **Smart Q&A:** Developers can ask natural language questions about technical documentation, codebases, and internal best practices, and receive accurate, context-aware answers.
-    *   **Example Prompts:**
-        *   "How do I use the X library to make a network request?"
-        *   "What are the best practices for error handling in our codebase?"
-        * "What are the supported authentication methods?"
--   **Ticket Lookup (Azure DevOps):** Retrieve details on your Azure DevOps work items — status, assignees, and more — in natural language. *(Jira support is planned.)*
-    *   **Example Prompts:**
-        *   "What is the current status of work item 12345?"
-        *   "Who is assigned to this bug?"
--   **Codebase exploration:** Search and inspect the workspace currently open in VS Code using live tools. This reads the files you ask about; it does not build embeddings or a persistent codebase index.
-    *   **Example Prompts:**
-        *   "Where is the network call defined?"
-        *   "Show me examples of how to use the `calculate_total` function."
--   **Secure & Private:** Designed for internal use. Your indexed data is stored in your own vector database, and with the default local model + local vector store, **it stays on your machine.** Only if you opt into a cloud model/embedding provider is data sent to that provider.
 
 ## ⚙️ Installation & Setup:
 
