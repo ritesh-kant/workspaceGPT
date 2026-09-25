@@ -2238,6 +2238,8 @@ button:disabled {
 }
 .agent-write-kind.kind-edit { background: rgba(64, 128, 255, 0.18); color: var(--vscode-charts-blue, #4a8cf7); }
 .agent-write-kind.kind-create { background: rgba(64, 192, 96, 0.18); color: var(--vscode-charts-green, #3fb950); }
+.agent-write-kind.kind-confluence-edit { background: rgba(64, 128, 255, 0.18); color: var(--vscode-charts-blue, #4a8cf7); }
+.agent-write-kind.kind-confluence-create { background: rgba(64, 192, 96, 0.18); color: var(--vscode-charts-green, #3fb950); }
 .agent-write-kind.kind-delete { background: rgba(255, 96, 96, 0.18); color: var(--vscode-charts-red, #f85149); }
 
 .agent-write-path {

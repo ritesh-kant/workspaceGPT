@@ -18,7 +18,7 @@
 export interface ToolAvailability {
   /** A workspace folder is open: file, search, git, diagnostics and write tools work. */
   codebase: boolean;
-  /** Confluence is authenticated: `search_docs`, `get_confluence_page`. */
+  /** Confluence is authenticated: `search_docs`, `get_confluence_page`, and the page write tools (which check the write scope themselves). */
   confluence: boolean;
   /** A ticket tracker (Azure DevOps, Jira, …) is authenticated: `search_tickets`, `get_ticket`. See tickets/registry.ts. */
   tickets: boolean;
@@ -52,6 +52,9 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   delete_file: 'codebase',
   search_docs: 'confluence',
   get_confluence_page: 'confluence',
+  find_confluence_location: 'confluence',
+  update_confluence_page: 'confluence',
+  create_confluence_page: 'confluence',
   search_tickets: 'tickets',
   get_ticket: 'tickets',
   browser_list_tabs: 'browser',

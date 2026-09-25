@@ -3010,10 +3010,126 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
       'search_codebase', 'explore', 'find_symbol', 'find_references', 'go_to_definition', 'read_file',
       'list_directory', 'find_files', 'run_command', 'run_checks', 'get_diagnostics', 'git_status', 'git_diff',
       'git_log', 'git_blame', 'edit_file', 'create_file', 'delete_file', 'search_docs', 'get_confluence_page',
+      'find_confluence_location', 'update_confluence_page', 'create_confluence_page',
       'search_tickets', 'get_ticket', 'browser_list_tabs', 'browser_read_page', 'browser_screenshot',
     ];
     assert.deepEqual(Object.keys(TOOL_REQUIREMENTS).sort(), expected.sort());
     assert.equal(TOOL_REQUIREMENTS.search_web, undefined, 'search_web is deliberately unscoped');
+  });
+}
+
+console.log('\nconfluenceAdf (page read/edit — edits touch one section, everything else is left byte-identical)');
+{
+  const adf = await import(path.join(outDir, 'confluenceAdf.mjs'));
+  const noIds = (x) => JSON.parse(JSON.stringify(x, (k, v) => (k === 'localId' ? undefined : v)));
+  const text = (t, marks) => (marks ? { type: 'text', text: t, marks } : { type: 'text', text: t });
+  const p = (...content) => ({ type: 'paragraph', content });
+  const h = (level, t) => ({ type: 'heading', attrs: { level }, content: [text(t)] });
+  const jiraMacro = { type: 'extension', attrs: { extensionType: 'com.atlassian.confluence.macro.core', extensionKey: 'jira', parameters: { macroParams: { key: { value: 'D2C-42' } } } } };
+  const mention = { type: 'mention', attrs: { id: '557058:abc', text: '@Priya' } };
+  const page = () => ({
+    type: 'doc',
+    version: 1,
+    content: [
+      h(2, 'Context'),
+      p(text('Owner: '), mention, text(' — see '), text('runbook', [{ type: 'link', attrs: { href: 'https://example.com/run' } }]), text('.')),
+      jiraMacro,
+      h(2, 'Risks'),
+      { type: 'bulletList', content: [{ type: 'listItem', content: [p(text('GTM access '), text('blocked', [{ type: 'strong' }]))] }] },
+      { type: 'panel', attrs: { panelType: 'warning' }, content: [p(text('Deploy only after CAB.'))] },
+      h(2, 'Rollout'),
+      {
+        type: 'table',
+        attrs: { isNumberColumnEnabled: false, layout: 'default' },
+        content: [
+          { type: 'tableRow', content: [{ type: 'tableHeader', attrs: {}, content: [p(text('Env'))] }, { type: 'tableHeader', attrs: {}, content: [p(text('Date'))] }] },
+          { type: 'tableRow', content: [{ type: 'tableCell', attrs: {}, content: [p(text('Prod'))] }, { type: 'tableCell', attrs: {}, content: [p(text('1 Oct'))] }] },
+        ],
+      },
+      { type: 'codeBlock', attrs: { language: 'bash' }, content: [text('pnpm release --tag `v2`')] },
+    ],
+  });
+
+  await t('a page reads as markdown: headings, lists, tables, code and panels survive; macros and mentions become keep tokens', () => {
+    const r = adf.adfToMarkdown(page());
+    assert.match(r.markdown, /^## Context$/m);
+    assert.match(r.markdown, /^\| Env \| Date \|$/m);
+    assert.match(r.markdown, /^```bash$/m);
+    assert.match(r.markdown, /^:::panel warning$/m);
+    assert.match(r.markdown, /- GTM access \*\*blocked\*\*/);
+    assert.match(r.markdown, /⟦keep \d+: @Priya⟧/);
+    assert.match(r.markdown, /⟦keep \d+: jira macro⟧/);
+    assert.deepEqual(r.sections, ['## Context', '## Risks', '## Rollout']);
+  });
+
+  await t('rendering a page and parsing it back reproduces the page exactly (the fixpoint every edit relies on)', () => {
+    const doc = page();
+    const r = adf.adfToMarkdown(doc);
+    assert.deepEqual(noIds(adf.markdownToAdfBlocks(r.markdown, r.keep)), noIds(doc.content));
+  });
+
+  await t('replace_section changes only that section; the macro in another section is untouched', () => {
+    const doc = page();
+    const e = adf.editPage(doc, { mode: 'replace_section', section: '## Risks', markdown: '## Risks\n\n- GTM access granted' });
+    assert.deepEqual(noIds(e.doc.content.slice(0, 3)), noIds(doc.content.slice(0, 3)), 'Context section (with the macro) changed');
+    assert.deepEqual(noIds(e.doc.content.slice(-2)), noIds(doc.content.slice(-2)), 'Rollout section changed');
+    assert.equal(e.doc.content.filter((n) => n.type === 'panel').length, 0, 'the panel was not in the new markdown, so it is gone');
+    assert.match(e.before, /GTM access \*\*blocked\*\*/);
+    assert.equal(e.after, '## Risks\n\n- GTM access granted');
+    assert.equal(doc.content[4].content[0].content[0].content[1].text, 'blocked', 'the input doc must not be mutated');
+  });
+
+  await t('a keep token copied into an edit restores the original element; leaving it out removes it', () => {
+    const doc = page();
+    const { markdown } = adf.adfToMarkdown(doc);
+    const token = markdown.match(/⟦keep \d+: jira macro⟧/)[0];
+    const kept = adf.editPage(doc, { mode: 'replace_section', section: 'Context', markdown: `## Context\n\nRewritten.\n\n${token}` });
+    assert.deepEqual(kept.doc.content[2], jiraMacro);
+    const dropped = adf.editPage(doc, { mode: 'replace_section', section: 'Context', markdown: '## Context\n\nRewritten.' });
+    assert.equal(dropped.doc.content.some((n) => n.type === 'extension'), false);
+    assert.throws(() => adf.editPage(doc, { mode: 'append', markdown: '⟦keep 99: invented⟧' }), /does not refer to any element/);
+  });
+
+  await t('repeated headings are addressed as "### Cause [2]"; an ambiguous or unknown heading is refused with the list', () => {
+    const doc = { type: 'doc', version: 1, content: [h(3, 'Cause'), p(text('a')), h(3, 'Cause'), p(text('b'))] };
+    assert.deepEqual(adf.adfToMarkdown(doc).sections, ['### Cause [1]', '### Cause [2]']);
+    const e = adf.editPage(doc, { mode: 'replace_section', section: '### Cause [2]', markdown: '### Cause\n\nB!' });
+    assert.equal(e.doc.content[1].content[0].text, 'a');
+    assert.equal(e.doc.content[3].content[0].text, 'B!');
+    assert.throws(() => adf.editPage(doc, { mode: 'replace_section', section: 'Cause', markdown: 'x' }), /heads 2 sections.*\[2\]/);
+    assert.throws(() => adf.editPage(doc, { mode: 'replace_section', section: 'Impact', markdown: 'x' }), /No section headed "Impact".*### Cause \[1\]/);
+  });
+
+  await t('markdown edge cases round-trip: adjacent lists, emphasis runs, backticks in code, relative links', () => {
+    const doc = {
+      type: 'doc',
+      version: 1,
+      content: [
+        { type: 'bulletList', content: [{ type: 'listItem', content: [p(text('one'))] }] },
+        { type: 'bulletList', content: [{ type: 'listItem', content: [p(text('two'))] }] },
+        p(text('a', [{ type: 'em' }]), text('b', [{ type: 'em' }, { type: 'strong' }]), text(' and '), text('x `y` z', [{ type: 'code' }])),
+        p(text('snake_case and *literal* stars & [brackets]')),
+      ],
+    };
+    const r = adf.adfToMarkdown(doc);
+    assert.deepEqual(noIds(adf.markdownToAdfBlocks(r.markdown, r.keep)), noIds(doc.content));
+    const rel = adf.markdownToAdf('see [src](../src/x.ts)');
+    assert.deepEqual(rel.content[0].content, [text('see src')], 'ADF rejects relative hrefs — keep the text, drop the link');
+  });
+
+  await t('a new page from markdown carries no keep tokens and builds tasks, tables with headers and panels', () => {
+    const doc = adf.markdownToAdf('# Plan\n\n- [x] agree TTL\n- [ ] load test\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n:::panel info\nHeads up.\n:::');
+    assert.deepEqual(doc.content.map((n) => n.type), ['heading', 'taskList', 'table', 'panel']);
+    assert.deepEqual(doc.content[1].content.map((i) => i.attrs.state), ['DONE', 'TODO']);
+    assert.equal(doc.content[2].content[0].content[0].type, 'tableHeader');
+    assert.throws(() => adf.markdownToAdf('⟦keep 1: jira macro⟧'), /does not refer to any element/);
+  });
+
+  const { TOOL_REQUIREMENTS } = await import(path.join(outDir, 'toolScope.mjs'));
+  await t('Confluence write tools are offered only when Confluence is connected', () => {
+    for (const name of ['update_confluence_page', 'create_confluence_page', 'find_confluence_location']) {
+      assert.equal(TOOL_REQUIREMENTS[name], 'confluence', name);
+    }
   });
 }
 

@@ -8,12 +8,15 @@ import type { ChatAttachment } from '../constants';
 /** A proposed agent action awaiting (or past) user review — file write or command. */
 export interface WriteReview {
   id: string;
-  kind: 'edit' | 'create' | 'delete' | 'command';
+  kind: 'edit' | 'create' | 'delete' | 'command' | 'confluence-edit' | 'confluence-create';
+  /** A workspace path — or, for a Confluence write, where it lands ("D2C › Parent › Title"). */
   path: string;
   summary: string;
   diff: { added: number; removed: number; text: string };
   /** The shell command, when kind === 'command'. */
   command?: string;
+  /** The Confluence page (or parent page) a Confluence write opens to. */
+  url?: string;
   /** Set once the user decides; collapses the buttons into a badge. */
   decision?: 'approved' | 'rejected';
 }

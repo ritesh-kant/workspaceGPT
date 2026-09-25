@@ -68,7 +68,14 @@ import { TicketDetail } from './ado/adoWorkItemService';
 import { getActiveTicketProvider } from './tickets/registry';
 import { collectRefs, mergeRefs, refsFromTicket, RunRef } from './agent/referenceIndex';
 import { getPrUrlTemplate } from './agent/gitStatusService';
-import { fetchConfluencePage, ConfluencePageDetail } from './confluence/confluencePageService';
+import {
+  fetchConfluencePage,
+  ConfluencePageDetail,
+  prepareConfluenceEdit,
+  prepareConfluenceCreate,
+  suggestConfluenceLocation,
+  PreparedConfluenceWrite,
+} from './confluence/confluencePageService';
 import { detectTicketId } from 'src/utils/ticketDetection';
 import { detectConfluenceUrl } from 'src/utils/confluenceUrlDetection';
 import { decideTurnRouting } from 'src/utils/turnRouting';
@@ -1378,7 +1385,18 @@ export class ChatService {
         // channel as @-mentioned files — it's inline reference material, not
         // prompt-scaffolding the model has to ask for.
         ...(confluencePageContext
-          ? [{ name: confluencePageContext.title || confluencePageContext.url, content: confluencePageContext.text }]
+          ? [
+              {
+                name: confluencePageContext.title || confluencePageContext.url,
+                // The id, version and sections are what update_confluence_page
+                // needs — without them an edit request starts with a re-read.
+                content:
+                  `Confluence page ${confluencePageContext.id} (${confluencePageContext.url}), version ${confluencePageContext.version ?? '?'}` +
+                  (confluencePageContext.sections?.length ? `\nSections: ${confluencePageContext.sections.join(' | ')}` : '') +
+                  (confluencePageContext.note ? `\n${confluencePageContext.note}` : '') +
+                  `\n\n${confluencePageContext.text}`,
+              },
+            ]
           : []),
       ];
 
@@ -1620,6 +1638,12 @@ export class ChatService {
       }
       case 'get_confluence_page':
         return fetchConfluencePage(this.context, args?.pageId ?? '');
+      case 'update_confluence_page':
+        return this.gatedConfluenceWrite(run, await prepareConfluenceEdit(this.context, args));
+      case 'create_confluence_page':
+        return this.gatedConfluenceWrite(run, await prepareConfluenceCreate(this.context, args));
+      case 'find_confluence_location':
+        return this.findConfluenceLocation(args);
       case 'search_web':
         return searchWeb(this.context, args, (message) => this.postStatus(run, message));
       case 'browser_list_tabs':
@@ -1871,9 +1895,76 @@ export class ChatService {
     return res;
   }
 
+  /**
+   * A Confluence write, reviewed like a file write: the card shows the
+   * affected part of the page as markdown before → after, and nothing is sent
+   * to Confluence until the user approves. There is no checkpoint to revert
+   * to — Confluence's own page history is the undo, and the result says so.
+   *
+   * Autonomous runs refuse outright: an unreviewed change to shared org docs
+   * is outward-facing in a way a revertible workspace edit is not.
+   */
+  private async gatedConfluenceWrite(run: SessionRun, write: PreparedConfluenceWrite): Promise<unknown> {
+    if (run.autonomous) {
+      await this.audit(write.kind, write.summary, 'rejected', 'skipped', 'autonomous run');
+      throw new Error(
+        'Autonomous runs do not write to Confluence — nobody is present to approve a change to shared docs. ' +
+          'Put the proposed page content in your report instead.'
+      );
+    }
+    const { id, decision } = run.writeGate.await({ kind: write.kind, summary: write.summary });
+    this.post(run, {
+      type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
+      id,
+      kind: write.kind,
+      path: write.location,
+      summary: write.summary,
+      url: write.url,
+      diff: buildReviewDiff(write.before, write.after),
+    });
+    const result = await decision;
+    if (!result.approved) {
+      await this.audit(write.kind, write.summary, 'rejected', 'skipped');
+      throw new Error(
+        `The user rejected this Confluence change.${result.feedback ? ` Feedback: ${result.feedback}` : ''} ` +
+          'Do not retry the same change — adjust per the feedback or ask the user how to proceed.'
+      );
+    }
+    try {
+      const applied = await write.apply();
+      await this.audit(write.kind, `${write.summary} → ${applied.url}`, 'approved', 'applied');
+      const diff = buildReviewDiff(write.before, write.after);
+      return {
+        ...applied,
+        added: diff.added,
+        removed: diff.removed,
+        note:
+          write.kind === 'confluence-create' && applied.status === 'draft'
+            ? 'Created as a draft — only the user can see it until they publish it from Confluence. Give them the link.'
+            : 'Saved as a new page version — the previous one stays in the page history. Give the user the link.',
+      };
+    } catch (e) {
+      await this.audit(write.kind, write.summary, 'approved', 'failed', e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  }
+
+  /** find_confluence_location: similar pages from the synced index → their parents, resolved live. */
+  private async findConfluenceLocation(args: { title?: string; summary?: string }): Promise<unknown> {
+    const query = [args?.title, args?.summary].filter(Boolean).join(' — ').trim();
+    if (!query) throw new Error('title is required.');
+    const hits = await this.searchSource('CONFLUENCE', query, 8).catch(() => [] as SearchResult[]);
+    const settings = this.context.globalState.get(STORAGE_KEYS.SETTINGS) as any;
+    return suggestConfluenceLocation(
+      this.context,
+      hits.map((h) => ({ title: (h.data as any)?.title, url: (h.data as any)?.url })),
+      settings?.state?.config?.confluence?.spaceKey
+    );
+  }
+
   /** Append one line to the agent-actions JSONL audit log; never throws. */
   private async audit(
-    action: 'edit' | 'create' | 'delete' | 'command',
+    action: 'edit' | 'create' | 'delete' | 'command' | 'confluence-edit' | 'confluence-create',
     detail: string,
     decision: 'approved' | 'approved-session' | 'rejected' | 'auto',
     outcome: 'applied' | 'failed' | 'skipped',
@@ -2168,6 +2259,12 @@ export class ChatService {
         return { kind: 'read', title: 'Read ticket', detail: String(args?.id ?? '') };
       case 'get_confluence_page':
         return { kind: 'read', title: 'Read Confluence page', detail: String(args?.pageId ?? '') };
+      case 'update_confluence_page':
+        return { kind: 'edit', title: 'Edited Confluence page', detail: String(args?.section ?? args?.mode ?? args?.pageId ?? '') };
+      case 'create_confluence_page':
+        return { kind: 'edit', title: 'Created Confluence page', detail: String(args?.title ?? '') };
+      case 'find_confluence_location':
+        return { kind: 'search', title: 'Looked for a place in Confluence for', detail: String(args?.title ?? '') };
       case 'search_web':
         return { kind: 'search', title: 'Searched the web', detail: args?.query ?? '' };
       case 'explore':
@@ -2287,6 +2384,11 @@ export class ChatService {
       case 'browser_read_page':
       case 'browser_screenshot':
         return result?.title ? { summary: String(result.title) } : {};
+      case 'update_confluence_page':
+      case 'create_confluence_page':
+        return result?.applied ? { summary: `+${result.added ?? 0} −${result.removed ?? 0}` } : {};
+      case 'find_confluence_location':
+        return { summary: plural(result?.suggestions?.length ?? 0, 'suggestion') };
       default:
         return {};
     }
@@ -2323,6 +2425,12 @@ export class ChatService {
         return `Reading ticket ${args?.id ?? ''}...`;
       case 'get_confluence_page':
         return `Reading Confluence page ${args?.pageId ?? ''}...`;
+      case 'update_confluence_page':
+        return 'Proposing a Confluence page edit (awaiting your review)...';
+      case 'create_confluence_page':
+        return `Proposing new Confluence page "${args?.title ?? ''}" (awaiting your review)...`;
+      case 'find_confluence_location':
+        return 'Looking for where this page belongs in Confluence...';
       case 'search_web':
         return `Searching the web for "${args?.query ?? ''}"...`;
       case 'browser_list_tabs':
