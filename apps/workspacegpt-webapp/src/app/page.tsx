@@ -198,13 +198,13 @@ export default function Home() {
                 <span className="relative flex h-2 w-2">
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
                 </span>
-                WorkspaceGPT v2.0 — agentic coding, Local &amp; Remote modes
+                Grounded in your Confluence &amp; Azure DevOps
               </div>
               <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-[4.5rem] font-normal tracking-tight mb-6 sm:mb-8 leading-[1.05] text-foreground">
                 The coding agent that knows <span className="text-brand">your whole org</span>
               </h1>
               <p className="text-lg sm:text-xl text-muted mb-8 sm:mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
-                It searches and reads your code, edits files, and runs your tests &mdash; grounded in your Confluence docs and Azure DevOps tickets, not just your repo. Every change is a diff you approve first, and your connected knowledge and its search index <span className="text-white font-medium">never leave your machine</span>.
+                Other coding agents start from your repo and a prompt. WorkspaceGPT starts from the ticket and the design doc &mdash; it reads your Confluence and Azure DevOps mid-task, then edits your code and runs your tests. Every change is a diff you approve first, and your org&apos;s knowledge and its search index <span className="text-white font-medium">never leave your machine</span>.
               </p>
               
               <div className="flex flex-wrap gap-4 justify-center lg:justify-start">
@@ -386,7 +386,7 @@ export default function Home() {
               <div className="bg-surface border border-line p-8 rounded-xl hover:border-line-strong transition-colors duration-500 relative overflow-hidden">
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-xl bg-white/5 border border-line flex items-center justify-center mb-6 text-blue-400"><Icon name="file-text" size={26} /></div>
-                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Confluence One-Click</h3>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Your Confluence, mid-task</h3>
                   <p className="text-muted">Connect your space in one click and your team&apos;s documentation becomes context the agent can pull mid-task &mdash; the design page, not just the file.</p>
                 </div>
               </div>
@@ -395,7 +395,7 @@ export default function Home() {
               <div className="bg-surface border border-line p-8 rounded-xl hover:border-line-strong transition-colors duration-500 relative overflow-hidden">
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-xl bg-white/5 border border-line flex items-center justify-center mb-6 text-purple-400"><Icon name="clipboard-list" size={26} /></div>
-                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Azure DevOps (ADO)</h3>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Your Azure DevOps tickets</h3>
                   <p className="text-muted">Work items, user stories and PR context synced and searchable, so a run can be grounded in the ticket that asked for it.</p>
                 </div>
               </div>
@@ -589,7 +589,7 @@ export default function Home() {
                 <div>
                   <div className="flex items-center gap-4 mb-4">
                     <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">3</div>
-                    <h3 className="text-2xl font-semibold text-white">Connect Contexts</h3>
+                    <h3 className="text-2xl font-semibold text-white">Connect your org&apos;s knowledge</h3>
                   </div>
                   <div className="pl-12 text-muted space-y-6">
                     <div className="bg-surface border border-line p-5 rounded-xl relative overflow-hidden group">
@@ -597,7 +597,7 @@ export default function Home() {
                       <h4 className="text-blue-400 font-semibold mb-2 flex items-center gap-2">
                          Confluence Start
                       </h4>
-                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Confluence</code>. Click <strong>Sign in</strong> for one-click auth, and hit <strong>Sync</strong>.</p>
+                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Knowledge {`>`} Confluence</code>. Click <strong>Sign in</strong> for one-click auth, and hit <strong>Sync</strong>.</p>
                     </div>
 
                     <div className="bg-surface border border-line p-5 rounded-xl relative overflow-hidden group">
@@ -605,7 +605,7 @@ export default function Home() {
                       <h4 className="text-purple-400 font-semibold mb-2 flex items-center gap-2">
                         ADO Synchronization
                       </h4>
-                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} ADO Integration</code>. Enter PAT to sync pull requests, tickets, and work items.</p>
+                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Knowledge {`>`} Azure DevOps</code>. Enter PAT to sync pull requests, tickets, and work items.</p>
                     </div>
                   </div>
                 </div>
