@@ -14,7 +14,7 @@
  * sessionStorage (shared with the same-origin frames) and the fragment is
  * cleared. Under Tauri the window's initialization script provides it.
  */
-import { MESSAGE_TYPES } from '../../vscode-extensions/constants';
+import { MESSAGE_TYPES, STORAGE_KEYS } from '../../vscode-extensions/constants';
 import type { ShellHooks } from './desktop-bridge';
 
 interface TitleAction {
@@ -83,7 +83,7 @@ interface SessionPreview {
   let activeSessionId: string | null = null;
   let hasSessionsView = true;
   let actions: TitleAction[] = [];
-  const account = { signedIn: false, known: false, login: '', plan: '' };
+  const account = { signedIn: false, known: false, login: '', plan: '', mode: '' };
 
   const hooks: ShellHooks = {
     token,
@@ -115,6 +115,16 @@ interface SessionPreview {
         case MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS:
           setAccount(false);
           break;
+        case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
+          if (msg.key === STORAGE_KEYS.SETTINGS) setMode(msg.state?.config?.mode);
+          break;
+      }
+    },
+    viewMessage(viewType, message) {
+      const msg = (message ?? {}) as Record<string, any>;
+      // The chat saves its whole persisted store ({ state, version }) on every change.
+      if (viewType === CHAT_VIEW && msg.type === MESSAGE_TYPES.UPDATE_GLOBAL_STATE && msg.key === STORAGE_KEYS.SETTINGS) {
+        setMode(msg.state?.state?.config?.mode);
       }
     },
     toolbar(viewType, items) {
@@ -130,6 +140,15 @@ interface SessionPreview {
     account.signedIn = signedIn;
     account.login = signedIn ? String(login ?? '') : '';
     account.plan = signedIn ? String(plan ?? '') : '';
+    renderAccount();
+  }
+
+  /** Local mode needs no account, so "Not signed in" would read as a to-do. */
+  function setMode(mode: unknown): void {
+    // Absent means local, as in the extension's getMode().
+    const next = mode === 'remote' ? 'remote' : 'local';
+    if (next === account.mode) return;
+    account.mode = next;
     renderAccount();
   }
 
@@ -381,6 +400,11 @@ interface SessionPreview {
       sub.textContent = account.plan ? `${account.plan[0]!.toUpperCase()}${account.plan.slice(1)} plan` : 'Remote mode';
       avatar.textContent = (account.login || '?')[0]!.toUpperCase();
       avatar.classList.add('on');
+    } else if (account.mode === 'local') {
+      name.textContent = 'Local mode';
+      sub.textContent = 'No account needed';
+      avatar.textContent = 'L';
+      avatar.classList.remove('on');
     } else {
       name.textContent = 'Not signed in';
       sub.textContent = 'Sign in from Settings';

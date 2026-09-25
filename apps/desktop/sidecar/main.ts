@@ -299,6 +299,11 @@ async function main(): Promise<void> {
 
   const ctx = createExtensionContext({ paths, extensionDir, workspaceFolder: folders[0] });
   console.log(`[desktop] data dir ${paths.root}; secrets in ${ctx.secretsBackend}; workspace ${folders[0] ?? '(none)'}`);
+  // McpUiManager's first-run toast offers "Connect MCP", which writes the host
+  // editor's mcp.json; the desktop has no editor (and no MCP Server page), so
+  // it would greet a new user over the onboarding card with a dead end.
+  // Marking it shown is the extension's own opt-out.
+  if (!ctx.globalState.get('workspacegpt.mcp_welcome_shown')) void ctx.globalState.update('workspacegpt.mcp_welcome_shown', true);
 
   await extension.activate(ctx.context);
   const activatedAt = Date.now();

@@ -243,6 +243,58 @@ x86_64 and signed correctly, but it was **not run** (no Rosetta here).
 - Windows (NSIS) and Linux (AppImage): the scripts know the targets, the
   workflow doesn't build them.
 
+## QA pass (2026-09-25)
+
+Fresh profile, headless sidecar driven in the browser pane, chat against a
+local mock OpenAI-compatible server, plus a static review of the shell,
+sidecar, bridge and installer. Fixed:
+
+- **MCP promo toast on first launch.** The extension's "Connect MCP" toast
+  (it writes the editor's mcp.json) sat over the onboarding card. `main.ts`
+  marks `workspacegpt.mcp_welcome_shown` before activate.
+- **Local mode with Ollama down showed nothing.** No model list, no error,
+  a greyed-out Continue: every models-list failure became "Invalid API Key",
+  and that error only rendered inside the API-key box Ollama doesn't have.
+  Now "Could not reach <url> — is the server running?", shown for keyless
+  providers too.
+- **Footer said "Not signed in · Sign in from Settings" in Local mode.** The
+  shell now follows `config.mode` (settings load + saves, via a new
+  `viewMessage` bridge hook) and shows "Local mode · No account needed".
+- **Knowledge "Connect" opened a page with the source switched Off.**
+  `prepareToConnect()` turns the source on for Connect clicks (overview,
+  greeting line, composer Context menu); plain nav visits don't.
+- **Cited files could be executed.** The no-editor fallback was plain `open`,
+  which runs `.command`/`.jar`/`.webloc`; now `open -t` (Windows: notepad).
+- **Two quick Open Folder picks quit the app** (second restart skipped the
+  stop, the new sidecar hit the profile lock). Restarts hold a lock; a quit
+  mid-restart waits for it.
+- **Questions hung after a page takeover** (superseded socket's close bails):
+  open questions are re-sent to the new page.
+- **Install path with `#`/`?`** gave a blank view: escaped in asset/icon URLs.
+- **Stale profile lock + reused pid** blocked every launch: a pid that started
+  after the lock was written is treated as stale (`ps -o lstart`).
+- **Diff panel:** a fast second click went by a stale hunk index; all
+  file-changing buttons now wait for the redraw. Open in editor no longer
+  disables itself for good.
+- **Malformed `/view/%E0%A4`** hung the request: now 400.
+- **install.sh** verifies the signature before replacing the app and puts the
+  previous one back if the copy or the check fails.
+
+Native-app checks (`tauri dev`), each reproduced on the old code first:
+- Open Folder race: a temporary env hook fired two restarts 1 s apart while
+  the old sidecar was SIGSTOPped for 3 s (a busy sidecar). Old: "giving up …
+  already using this profile". Fixed: A then B, one sidecar on B. A quit
+  0.5 s into the restart: nothing restarted after it, 0 processes left.
+- Question takeover: joined the socket with `WGPT_DESKTOP_DEBUG_TOKEN_FILE`,
+  sent `agent-revert-checkpoint`, opened a second tab. Old: the new tab had
+  no question. Fixed: it did, and its "Undo" reached the host.
+- Open as text: sidecar PATH without code/cursor (minimal PATH + a stand-in
+  `$SHELL` for the login probe), cited `setup.command` that touches a marker.
+  Old: Terminal ran it. Fixed: TextEdit opened it, no marker.
+
+Not covered: Remote sign-in and real Confluence/ADO/Jira connections (need
+accounts); Windows' notepad fallback.
+
 ## Findings from Phase 0 (and what was done)
 
 1. **Title-bar actions don't exist outside VS Code.** Settings, History and New

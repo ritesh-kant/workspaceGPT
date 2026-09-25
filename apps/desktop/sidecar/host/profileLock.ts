@@ -9,6 +9,7 @@
  * The lock is a file holding the owner's pid. A lock whose pid is gone (the
  * owner was killed -9, or the machine rebooted) is stale and taken over.
  */
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -33,6 +34,20 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * The pid was handed to a newer process: the owner died without removing the
+ * lock (SIGKILL, power loss) and, after a reboot, pids repeat. A process that
+ * started after the lock was written cannot be the one that wrote it.
+ * Unknown (Windows, no ps) counts as not reused.
+ */
+function pidReused(pid: number, lockedAt: number): boolean {
+  if (process.platform === 'win32' || !Number.isFinite(lockedAt)) return false;
+  const r = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } });
+  const started = Date.parse(String(r.stdout ?? '').trim());
+  // lstart has 1 s resolution; the owner writes the lock after it starts.
+  return Number.isFinite(started) && started > lockedAt + 2000;
+}
+
 /** Takes the profile's lock or throws ProfileInUseError. Released when this process exits. */
 export function acquireProfileLock(dir: string): void {
   const file = path.join(dir, 'sidecar.lock');
@@ -52,12 +67,15 @@ export function acquireProfileLock(dir: string): void {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
     }
     let owner = 0;
+    let lockedAt = NaN;
     try {
-      owner = Number(JSON.parse(fs.readFileSync(file, 'utf8')).pid) || 0;
+      const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
+      owner = Number(lock.pid) || 0;
+      lockedAt = Date.parse(lock.startedAt);
     } catch {
       /* unreadable: treat as stale */
     }
-    if (owner && owner !== process.pid && alive(owner)) throw new ProfileInUseError(dir, owner);
+    if (owner && owner !== process.pid && alive(owner) && !pidReused(owner, lockedAt)) throw new ProfileInUseError(dir, owner);
     fs.rmSync(file, { force: true });
   }
   throw new Error(`could not take the profile lock ${file}`);

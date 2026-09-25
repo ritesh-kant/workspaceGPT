@@ -27,6 +27,12 @@ export async function fetchAvailableModels(baseURL: string, apiKey: string) {
       .map((model) => ({id: model.id}));
   } catch (error: any) {
     console.error('Error fetching models:', error);
+    // No HTTP status means the request never got an answer (server down,
+    // wrong base URL, offline) — "Invalid API Key" would send an Ollama user
+    // hunting for a key they don't have.
+    if (error instanceof OpenAI.APIConnectionError) {
+      throw new Error(`Could not reach ${baseURL} — is the server running?`);
+    }
     throw new Error('Invalid API Key');
   }
 }

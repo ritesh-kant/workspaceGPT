@@ -106,7 +106,14 @@ export function startServer(opts: ServerOptions): Promise<DesktopServer> {
     }
 
     if (url.pathname.startsWith('/view/')) {
-      const surface = opts.surfaces.get(decodeURIComponent(url.pathname.slice('/view/'.length)));
+      let viewId: string;
+      try {
+        viewId = decodeURIComponent(url.pathname.slice('/view/'.length));
+      } catch {
+        send(400, 'bad path');
+        return;
+      }
+      const surface = opts.surfaces.get(viewId);
       if (!surface) {
         send(404, 'no such view');
         return;

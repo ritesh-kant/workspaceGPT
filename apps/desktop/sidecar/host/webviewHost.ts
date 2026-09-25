@@ -60,6 +60,8 @@ export class ViewSurface {
   readonly diffActionRequested = new EventEmitter<{ file: string; action: DiffAction; idx?: number }>();
   private uiSeq = 0;
   private pendingUi = new Map<number, (value: unknown) => void>();
+  /** The `ui` frame behind each pending question, for a page that takes over. */
+  private pendingUiFrames = new Map<number, string>();
   /**
    * Rewrites what the extension posts to this view before the page sees it —
    * the desktop's chance to present the same data differently without
@@ -102,7 +104,8 @@ export class ViewSurface {
         // into every directive of its CSP, connect-src included.
         return `${o} ${o.replace(/^http/, 'ws')}`;
       },
-      asWebviewUri: (uri: Uri) => Uri.parse(`${self.origin()}/_res${encodeURI(uri.path)}`),
+      // encodeURI leaves ? and # alone; in an install path ("…/C#/…") they would end the URL's path.
+      asWebviewUri: (uri: Uri) => Uri.parse(`${self.origin()}/_res${encodeURI(uri.path).replace(/[?#]/g, encodeURIComponent)}`),
       postMessage: (message: unknown) => {
         self.posted.fire(message);
         const rewrite = self.outgoing;
@@ -177,6 +180,7 @@ export class ViewSurface {
       // Any dialog that page was showing is gone; resolve as "dismissed".
       for (const [, resolve] of this.pendingUi) resolve(undefined);
       this.pendingUi.clear();
+      this.pendingUiFrames.clear();
       this.visibility.fire();
     });
     const queued = this.queue;
@@ -185,6 +189,9 @@ export class ViewSurface {
       socket.send(data);
       this.stats.toPage++;
     }
+    // The superseded page's close handler bails (it is no longer this.socket),
+    // so its open questions would never settle: ask them again here.
+    for (const data of this.pendingUiFrames.values()) socket.send(data);
     this.attached.fire();
     this.visibility.fire();
   }
@@ -208,6 +215,7 @@ export class ViewSurface {
     } else if (frame.t === 'ui-result') {
       const resolve = this.pendingUi.get(frame.id);
       this.pendingUi.delete(frame.id);
+      this.pendingUiFrames.delete(frame.id);
       resolve?.(frame.value);
     } else if (frame.t === 'command' && typeof frame.id === 'string') {
       this.commandRequested.fire(frame.id);
@@ -253,6 +261,7 @@ export class ViewSurface {
       return undefined;
     }
     const id = this.sendUi(kind, req);
+    this.pendingUiFrames.set(id, JSON.stringify({ t: 'ui', id, kind, req }));
     return new Promise((resolve) => this.pendingUi.set(id, resolve));
   }
 

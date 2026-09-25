@@ -47,6 +47,8 @@ struct State {
     running: Option<Running>,
     workspace: Option<PathBuf>,
     shutting_down: bool,
+    /// An Open Folder… restart is stopping the old sidecar on purpose.
+    restarting: bool,
     generation: u64,
     restarts: Vec<Instant>,
     /// Set when the sidecar reported that another instance holds the profile:
@@ -57,6 +59,11 @@ struct State {
 #[derive(Clone)]
 pub struct Supervisor {
     state: Arc<Mutex<State>>,
+    /// Held across a restart's stop + start, and by shutdown(): a second
+    /// folder pick (or a quit) mid-restart would otherwise find `running`
+    /// already taken, skip the stop, and start a sidecar while the old one
+    /// still holds the profile lock.
+    restart_lock: Arc<Mutex<()>>,
     token: String,
     on_ready: ReadyCallback,
     on_gave_up: ExitCallback,
@@ -122,10 +129,12 @@ impl Supervisor {
                 running: None,
                 workspace: None,
                 shutting_down: false,
+                restarting: false,
                 generation: 0,
                 restarts: Vec::new(),
                 fatal: None,
             })),
+            restart_lock: Arc::new(Mutex::new(())),
             token,
             on_ready,
             on_gave_up,
@@ -216,7 +225,7 @@ impl Supervisor {
             };
             let now = Instant::now();
             st.restarts.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
-            let restart = !st.shutting_down && st.restarts.len() < MAX_RESTARTS_PER_MINUTE;
+            let restart = !st.shutting_down && !st.restarting && st.restarts.len() < MAX_RESTARTS_PER_MINUTE;
             if restart {
                 st.restarts.push(now);
             }
@@ -224,7 +233,7 @@ impl Supervisor {
         };
         let (shutting_down, fatal) = {
             let mut st = self.state.lock().unwrap();
-            (st.shutting_down, st.fatal.take())
+            (st.shutting_down || st.restarting, st.fatal.take())
         };
         if shutting_down {
             return;
@@ -292,20 +301,27 @@ impl Supervisor {
             }
             st.shutting_down = true;
         }
+        // Wait out a restart in flight: it is the one stopping the old sidecar,
+        // and its start() now refuses because shutting_down is set.
+        let _restart = self.restart_lock.lock().unwrap();
         self.stop_running(Duration::from_secs(8));
         eprintln!("[shell] sidecar stopped");
     }
 
     /// Open Folder…: like VS Code, a new folder means a new extension host.
     pub fn restart_with_workspace(&self, workspace: PathBuf) -> Result<(), String> {
-        self.state.lock().unwrap().workspace = Some(workspace);
+        let _restart = self.restart_lock.lock().unwrap();
         {
-            // Mark as intentional so the stdout pump doesn't count it as a crash.
             let mut st = self.state.lock().unwrap();
-            st.shutting_down = true;
+            if st.shutting_down {
+                return Ok(());
+            }
+            st.workspace = Some(workspace);
+            // Intentional, so the stdout pump doesn't count it as a crash.
+            st.restarting = true;
         }
         self.stop_running(Duration::from_secs(8));
-        self.state.lock().unwrap().shutting_down = false;
+        self.state.lock().unwrap().restarting = false;
         self.start()
     }
 }

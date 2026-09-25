@@ -14,7 +14,7 @@ import ChatHistorySidebar from './components/ChatHistorySidebar';
 import MentionPicker from './components/MentionPicker';
 import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
 import HomeGreeting from './components/HomeGreeting';
-import { KNOWLEDGE_SOURCES } from './components/settings/knowledgeSources';
+import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowledgeSources';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
 import UsageLimitBar from './components/UsageLimitBar';
@@ -460,7 +460,10 @@ const App: React.FC = () => {
         disabled: !status.ready,
         subtitle: quiet ? undefined : !status.ready && status.action ? `${status.text} · ${status.action} ›` : status.text,
         progress: status.progress,
-        disabledAction: () => openSettings(source.id),
+        disabledAction: () => {
+          prepareToConnect(source.id, config);
+          openSettings(source.id);
+        },
       };
     }),
     {

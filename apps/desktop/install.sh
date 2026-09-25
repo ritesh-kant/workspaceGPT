@@ -52,6 +52,8 @@ ACTUAL="$(shasum -a 256 "$TMP/$FILE" | awk '{ print $1 }')"
 mkdir -p "$TMP/app"
 tar -xzf "$TMP/$FILE" -C "$TMP/app"
 [ -d "$TMP/app/$APP_NAME" ] || die "$FILE does not contain $APP_NAME"
+# Verified before the installed copy is touched, so a bad bundle leaves it as it was.
+codesign --verify --deep --strict "$TMP/app/$APP_NAME" 2>/dev/null || die "$FILE failed signature verification; nothing was installed"
 
 if [ -n "${WGPT_INSTALL_DIR:-}" ]; then
   DEST="$WGPT_INSTALL_DIR"
@@ -69,11 +71,17 @@ if [ -e "$DEST/$APP_NAME" ]; then
   rm -rf "$DEST/$APP_NAME.previous"
   mv "$DEST/$APP_NAME" "$DEST/$APP_NAME.previous"
 fi
-ditto "$TMP/app/$APP_NAME" "$DEST/$APP_NAME"
-rm -rf "$DEST/$APP_NAME.previous"
+# Put the previous app back if the copy fails (disk full) or doesn't verify.
+restore_previous() {
+  rm -rf "$DEST/$APP_NAME"
+  [ -e "$DEST/$APP_NAME.previous" ] && mv "$DEST/$APP_NAME.previous" "$DEST/$APP_NAME"
+  die "$1"
+}
+ditto "$TMP/app/$APP_NAME" "$DEST/$APP_NAME" || restore_previous "could not copy $APP_NAME to $DEST; the previous version was kept"
 # Belt and braces: a copy that arrived some other way may carry the flag.
 xattr -dr com.apple.quarantine "$DEST/$APP_NAME" 2>/dev/null || true
-codesign --verify --deep --strict "$DEST/$APP_NAME" 2>/dev/null || die "$DEST/$APP_NAME failed signature verification"
+codesign --verify --deep --strict "$DEST/$APP_NAME" 2>/dev/null || restore_previous "$DEST/$APP_NAME failed signature verification; the previous version was kept"
+rm -rf "$DEST/$APP_NAME.previous"
 
 say "Installed WorkspaceGPT $VERSION to $DEST/$APP_NAME"
 say "Open it from Launchpad or: open \"$DEST/$APP_NAME\""

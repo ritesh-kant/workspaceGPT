@@ -1,5 +1,5 @@
 import React from 'react';
-import type { SettingsConfig } from '../../store/settingsStore';
+import { useSettingsStore, type SettingsConfig } from '../../store/settingsStore';
 import ConfluenceSettings from './ConfluenceSettings';
 import AdoSettings from './AdoSettings';
 import JiraSettings from './JiraSettings';
@@ -48,6 +48,11 @@ export interface KnowledgeSource {
   /** ISO time of the last completed sync, for freshness displays. */
   lastSync?: (config: SettingsConfig) => string | undefined;
   render: () => React.ReactNode;
+  /**
+   * Switches the source on. Its page shows the sign-in only while it is on,
+   * so a "Connect" that just opened the page would land on an Off toggle.
+   */
+  turnOn?: () => void;
 }
 
 /* Monochrome glyphs, drawn in currentColor; a brand mark would need its own
@@ -142,6 +147,10 @@ export const KNOWLEDGE_SOURCES: KnowledgeSource[] = [
     },
     lastSync: (c) => c.confluence?.lastSyncTime,
     render: () => <ConfluenceSettings />,
+    turnOn: () => {
+      const { config, updateConfig } = useSettingsStore.getState();
+      if (!config.confluence?.isConfluenceEnabled) updateConfig('confluence', 'isConfluenceEnabled', true);
+    },
   },
   {
     id: 'ado',
@@ -163,6 +172,10 @@ export const KNOWLEDGE_SOURCES: KnowledgeSource[] = [
     },
     lastSync: (c) => c.ado?.lastSyncTime,
     render: () => <AdoSettings />,
+    turnOn: () => {
+      const { config, updateConfig } = useSettingsStore.getState();
+      if (!config.ado?.isAdoEnabled) updateConfig('ado', 'isAdoEnabled', true);
+    },
   },
   {
     id: 'jira',
@@ -184,6 +197,10 @@ export const KNOWLEDGE_SOURCES: KnowledgeSource[] = [
     },
     lastSync: (c) => c.jira?.lastSyncTime,
     render: () => <JiraSettings />,
+    turnOn: () => {
+      const { config, updateConfig } = useSettingsStore.getState();
+      if (!config.jira?.isJiraEnabled) updateConfig('jira', 'isJiraEnabled', true);
+    },
   },
   {
     id: 'webSearch',
@@ -202,6 +219,12 @@ export const KNOWLEDGE_SOURCES: KnowledgeSource[] = [
 ];
 
 export const SOURCE_GROUPS: SourceGroup[] = ['Your organisation', 'Beyond your organisation'];
+
+/** For a click on a source's "Connect": turn it on, so its page opens on the sign-in. */
+export function prepareToConnect(id: string, config: SettingsConfig): void {
+  const source = KNOWLEDGE_SOURCES.find((s) => s.id === id);
+  if (source?.status(config).action === 'Connect') source.turnOn?.();
+}
 
 interface OverviewProps {
   config: SettingsConfig;
@@ -231,7 +254,10 @@ export const KnowledgeSourcesOverview: React.FC<OverviewProps> = ({ config, onOp
                 <button
                   type='button'
                   className={`source-action${status.ready ? ' source-action--quiet' : ''}`}
-                  onClick={() => onOpen(item.id)}
+                  onClick={() => {
+                    prepareToConnect(item.id, config);
+                    onOpen(item.id);
+                  }}
                 >
                   {status.action ?? 'View'}
                   <span aria-hidden='true'> ›</span>

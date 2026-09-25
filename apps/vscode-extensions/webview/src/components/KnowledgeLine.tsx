@@ -1,6 +1,6 @@
 import React from 'react';
 import { useSettingsStore } from '../store';
-import { KNOWLEDGE_SOURCES } from './settings/knowledgeSources';
+import { KNOWLEDGE_SOURCES, prepareToConnect } from './settings/knowledgeSources';
 import { formatRelativeTime } from './settings/utils';
 import StatusDot from './settings/StatusDot';
 
@@ -43,7 +43,10 @@ const KnowledgeLine: React.FC<KnowledgeLineProps> = ({ onOpen }) => {
             type='button'
             key={source.id}
             className={`home-knowledge-source home-knowledge-source--${status.tone ?? 'off'}`}
-            onClick={() => onOpen(source.id)}
+            onClick={() => {
+              prepareToConnect(source.id, config);
+              onOpen(source.id);
+            }}
             title={`${source.label}: ${status.text}`}
           >
             {status.tone && <StatusDot tone={status.tone} />}
