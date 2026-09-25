@@ -552,7 +552,7 @@ function handleBackgroundSyncState(message: any): void {
   if (message.section !== 'confluence' && message.section !== 'ado' && message.section !== 'jira') return;
 
   const patch: Record<string, unknown> = {};
-  for (const field of ['lastSyncTime', 'isSyncing', 'isIndexing'] as const) {
+  for (const field of ['lastSyncTime', 'isSyncing', 'isIndexing', 'isIndexingCompleted'] as const) {
     if (message[field] !== undefined) patch[field] = message[field];
   }
   if (Object.keys(patch).length === 0) return;

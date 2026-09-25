@@ -3913,6 +3913,138 @@ console.log('\nticketRefs (work-item vs PR linkification)');
   });
 }
 
+console.log('\nsync sources (a background or resumed run is visible, stoppable, and usable when done)');
+{
+  const { EventEmitter } = await import('events');
+  const { MESSAGE_TYPES, STORAGE_KEYS, WORKER_STATUS } = await import(path.join(outDir, 'constants.mjs'));
+  const src = await import(path.join(outDir, 'syncSourcesUnit.mjs'));
+  const posted = [];
+  src.registerWebviewPoster((m) => {
+    posted.push(m);
+    return Promise.resolve(true);
+  });
+
+  const makeContext = (config) => {
+    const store = new Map([[STORAGE_KEYS.SETTINGS, { state: { config } }]]);
+    return {
+      globalState: {
+        get: (k) => store.get(k),
+        update: async (k, v) => void store.set(k, v),
+      },
+      secrets: { get: async () => undefined, store: async () => {}, delete: async () => {} },
+      globalStorageUri: { fsPath: fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-sync-')) },
+      settings: () => store.get(STORAGE_KEYS.SETTINGS).state.config,
+    };
+  };
+  const fakeWorker = () => {
+    const p = new EventEmitter();
+    p.killed = false;
+    p.kill = () => {
+      p.killed = true;
+      setImmediate(() => p.emit('exit', null, 'SIGTERM'));
+      return true;
+    };
+    return p;
+  };
+
+  await t('an indexer with no webview (the scheduler\'s) still reports progress and completion to the panel', async () => {
+    posted.length = 0;
+    const ctx = makeContext({ confluence: { isIndexing: true, isIndexingCompleted: false } });
+    const svc = new src.ConfluenceEmbeddingService(undefined, ctx);
+    await svc.handleCreateEmbeddingMessage({ type: WORKER_STATUS.PROCESSING, progress: 40, current: 4, total: 10 });
+    const tick = posted.find((m) => m.type === MESSAGE_TYPES.INDEXING_CONFLUENCE_IN_PROGRESS);
+    assert.equal(tick?.progress, 40, 'progress never left the host: the panel sat at "Indexing… 0%"');
+
+    await svc.handleCreateEmbeddingMessage({ type: WORKER_STATUS.COMPLETED, processedFiles: 10, totalFiles: 10, isComplete: true });
+    assert.ok(posted.some((m) => m.type === MESSAGE_TYPES.INDEXING_CONFLUENCE_COMPLETE));
+    assert.equal(ctx.settings().confluence.isIndexingCompleted, true, 'chat skips a source whose index is not marked complete');
+    assert.equal(ctx.settings().confluence.isIndexing, false);
+    const pushed = posted.find((m) => m.type === MESSAGE_TYPES.BACKGROUND_SYNC_STATE && m.section === 'confluence');
+    assert.equal(pushed?.isIndexingCompleted, true);
+  });
+
+  await t('Stop from the panel reaches the indexing worker another instance started', async () => {
+    const ctx = makeContext({ ado: {}, confluence: {} });
+    const webview = { webview: { postMessage: async () => true } };
+
+    const adoScheduler = new src.AdoEmbeddingService(undefined, ctx);
+    const adoWorker = fakeWorker();
+    adoScheduler.embeddingProcess = adoWorker;
+    await new src.AdoEmbeddingService(webview, ctx).stopEmbeddingProcess();
+    assert.equal(adoWorker.killed, true, 'the panel\'s Stop only knew about its own (idle) instance');
+
+    const confScheduler = new src.ConfluenceEmbeddingService(undefined, ctx);
+    const confWorker = fakeWorker();
+    confScheduler.embeddingProcess = confWorker;
+    new src.ConfluenceEmbeddingService(webview, ctx).stopEmbeddingProcess();
+    assert.equal(confWorker.killed, true);
+    assert.equal(confScheduler.embeddingProcess, null);
+  });
+
+  await t('disposing a search-only instance (the chat service\'s) leaves another instance\'s run alone', async () => {
+    const ctx = makeContext({ ado: {} });
+    const worker = fakeWorker();
+    new src.AdoEmbeddingService(undefined, ctx).embeddingProcess = worker;
+    await new src.AdoEmbeddingService(undefined, ctx).dispose();
+    assert.equal(worker.killed, false, 'closing the panel killed the scheduler\'s indexing');
+    await new src.AdoEmbeddingService(undefined, ctx).stopEmbeddingProcess();
+  });
+
+  await t('a stale webview settings write cannot roll isIndexingCompleted back', () => {
+    const ctx = makeContext({ ado: { isIndexingCompleted: true } });
+    const incoming = { state: { config: { ado: { isIndexingCompleted: false } } } };
+    assert.equal(src.preserveHostOwnedSyncFields(ctx, incoming).state.config.ado.isIndexingCompleted, true);
+  });
+
+  await t('indexing cut short by a restart is resumed by the scheduler, with no webview involved', async () => {
+    // What the desktop left on disk: indexing in flight, sync long finished.
+    const ctx = makeContext({
+      confluence: { isAuthenticated: true, spaceKey: 'D2C', lastSyncTime: new Date().toISOString(), isSyncing: false, isIndexing: true },
+    });
+    const sched = new src.ConfluenceSyncScheduler(ctx);
+    let resumed = 0;
+    sched.resumeIndexing = async () => void resumed++;
+    // start() runs exactly this, in this order.
+    await sched.handleRestartRecovery();
+    await sched.checkAndSync();
+    assert.equal(resumed, 1, 'the only resume trigger was the webview resolve, which the desktop runs before recovery');
+    assert.equal(ctx.settings().confluence._needsResumeIndexing, false);
+    await sched.checkAndSync();
+    assert.equal(resumed, 1, 'the flag is consumed once');
+  });
+
+  await t('a resumed sync consumes the indexing flag too (it indexes when it completes)', async () => {
+    const ctx = makeContext({
+      confluence: { isAuthenticated: true, spaceKey: 'D2C', lastSyncTime: '', isSyncing: true, isIndexing: false },
+    });
+    await ctx.globalState.update(STORAGE_KEYS.CONFLUENCE_SYNC_PROGRESS, { isComplete: false, processedPages: 10, totalPages: 30 });
+    ctx.settings().confluence._needsResumeIndexing = true;
+    const sched = new src.ConfluenceSyncScheduler(ctx);
+    let synced = 0;
+    let indexed = 0;
+    sched.runSync = async () => void synced++;
+    sched.resumeIndexing = async () => void indexed++;
+    await sched.handleRestartRecovery();
+    await sched.checkAndSync();
+    assert.deepEqual([synced, indexed], [1, 0]);
+    assert.equal(ctx.settings().confluence._needsResumeIndexing, false);
+  });
+
+  await t('a scheduler run stopped from the panel does not block the next scheduled sync', async () => {
+    const live = { isAuthenticated: true, spaceKey: 'D2C', lastSyncTime: new Date().toISOString() };
+    const stopped = new src.ConfluenceSyncScheduler(makeContext({ confluence: { ...live, isSyncing: false, isIndexing: false } }));
+    stopped.syncStartedAt = Date.now();
+    await stopped.checkAndSync();
+    assert.equal(stopped.syncStartedAt, undefined, 'syncStartedAt outlived its run and skipped every later tick');
+
+    const running = new src.ConfluenceSyncScheduler(makeContext({ confluence: { ...live, isSyncing: true, isIndexing: false } }));
+    const startedAt = Date.now();
+    running.syncStartedAt = startedAt;
+    await running.checkAndSync();
+    assert.equal(running.syncStartedAt, startedAt, 'a live run must keep its re-entrancy guard');
+  });
+}
+
 // ── summary ──
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {

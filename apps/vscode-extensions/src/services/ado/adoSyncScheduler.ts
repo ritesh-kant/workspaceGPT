@@ -4,7 +4,7 @@ import { AdoAuthService } from './adoAuthService';
 import { AdoEmbeddingService } from './adoEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
-import { persistSyncState, publishSyncState } from '../../utils/syncStateStore';
+import { publishSyncState } from '../../utils/syncStateStore';
 
 export class AdoSyncScheduler {
   private intervalId?: NodeJS.Timeout;
@@ -82,6 +82,14 @@ export class AdoSyncScheduler {
         return; // Not fully configured yet
       }
 
+      // Stop in the settings panel ends a scheduler run without firing either
+      // callback (it reaches the same worker). Once the persisted flags are
+      // down, that run is over and must not block the next one.
+      const adoFlags = config.state.config.ado;
+      if (this.syncStartedAt && !adoFlags.isSyncing && !adoFlags.isIndexing) {
+        this.syncStartedAt = undefined;
+      }
+
       // If a live sync is already running in this process instance, skip.
       if (this.syncStartedAt) {
         console.log('⏳ Auto-sync ADO: skipped — scheduler sync already in progress');
@@ -102,6 +110,8 @@ export class AdoSyncScheduler {
         if (syncProgress && !syncProgress.isComplete) {
           console.log('🔁 Auto-sync ADO: resuming interrupted sync...');
           config.state.config.ado._needsResume = false;
+          // runSync indexes when the sync completes, so this covers indexing too.
+          config.state.config.ado._needsResumeIndexing = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
           await this.runSync(true);
           return;
@@ -110,6 +120,17 @@ export class AdoSyncScheduler {
           config.state.config.ado._needsResume = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
         }
+      }
+
+      // Indexing the restart cut short. Resumed here, not when the webview
+      // resolves: the desktop resolves its view straight after activate(),
+      // before handleRestartRecovery() sets this flag, so that resume never
+      // ran and the source sat at "Indexing unfinished".
+      if (config.state.config.ado._needsResumeIndexing) {
+        config.state.config.ado._needsResumeIndexing = false;
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+        await this.resumeIndexing();
+        return;
       }
 
       const lastSyncTimeStr = config.state.config.ado.lastSyncTime;
@@ -128,6 +149,18 @@ export class AdoSyncScheduler {
     } catch (err) {
       console.error('ADO Background sync check failed:', err);
     }
+  }
+
+  private async resumeIndexing() {
+    console.log('🔁 Auto-sync ADO: resuming interrupted indexing...');
+    // Mark in flight before forking, as the panel's resume does, so a tick in
+    // between can't start a sync over it. The embedding service clears it on
+    // the worker's terminal message.
+    await publishSyncState(this.context, 'ado', { isIndexing: true });
+    await new AdoEmbeddingService(undefined, this.context).createEmbeddings(
+      { dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS } as EmbeddingConfig,
+      true
+    );
   }
 
   private async resetSyncFlags() {
@@ -151,10 +184,9 @@ export class AdoSyncScheduler {
           throw new Error('ADO config incomplete');
       }
 
-      // Mark the sync in-flight for our own re-entrancy guard, but don't push
-      // it to the UI: this run reports no progress to the webview (the service
-      // below is built without one), so the panel would show a stalled bar.
-      await persistSyncState(this.context, 'ado', { isSyncing: true });
+      // Pushed to the panel: this run's services report progress to it and
+      // share their worker with its Stop button.
+      await publishSyncState(this.context, 'ado', { isSyncing: true });
       this.syncStartedAt = Date.now();
 
       const adoConfig: AdoConfig = {

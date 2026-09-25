@@ -8,6 +8,7 @@ import {
   EmbeddingSearchResult,
 } from 'src/types/types';
 import { WORKER_STATUS, MESSAGE_TYPES, STORAGE_KEYS } from '../../../constants';
+import { postToWebview } from 'src/utils/webviewBroadcast';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 import { getEmbeddingSettings } from 'src/utils/getEmbeddingSettings';
 import { getVectorStoreSettings } from 'src/utils/getVectorStoreSettings';
@@ -22,12 +23,36 @@ import { publishSyncState } from 'src/utils/syncStateStore';
  * "reused unchanged").
  */
 export class JiraEmbeddingService {
-  private embeddingProcess: ChildProcess | null = null;
+  // One indexing worker per source per host. The sync scheduler and the settings
+  // panel each build their own instance, and Stop has to reach whichever run
+  // is live; two runs would also write the same files.
+  private static activeEmbeddingProcess: ChildProcess | null = null;
+  private get embeddingProcess(): ChildProcess | null {
+    return JiraEmbeddingService.activeEmbeddingProcess;
+  }
+  private set embeddingProcess(value: ChildProcess | null) {
+    JiraEmbeddingService.activeEmbeddingProcess = value;
+  }
+  // The run this instance forked, so dispose() only ends its own.
+  private startedHere: ChildProcess | null = null;
   private searchWorker: ChildProcess | null = null;
   private searchWorkerReady: boolean = false;
   private webviewView?: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private embeddingProgress?: EmbeddingProgress;
+
+  /**
+   * The scheduler's instance has no webview of its own. Its progress and
+   * completion still have to reach the panel, or a background or resumed run
+   * reads as "Not synced yet" or "Indexing… 0%" while it is working.
+   */
+  private post(message: unknown): void {
+    if (this.webviewView) {
+      this.webviewView.webview.postMessage(message);
+    } else {
+      postToWebview(message);
+    }
+  }
 
   constructor(webviewView: vscode.WebviewView | undefined, context: vscode.ExtensionContext) {
     this.webviewView = webviewView;
@@ -158,6 +183,8 @@ export class JiraEmbeddingService {
   public async createEmbeddings(config: EmbeddingConfig, resume: boolean = false) {
     try {
       await this.stopEmbeddingProcess();
+      // Re-read: another instance (scheduler or panel) may have advanced it.
+      this.loadEmbeddingProgress();
       await this.resetStateIfNotResume(resume);
 
       const embeddingSettings = getEmbeddingSettings(this.context);
@@ -198,6 +225,7 @@ export class JiraEmbeddingService {
         },
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       });
+      this.startedHere = this.embeddingProcess;
 
       this.embeddingProcess.stdout?.on('data', (chunk) => process.stdout.write(`[jira-embed-worker] ${chunk}`));
       this.embeddingProcess.stderr?.on('data', (chunk) => process.stderr.write(`[jira-embed-worker] ${chunk}`));
@@ -222,7 +250,7 @@ export class JiraEmbeddingService {
         const reason = signal ? `killed by signal ${signal}` : `exited with code ${code}`;
         console.error(`Jira embedding worker died unexpectedly: ${reason}`);
         await publishSyncState(this.context, 'jira', { isIndexing: false });
-        this.webviewView?.webview.postMessage({
+        this.post({
           type: MESSAGE_TYPES.INDEXING_JIRA_ERROR,
           message: `Indexing stopped: the embedding worker ${reason}.`,
         });
@@ -310,14 +338,19 @@ export class JiraEmbeddingService {
   }
 
   public async dispose(): Promise<void> {
-    await this.stopEmbeddingProcess();
+    // The indexing worker is shared across instances. The chat service's
+    // search-only instances are disposed with the panel and on reset, and
+    // must not end a scheduler's run.
+    if (this.embeddingProcess && this.embeddingProcess === this.startedHere) {
+      await this.stopEmbeddingProcess();
+    }
     this.stopSearchWorker();
   }
 
   private async handleError(error: unknown) {
     console.error('Error starting Jira embedding process:', error);
     await publishSyncState(this.context, 'jira', { isIndexing: false });
-    this.webviewView?.webview.postMessage({
+    this.post({
       type: MESSAGE_TYPES.INDEXING_JIRA_ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
@@ -327,7 +360,7 @@ export class JiraEmbeddingService {
   private async handleCreateEmbeddingMessage(message: any) {
     switch (message.type) {
       case WORKER_STATUS.PROCESSING:
-        this.webviewView?.webview.postMessage({
+        this.post({
           type: MESSAGE_TYPES.INDEXING_JIRA_IN_PROGRESS,
           progress: message.progress,
           current: message.current,
@@ -339,7 +372,7 @@ export class JiraEmbeddingService {
       case WORKER_STATUS.ERROR:
         console.error(`Jira worker error: ${message.message}`);
         await publishSyncState(this.context, 'jira', { isIndexing: false });
-        this.webviewView?.webview.postMessage({
+        this.post({
           type: MESSAGE_TYPES.INDEXING_JIRA_ERROR,
           message: message.message,
         });
@@ -347,8 +380,14 @@ export class JiraEmbeddingService {
 
       case WORKER_STATUS.COMPLETED:
         console.log('Jira embedding creation complete');
-        await publishSyncState(this.context, 'jira', { isIndexing: false });
-        this.webviewView?.webview.postMessage({
+        // Written here, not by the webview on INDEXING_*_COMPLETE: a scheduler
+        // run may finish with no panel open, and chat only searches a source
+        // whose index is marked complete.
+        await publishSyncState(this.context, 'jira', {
+          isIndexing: false,
+          isIndexingCompleted: true,
+        });
+        this.post({
           type: MESSAGE_TYPES.INDEXING_JIRA_COMPLETE,
         });
         await this.saveEmbeddingProgress(message);

@@ -49,6 +49,8 @@ const UNITS = [
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',
   'webview/src/utils/ticketRefs.ts',
+  // Lives here, not in the extension: see the file for why it is one bundle.
+  '../../packages/agent-evals/src/headless/syncSourcesUnit.ts',
 ];
 
 // codebaseTools.ts dynamically `import('@vscode/ripgrep')`s to find the `rg`
@@ -104,6 +106,9 @@ export async function buildUnits() {
     sourcemap: false,
     logLevel: 'silent',
     alias: { vscode: path.join(here, 'vscode-stub.mjs') },
+    // The sync schedulers reach axios (via the auth services), whose CJS deps
+    // `require('util')` at runtime. An ESM bundle has no `require` unless given one.
+    banner: { js: "import { createRequire as __wgptCreateRequire } from 'module'; const require = __wgptCreateRequire(import.meta.url);" },
     plugins: [ripgrepExternalPlugin, openaiExternalPlugin],
   });
   return outDir;

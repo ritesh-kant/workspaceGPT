@@ -4,6 +4,7 @@ import { Worker } from 'worker_threads';
 import * as fs from 'fs';
 import { promisify } from 'util';
 import { MESSAGE_TYPES, WORKER_STATUS, STORAGE_KEYS } from '../../../constants';
+import { postToWebview } from 'src/utils/webviewBroadcast';
 import { ConfluencePageFetcher } from '@workspace-gpt/confluence-utils';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
@@ -30,10 +31,32 @@ interface SyncProgress {
 }
 
 export class ConfluenceService {
-  private worker: Worker | null = null;
+  // One sync worker per source per host. The sync scheduler and the settings
+  // panel each build their own instance, and Stop has to reach whichever run
+  // is live; two runs would also write the same files.
+  private static activeWorker: Worker | null = null;
+  private get worker(): Worker | null {
+    return ConfluenceService.activeWorker;
+  }
+  private set worker(value: Worker | null) {
+    ConfluenceService.activeWorker = value;
+  }
   private webviewView?: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private syncProgress: SyncProgress | null = null;
+
+  /**
+   * The scheduler's instance has no webview of its own. Its progress and
+   * completion still have to reach the panel, or a background or resumed run
+   * reads as "Not synced yet" or "Indexing… 0%" while it is working.
+   */
+  private post(message: unknown): void {
+    if (this.webviewView) {
+      this.webviewView.webview.postMessage(message);
+    } else {
+      postToWebview(message);
+    }
+  }
 
   constructor(
     webviewView: vscode.WebviewView | undefined,
@@ -104,6 +127,8 @@ export class ConfluenceService {
     try {
       // Stop any existing worker
       this.stopSync();
+      // Re-read: another instance (scheduler or panel) may have advanced it.
+      this.loadSyncProgress();
 
       // Load the current progress if resuming
       let isIncremental = false;
@@ -166,7 +191,7 @@ export class ConfluenceService {
         switch (message.type) {
           case WORKER_STATUS.PROCESSING:
             // Update progress in the webview
-            this.webviewView?.webview.postMessage({
+            this.post({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_IN_PROGRESS,
               source: 'confluence',
               progress: message.progress,
@@ -192,7 +217,7 @@ export class ConfluenceService {
 
           case WORKER_STATUS.ERROR:
             console.error(`Worker error: ${message.message}`);
-            this.webviewView?.webview.postMessage({
+            this.post({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
               message: message.message,
             });
@@ -207,7 +232,7 @@ export class ConfluenceService {
             );
             // Notify the webview that sync is complete
             const lastSyncTime = new Date().toISOString();
-            this.webviewView?.webview.postMessage({
+            this.post({
               type: MESSAGE_TYPES.SYNC_CONFLUENCE_COMPLETE,
               source: 'confluence',
               pagesCount: message.pages.length,
@@ -237,7 +262,7 @@ export class ConfluenceService {
       // Handle worker errors
       this.worker.on('error', (error) => {
         console.error('Worker error:', error);
-        this.webviewView?.webview.postMessage({
+        this.post({
           type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
           message: error.message,
         });
@@ -249,7 +274,7 @@ export class ConfluenceService {
 
     } catch (error) {
       console.error('Error starting worker:', error);
-      this.webviewView?.webview.postMessage({
+      this.post({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });

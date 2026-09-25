@@ -4,6 +4,7 @@ import { Worker } from 'worker_threads';
 import * as fs from 'fs';
 import { promisify } from 'util';
 import { MESSAGE_TYPES, WORKER_STATUS, STORAGE_KEYS } from '../../../constants';
+import { postToWebview } from 'src/utils/webviewBroadcast';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
@@ -34,11 +35,33 @@ interface SyncProgress {
 const AUTH_REFRESH_INTERVAL_MS = 20 * 60 * 1000;
 
 export class AdoService {
-  private worker: Worker | null = null;
+  // One sync worker per source per host. The sync scheduler and the settings
+  // panel each build their own instance, and Stop has to reach whichever run
+  // is live; two runs would also write the same files.
+  private static activeWorker: Worker | null = null;
+  private get worker(): Worker | null {
+    return AdoService.activeWorker;
+  }
+  private set worker(value: Worker | null) {
+    AdoService.activeWorker = value;
+  }
   private webviewView?: vscode.WebviewView;
   private context: vscode.ExtensionContext;
   private syncProgress: SyncProgress | null = null;
   private authRefreshInterval: NodeJS.Timeout | null = null;
+
+  /**
+   * The scheduler's instance has no webview of its own. Its progress and
+   * completion still have to reach the panel, or a background or resumed run
+   * reads as "Not synced yet" or "Indexing… 0%" while it is working.
+   */
+  private post(message: unknown): void {
+    if (this.webviewView) {
+      this.webviewView.webview.postMessage(message);
+    } else {
+      postToWebview(message);
+    }
+  }
 
   constructor(
     webviewView: vscode.WebviewView | undefined,
@@ -115,6 +138,8 @@ export class AdoService {
   ): Promise<void> {
     try {
       this.stopSync();
+      // Re-read: another instance (scheduler or panel) may have advanced it.
+      this.loadSyncProgress();
 
       let isIncremental = false;
       let lastSyncTimeStr = '';
@@ -168,7 +193,7 @@ export class AdoService {
       this.worker.on('message', async (message) => {
         switch (message.type) {
           case WORKER_STATUS.PROCESSING:
-            this.webviewView?.webview.postMessage({
+            this.post({
               type: MESSAGE_TYPES.SYNC_ADO_IN_PROGRESS,
               source: 'ado',
               progress: message.progress,
@@ -192,7 +217,7 @@ export class AdoService {
 
           case WORKER_STATUS.ERROR:
             console.error(`ADO Worker error: ${message.message}`);
-            this.webviewView?.webview.postMessage({
+            this.post({
               type: MESSAGE_TYPES.SYNC_ADO_ERROR,
               message: message.message,
             });
@@ -208,7 +233,7 @@ export class AdoService {
           case WORKER_STATUS.COMPLETED:
             console.log(`ADO Sync complete. Processed ${message.itemsCount} items.`);
             const lastSyncTime = new Date().toISOString();
-            this.webviewView?.webview.postMessage({
+            this.post({
               type: MESSAGE_TYPES.SYNC_ADO_COMPLETE,
               source: 'ado',
               itemsCount: message.itemsCount,
@@ -245,7 +270,7 @@ export class AdoService {
 
       this.worker.on('error', (error) => {
         console.error('ADO Worker error:', error);
-        this.webviewView?.webview.postMessage({
+        this.post({
           type: MESSAGE_TYPES.SYNC_ADO_ERROR,
           message: error.message,
         });
@@ -257,7 +282,7 @@ export class AdoService {
 
     } catch (error) {
       console.error('Error starting ADO worker:', error);
-      this.webviewView?.webview.postMessage({
+      this.post({
         type: MESSAGE_TYPES.SYNC_ADO_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
