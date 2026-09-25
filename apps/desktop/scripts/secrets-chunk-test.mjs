@@ -85,5 +85,25 @@ const spoof = 'wgpt-chunked:v1:abc:3';
 await store.set('spoof', spoof);
 check('a value that looks like a header is stored as data', (await store.get('spoof')) === spoof);
 
+// The real OS store (on by default on Windows, WGPT_SECRETS_REAL=1 elsewhere):
+// createSecretStorage() exactly as the sidecar builds it, so on Windows that
+// is Credential Manager behind the chunking. The bundle goes inside
+// apps/desktop so the native @napi-rs/keyring resolves.
+if (process.platform === 'win32' || process.env.WGPT_SECRETS_REAL === '1') {
+  const liveOut = path.join(root, '.cache', 'secrets-live-test.cjs');
+  fs.mkdirSync(path.dirname(liveOut), { recursive: true });
+  await esbuild.build({ entryPoints: [path.join(root, 'sidecar/host/secrets.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: liveOut, logLevel: 'error', external: ['@napi-rs/keyring'] });
+  const { createSecretStorage } = createRequire(import.meta.url)(liveOut);
+  const { backendKind, storage } = createSecretStorage();
+  check('real store: the OS keychain loaded', backendKind === 'keychain', backendKind);
+  const key = `ci-probe-${process.pid}`;
+  await storage.store(key, msal);
+  check('real store: 32 KB value round-trips', (await storage.get(key)) === msal);
+  await storage.store(key, 'small');
+  check('real store: overwrite with a small value', (await storage.get(key)) === 'small');
+  await storage.delete(key);
+  check('real store: delete', (await storage.get(key)) === undefined);
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);
