@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "The coding agent that reads your Confluence docs and Azure DevOps tickets mid-task — not just your repo — then edits and verifies your code. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor, and Antigravity.",
+    "The coding agent that reads your Confluence docs and your Jira and Azure DevOps tickets mid-task — not just your repo — then edits and verifies your code. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor and Antigravity, or as a desktop app for macOS and Windows.",
   applicationName: "WorkspaceGPT",
   keywords: [
     "AI coding assistant",
@@ -38,6 +38,9 @@ export const metadata: Metadata = {
     "chat with Confluence in VS Code",
     "Confluence knowledge base AI",
     "coding agent with company knowledge",
+    "Jira AI coding agent",
+    "AI coding agent for Mac",
+    "AI coding agent for Windows",
     "Confluence grounded coding agent",
     "zero data retention AI",
     "on-device embeddings",
@@ -55,14 +58,14 @@ export const metadata: Metadata = {
     siteName: "WorkspaceGPT",
     title: "WorkspaceGPT — The Coding Agent That Knows Your Whole Org",
     description:
-      "An agent that edits and verifies your code, grounded in your Confluence docs and Azure DevOps tickets. Zero data retention — connected knowledge and its search index stay on your machine.",
+      "An agent that edits and verifies your code, grounded in your Confluence docs and your Jira and Azure DevOps tickets. Zero data retention — connected knowledge and its search index stay on your machine.",
     locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
     title: "WorkspaceGPT — The Coding Agent That Knows Your Whole Org",
     description:
-      "An agent that edits and verifies your code, grounded in your Confluence docs and Azure DevOps tickets. Zero data retention — connected knowledge and its search index stay on your machine.",
+      "An agent that edits and verifies your code, grounded in your Confluence docs and your Jira and Azure DevOps tickets. Zero data retention — connected knowledge and its search index stay on your machine.",
   },
   robots: {
     index: true,
@@ -88,7 +91,7 @@ const jsonLd = {
       "@id": `${SITE_URL}/#software`,
       name: "WorkspaceGPT",
       description:
-        "A coding agent with zero data retention. It searches, reads and edits your code and runs your checks to verify the result, while connected Confluence and Azure DevOps knowledge is indexed on-device in both Local and Remote mode.",
+        "A coding agent with zero data retention. It searches, reads and edits your code and runs your checks to verify the result, while connected Confluence, Jira and Azure DevOps knowledge is indexed on-device in both Local and Remote mode.",
       url: SITE_URL,
       applicationCategory: "DeveloperApplication",
       operatingSystem: "Windows, macOS, Linux",
@@ -97,7 +100,7 @@ const jsonLd = {
         price: "0",
         priceCurrency: "USD",
       },
-      softwareRequirements: "VS Code, Cursor, or Antigravity IDE",
+      softwareRequirements: "VS Code, Cursor or Antigravity IDE — or none, with WorkspaceGPT Desktop for macOS 12+ or Windows x64",
       author: {
         "@type": "Person",
         name: "Ritesh Kant",

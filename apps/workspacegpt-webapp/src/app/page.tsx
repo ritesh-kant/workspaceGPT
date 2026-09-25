@@ -7,6 +7,21 @@ import { Icon } from "./_components/Icon";
 import { SiteNav } from "./_components/SiteNav";
 import { Reveal } from "./_components/Reveal";
 
+/** Published by .github/workflows/desktop-publish.yml on every desktop-v* tag. */
+const DESKTOP_INSTALL = [
+  {
+    os: "macOS",
+    where: "Terminal",
+    command: "curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh",
+  },
+  {
+    os: "Windows",
+    where: "PowerShell",
+    command: "irm https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | iex",
+  },
+] as const;
+const DESKTOP_RELEASES_URL = "https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&expanded=true";
+
 export default function Home() {
   const [showVSCodeOpenedMessage, setShowVSCodeOpenedMessage] = useState(false);
   const [showCursorOpenedMessage, setShowCursorOpenedMessage] = useState(false);
@@ -36,15 +51,19 @@ export default function Home() {
     setTimeout(() => setShowCursorOpenedMessage(false), 5000);
   };
 
-  const openChrome = () => {
-    // The Chrome extension is a separate browser companion (not an IDE) — it just
-    // opens the Web Store listing in a new tab; no custom protocol needed.
-    window.open(
-      'https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole',
-      '_blank',
-      'noopener,noreferrer',
-    );
+  const openDesktop = () => {
+    // The desktop app isn't an extension: send the visitor to the install
+    // section (one-line installers + downloads) rather than a protocol handler.
     setShowInstallModal(false);
+    document.getElementById("install")?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const [copied, setCopied] = useState<string | null>(null);
+  const copyInstallCommand = (command: string) => {
+    navigator.clipboard?.writeText(command).then(() => {
+      setCopied(command);
+      setTimeout(() => setCopied(null), 2000);
+    });
   };
 
   const openAntigravity = () => {
@@ -76,7 +95,7 @@ export default function Home() {
                 </svg>
               </button>
             </div>
-            <p className="text-muted mb-6 font-medium">Select your preferred IDE to begin</p>
+            <p className="text-muted mb-6 font-medium">Add it to your editor, or run it as an app</p>
             
             <div className="space-y-4">
               <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-line transition-all duration-300">
@@ -121,33 +140,19 @@ export default function Home() {
               </div>
 
               <div className="pt-2">
-                <p className="text-xs text-faint mb-3">Browser companion (pairs with the IDE extension)</p>
-                <div className="mb-3 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3 py-2">
-                  <p className="text-xs text-yellow-400 font-semibold">Temporarily unavailable for new setups</p>
-                  <p className="text-xs text-muted mt-0.5">
-                    The browser companion reads your search index directly, and that index now lives only on your
-                    machine &mdash; so there is nothing for another browser to connect to. Pairing is paused until a
-                    hosted index ships. Existing installs are unaffected.
-                  </p>
-                </div>
+                <p className="text-xs text-faint mb-3">No editor? The same agent, as an app</p>
                 <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-line transition-all duration-300">
                   <div className="flex items-center gap-4">
-                    <div className="bg-surface-2 p-2 rounded-lg border border-line flex items-center justify-center" style={{ width: 44, height: 44 }}>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 48 48">
-                        <circle cx="24" cy="24" r="22" fill="#fff" />
-                        <path fill="#4caf50" d="M24 4A20 20 0 0 0 6.7 14.1l8.4 14.5A10 10 0 0 1 24 14h19.3A20 20 0 0 0 24 4z" />
-                        <path fill="#f44336" d="M43.3 14H24a10 10 0 0 1 8.7 5.1L24 4a20 20 0 0 0-17.3 10.1L15 28.6A10 10 0 0 1 24 14z" opacity="0" />
-                        <path fill="#ffc107" d="M6.7 14.1A20 20 0 0 0 16 41.6l8.4-14.5A10 10 0 0 1 15.1 14z" />
-                        <path fill="#f44336" d="M24 14h19.3A20 20 0 0 0 24 4v10z" />
-                        <path fill="#2196f3" d="M16 41.6A20 20 0 0 0 43.3 14H24a10 10 0 0 1 .4 20z" />
-                        <circle cx="24" cy="24" r="8" fill="#fff" />
-                        <circle cx="24" cy="24" r="6.5" fill="#2196f3" />
-                      </svg>
+                    <div className="bg-surface-2 p-2 rounded-lg border border-line flex items-center justify-center text-brand" style={{ width: 44, height: 44 }}>
+                      <Icon name="laptop" size={26} />
                     </div>
-                    <span className="font-semibold text-white">Chrome</span>
+                    <div>
+                      <span className="font-semibold text-white block">WorkspaceGPT Desktop</span>
+                      <span className="text-xs text-faint">macOS &middot; Windows</span>
+                    </div>
                   </div>
-                  <button onClick={openChrome} className="bg-white/10 hover:bg-white/15 border border-line text-muted font-medium py-2 px-5 rounded-lg transition-colors text-sm">
-                    View listing
+                  <button onClick={openDesktop} className="bg-brand-blue hover:bg-blue-500 text-white font-medium py-2 px-5 rounded-lg transition-colors text-sm whitespace-nowrap">
+                    Get the app
                   </button>
                 </div>
               </div>
@@ -194,17 +199,17 @@ export default function Home() {
         <div className="container mx-auto px-6 relative z-10">
           <div className="flex flex-col lg:flex-row items-center justify-between gap-8 lg:gap-12">
             <div className="lg:w-1/2 md:mb-0 text-center lg:text-left">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/10 border border-brand/20 text-brand text-sm font-medium mb-6 sm:mb-8">
+              <Link href="#install" className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/10 border border-brand/20 text-brand text-sm font-medium mb-6 sm:mb-8 hover:bg-brand/15 transition-colors">
                 <span className="relative flex h-2 w-2">
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
                 </span>
-                Grounded in your Confluence &amp; Azure DevOps
-              </div>
+                New: WorkspaceGPT Desktop for macOS and Windows &mdash; no editor required
+              </Link>
               <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-[4.5rem] font-normal tracking-tight mb-6 sm:mb-8 leading-[1.05] text-foreground">
                 The coding agent that knows <span className="text-brand">your whole org</span>
               </h1>
               <p className="text-lg sm:text-xl text-muted mb-8 sm:mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
-                Other coding agents start from your repo and a prompt. WorkspaceGPT starts from the ticket and the design doc &mdash; it reads your Confluence and Azure DevOps mid-task, then edits your code and runs your tests. Every change is a diff you approve first, and your org&apos;s knowledge and its search index <span className="text-white font-medium">never leave your machine</span>.
+                Other coding agents start from your repo and a prompt. WorkspaceGPT starts from the ticket and the design doc &mdash; it reads your Confluence, Jira and Azure DevOps mid-task, then edits your code and runs your tests. Every change is a diff you approve first, and your org&apos;s knowledge and its search index <span className="text-white font-medium">never leave your machine</span>.
               </p>
               
               <div className="flex flex-wrap gap-4 justify-center lg:justify-start">
@@ -220,10 +225,17 @@ export default function Home() {
                   <span>Install Extension</span>
                 </button>
                 <Link
-                  href="#modes"
-                  className="bg-surface hover:bg-surface-2 border border-line hover:border-line-strong text-foreground font-medium px-6 py-3 rounded-lg transition-colors"
+                  href="#install"
+                  className="bg-surface hover:bg-surface-2 border border-line hover:border-line-strong text-foreground font-medium px-6 py-3 rounded-lg transition-colors flex items-center gap-2"
                 >
-                  How privacy works
+                  <Icon name="download" size={18} />
+                  Get the desktop app
+                </Link>
+                <Link
+                  href="#modes"
+                  className="text-muted hover:text-foreground font-medium px-2 py-3 transition-colors"
+                >
+                  How privacy works &rarr;
                 </Link>
               </div>
             </div>
@@ -302,7 +314,7 @@ export default function Home() {
               <h2 className="text-3xl sm:text-5xl font-normal text-foreground mb-4 tracking-tight">Two modes, one guarantee</h2>
               <p className="text-muted text-base sm:text-lg max-w-2xl mx-auto">
                 The mode changes exactly one thing: <span className="text-white font-medium">where the answer is generated</span>.
-                Your documents, your code, and the search index built from them stay local either way.
+                Your docs and tickets, and the search index built from them, stay local either way.
               </p>
             </div>
 
@@ -386,17 +398,17 @@ export default function Home() {
               <div className="bg-surface border border-line p-8 rounded-xl hover:border-line-strong transition-colors duration-500 relative overflow-hidden">
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-xl bg-white/5 border border-line flex items-center justify-center mb-6 text-blue-400"><Icon name="file-text" size={26} /></div>
-                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Your Confluence, mid-task</h3>
-                  <p className="text-muted">Connect your space in one click and your team&apos;s documentation becomes context the agent can pull mid-task &mdash; the design page, not just the file.</p>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Your org&apos;s knowledge, mid-task</h3>
+                  <p className="text-muted">Confluence pages, Jira issues and Azure DevOps work items, synced and searchable. The agent pulls them mid-task, so a run is grounded in the design page and the ticket that asked for it &mdash; not just the file.</p>
                 </div>
               </div>
 
               {/* Feature 3 */}
               <div className="bg-surface border border-line p-8 rounded-xl hover:border-line-strong transition-colors duration-500 relative overflow-hidden">
                 <div className="relative z-10">
-                  <div className="w-14 h-14 rounded-xl bg-white/5 border border-line flex items-center justify-center mb-6 text-purple-400"><Icon name="clipboard-list" size={26} /></div>
-                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Your Azure DevOps tickets</h3>
-                  <p className="text-muted">Work items, user stories and PR context synced and searchable, so a run can be grounded in the ticket that asked for it.</p>
+                  <div className="w-14 h-14 rounded-xl bg-white/5 border border-line flex items-center justify-center mb-6 text-purple-400"><Icon name="laptop" size={26} /></div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">In your editor, or on its own</h3>
+                  <p className="text-muted">Install it in VS Code, Cursor or Antigravity &mdash; or run WorkspaceGPT Desktop, the same agent as an app for macOS and Windows. Open a folder and go.</p>
                 </div>
               </div>
 
@@ -417,7 +429,7 @@ export default function Home() {
                 {
                   icon: "search" as const,
                   title: "Codebase understanding",
-                  body: "ripgrep search plus symbol, definition and reference lookup through your editor's own language server.",
+                  body: "ripgrep search plus symbol, definition and reference lookup through a real language server — your editor's, or the one bundled with Desktop.",
                 },
                 {
                   icon: "clipboard-list" as const,
@@ -442,7 +454,7 @@ export default function Home() {
                 {
                   icon: "plug" as const,
                   title: "MCP server",
-                  body: "Ships an MCP server that exposes your Confluence and ADO search to Claude Desktop, Cursor and other MCP clients.",
+                  body: "Ships an MCP server that exposes your Confluence, Jira and Azure DevOps search to Claude Desktop, Cursor and other MCP clients.",
                 },
                 {
                   icon: "wifi-off" as const,
@@ -530,6 +542,95 @@ export default function Home() {
           </div>
         </section>
 
+        {/* Install: the editor extension and the desktop app side by side. SiteNav
+            links here (/#install) from every page. */}
+        <section data-reveal id="install" className="py-16 sm:py-24 border-t border-line">
+          <div className="container mx-auto px-6 max-w-5xl">
+            <div className="text-center mb-12 sm:mb-16">
+              <h2 className="text-3xl sm:text-5xl font-normal text-foreground mb-4 tracking-tight">Run it where you work</h2>
+              <p className="text-muted text-base sm:text-lg max-w-2xl mx-auto">
+                The same agent, the same knowledge and the same privacy guarantees &mdash; in your editor, or as an app of its own.
+              </p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Desktop */}
+              <div className="bg-surface border border-line rounded-xl p-8 hover:border-line-strong transition-colors duration-500 flex flex-col">
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="text-brand"><Icon name="laptop" size={22} /></span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-brand/10 text-brand border-brand/20">New &middot; macOS &middot; Windows</span>
+                </div>
+                <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">WorkspaceGPT Desktop</h3>
+                <p className="text-muted leading-relaxed mb-6">
+                  No editor needed. Open a project folder and the agent reads, edits and tests it, with your Confluence,
+                  Jira and Azure DevOps knowledge in reach. Paste one line:
+                </p>
+                {DESKTOP_INSTALL.map((d) => (
+                  <div key={d.os} className="mb-3">
+                    <p className="text-xs text-faint mb-1.5">
+                      <span className="text-foreground font-medium">{d.os}</span> &middot; {d.where}
+                    </p>
+                    <div className="bg-background border border-line rounded-xl p-3 pl-4 font-mono text-xs sm:text-sm text-brand-blue flex items-start justify-between gap-3">
+                      <code className="break-all leading-relaxed">{d.command}</code>
+                      <button
+                        onClick={() => copyInstallCommand(d.command)}
+                        aria-label={`Copy the ${d.os} install command`}
+                        className="shrink-0 text-faint hover:text-foreground transition-colors p-1"
+                      >
+                        <Icon name={copied === d.command ? "check" : "copy"} size={18} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <ul className="space-y-2.5 text-sm text-muted mt-4 mb-6">
+                  <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="check" size={16} /></span> Apple Silicon and Intel Macs (macOS 12+), and Windows x64</li>
+                  <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="refresh" size={16} /></span> Updates itself &mdash; every update is signed and verified before it installs</li>
+                  <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="lock" size={16} /></span> Secrets in the macOS Keychain or Windows Credential Manager; indexes stay on your machine</li>
+                </ul>
+                <div className="mt-auto">
+                  <a
+                    href={DESKTOP_RELEASES_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-sm text-brand hover:underline"
+                  >
+                    <Icon name="download" size={16} /> Prefer a DMG or setup.exe? Download it from GitHub
+                  </a>
+                  <p className="text-xs text-faint mt-2 leading-relaxed">
+                    The app isn&apos;t notarized or code-signed yet. The one-line installers need nothing extra.
+                    A DMG needs one &ldquo;Open Anyway&rdquo; in System Settings &rsaquo; Privacy &amp; Security; a
+                    browser-downloaded setup.exe needs &ldquo;More info &rsaquo; Run anyway&rdquo;. Linux is on the way.
+                  </p>
+                </div>
+              </div>
+
+              {/* Editor extension */}
+              <div className="bg-surface border border-line rounded-xl p-8 hover:border-line-strong transition-colors duration-500 flex flex-col">
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="text-brand-blue"><Icon name="sparkles" size={22} /></span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-blue-500/10 text-blue-400 border-blue-500/20">VS Code &middot; Cursor &middot; Antigravity</span>
+                </div>
+                <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Editor extension</h3>
+                <p className="text-muted leading-relaxed mb-6">
+                  Lives in your editor&apos;s sidebar or a full editor tab, and uses your editor&apos;s own language server
+                  for symbol lookups. From the VS Code Marketplace, or Open VSX for Cursor and Antigravity.
+                </p>
+                <div className="bg-background border border-line rounded-xl p-3 pl-4 font-mono text-xs sm:text-sm text-brand-blue mb-6">
+                  <code>ext install Riteshkant.workspacegpt-extension</code>
+                </div>
+                <div className="mt-auto">
+                  <button
+                    onClick={openInstallModal}
+                    className="bg-brand hover:bg-[#3df5c2] text-black font-medium px-5 py-2.5 rounded-lg transition-colors text-sm"
+                  >
+                    Install in your editor
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Setup & Installation Guide */}
         <section id="getting-started" className="py-6 sm:py-10 border-t border-line bg-background">
           <div className="container mx-auto px-6 max-w-5xl">
@@ -545,10 +646,12 @@ export default function Home() {
                     <h3 className="text-2xl font-semibold text-white">Installation</h3>
                   </div>
                   <div className="pl-12 space-y-4 text-muted">
-                    <p>WorkspaceGPT is available directly through the marketplace. Install it for VS Code, Cursor, or Antigravity.</p>
-                    <div className="bg-surface border border-line rounded-xl p-4 font-mono text-sm text-brand-blue flex justify-between items-center">
+                    <p>
+                      Add the extension to VS Code, Cursor or Antigravity, or install{" "}
+                      <Link href="#install" className="text-brand hover:underline">WorkspaceGPT Desktop</Link> on a Mac.
+                    </p>
+                    <div className="bg-surface border border-line rounded-xl p-4 font-mono text-sm text-brand-blue">
                       <span>ext install Riteshkant.workspacegpt-extension</span>
-                      <svg className="w-5 h-5 text-faint" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
                     </div>
                   </div>
                 </div>
@@ -584,7 +687,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Column 2: Integrations */}
+              {/* Column 2: Knowledge */}
               <div className="space-y-10">
                 <div>
                   <div className="flex items-center gap-4 mb-4">
@@ -595,17 +698,17 @@ export default function Home() {
                     <div className="bg-surface border border-line p-5 rounded-xl relative overflow-hidden group">
                       <div className="absolute top-0 right-0 w-full h-full bg-blue-500/5 group-hover:bg-blue-500/10 transition-colors pointer-events-none"></div>
                       <h4 className="text-blue-400 font-semibold mb-2 flex items-center gap-2">
-                         Confluence Start
+                        Confluence and Jira
                       </h4>
-                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Knowledge {`>`} Confluence</code>. Click <strong>Sign in</strong> for one-click auth, and hit <strong>Sync</strong>.</p>
+                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Knowledge {`>`} Confluence</code> or <strong>Jira</strong> and click <strong>Connect</strong> to sign in with your Atlassian account. Pick a space or project and hit <strong>Sync</strong>.</p>
                     </div>
 
                     <div className="bg-surface border border-line p-5 rounded-xl relative overflow-hidden group">
                       <div className="absolute top-0 right-0 w-full h-full bg-purple-500/5 group-hover:bg-purple-500/10 transition-colors pointer-events-none"></div>
                       <h4 className="text-purple-400 font-semibold mb-2 flex items-center gap-2">
-                        ADO Synchronization
+                        Azure DevOps
                       </h4>
-                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Knowledge {`>`} Azure DevOps</code>. Enter PAT to sync pull requests, tickets, and work items.</p>
+                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Knowledge {`>`} Azure DevOps</code>, enter your organization and a Personal Access Token to sync work items and the tickets behind <em>Your work</em>.</p>
                     </div>
                   </div>
                 </div>
