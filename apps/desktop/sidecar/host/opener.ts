@@ -81,7 +81,12 @@ export async function openInEditor(file: string, line?: number): Promise<void> {
       return;
     }
   }
-  await systemOpen(file);
+  // Shown as text, like VS Code's showTextDocument — never run: the OS
+  // default app for `x.command` / `.jar` / `.webloc` (or `.bat` on Windows)
+  // executes it, and the file may be one the agent just wrote.
+  if (process.platform === 'darwin') await launch('open', ['-t', file]);
+  else if (process.platform === 'win32') await launch('notepad.exe', [file]);
+  else await systemOpen(file);
 }
 
 function pipeTo(cmd: string, args: string[], input: string): Promise<void> {

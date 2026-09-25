@@ -47,7 +47,7 @@ export function computeTitleActions(extensionDir: string, viewId: string, contex
   const commands = new Map<string, any>((pkg.contributes?.commands ?? []).map((c: any) => [c.command, c]));
   const keys = new Map(contextKeys);
   keys.set('view', viewId);
-  const iconUrl = (rel: unknown) => (typeof rel === 'string' && !rel.startsWith('$(') ? `/_res${encodeURI(path.join(extensionDir, rel))}` : undefined);
+  const iconUrl = (rel: unknown) => (typeof rel === 'string' && !rel.startsWith('$(') ? `/_res${encodeURI(path.join(extensionDir, rel)).replace(/[?#]/g, encodeURIComponent)}` : undefined);
   return (pkg.contributes?.menus?.['view/title'] ?? [])
     .filter((m: any) => String(m.group ?? '').startsWith('navigation'))
     .filter((m: any) => !(m.command in HIDDEN_IN_DESKTOP) && evaluateWhen(m.when, keys))

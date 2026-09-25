@@ -35,6 +35,8 @@ interface DesktopConfig {
 export interface ShellHooks {
   token?: string;
   hostMessage(viewType: string, message: unknown): void;
+  /** A message the view posted to the host (after it was sent). */
+  viewMessage?(viewType: string, message: unknown): void;
   toolbar(viewType: string, items: unknown[]): void;
 }
 
@@ -219,6 +221,11 @@ interface UiFrame {
     return {
       postMessage: (message: unknown) => {
         send({ t: 'msg', d: message });
+        try {
+          shell()?.viewMessage?.(viewType, message);
+        } catch {
+          /* best-effort, as in deliver() */
+        }
         // The page just attached its listener (see READY_SIGNAL); hand over
         // what arrived meanwhile, after the effect that posted this returns.
         if (held && (message as { type?: string } | null)?.type === READY_SIGNAL[viewType]) setTimeout(release, 0);
@@ -500,9 +507,15 @@ interface UiFrame {
       const button = (label: string, action: string, primary = false, idx?: number) => {
         const b = el('button', `wgpt-btn${primary ? ' primary' : ''}`, label) as HTMLButtonElement;
         b.onclick = () => {
-          b.disabled = true;
+          // Hunks go by index, and every keep/revert renumbers them: nothing
+          // that changes the file is clickable again until the panel redraws.
+          // Open in editor changes nothing (and brings no redraw).
+          if (action !== 'openInEditor') {
+            diffEl?.querySelectorAll<HTMLButtonElement>('button[data-diff-edit]').forEach((other) => (other.disabled = true));
+          }
           diffAction(action, idx);
         };
+        if (action !== 'openInEditor') b.dataset.diffEdit = '';
         return b;
       };
       if (frame.reviewable && frame.hunks.length) head.append(button('Revert all', 'revertAll'), button('Keep all', 'keepAll', true));

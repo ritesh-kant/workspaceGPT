@@ -163,7 +163,9 @@ const ModelSettings: React.FC = () => {
   }, [selectedModelProvider]);
 
   const summary = apiKeyError
-    ? '⚠️ Check API key'
+    ? MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === selectedModelProvider.provider)?.requireApiKey
+      ? '⚠️ Check API key'
+      : '⚠️ No models found'
     : configuredKeyCount === 0
       ? 'No API key set'
       : `${selectedModelProvider.provider}${selectedModelProvider.selectedModel ? ` · ${selectedModelProvider.selectedModel}` : ' · no model selected'}`;
@@ -260,6 +262,12 @@ const ModelSettings: React.FC = () => {
                 </div>
               </details>
             </div>
+          )}
+
+        {/* Providers without a key field (Ollama) have nowhere else to show why no models loaded. */}
+        {apiKeyError &&
+          !MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === selectedModelProvider.provider)?.requireApiKey && (
+            <small className='form-text error-message'>{apiKeyError}</small>
           )}
 
         {showSelectModelValidator() && (
