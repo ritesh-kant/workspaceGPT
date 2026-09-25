@@ -2424,7 +2424,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // completions that are paid once and discarded — instead of letting the
   // main loop accumulate raw file dumps in `messages` across many rounds.
   // Deterministic scout/cluster/merge; the model is only ever asked to
-  // answer, never to plan the split. See EXPLORATION-DECOMPOSITION-DESIGN.md.
+  // answer, never to plan the split. See docs/design/exploration-decomposition.md.
   // Best-effort throughout: any failure here falls through to the loop below
   // running exactly as it does today.
   //
@@ -2578,7 +2578,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         usedPct: contextNow.usedPct,
         remainingPct: contextNow.remainingPct,
         // Truncated-result count, so the meter can say the context has already
-        // been trimmed once. Not summarizing compaction — see TODO.md.
+        // been trimmed once. Not summarizing compaction — see docs/todo.md.
         compactions: toolResultLog.filter((e) => e.compacted).length,
         // Where that occupancy came from. The total above is the provider's;
         // this split is derived from the same payload it counted, so the two
@@ -3439,7 +3439,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // ── Running out of room ends the run; running out of TURNS no longer does ──
     // Automatic summarizing compaction (which would let a run continue past a
     // full context, the way Claude Code does) is deliberately not built yet —
-    // see TODO.md. Until it is, a genuinely full context is a real stop, and
+    // see docs/todo.md. Until it is, a genuinely full context is a real stop, and
     // the honest one: the model cannot be shown any more. Note this is a much
     // later stop than the old 33-turn cap, and the narrowing above has already
     // pushed the run to conclude before it gets here.

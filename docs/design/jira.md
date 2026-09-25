@@ -1,6 +1,6 @@
 # WorkspaceGPT — Jira Integration (Design)
 
-> Status: **Draft for review** · Owner: Ritesh · Last updated: 2026-09-15
+> Status: **Built** (P0–P9, then OAuth 3LO connect) — `services/jira/`, `JiraMessageHandler`, the MCP `search_jira` tool · Owner: Ritesh · Design last updated: 2026-09-15
 >
 > Brings Jira to parity with the Azure DevOps integration, by first extracting
 > the **provider seam** that ADO is currently fused to, then implementing Jira
@@ -30,7 +30,7 @@ Supporting both adds roughly **40%** to every phase below. Settle this before
 anyone commits to a date — it is the single biggest swing in the estimate.
 
 **Naming collision to avoid.** `SourceProvider = … | 'jira' | …` already exists
-in [constants.ts](apps/vscode-extensions/constants.ts) — that is the
+in [constants.ts](../../apps/vscode-extensions/constants.ts) — that is the
 **deployment/release roster** source in `release-core`, an unrelated feature.
 This document never touches it. Nothing here should be named `SourceProvider`.
 
@@ -42,26 +42,26 @@ The inventory this design has to reproduce:
 
 | Feature | Where | LOC |
 |---|---|---|
-| Auth — 3 modes (MSAL, `az cli`, PAT) + 20-min token refresh | [adoAuthService.ts](apps/vscode-extensions/src/services/ado/adoAuthService.ts) | 368 |
-| Live ticket read + comments + inline images→base64 for vision | [adoWorkItemService.ts](apps/vscode-extensions/src/services/ado/adoWorkItemService.ts) | 495 |
-| Bulk sync worker — WIQL, batched fetch, concurrent comments, md conversion | [adoWorker.ts](apps/vscode-extensions/src/workers/ado/adoWorker.ts) | 363 |
-| Embedding/indexing into the `'ADO'` namespace | [adoEmbeddingService.ts](apps/vscode-extensions/src/services/ado/adoEmbeddingService.ts) | 486 |
-| Resumable sync + progress persistence | [adoService.ts](apps/vscode-extensions/src/services/ado/adoService.ts) | 321 |
-| Scheduled background sync | [adoSyncScheduler.ts](apps/vscode-extensions/src/services/ado/adoSyncScheduler.ts) | 202 |
-| 16 webview message cases, org/project discovery, identity | [AdoMessageHandler.ts](apps/vscode-extensions/src/handlers/AdoMessageHandler.ts) | 605 |
-| Settings UI | [AdoSettings.tsx](apps/vscode-extensions/webview/src/components/settings/AdoSettings.tsx) | 380 |
-| My Work panel + sprint detection/ordering | [MyWorkPanel.tsx](apps/vscode-extensions/webview/src/components/MyWorkPanel.tsx) | 207 |
+| Auth — 3 modes (MSAL, `az cli`, PAT) + 20-min token refresh | [adoAuthService.ts](../../apps/vscode-extensions/src/services/ado/adoAuthService.ts) | 368 |
+| Live ticket read + comments + inline images→base64 for vision | [adoWorkItemService.ts](../../apps/vscode-extensions/src/services/ado/adoWorkItemService.ts) | 495 |
+| Bulk sync worker — WIQL, batched fetch, concurrent comments, md conversion | [adoWorker.ts](../../apps/vscode-extensions/src/workers/ado/adoWorker.ts) | 363 |
+| Embedding/indexing into the `'ADO'` namespace | [adoEmbeddingService.ts](../../apps/vscode-extensions/src/services/ado/adoEmbeddingService.ts) | 486 |
+| Resumable sync + progress persistence | [adoService.ts](../../apps/vscode-extensions/src/services/ado/adoService.ts) | 321 |
+| Scheduled background sync | [adoSyncScheduler.ts](../../apps/vscode-extensions/src/services/ado/adoSyncScheduler.ts) | 202 |
+| 16 webview message cases, org/project discovery, identity | [AdoMessageHandler.ts](../../apps/vscode-extensions/src/handlers/AdoMessageHandler.ts) | 605 |
+| Settings UI | [AdoSettings.tsx](../../apps/vscode-extensions/webview/src/components/settings/AdoSettings.tsx) | 380 |
+| My Work panel + sprint detection/ordering | [MyWorkPanel.tsx](../../apps/vscode-extensions/webview/src/components/MyWorkPanel.tsx) | 207 |
 
 Plus thin-but-wide coupling that is easy to miss when scoping:
 
-- `search_tickets` / `get_ticket` tool defs ([modelWorker.ts](apps/vscode-extensions/src/workers/model/modelWorker.ts)) and their dispatch ([chatService.ts](apps/vscode-extensions/src/services/chatService.ts))
-- `ToolAvailability.ado` gating ([toolScope.ts](apps/vscode-extensions/src/workers/model/toolScope.ts))
-- ADO URL/filename regexes and `work-item` ref kind ([referenceIndex.ts](apps/vscode-extensions/src/services/agent/referenceIndex.ts))
-- `#<id>` → `dev.azure.com` citation linking ([ticketRefs.ts](apps/vscode-extensions/webview/src/utils/ticketRefs.ts))
-- Source routing ([queryClassifier.ts](apps/vscode-extensions/src/utils/queryClassifier.ts), [turnRouting.ts](apps/vscode-extensions/src/utils/turnRouting.ts))
-- Ship write-back — `AB#<id>` trailer, branch type from work-item type, report posted as an HTML comment ([shipService.ts](apps/vscode-extensions/src/services/agent/shipService.ts))
-- MCP `search_ado` tool ([searchTools.ts](apps/workspacegpt-mcp/src/tools/searchTools.ts)) and its data-dir probe ([dataDir.ts](apps/workspacegpt-mcp/src/utils/dataDir.ts))
-- Chrome extension `'ADO'` source ([retrieval.ts](apps/chrome-extension/src/lib/retrieval.ts))
+- `search_tickets` / `get_ticket` tool defs ([modelWorker.ts](../../apps/vscode-extensions/src/workers/model/modelWorker.ts)) and their dispatch ([chatService.ts](../../apps/vscode-extensions/src/services/chatService.ts))
+- `ToolAvailability.ado` gating ([toolScope.ts](../../apps/vscode-extensions/src/workers/model/toolScope.ts))
+- ADO URL/filename regexes and `work-item` ref kind ([referenceIndex.ts](../../apps/vscode-extensions/src/services/agent/referenceIndex.ts))
+- `#<id>` → `dev.azure.com` citation linking ([ticketRefs.ts](../../apps/vscode-extensions/webview/src/utils/ticketRefs.ts))
+- Source routing ([queryClassifier.ts](../../apps/vscode-extensions/src/utils/queryClassifier.ts), [turnRouting.ts](../../apps/vscode-extensions/src/utils/turnRouting.ts))
+- Ship write-back — `AB#<id>` trailer, branch type from work-item type, report posted as an HTML comment ([shipService.ts](../../apps/vscode-extensions/src/services/agent/shipService.ts))
+- MCP `search_ado` tool ([searchTools.ts](../../apps/workspacegpt-mcp/src/tools/searchTools.ts)) and its data-dir probe ([dataDir.ts](../../apps/workspacegpt-mcp/src/utils/dataDir.ts))
+- Chrome extension `'ADO'` source ([retrieval.ts](../../apps/chrome-extension/src/lib/retrieval.ts))
 
 > **`packages/jira-utils` is not a head start.** It and `packages/azure-devops-utils`
 > are stale `dist/`-only build leftovers from March with no `src` and no
@@ -80,7 +80,7 @@ Plus thin-but-wide coupling that is easy to miss when scoping:
 3. **Capability from facts, not keywords.** `ToolAvailability` grows a
    `tickets: boolean` derived from "any tracker authenticated" — never from
    parsing the user's text. Same rule as
-   [toolScope.ts](apps/vscode-extensions/src/workers/model/toolScope.ts) states today.
+   [toolScope.ts](../../apps/vscode-extensions/src/workers/model/toolScope.ts) states today.
 4. **Tool names stay provider-neutral.** `search_tickets` and `get_ticket`
    already are. The model must not learn `search_jira` vs `search_ado` — that
    is a prompt tax per provider and invites failed calls.
@@ -97,7 +97,7 @@ Plus thin-but-wide coupling that is easy to miss when scoping:
 
 `TicketDetail.id` is `number`. `parseWorkItemId` deliberately takes the
 *trailing digit run*, documented in
-[adoWorkItemService.ts](apps/vscode-extensions/src/services/ado/adoWorkItemService.ts)
+[adoWorkItemService.ts](../../apps/vscode-extensions/src/services/ado/adoWorkItemService.ts)
 as correct because ADO work items are plain integers and `TKT-`/`D2C-` prefixes
 are org conventions the engine must not learn.
 
@@ -128,7 +128,7 @@ green, is what keeps it from contaminating every later phase.
 ### 4.1 The interface
 
 ```ts
-/** A ticket tracker. One implementation per vendor; see NORTH-STAR.md §1. */
+/** A ticket tracker. One implementation per vendor; see docs/north-star.md §1. */
 export interface TicketProvider {
   /** Stable key: 'ado' | 'jira'. Used for storage keys, namespaces, telemetry. */
   readonly kind: TrackerKind;
@@ -170,15 +170,15 @@ message-handler path, not through this object.
 
 Five places hardcode the source union and all must become registry lookups:
 
-- [types.ts:46](apps/vscode-extensions/src/types/types.ts) — `DataSource = 'CONFLUENCE' | 'ADO' | 'CODEBASE'`
-- [types.ts:23](apps/vscode-extensions/src/types/types.ts) — `sourceName: 'CONFLUENCE' | 'ADO'`
-- [searchProcess.ts:24,78,441](apps/vscode-extensions/src/workers/common/searchProcess.ts) — `currentNamespace`
-- [embeddingManifest.ts:24](packages/embedding-core/src/embeddingManifest.ts) — `source: 'CONFLUENCE' | 'ADO'`
-- [retrieval.ts](apps/chrome-extension/src/lib/retrieval.ts) — the extension's own copy
+- [types.ts:46](../../apps/vscode-extensions/src/types/types.ts) — `DataSource = 'CONFLUENCE' | 'ADO' | 'CODEBASE'`
+- [types.ts:23](../../apps/vscode-extensions/src/types/types.ts) — `sourceName: 'CONFLUENCE' | 'ADO'`
+- [searchProcess.ts:24,78,441](../../apps/vscode-extensions/src/workers/common/searchProcess.ts) — `currentNamespace`
+- [embeddingManifest.ts:24](../../packages/embedding-core/src/embeddingManifest.ts) — `source: 'CONFLUENCE' | 'ADO'`
+- [retrieval.ts](../../apps/chrome-extension/src/lib/retrieval.ts) — the extension's own copy
 
 The vector store itself is namespace-agnostic; only these type unions and the
 `namespace: 'ADO'` literals in
-[adoEmbeddingService.ts](apps/vscode-extensions/src/services/ado/adoEmbeddingService.ts)
+[adoEmbeddingService.ts](../../apps/vscode-extensions/src/services/ado/adoEmbeddingService.ts)
 pin it. Adding `'JIRA'` is a type change plus a data-dir entry, not a storage
 migration.
 
@@ -186,7 +186,7 @@ migration.
 
 `ToolAvailability.ado: boolean` → `tickets: boolean`, and
 `TOOL_REQUIREMENTS.search_tickets/get_ticket` point at it. The prompt text in
-[promptTemplates.ts](apps/vscode-extensions/src/utils/promptTemplates.ts) that
+[promptTemplates.ts](../../apps/vscode-extensions/src/utils/promptTemplates.ts) that
 says "Azure DevOps" becomes the active provider's `label`.
 
 `turnRouting`'s context-picker case `'Azure DevOps' → 'ADO'` becomes a registry
@@ -236,7 +236,7 @@ comments as **Atlassian Document Format** — a JSON node tree, not HTML.
 Needed: ADF → markdown/plain text (paragraph, heading, list, code block, table,
 link, mention, panel), and the reverse for `addComment`, since Jira expects ADF
 on the way in where ADO takes an HTML subset (`reportToHtml` in
-[shipHelpers.ts](apps/vscode-extensions/src/services/agent/shipHelpers.ts)
+[shipHelpers.ts](../../apps/vscode-extensions/src/services/agent/shipHelpers.ts)
 already proves the shape of that converter).
 
 Attachments differ structurally: ADO embeds `<img src>` in description HTML and
@@ -254,7 +254,7 @@ no shape change once P0 lands: `issuetype.name` → `type`, `status.name` →
 
 ### P5 · Sync worker + indexing — 4–5 d
 
-Clone of [adoWorker.ts](apps/vscode-extensions/src/workers/ado/adoWorker.ts)'s
+Clone of [adoWorker.ts](../../apps/vscode-extensions/src/workers/ado/adoWorker.ts)'s
 *shape*, different query layer:
 
 - WIQL `SELECT … WHERE [System.ChangedDate] >= @today - N` → JQL
@@ -294,7 +294,7 @@ plumbing that the seam does not remove.
 ### P8 · Peripheral surfaces — 3–4 d
 
 Ship write-back (Jira uses the bare key as its smart-commit trailer;
-`conventionalCommitType` in [shipHelpers.ts](apps/vscode-extensions/src/services/agent/shipHelpers.ts)
+`conventionalCommitType` in [shipHelpers.ts](../../apps/vscode-extensions/src/services/agent/shipHelpers.ts)
 already matches on `bug|defect` and `feature|story|epic|enhancement`, which
 covers Jira's issue-type names as-is and likely needs no change), `referenceIndex`
 patterns, `ticketRefs` linking, `queryClassifier` keywords (which already

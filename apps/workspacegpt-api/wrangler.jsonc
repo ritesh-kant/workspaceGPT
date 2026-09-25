@@ -15,7 +15,7 @@
     // D1 table, with no redeploy — the Worker reads that table on each request
     // (batched with the user lookup, so it's free). Precedence and the exact
     // key names live in src/config.ts; the wrangler commands to set them are in
-    // CLOUDFLARE-REMOTE-MODE-DESIGN.md §"Configuration".
+    // docs/design/remote-mode.md §"Configuration".
 
     // Which upstream vendor remote-mode requests are routed to — "openrouter"
     // or "custom" (see ProviderName in src/config.ts). Each has its own key +

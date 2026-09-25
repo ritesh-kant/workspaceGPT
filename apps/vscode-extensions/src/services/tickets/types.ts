@@ -3,14 +3,14 @@
  *
  * These used to be declared inside adoWorkItemService.ts, ADO-specific by
  * file even though nothing in their shape was. This is the extraction
- * JIRA-INTEGRATION-DESIGN.md §4 calls for: adoWorkItemService.ts now imports
+ * docs/design/jira.md §4 calls for: adoWorkItemService.ts now imports
  * and re-exports these (so every existing `from '../ado/adoWorkItemService'`
  * import keeps working, unchanged), and a future JiraTicketProvider returns
  * the same shapes without owing anything to the ADO module.
  *
  * `id`/`parentId` are strings throughout — an ADO work item's id happens to
  * be a digit run, but a Jira issue key ("PROJ-123") is not, and nothing here
- * should assume otherwise. See JIRA-INTEGRATION-DESIGN.md §3.
+ * should assume otherwise. See docs/design/jira.md §3.
  */
 
 export interface TicketComment {

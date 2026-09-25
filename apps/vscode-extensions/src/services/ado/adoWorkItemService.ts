@@ -19,7 +19,7 @@ import { sniffImageMime } from '../tickets/imageSniff';
 // TicketComment/TicketImage/TicketDetail moved to ../tickets/types.ts (they were
 // never ADO-specific in shape) — re-exported here so every existing
 // `from '../ado/adoWorkItemService'` import keeps working unchanged. See
-// JIRA-INTEGRATION-DESIGN.md §4.
+// docs/design/jira.md §4.
 export type { TicketComment, TicketImage, TicketDetail };
 
 interface AdoRequestContext {
@@ -33,13 +33,13 @@ interface AdoRequestContext {
  * string. ("Canonical" here is still a plain digit run — ADO ids are
  * genuinely numeric — but returning a string rather than a `number` keeps this
  * function's signature identical in shape to a future provider's, e.g. a Jira
- * `parseId` that returns "PROJ-123" unchanged; see JIRA-INTEGRATION-DESIGN.md
+ * `parseId` that returns "PROJ-123" unchanged; see docs/design/jira.md
  * §3.)
  *
  * Prefixes like `TKT-`, `D2C-` or a leading `#` are *organisation conventions*,
  * not part of Azure DevOps: work items are plain integers. So rather than
  * knowing any org's prefix (which would put an org string in the engine — see
- * NORTH-STAR.md), take the trailing digit run and ignore whatever precedes it.
+ * docs/north-star.md), take the trailing digit run and ignore whatever precedes it.
  */
 export function parseWorkItemId(raw: string): string {
   const match = String(raw ?? '').trim().match(/(\d+)\s*$/);
@@ -283,7 +283,7 @@ const MY_WORK_ITEMS_LIMIT = 50;
  * how to parse — a leaked ADO assumption a Jira provider couldn't honour: a
  * Jira sprint is a bare name with no path to parse, and the old function's
  * "one segment means no sprint" rule would have swallowed every real Jira
- * sprint name (JIRA-INTEGRATION-DESIGN.md §5 P6, discovered during that
+ * sprint name (docs/design/jira.md §5 P6, discovered during that
  * phase). Resolving it here means TicketSummary.sprint is always
  * already-a-display-name, whichever provider set it.
  */

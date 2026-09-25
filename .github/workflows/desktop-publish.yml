@@ -1,8 +1,8 @@
 name: Publish Desktop App
 
 # Builds and publishes the WorkspaceGPT desktop app (apps/desktop, Tauri) for
-# macOS arm64 and x64 and Windows x64 (DESKTOP-TAURI-PLAN.md Phase 3). Linux is
-# not built yet.
+# macOS arm64 and x64 and Windows x64 (docs/design/desktop.md Phase 3). Linux
+# is not built yet.
 #
 #   - Push a tag desktop-vX.Y.Z: build every target, create release
 #     desktop-vX.Y.Z (DMGs, the Windows installer, updater bundles + .sig,

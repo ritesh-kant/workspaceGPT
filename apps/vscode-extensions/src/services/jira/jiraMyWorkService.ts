@@ -4,7 +4,7 @@ import { MyTicketsResult, TicketSummary } from '../tickets/types';
 import { JiraAuthService, jiraApiBase } from './jiraAuthService';
 
 /**
- * "Your work" for Jira — JIRA-INTEGRATION-DESIGN.md §5 P6.
+ * "Your work" for Jira — docs/design/jira.md §5 P6.
  *
  * Sprint here is the genuinely uncertain part (design doc §8 risk 3): Jira's
  * Sprint field is a CUSTOM field whose id varies per site, and its value

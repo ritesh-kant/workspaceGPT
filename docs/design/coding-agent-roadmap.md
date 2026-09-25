@@ -2,13 +2,13 @@
 
 > Status: **Draft for review** · Owner: Ritesh · Last updated: 2026-08-15
 >
-> Companion to [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) (the
-> billing/privacy backbone) and [ARCHITECTURE.md](ARCHITECTURE.md). This doc
+> Companion to [remote-mode.md](remote-mode.md) (the billing/privacy
+> backbone, as built) and [architecture.md](../architecture.md). This doc
 > answers: *what does it take to be a credible alternative to Cursor and
 > Claude Code, and in what order?*
 >
 > The canonical statement of the positioning lives in
-> [NORTH-STAR.md](NORTH-STAR.md) — §1 below is the working version of it.
+> [docs/north-star.md](../north-star.md) — §1 below is the working version of it.
 
 ---
 
@@ -52,7 +52,7 @@ and forks like Antigravity are already a distribution channel via Open VSX).
 | Asset | State | Role in the agent |
 |---|---|---|
 | Tool-calling loop in chat (`modelWorker.ts` TOOL_DEFS) | working | the agent loop seed |
-| Read tools: ripgrep search, read file, list/find files, LSP symbols/defs/refs, repo orientation ([codebaseTools.ts](apps/vscode-extensions/src/services/codebase/codebaseTools.ts)) | working, read-only | the "explore" half of the agent |
+| Read tools: ripgrep search, read file, list/find files, LSP symbols/defs/refs, repo orientation ([codebaseTools.ts](../../apps/vscode-extensions/src/services/codebase/codebaseTools.ts)) | working, read-only | the "explore" half of the agent |
 | Confluence + ADO RAG (sync, embeddings, Qdrant/local store) | live | org-knowledge tools |
 | Live codebase tools (search, reads, LSP navigation, repo orientation) | working | workspace exploration without a persistent index |
 | `workspacegpt-mcp` | exists | MCP surface for our tools |
@@ -192,7 +192,7 @@ allow it.
 
 ## 4. Build order
 
-> **Superseded by [PHASES.md](PHASES.md)** — the canonical master phase plan
+> **Superseded by [docs/roadmap.md](../roadmap.md)** — the canonical master phase plan
 > that merges this table with the SaaS build order. The table below is kept
 > as the original one-glance rationale.
 

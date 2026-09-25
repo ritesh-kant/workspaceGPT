@@ -13,7 +13,7 @@
  *
  * NOTE: automatic summarizing compaction — which would let a run continue past
  * a full context the way Claude Code does — is deliberately NOT built yet (see
- * TODO.md). Until it is, a full context genuinely ends a run. That is still a
+ * docs/todo.md). Until it is, a full context genuinely ends a run. That is still a
  * far later and far more honest stop than the turn cap it replaced.
  *
  * The number it watches is measured, not guessed: every completion response

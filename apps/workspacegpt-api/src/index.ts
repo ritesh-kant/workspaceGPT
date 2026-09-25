@@ -25,7 +25,7 @@ import { readUsageSnapshot } from './usage';
  *   · data     — `POST /v1/chat/completions`: OpenAI-compatible proxy to
  *                OpenRouter on the vendor's key, session-validated per request
  *                and capped per user per day (chat.ts / usage.ts).
- * See CLOUDFLARE-REMOTE-MODE-DESIGN.md at the repo root.
+ * See docs/design/remote-mode.md at the repo root.
  *
  * RECONSTRUCTED 2026-08-31 — this entire package was deleted by mistake
  * earlier in the same session, before any of it had been committed to git
@@ -38,7 +38,7 @@ import { readUsageSnapshot } from './usage';
  * whatever was actually running before — re-verify against real GitHub
  * OAuth App credentials and Cloudflare D1/KV resources before trusting it in
  * production. The design doc it was extracted from was
- * lost too; CLOUDFLARE-REMOTE-MODE-DESIGN.md has since been rewritten from
+ * lost too; docs/design/remote-mode.md has since been rewritten from
  * the shipped code.
  *
  * The account-age gate (isAccountOldEnough in auth.ts) was missing from the

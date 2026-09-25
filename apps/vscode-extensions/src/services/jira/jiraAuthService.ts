@@ -6,7 +6,7 @@ import { JIRA_OAUTH, STORAGE_KEYS } from '../../../constants';
  * Jira Cloud auth — OAuth 2.0 (3LO), mirroring confluenceAuthService.ts's
  * flow exactly: same Atlassian app, same token-exchange proxy, same
  * accessible-resources site discovery. Replaced the original API-token
- * (Basic email:token) flow post-P9 — see JIRA-INTEGRATION-DESIGN.md §5 P2
+ * (Basic email:token) flow post-P9 — see docs/design/jira.md §5 P2
  * for that flow's rationale at the time; OAuth turned out to need no new
  * backend, since Confluence's proxy already forwards any Atlassian
  * grant_type/code/refresh_token regardless of product or scope.

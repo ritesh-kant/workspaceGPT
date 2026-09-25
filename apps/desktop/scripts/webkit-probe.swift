@@ -6,7 +6,7 @@
 //
 //   swift scripts/webkit-probe.swift <url> [--wait 6] [--png out.png] [--width 420] [--height 900] [--appearance light|dark] [--run <js> --run-at 3] [--eval '<js expression>']
 //
-// The page is the real chat (DESKTOP-TAURI-PLAN.md challenge #4: the webview
+// The page is the real chat (docs/design/desktop.md challenge #4: the webview
 // had only ever run in Chromium).
 import Cocoa
 import WebKit

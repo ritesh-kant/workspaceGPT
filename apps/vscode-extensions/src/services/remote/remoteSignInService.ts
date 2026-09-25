@@ -78,7 +78,7 @@ let inFlightSignIn: RemoteSignInService | null = null;
  * relying on exact field names.
  *
  * Remote-mode SaaS account sign-in (apps/workspacegpt-api Worker — see
- * CLOUDFLARE-REMOTE-MODE-DESIGN.md). Unlike GitHubOAuthService, the Worker
+ * docs/design/remote-mode.md). Unlike GitHubOAuthService, the Worker
  * mediates the entire GitHub round-trip: the extension never sees a GitHub
  * token, only holds an opaque session token minted by the Worker. Flow:
  * open `${REMOTE_AUTH.API_BASE}/auth/login?redirect_uri=<loopback>&state=`,

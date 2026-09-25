@@ -3,7 +3,7 @@
  *
  * The hotfix flow reuses the same resolve → extract → diff → approve → apply
  * spine as config-sync, but the unit of work is *tickets → commits → components
- * → tags* instead of config variables. See §9 of DEPLOYMENT-AUTOMATION-DESIGN.md.
+ * → tags* instead of config variables. See §9 of docs/design/deployment-automation.md.
  *
  * Everything here is pure: the caller (an adapter) fetches commits from the VCS
  * and passes them in; this module decides which component each commit belongs

@@ -1,9 +1,10 @@
 # WorkspaceGPT Desktop (Tauri) — Plan
 
-Status: Phase 0 (headless spike) and Phase 1 (Tauri shell) built 2026-09-24
+Status: Phases 0–3 built (headless spike, Tauri shell, agent tool parity, macOS packaging). desktop-v0.0.1 released 2026-09-25; the 0.0.1 → 0.0.2 in-app update was verified through the public release the same day. Windows x64 released in 0.0.3 (no code signing; see `apps/desktop/NOTES.md` → Windows). Linux not started.
+Earlier status: Phase 0 (headless spike) and Phase 1 (Tauri shell) built 2026-09-24
 on branch `desktop/phase-0`. Results, measurements and every compat API hit
 are in `apps/desktop/NOTES.md`. Written 2026-09-24.
-Supersedes `DESKTOP-APP-BUILD-PROMPT.md` (that draft assumed `@cline/sdk`,
+Supersedes an earlier build prompt (removed 2026-09-25; it assumed `@cline/sdk`,
 Ollama-by-default and "no login"; all three are wrong for today's product).
 
 ## Goal

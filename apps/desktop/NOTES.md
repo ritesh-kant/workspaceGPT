@@ -1,6 +1,6 @@
 # WorkspaceGPT Desktop — build notes
 
-Phase 0 (headless spike) and Phase 1 (Tauri shell) of `DESKTOP-TAURI-PLAN.md`,
+Phase 0 (headless spike) and Phase 1 (Tauri shell) of `docs/design/desktop.md`,
 built 2026-09-24 on branch `desktop/phase-0`. Everything lives in
 `apps/desktop/`; `apps/vscode-extensions/src` and `webview/src` are untouched.
 
@@ -232,14 +232,28 @@ reinstall work and the installed app verifies; a tampered bundle is refused
 (checksum) and nothing is installed. darwin-x64 staging: every native binary is
 x86_64 and signed correctly, but it was **not run** (no Rosetta here).
 
+**First real releases (2026-09-25).** `desktop-v0.0.1` and `desktop-v0.0.2`
+were published by `desktop-publish.yml` once the repo went public (a private
+repo's release assets 404 anonymously, so install.sh and the updater need a
+public repo). Checked against the public URLs:
+- `curl … install.sh | sh` installed 0.0.1 in 29 s (SHA-256 checked, codesign
+  verified, no quarantine xattr). Launched with its bundled Node, and both views
+  connected in ~1.7 s.
+- Updater 0.0.1 → 0.0.2: the first check (30 s after launch) found 0.0.2 in
+  `desktop-latest/latest.json` and downloaded 203 MB with a valid signature.
+  A normal quit logged "installed v0.0.2". Info.plist and
+  `runtime/manifest.json` then read 0.0.2, the signature still verified, and
+  no processes were left. On relaunch it polled and found nothing newer.
+- Keychain: an item created by 0.0.1's `runtime/node` was read by 0.0.2's
+  `runtime/node` with **no prompt**. Node keeps its own Developer ID
+  signature (team HX7739G8FX), which doesn't change between our releases.
+  Expect a prompt once when `NODE_VERSION` changes.
+- The CI-built `.app.tar.gz.sig` files verify against `plugins.updater.pubkey`
+  (key id 00da8e104e544963).
+
 **Not done / open:**
-- A clean-Mac run (no Node, no Homebrew) of install → sign in → connect
-  Confluence → index → grounded answer, and an updater vN → vN+1 through the
-  published release. Needs a first real release (secret + tag).
-- Keychain prompts after an update: the item's owner is `runtime/node`, whose
-  signature is Node's own and doesn't change between our releases, so updates
-  that keep the Node version should not re-prompt. Untested; a Node upgrade
-  probably will.
+- A clean-Mac run (no Node, no Homebrew; ideally an Intel Mac, since x64 was never
+  run here) of install → sign in → connect Confluence → index → grounded answer.
 - Windows (NSIS) and Linux (AppImage): the scripts know the targets, the
   workflow doesn't build them.
 
@@ -700,11 +714,10 @@ built with `--config '{"version":"0.0.2",…}'` and served by
   (`sidecar_entry()`, `WGPT_NODE`). Until Phase 3 bundles them, an update
   replaces only the shell. The mechanism is the same once they're inside the
   `.app`.
-- **Keychain prompts after each update (likely, untested).** An ad-hoc
-  signature is a cdhash, and it changes with every build. macOS keychain
-  ACLs for items the bundled Node created will probably ask again after each
-  update. The test used `WGPT_DESKTOP_SECRETS=memory`. Check this with the
-  real keyring before shipping. A Developer ID signature fixes it.
+- ~~Keychain prompts after each update~~: checked 2026-09-25 through the
+  real 0.0.1 → 0.0.2 update, and there was no prompt. The keychain client is
+  the bundled `runtime/node`, which keeps Node's own Developer ID signature;
+  the ad-hoc-signed shell isn't what the ACL names. See the Phase 3 section.
 - An app installed in `/Applications` by an admin, then run by a non-admin
   user, can't replace itself. The plugin asks for elevation. Not tried.
 

@@ -10,7 +10,7 @@ import { publishSyncState } from '../utils/syncStateStore';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 
 /**
- * Jira Cloud connect/discovery/sync/indexing — JIRA-INTEGRATION-DESIGN.md §5
+ * Jira Cloud connect/discovery/sync/indexing — docs/design/jira.md §5
  * P7 (connect), P5 (sync/indexing, added here). Mirrors AdoMessageHandler's
  * equivalent cases; still no My Work fetch here (§5 P6) — see
  * ticketsMessageHandler.ts for that, which is provider-neutral rather than

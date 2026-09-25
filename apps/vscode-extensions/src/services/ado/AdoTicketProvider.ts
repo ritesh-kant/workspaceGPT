@@ -12,7 +12,7 @@ import { ADO_FILENAME_ID_RE, ADO_URL_ID_RE } from '../agent/referenceIndex';
  * A thin adapter, not a reimplementation: every method delegates to the
  * already-existing, already-tested functions in adoWorkItemService.ts. Its
  * job is only to give ADO the same shape a Jira provider will have — see
- * JIRA-INTEGRATION-DESIGN.md §4.
+ * docs/design/jira.md §4.
  */
 export class AdoTicketProvider implements TicketProvider {
   readonly kind = 'ado' as const;

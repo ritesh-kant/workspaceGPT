@@ -3,10 +3,10 @@
 > Read this before adding any feature. If a proposed feature doesn't serve the
 > position below, it's scope creep — however cool it is.
 >
-> Decided 2026-08-15. Details: [CODING-AGENT-ROADMAP.md](CODING-AGENT-ROADMAP.md)
-> (capabilities + strategy), [PHASES.md](PHASES.md) (sequencing),
-> [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) (privacy/billing backbone),
-> [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md) (differentiator #1,
+> Decided 2026-08-15. Details: [docs/design/coding-agent-roadmap.md](design/coding-agent-roadmap.md)
+> (capabilities + strategy), [docs/roadmap.md](roadmap.md) (sequencing),
+> [docs/design/remote-mode.md](design/remote-mode.md) (privacy/billing backbone),
+> [docs/design/ticket-entry-point.md](design/ticket-entry-point.md) (differentiator #1,
 > made the product's first screen).
 
 ## The one-liner
@@ -28,8 +28,8 @@ already built:
    neither competitor can do out of the box. Cursor and Claude Code start from
    the repo and a prompt; we start from the org's actual context.
 2. **Provable privacy.** Local mode is fully offline — no account, nothing
-   leaves the machine. Remote mode stores nothing readable — client-side
-   encryption means we physically cannot read customer code or documents.
+   leaves the machine. Remote mode keeps the index on the machine and retains nothing — a
+   request is processed in memory and discarded, never logged or stored.
    **Cursor's privacy mode is a policy; ours is architecture.** This is what
    wins regulated/enterprise teams.
 3. **The deploy loop.** `release-core` (config-sync, hotfix → tag → release)

@@ -2,7 +2,7 @@ import { MyTicketsResult, TicketDetail, TrackerKind } from './types';
 
 /**
  * A ticket tracker. One implementation per vendor (AdoTicketProvider today,
- * JiraTicketProvider in JIRA-INTEGRATION-DESIGN.md §5).
+ * JiraTicketProvider in docs/design/jira.md §5).
  *
  * Deliberately NOT on this interface: sync/indexing into the RAG index, auth
  * UI, org/project discovery. Those stay per-provider, reached through the

@@ -5,7 +5,7 @@
  * (sidecar/esbuild.config.mjs), so `import * as vscode from 'vscode'` in
  * apps/vscode-extensions/src lands here, unchanged.
  *
- * Coverage rule (DESKTOP-TAURI-PLAN.md, Decision 2): implement exactly what
+ * Coverage rule (docs/design/desktop.md, Decision 2): implement exactly what
  * usage-check.mjs finds the extension using. Everything else fails loudly —
  * a namespace member that isn't defined throws NotSupportedInDesktop on
  * access, and stubs made with notSupported() throw when called.

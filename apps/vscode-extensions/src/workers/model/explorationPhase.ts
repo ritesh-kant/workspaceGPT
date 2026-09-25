@@ -4,7 +4,7 @@ import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
 import { extractBalancedJsonObjects } from './jsonExtract';
 
 /**
- * Exploration decomposition — see EXPLORATION-DECOMPOSITION-DESIGN.md.
+ * Exploration decomposition — see docs/design/exploration-decomposition.md.
  *
  * Runs BEFORE the agentic tool loop for codebase questions that would touch
  * many files across several parts of the repo. Instead of letting the main

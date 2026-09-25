@@ -220,7 +220,7 @@ export const MESSAGE_TYPES = {
   GET_MY_WORK_ITEMS_RESPONSE: 'get-my-work-items-response',
   SAVE_ADO_USER_DISPLAY_NAME: 'save-ado-user-display-name',
 
-  // Jira messages (JIRA-INTEGRATION-DESIGN.md §5 P7, sync/indexing added P5,
+  // Jira messages (docs/design/jira.md §5 P7, sync/indexing added P5,
   // My Work added P6, OAuth 3LO added post-P9 — replaced the original
   // API-token connect flow, mirroring Confluence's START/CANCEL/SUCCESS/ERROR
   // shape below rather than ADO's token-form one).
@@ -795,7 +795,7 @@ export const GITHUB_APP = {
 
 /**
  * Remote-mode SaaS account sign-in (apps/workspacegpt-api Worker — see
- * CLOUDFLARE-REMOTE-MODE-DESIGN.md). Distinct from GITHUB_OAUTH above: that
+ * docs/design/remote-mode.md). Distinct from GITHUB_OAUTH above: that
  * one is deployment automation's write-scoped (`repo,workflow`) consent flow
  * hitting GitHub directly; this one is a plain `read:user` sign-in/account-age
  * check where the Worker mediates the entire GitHub round-trip — the

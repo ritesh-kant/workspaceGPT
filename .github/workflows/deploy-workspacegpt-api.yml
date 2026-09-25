@@ -1,7 +1,7 @@
 name: Deploy WorkspaceGPT API
 
 # Deploys the Cloudflare Worker backend (apps/workspacegpt-api) — the GitHub
-# sign-in + session API described in CLOUDFLARE-REMOTE-MODE-DESIGN.md.
+# sign-in + session API described in docs/design/remote-mode.md.
 #   - Push to main touching apps/workspacegpt-api/**: typecheck, apply D1
 #     migrations, deploy.
 #   - Manual run (workflow_dispatch): same steps, on demand.

@@ -3,9 +3,9 @@
 > Status: **Canonical sequencing** · Owner: Ritesh · Last updated: 2026-08-25
 >
 > One place that orders ALL planned work. Merges the build orders from
-> [CODING-AGENT-ROADMAP.md](CODING-AGENT-ROADMAP.md) (items A1–G5),
-> [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) (steps a–h), and
-> [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md) (steps 1–5,
+> [docs/design/coding-agent-roadmap.md](design/coding-agent-roadmap.md) (items A1–G5),
+> the original AWS/managed-index remote-mode plan (superseded; removed 2026-09-25, in git history) (steps a–h), and
+> [docs/design/ticket-entry-point.md](design/ticket-entry-point.md) (steps 1–5,
 > feeding P3.1/3.2/3.5).
 >
 > **Status (2026-08-15):** P0 ✅ (0.1 matrix still finishing on qwen; shadow-git
@@ -23,7 +23,7 @@
 > EDH write-flow confirmed live (cards → approve → apply → revert pending).
 > Local-model ceiling characterized: qwen-14B ~60% single-edit, compounds on
 > multi-file — D3 boundary, skills (2.9) + remote tier are the mitigations.
-> **P3.1 extended (2026-08-24)** — [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md)
+> **P3.1 extended (2026-08-24)** — [docs/design/ticket-entry-point.md](design/ticket-entry-point.md)
 > steps 1–3 landed: `get_ticket` (live exact-ID ADO read — fills the gap
 > `search_tickets`'s semantic RAG search can't cover), `listMyWorkItems` +
 > cache, and the "Your work" `MyWorkPanel` in the chat empty state (replacing
@@ -39,8 +39,8 @@
 > **B1 shipped 2026-08-31** on Cloudflare (not AWS): GitHub sign-in + session
 > API, and the OpenAI-compatible `/v1/chat/completions` proxy to OpenRouter with
 > per-request session validation and a configurable per-user weekly cap — see
-> CLOUDFLARE-REMOTE-MODE-DESIGN.md. One blocker to usability: `REMOTE_AUTH.API_BASE`
-> still points at localhost. B2 is **dropped** (the index stays local); B3 is
+> docs/design/remote-mode.md. (`REMOTE_AUTH.API_BASE` has since been pointed at
+> the deployed Worker.) B2 is **dropped** (the index stays local); B3 is
 > reduced to Stripe, blocked on a pricing decision. Also shipped this week, outside
 > this roadmap's phase gates: **Track X** (general product UX — message
 > editing, sidebar auto-collapse, collapsible Settings).
@@ -112,7 +112,7 @@ rolls back cleanly. Ships as a pre-release to early users.
 | 2.6 | A9 rules files | `.workspacegpt/rules.md` + read `.cursorrules`/`CLAUDE.md` |
 | 2.7 | F2 audit log | every agent action → `FileAuditLog` JSONL |
 | 2.8 | B4 git write tools | branch / stage / commit (user approves message) |
-| 2.9 | **Skills: carve-out + router** (added 2026-08-17, [SKILLS-DESIGN.md](SKILLS-DESIGN.md) steps 1–2) | `skillFiles.ts` loader + built-in skills carved from `promptTemplates.ts` (behavior-neutral first), then `skillRouter.ts` deterministic selection + analytics. Pairs with 2.5: both shrink per-turn prompt |
+| 2.9 | **Skills: carve-out + router** (added 2026-08-17, [docs/proposals/skills.md](proposals/skills.md) steps 1–2) | `skillFiles.ts` loader + built-in skills carved from `promptTemplates.ts` (behavior-neutral first), then `skillRouter.ts` deterministic selection + analytics. Pairs with 2.5: both shrink per-turn prompt |
 
 **Exit demo:** point the agent at a failing test; it reads the failure, fixes
 the code, reruns the test to green, commits on approval — with every command
@@ -129,12 +129,12 @@ Differentiation on top of a working agent. This phase is the marketing.
 | # | Item | Scope |
 |---|---|---|
 | 3.1 | C1 org tools in agent | `search_docs` / `search_tickets` (semantic, RAG) — **done** |
-| 3.1b | **Ticket entry point** (added 2026-08-24, [TICKET-ENTRY-POINT-DESIGN.md](TICKET-ENTRY-POINT-DESIGN.md) steps 1–3) | `get_ticket` exact-ID ADO tool + `listMyWorkItems`/cache + "Your work" panel in the chat empty state. Code-complete, unit-tested; **pending live verification** |
+| 3.1b | **Ticket entry point** (added 2026-08-24, [docs/design/ticket-entry-point.md](design/ticket-entry-point.md) steps 1–3) | `get_ticket` exact-ID ADO tool + `listMyWorkItems`/cache + "Your work" panel in the chat empty state. Code-complete, unit-tested; **pending live verification** |
 | 3.2 | B5 @-mentions | files, symbols, Confluence pages, ADO tickets in one mention model — ticket kind is ticket-entry-point step 4, not started |
 | 3.3 | B1 live codebase exploration | improve focused search, repo orientation, and LSP navigation without a persistent embedding index |
 | 3.4 | B2 repo map | `buildRepoOrientation` + LSP symbols, import-graph ranked, in the cached prompt prefix |
 | 3.5 | C2 ticket→PR flow | "implement D2C-1234" end-to-end; record the 3-minute demo (G4) — 3.1b supplies the precise ticket read this needed; remaining is step 5 (prompt tuning + eval on 5 real tickets) |
-| 3.6 | **Workspace + third-party skills** (added 2026-08-17, [SKILLS-DESIGN.md](SKILLS-DESIGN.md) steps 3–4) | `.workspacegpt/skills/*.md` + authoring guide; `.claude/skills/*/SKILL.md` compat + `triggers.json` overlay. Team-encoded procedures = enterprise stickiness |
+| 3.6 | **Workspace + third-party skills** (added 2026-08-17, [docs/proposals/skills.md](proposals/skills.md) steps 3–4) | `.workspacegpt/skills/*.md` + authoring guide; `.claude/skills/*/SKILL.md` compat + `triggers.json` overlay. Team-encoded procedures = enterprise stickiness |
 
 **Exit:** the demo video exists and is reproducible on a fresh repo; G5 (X
 pipeline) starts posting agent demos.
@@ -147,9 +147,8 @@ indexing is local in both modes; the mode switch moves inference only.
 ## Backend B1 — Managed chat proxy (BACKEND, medium) · **SHIPPED 2026-08-31**
 
 Built on Cloudflare Workers, not AWS. See
-[CLOUDFLARE-REMOTE-MODE-DESIGN.md](CLOUDFLARE-REMOTE-MODE-DESIGN.md) for the
-as-built design; [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) is
-superseded.
+[docs/design/remote-mode.md](design/remote-mode.md) for the
+as-built design; the earlier AWS plan is superseded and was removed.
 
 - `apps/workspacegpt-api`: GitHub sign-in (`/auth/*`, KV sessions, D1 accounts,
   60-day account-age gate) + `POST /v1/chat/completions` — OpenAI-compatible
@@ -226,7 +225,7 @@ Post-launch, priority-ordered by user feedback; each item independent.
 | 5.4 | A10 sub-agents / background tasks |
 | 5.5 | C4 deploy-loop agent tools (`release-core` behind approval gates) |
 | 5.6 | D3 local-mode agent tuning + honest capability labels — leans on skills (2.9/3.6): recipe-driven small-model workflows |
-| 5.7 | Skills phase 2: descriptions listing + `load_skill` tool ([SKILLS-DESIGN.md](SKILLS-DESIGN.md) step 5) |
+| 5.7 | Skills phase 2: descriptions listing + `load_skill` tool ([docs/proposals/skills.md](proposals/skills.md) step 5) |
 
 ---
 
