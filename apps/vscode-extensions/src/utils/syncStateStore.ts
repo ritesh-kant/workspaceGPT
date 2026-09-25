@@ -12,6 +12,8 @@ export interface SyncStatePatch {
   lastSyncTime?: string;
   isSyncing?: boolean;
   isIndexing?: boolean;
+  /** The index is usable. Set when an indexing worker finishes, whoever started it. */
+  isIndexingCompleted?: boolean;
 }
 
 /**
@@ -33,7 +35,7 @@ export interface SyncStatePatch {
  *
  * The `_needsResume*` flags are here for the same reason even though they never
  * reach the UI: only the host reads or writes them (crash recovery in the
- * schedulers, consumption in `checkAndSync` and on webview resolve), so a
+ * schedulers, consumption in `checkAndSync`), so a
  * webview blob write could either drop a pending resume or resurrect one the
  * host had just consumed. The webview's own resume state is `canResume` /
  * `canResumeIndexing`, which it does own.
@@ -42,6 +44,7 @@ export const HOST_OWNED_SYNC_FIELDS = [
   'lastSyncTime',
   'isSyncing',
   'isIndexing',
+  'isIndexingCompleted',
   '_needsResume',
   '_needsResumeIndexing',
 ] as const;
@@ -66,12 +69,10 @@ export function readLastSyncTime(
 }
 
 /**
- * Write sync state into global state. Use when the change should not be
- * reflected in the UI — notably a background sync setting `isSyncing: true`,
- * which the scheduler needs for its own re-entrancy guard but which must not
- * put the settings panel into a progress state it can neither track (the
- * scheduler's services have no webview to report progress to) nor stop (its
- * "Stop sync" button targets a different service instance).
+ * Write sync state into global state without telling the webview. Prefer
+ * publishSyncState: the schedulers' services now report progress to the panel
+ * and share their worker with its Stop button, so a background run has no
+ * reason to be hidden.
  */
 export async function persistSyncState(
   context: vscode.ExtensionContext,

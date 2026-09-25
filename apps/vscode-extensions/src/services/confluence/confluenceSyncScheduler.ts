@@ -4,7 +4,7 @@ import { ConfluenceAuthService } from './confluenceAuthService';
 import { ConfluenceEmbeddingService } from './confluenceEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
-import { persistSyncState, publishSyncState } from '../../utils/syncStateStore';
+import { publishSyncState } from '../../utils/syncStateStore';
 
 export class ConfluenceSyncScheduler {
   private intervalId?: NodeJS.Timeout;
@@ -90,6 +90,14 @@ export class ConfluenceSyncScheduler {
         return; // Not fully configured yet
       }
 
+      // Stop in the settings panel ends a scheduler run without firing either
+      // callback (it reaches the same worker). Once the persisted flags are
+      // down, that run is over and must not block the next one.
+      const confluenceFlags = config.state.config.confluence;
+      if (this.syncStartedAt && !confluenceFlags.isSyncing && !confluenceFlags.isIndexing) {
+        this.syncStartedAt = undefined;
+      }
+
       // Skip if the scheduler itself already has a sync running.
       if (this.syncStartedAt) {
         console.log('⏳ Auto-sync: skipped — scheduler sync already in progress');
@@ -110,6 +118,8 @@ export class ConfluenceSyncScheduler {
         if (syncProgress && !syncProgress.isComplete) {
           console.log('🔁 Auto-sync: resuming interrupted Confluence sync...');
           config.state.config.confluence._needsResume = false;
+          // runSync indexes when the sync completes, so this covers indexing too.
+          config.state.config.confluence._needsResumeIndexing = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
           await this.runSync(true);
           return;
@@ -118,6 +128,17 @@ export class ConfluenceSyncScheduler {
           config.state.config.confluence._needsResume = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
         }
+      }
+
+      // Indexing the restart cut short. Resumed here, not when the webview
+      // resolves: the desktop resolves its view straight after activate(),
+      // before handleRestartRecovery() sets this flag, so that resume never
+      // ran and the source sat at "Indexing unfinished".
+      if (config.state.config.confluence._needsResumeIndexing) {
+        config.state.config.confluence._needsResumeIndexing = false;
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+        await this.resumeIndexing();
+        return;
       }
 
       const lastSyncTimeStr = config.state.config.confluence.lastSyncTime;
@@ -136,6 +157,18 @@ export class ConfluenceSyncScheduler {
     } catch (err) {
       console.error('Background sync check failed:', err);
     }
+  }
+
+  private async resumeIndexing() {
+    console.log('🔁 Auto-sync Confluence: resuming interrupted indexing...');
+    // Mark in flight before forking, as the panel's resume does, so a tick in
+    // between can't start a sync over it. The embedding service clears it on
+    // the worker's terminal message.
+    await publishSyncState(this.context, 'confluence', { isIndexing: true });
+    await new ConfluenceEmbeddingService(undefined, this.context).createEmbeddings(
+      { dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS } as EmbeddingConfig,
+      true
+    );
   }
 
   private async resetSyncFlags() {
@@ -158,10 +191,9 @@ export class ConfluenceSyncScheduler {
           throw new Error('Confluence config incomplete');
       }
 
-      // Mark the sync in-flight for our own re-entrancy guard, but don't push
-      // it to the UI: this run reports no progress to the webview (the service
-      // below is built without one), so the panel would show a stalled bar.
-      await persistSyncState(this.context, 'confluence', { isSyncing: true });
+      // Pushed to the panel: this run's services report progress to it and
+      // share their worker with its Stop button.
+      await publishSyncState(this.context, 'confluence', { isSyncing: true });
       this.syncStartedAt = Date.now();
 
       const confluenceConfig: ConfluenceConfig = {

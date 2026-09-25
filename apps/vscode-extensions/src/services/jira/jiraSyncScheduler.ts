@@ -4,7 +4,7 @@ import { JiraAuthService, jiraApiBase } from './jiraAuthService';
 import { JiraEmbeddingService } from './jiraEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
-import { persistSyncState, publishSyncState } from '../../utils/syncStateStore';
+import { publishSyncState } from '../../utils/syncStateStore';
 
 /** Background sync scheduling — mirrors AdoSyncScheduler exactly, see docs/design/jira.md §5 P5. */
 export class JiraSyncScheduler {
@@ -67,6 +67,14 @@ export class JiraSyncScheduler {
         return; // Not fully configured yet
       }
 
+      // Stop in the settings panel ends a scheduler run without firing either
+      // callback (it reaches the same worker). Once the persisted flags are
+      // down, that run is over and must not block the next one.
+      const jiraFlags = config.state.config.jira;
+      if (this.syncStartedAt && !jiraFlags.isSyncing && !jiraFlags.isIndexing) {
+        this.syncStartedAt = undefined;
+      }
+
       if (this.syncStartedAt) {
         console.log('⏳ Auto-sync Jira: skipped — scheduler sync already in progress');
         return;
@@ -82,6 +90,8 @@ export class JiraSyncScheduler {
         if (syncProgress && !syncProgress.isComplete) {
           console.log('🔁 Auto-sync Jira: resuming interrupted sync...');
           config.state.config.jira._needsResume = false;
+          // runSync indexes when the sync completes, so this covers indexing too.
+          config.state.config.jira._needsResumeIndexing = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
           await this.runSync(true);
           return;
@@ -89,6 +99,17 @@ export class JiraSyncScheduler {
           config.state.config.jira._needsResume = false;
           await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
         }
+      }
+
+      // Indexing the restart cut short. Resumed here, not when the webview
+      // resolves: the desktop resolves its view straight after activate(),
+      // before handleRestartRecovery() sets this flag, so that resume never
+      // ran and the source sat at "Indexing unfinished".
+      if (config.state.config.jira._needsResumeIndexing) {
+        config.state.config.jira._needsResumeIndexing = false;
+        await this.context.globalState.update(STORAGE_KEYS.SETTINGS, config);
+        await this.resumeIndexing();
+        return;
       }
 
       const lastSyncTimeStr = config.state.config.jira.lastSyncTime;
@@ -107,6 +128,18 @@ export class JiraSyncScheduler {
     } catch (err) {
       console.error('Jira background sync check failed:', err);
     }
+  }
+
+  private async resumeIndexing() {
+    console.log('🔁 Auto-sync Jira: resuming interrupted indexing...');
+    // Mark in flight before forking, as the panel's resume does, so a tick in
+    // between can't start a sync over it. The embedding service clears it on
+    // the worker's terminal message.
+    await publishSyncState(this.context, 'jira', { isIndexing: true });
+    await new JiraEmbeddingService(undefined, this.context).createEmbeddings(
+      { dimensions: MODEL.DEFAULT_TEXT_EMBEDDING_DIMENSIONS } as EmbeddingConfig,
+      true
+    );
   }
 
   private async resetSyncFlags() {
@@ -130,7 +163,9 @@ export class JiraSyncScheduler {
       }
       const authHeader = await authService.getValidAuthHeader();
 
-      await persistSyncState(this.context, 'jira', { isSyncing: true });
+      // Pushed to the panel: this run's services report progress to it and
+      // share their worker with its Stop button.
+      await publishSyncState(this.context, 'jira', { isSyncing: true });
       this.syncStartedAt = Date.now();
 
       const jiraSyncConfig: JiraSyncConfig = { siteUrl: site.url, apiBase: jiraApiBase(site.id), projectKey, authHeader, lookbackMonths };

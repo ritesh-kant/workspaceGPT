@@ -104,10 +104,6 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       this.hub.setActive('sidebar');
     }
 
-    const config: any = this._context.globalState.get(STORAGE_KEYS.SETTINGS);
-    const confluenceConfig = config?.state?.config?.confluence;
-    const adoConfig = config?.state?.config?.ado;
-
     this.ensureHandler();
 
     webviewView.description = 'Close';
@@ -128,21 +124,10 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       this.watchWebviewDist(webviewView);
     }
 
-    if (confluenceConfig?.isIndexing || confluenceConfig?._needsResumeIndexing) {
-      if (confluenceConfig?._needsResumeIndexing && config?.state?.config?.confluence) {
-        config.state.config.confluence._needsResumeIndexing = false;
-        await this._context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-      }
-      this.sendMessage(MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE);
-    }
-
-    if (adoConfig?.isIndexing || adoConfig?._needsResumeIndexing) {
-      if (adoConfig?._needsResumeIndexing && config?.state?.config?.ado) {
-        config.state.config.ado._needsResumeIndexing = false;
-        await this._context.globalState.update(STORAGE_KEYS.SETTINGS, config);
-      }
-      this.sendMessage(MESSAGE_TYPES.RESUME_INDEXING_ADO);
-    }
+    // Interrupted indexing is resumed by the sync schedulers (checkAndSync),
+    // not here. On the desktop this view resolves before their restart
+    // recovery has flagged anything, and a later resolve would restart a run
+    // that is already live.
   }
 
   /**
