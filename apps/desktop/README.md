@@ -59,8 +59,11 @@ for this Mac:
 - Pass `--target darwin-x64` to cross-build the Intel app. Windows builds
   natively on Windows (`--target win32-x64`, NSIS installer).
 
-Publishing is done by CI. Bump `version` in `package.json`, `src-tauri/tauri.conf.json`
-and `src-tauri/Cargo.toml`, merge, then push a `desktop-vX.Y.Z` tag.
+Publishing is done by CI. From an up-to-date `main`, run
+`pnpm release:desktop patch` (or `minor`, `major`, `X.Y.Z`; `--dry-run` to
+preview). It bumps `version` in `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml` and `Cargo.lock`, commits, asks, then pushes `main`
+and a `desktop-vX.Y.Z` tag together.
 [`desktop-publish.yml`](../../.github/workflows/desktop-publish.yml) builds both
 Macs and Windows, installs and smoke-tests the Windows build
 (`scripts/smoke-installed.mjs`), creates the release and points `desktop-latest` (`latest.json`,

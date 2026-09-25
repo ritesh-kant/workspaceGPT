@@ -12,7 +12,8 @@
     "seed:from-vscode": "node scripts/seed-from-vscode.mjs",
     "fetch-node": "node scripts/fetch-node.mjs",
     "stage": "node scripts/stage-runtime.mjs",
-    "release": "node scripts/build-release.mjs"
+    "release": "node scripts/build-release.mjs",
+    "release:publish": "node scripts/publish-release.mjs"
   },
   "dependencies": {
     "@napi-rs/keyring": "^1.1.0",
