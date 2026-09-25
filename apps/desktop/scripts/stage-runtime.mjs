@@ -69,6 +69,9 @@ const copy = (src, dest) => {
 
 // ── 1. Builds ─────────────────────────────────────────────────────────────
 if (!skipBuild) {
+  // The extension's build copies the MCP server's bundle but doesn't build it
+  // (a clean checkout, like CI, has none).
+  run('pnpm', ['--filter', '@workspace-gpt/mcp-server', 'run', 'build'], root);
   // The extension's own release build (vscode:prepublish), pruned to this target.
   run('pnpm', ['run', 'download-models'], extDir);
   run('pnpm', ['run', 'build'], extDir, { NODE_ENV: 'production', VSCODE_TARGET: target });
