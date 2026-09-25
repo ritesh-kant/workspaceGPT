@@ -22,6 +22,8 @@ export interface ToolAvailability {
   confluence: boolean;
   /** A ticket tracker (Azure DevOps, Jira, …) is authenticated: `search_tickets`, `get_ticket`. See tickets/registry.ts. */
   tickets: boolean;
+  /** The WorkspaceGPT Chrome extension is connected to this host right now (services/browser/browserBridge.ts). Optional: a host that predates it offers no browser tools. */
+  browser?: boolean;
 }
 
 /**
@@ -52,6 +54,9 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   get_confluence_page: 'confluence',
   search_tickets: 'tickets',
   get_ticket: 'tickets',
+  browser_list_tabs: 'browser',
+  browser_read_page: 'browser',
+  browser_screenshot: 'browser',
 };
 
 interface NamedToolDef {

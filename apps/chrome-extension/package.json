@@ -1,7 +1,7 @@
 {
   "name": "workspacegpt-chrome",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "module",
   "description": "WorkspaceGPT for Chrome — ask questions about your Confluence & Azure DevOps knowledge from the browser side panel.",
   "scripts": {

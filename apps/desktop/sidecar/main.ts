@@ -41,6 +41,8 @@ import { acquireProfileLock, PROFILE_IN_USE_PREFIX, ProfileInUseError } from './
 import { createExtensionContext } from './host/extensionContext';
 import { createViewSurface, type ViewSurface } from './host/webviewHost';
 import { watchForAttention } from './host/notifier';
+import { registerBrowserHost } from './host/browserHost';
+import { startBrowserBridge } from 'workspacegpt-extension-browser';
 // Aliased to apps/vscode-extensions/src/services/historyService.ts (the same module extension.ts uses).
 import { HistoryService } from 'workspacegpt-extension-history';
 import { recordOriginalContent } from 'workspacegpt-extension-diff';
@@ -307,6 +309,13 @@ async function main(): Promise<void> {
 
   await extension.activate(ctx.context);
   const activatedAt = Date.now();
+  // The Chrome extension in the user's own profile reaches the agent through
+  // this (sidecar/browser-relay.ts). Failing here only means no browser tools.
+  try {
+    startBrowserBridge(registerBrowserHost(paths.root, path.join(__dirname, 'browser-relay.js')).socketPath);
+  } catch (err) {
+    console.warn('[desktop] browser bridge not started:', err);
+  }
 
   const chat = webviewViewProviders.get(CHAT_VIEW_ID);
   if (!chat) throw new Error(`activate() registered no provider for ${CHAT_VIEW_ID}`);
