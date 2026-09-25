@@ -667,6 +667,10 @@ export const ATLASSIAN_OAUTH = {
     'read:confluence-content.summary',
     'read:confluence-content.all',
     'read:page:confluence',
+    // Page edit + create (update_confluence_page / create_confluence_page).
+    // Must ALSO be enabled on the Atlassian app (developer.atlassian.com →
+    // Permissions) or the consent screen rejects the whole request.
+    'write:page:confluence',
     'offline_access',
   ],
   CALLBACK_PORT: 32323,

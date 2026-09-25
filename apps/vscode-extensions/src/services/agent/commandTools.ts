@@ -550,7 +550,7 @@ export function agentOutputChannel(): vscode.OutputChannel {
 
 export interface AgentAuditEntry {
   ts: string;
-  action: 'edit' | 'create' | 'delete' | 'command';
+  action: 'edit' | 'create' | 'delete' | 'command' | 'confluence-edit' | 'confluence-create';
   detail: string;
   decision: 'approved' | 'approved-session' | 'rejected' | 'auto';
   outcome: 'applied' | 'failed' | 'skipped';

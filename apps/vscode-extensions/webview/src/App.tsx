@@ -870,6 +870,7 @@ const App: React.FC = () => {
               summary: message.summary,
               diff: message.diff,
               command: message.command,
+              url: message.url,
             },
           });
           store.bgPatch(sessionId, { statusText: 'Waiting for your review…' });
@@ -1049,6 +1050,7 @@ const App: React.FC = () => {
               summary: message.summary,
               diff: message.diff,
               command: message.command,
+              url: message.url,
             },
           });
           setStatusText('Waiting for your review…');
@@ -2486,7 +2488,9 @@ const App: React.FC = () => {
               >
                 {pendingReview.kind === 'command'
                   ? pendingReview.command ?? pendingReview.summary
-                  : pendingReview.path.split('/').pop() || pendingReview.path}
+                  : pendingReview.kind.startsWith('confluence-')
+                    ? pendingReview.path
+                    : pendingReview.path.split('/').pop() || pendingReview.path}
               </button>
               <span className='agent-write-stats'>
                 {pendingReview.diff.added > 0 && (

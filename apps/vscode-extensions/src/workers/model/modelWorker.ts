@@ -520,6 +520,71 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'update_confluence_page',
+      description:
+        "Edit an existing Confluence page. Read it with get_confluence_page first — its markdown and `sections` are what this edits. Changes ONE section by default and leaves the rest of the page exactly as it was. The user reviews a diff and approves before anything is saved; a rejection comes back with their feedback. Write normal markdown (headings, lists, tables, code blocks, **bold**, *italic*, [links](https://…), `- [ ]` tasks, ':::panel info' … ':::' for a panel). Copy any ⟦keep N: …⟧ token from the page verbatim to keep that element (a macro, mention, image…); leaving one out deletes it.",
+      parameters: {
+        type: 'object',
+        properties: {
+          pageId: { type: 'string', description: 'Confluence page id or URL.' },
+          mode: {
+            type: 'string',
+            enum: ['replace_section', 'insert_after_section', 'append', 'replace_page'],
+            description:
+              'replace_section (default when `section` is given): swap that section — its heading through the next heading of the same or higher level — for `markdown`. insert_after_section: add `markdown` after that section. append: add to the end of the page. replace_page: rewrite the whole page (only when the user asked for that).',
+          },
+          section: {
+            type: 'string',
+            description: 'The target heading exactly as listed in the page\'s `sections`, e.g. "## Risks" or "### Cause [2]".',
+          },
+          markdown: {
+            type: 'string',
+            description: 'The new content. For replace_section, the WHOLE section including its heading line (so it can be renamed).',
+          },
+          versionMessage: { type: 'string', description: 'Short note for the page history, e.g. "Updated rollout dates".' },
+        },
+        required: ['pageId', 'markdown'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'find_confluence_location',
+      description:
+        'Suggest where a NEW Confluence page should go: parents of the most similar existing pages, the connected space, and the list of spaces. Call this before create_confluence_page unless the user already named the space or parent page — then ASK the user to choose (show the suggestions), and wait for their answer. Never pick a location silently.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'The planned page title.' },
+          summary: { type: 'string', description: 'One or two sentences on what the page covers — used to find similar pages.' },
+        },
+        required: ['title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_confluence_page',
+      description:
+        "Create a new Confluence page from markdown, in the space/parent the user chose (see find_confluence_location). Created as a DRAFT only the user can see unless they asked to publish. The user reviews the full page and its location before it is created. Same markdown rules as update_confluence_page; no ⟦keep⟧ tokens in a new page.",
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Page title — must be unique within the space.' },
+          markdown: { type: 'string', description: 'The page body.' },
+          spaceKey: { type: 'string', description: 'Space key, e.g. "D2C". Not needed when parentId is given.' },
+          parentId: { type: 'string', description: 'Parent page id or URL — the page is created under it.' },
+          publish: { type: 'boolean', description: 'true only if the user asked for it to be published immediately. Default: draft.' },
+        },
+        required: ['title', 'markdown'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'search_web',
       description:
         "Live web search for anything the codebase and org docs can't answer — an unfamiliar library/API/product, current documentation, or something that changed since training. Use it when a name or concept is unrecognized rather than guessing. Returns a synthesized answer (when available) plus source snippets with URLs — cite the URLs when you use them. Without a Tavily key configured, this falls back to a lower-reliability public search — don't over-trust unlabeled results in that mode. Never use this for Azure DevOps or Confluence links — it cannot reach private instances; use get_ticket/get_confluence_page (they take a URL directly) or search_tickets/search_docs instead.",
@@ -943,10 +1008,18 @@ function planCheckJobs(batch: PendingCheck[]): CheckJob[] {
  * the common shape (lint three changed files) and, measured on this
  * workspace, ~20s each of pure waiting.
  */
-const BARRIER_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 'run_command']);
+const BARRIER_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 'run_command', 'update_confluence_page', 'create_confluence_page']);
 
 /** File-mutating subset whose success must be verified by diagnostics before the run may end. */
 const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file']);
+
+/**
+ * Writes that land OUTSIDE the workspace (a Confluence page). They are real
+ * applied changes — the honesty gates must count them, or "I updated the page"
+ * after an approved edit is called a claim with nothing applied — but there is
+ * no file to lint, typecheck or diagnose afterwards.
+ */
+const EXTERNAL_WRITE_TOOL_NAMES = new Set(['update_confluence_page', 'create_confluence_page']);
 
 // The autonomous prompt block says "NO ONE IS WATCHING", but the write tools'
 // descriptions say "the user reviews and approves each edit" — a direct
@@ -1882,6 +1955,10 @@ function seedFromTranscript(raw: unknown): ResumeState | null {
             for (const k of ['lint', 'typecheck', 'test']) state.checksDone.delete(`${path}::${k}`);
           }
         }
+      }
+      if (EXTERNAL_WRITE_TOOL_NAMES.has(name)) {
+        state.anyWriteAttempted = true;
+        if (!failed) state.writesApplied++;
       }
       if (name === 'get_diagnostics' && !failed) state.writesSinceDiagnostics = 0;
       if (name === 'run_checks' && !failed && path) {
@@ -3393,6 +3470,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         // void — re-arming it is what turns a failing check into a
         // fix-then-re-verify cycle instead of a one-shot complaint.
         if (!failed) autoVerify.noteWrite(argPath, { deleted: tc.name === 'delete_file' });
+      }
+      if (EXTERNAL_WRITE_TOOL_NAMES.has(tc.name)) {
+        anyWriteAttempted = true;
+        if (!failed) writesApplied++;
       }
       if (tc.name === 'get_diagnostics') writesSinceDiagnostics = 0;
       if (tc.name === 'run_checks' && !failed && argPath) {
