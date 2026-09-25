@@ -6,7 +6,7 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "Install WorkspaceGPT in your editor or as a Mac app, pick an AI provider or Remote mode, and connect Confluence, Jira and Azure DevOps. Full setup and troubleshooting guide.",
+    "Install WorkspaceGPT in your editor or as a desktop app (macOS, Windows), pick an AI provider or Remote mode, and connect Confluence, Jira and Azure DevOps. Full setup and troubleshooting guide.",
   alternates: {
     canonical: "/docs",
   },

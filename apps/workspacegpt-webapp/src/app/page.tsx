@@ -8,8 +8,18 @@ import { SiteNav } from "./_components/SiteNav";
 import { Reveal } from "./_components/Reveal";
 
 /** Published by .github/workflows/desktop-publish.yml on every desktop-v* tag. */
-const DESKTOP_INSTALL_COMMAND =
-  "curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh";
+const DESKTOP_INSTALL = [
+  {
+    os: "macOS",
+    where: "Terminal",
+    command: "curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh",
+  },
+  {
+    os: "Windows",
+    where: "PowerShell",
+    command: "irm https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | iex",
+  },
+] as const;
 const DESKTOP_RELEASES_URL = "https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&expanded=true";
 
 export default function Home() {
@@ -42,17 +52,17 @@ export default function Home() {
   };
 
   const openDesktop = () => {
-    // The Mac app isn't an extension: send the visitor to the install section
-    // (one-line installer + DMGs) rather than a protocol handler.
+    // The desktop app isn't an extension: send the visitor to the install
+    // section (one-line installers + downloads) rather than a protocol handler.
     setShowInstallModal(false);
     document.getElementById("install")?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const [copied, setCopied] = useState(false);
-  const copyInstallCommand = () => {
-    navigator.clipboard?.writeText(DESKTOP_INSTALL_COMMAND).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const [copied, setCopied] = useState<string | null>(null);
+  const copyInstallCommand = (command: string) => {
+    navigator.clipboard?.writeText(command).then(() => {
+      setCopied(command);
+      setTimeout(() => setCopied(null), 2000);
     });
   };
 
@@ -85,7 +95,7 @@ export default function Home() {
                 </svg>
               </button>
             </div>
-            <p className="text-muted mb-6 font-medium">Add it to your editor, or run it as a Mac app</p>
+            <p className="text-muted mb-6 font-medium">Add it to your editor, or run it as an app</p>
             
             <div className="space-y-4">
               <div className="flex items-center justify-between bg-white/5 hover:bg-white/10 rounded-xl p-4 border border-line transition-all duration-300">
@@ -138,7 +148,7 @@ export default function Home() {
                     </div>
                     <div>
                       <span className="font-semibold text-white block">WorkspaceGPT Desktop</span>
-                      <span className="text-xs text-faint">macOS &middot; Apple Silicon &amp; Intel</span>
+                      <span className="text-xs text-faint">macOS &middot; Windows</span>
                     </div>
                   </div>
                   <button onClick={openDesktop} className="bg-brand-blue hover:bg-blue-500 text-white font-medium py-2 px-5 rounded-lg transition-colors text-sm whitespace-nowrap">
@@ -193,7 +203,7 @@ export default function Home() {
                 <span className="relative flex h-2 w-2">
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
                 </span>
-                New: WorkspaceGPT Desktop for macOS &mdash; no editor required
+                New: WorkspaceGPT Desktop for macOS and Windows &mdash; no editor required
               </Link>
               <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-[4.5rem] font-normal tracking-tight mb-6 sm:mb-8 leading-[1.05] text-foreground">
                 The coding agent that knows <span className="text-brand">your whole org</span>
@@ -219,7 +229,7 @@ export default function Home() {
                   className="bg-surface hover:bg-surface-2 border border-line hover:border-line-strong text-foreground font-medium px-6 py-3 rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Icon name="download" size={18} />
-                  Get the Mac app
+                  Get the desktop app
                 </Link>
                 <Link
                   href="#modes"
@@ -398,7 +408,7 @@ export default function Home() {
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-xl bg-white/5 border border-line flex items-center justify-center mb-6 text-purple-400"><Icon name="laptop" size={26} /></div>
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">In your editor, or on its own</h3>
-                  <p className="text-muted">Install it in VS Code, Cursor or Antigravity &mdash; or run WorkspaceGPT Desktop, the same agent as a Mac app. Open a folder and go.</p>
+                  <p className="text-muted">Install it in VS Code, Cursor or Antigravity &mdash; or run WorkspaceGPT Desktop, the same agent as an app for macOS and Windows. Open a folder and go.</p>
                 </div>
               </div>
 
@@ -532,7 +542,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Install: the editor extension and the Mac app side by side. SiteNav
+        {/* Install: the editor extension and the desktop app side by side. SiteNav
             links here (/#install) from every page. */}
         <section data-reveal id="install" className="py-16 sm:py-24 border-t border-line">
           <div className="container mx-auto px-6 max-w-5xl">
@@ -548,27 +558,34 @@ export default function Home() {
               <div className="bg-surface border border-line rounded-xl p-8 hover:border-line-strong transition-colors duration-500 flex flex-col">
                 <div className="flex items-center gap-3 mb-4">
                   <span className="text-brand"><Icon name="laptop" size={22} /></span>
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-brand/10 text-brand border-brand/20">New &middot; macOS</span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-brand/10 text-brand border-brand/20">New &middot; macOS &middot; Windows</span>
                 </div>
                 <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">WorkspaceGPT Desktop</h3>
                 <p className="text-muted leading-relaxed mb-6">
                   No editor needed. Open a project folder and the agent reads, edits and tests it, with your Confluence,
-                  Jira and Azure DevOps knowledge in reach. Paste this into Terminal:
+                  Jira and Azure DevOps knowledge in reach. Paste one line:
                 </p>
-                <div className="bg-background border border-line rounded-xl p-3 pl-4 font-mono text-xs sm:text-sm text-brand-blue flex items-start justify-between gap-3 mb-4">
-                  <code className="break-all leading-relaxed">{DESKTOP_INSTALL_COMMAND}</code>
-                  <button
-                    onClick={copyInstallCommand}
-                    aria-label="Copy install command"
-                    className="shrink-0 text-faint hover:text-foreground transition-colors p-1"
-                  >
-                    <Icon name={copied ? "check" : "copy"} size={18} />
-                  </button>
-                </div>
-                <ul className="space-y-2.5 text-sm text-muted mb-6">
-                  <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="check" size={16} /></span> Apple Silicon and Intel, macOS 12 or later</li>
+                {DESKTOP_INSTALL.map((d) => (
+                  <div key={d.os} className="mb-3">
+                    <p className="text-xs text-faint mb-1.5">
+                      <span className="text-foreground font-medium">{d.os}</span> &middot; {d.where}
+                    </p>
+                    <div className="bg-background border border-line rounded-xl p-3 pl-4 font-mono text-xs sm:text-sm text-brand-blue flex items-start justify-between gap-3">
+                      <code className="break-all leading-relaxed">{d.command}</code>
+                      <button
+                        onClick={() => copyInstallCommand(d.command)}
+                        aria-label={`Copy the ${d.os} install command`}
+                        className="shrink-0 text-faint hover:text-foreground transition-colors p-1"
+                      >
+                        <Icon name={copied === d.command ? "check" : "copy"} size={18} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <ul className="space-y-2.5 text-sm text-muted mt-4 mb-6">
+                  <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="check" size={16} /></span> Apple Silicon and Intel Macs (macOS 12+), and Windows x64</li>
                   <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="refresh" size={16} /></span> Updates itself &mdash; every update is signed and verified before it installs</li>
-                  <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="lock" size={16} /></span> Secrets in your macOS Keychain; indexes stay on your machine</li>
+                  <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="lock" size={16} /></span> Secrets in the macOS Keychain or Windows Credential Manager; indexes stay on your machine</li>
                 </ul>
                 <div className="mt-auto">
                   <a
@@ -577,12 +594,12 @@ export default function Home() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 text-sm text-brand hover:underline"
                   >
-                    <Icon name="download" size={16} /> Prefer a DMG? Download it from GitHub
+                    <Icon name="download" size={16} /> Prefer a DMG or setup.exe? Download it from GitHub
                   </a>
                   <p className="text-xs text-faint mt-2 leading-relaxed">
-                    The app isn&apos;t notarized yet. The Terminal installer needs nothing extra; a DMG needs one
-                    &ldquo;Open Anyway&rdquo; in System Settings &rsaquo; Privacy &amp; Security the first time.
-                    Windows and Linux are on the way.
+                    The app isn&apos;t notarized or code-signed yet. The one-line installers need nothing extra.
+                    A DMG needs one &ldquo;Open Anyway&rdquo; in System Settings &rsaquo; Privacy &amp; Security; a
+                    browser-downloaded setup.exe needs &ldquo;More info &rsaquo; Run anyway&rdquo;. Linux is on the way.
                   </p>
                 </div>
               </div>

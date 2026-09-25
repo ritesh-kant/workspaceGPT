@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "A coding agent that reads, edits and verifies your code — grounded in your Confluence docs and your Jira and Azure DevOps tickets, not just your repo. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor and Antigravity, or as a Mac app.",
+    "A coding agent that reads, edits and verifies your code — grounded in your Confluence docs and your Jira and Azure DevOps tickets, not just your repo. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor and Antigravity, or as a desktop app for macOS and Windows.",
   applicationName: "WorkspaceGPT",
   keywords: [
     "AI coding assistant",
@@ -36,6 +36,7 @@ export const metadata: Metadata = {
     "Jira AI coding agent",
     "Azure DevOps AI coding agent",
     "AI coding agent for Mac",
+    "AI coding agent for Windows",
     "Confluence grounded coding agent",
     "zero data retention AI",
     "on-device embeddings",
@@ -95,7 +96,7 @@ const jsonLd = {
         price: "0",
         priceCurrency: "USD",
       },
-      softwareRequirements: "VS Code, Cursor or Antigravity IDE — or none, with WorkspaceGPT Desktop for macOS 12+",
+      softwareRequirements: "VS Code, Cursor or Antigravity IDE — or none, with WorkspaceGPT Desktop for macOS 12+ or Windows x64",
       author: {
         "@type": "Person",
         name: "Ritesh Kant",

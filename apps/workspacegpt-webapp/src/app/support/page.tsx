@@ -70,7 +70,7 @@ export default function SupportPage() {
           </Card>
 
           <Card title="Read the docs" href="/docs" cta="Browse documentation">
-            Setup guides for the extension and the Mac app, AI provider configuration,
+            Setup guides for the extension and the desktop app, AI provider configuration,
             connecting Confluence, Jira and Azure DevOps, and troubleshooting tips.
           </Card>
         </div>

@@ -36,7 +36,7 @@ export default function PrivacyPage() {
           WorkspaceGPT is a privacy-first AI assistant that lets you ask questions about your
           own codebase, Confluence pages, Jira issues and Azure DevOps work items. This policy
           describes what data the WorkspaceGPT IDE extension (VS Code, Cursor, Antigravity), the
-          WorkspaceGPT Desktop app for macOS, and the WorkspaceGPT browser companion actually
+          WorkspaceGPT Desktop app for macOS and Windows, and the WorkspaceGPT browser companion actually
           process, and where it goes. It is written to
           match how the software behaves, not to describe an aspiration.
         </p>
@@ -191,7 +191,7 @@ export default function PrivacyPage() {
             When you connect Confluence, Jira, Azure DevOps, GitHub, or Vercel, authentication happens
             directly between your machine and that service (OAuth, or a token you paste). The
             resulting credentials are stored in your IDE&rsquo;s encrypted secret storage (in the
-            macOS Keychain for WorkspaceGPT Desktop) on your own device and are never transmitted
+            macOS Keychain or Windows Credential Manager for WorkspaceGPT Desktop) on your own device and are never transmitted
             to us. Content synced from those sources is
             indexed locally.
           </p>

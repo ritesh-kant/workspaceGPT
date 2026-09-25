@@ -166,7 +166,7 @@ export default function DocsPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-brand" />
               </span>
-              New: WorkspaceGPT Desktop for macOS
+              New: WorkspaceGPT Desktop for macOS and Windows
             </div>
             <SectionTitle>WorkspaceGPT Docs</SectionTitle>
             <SectionSubtitle>
@@ -190,7 +190,7 @@ export default function DocsPage() {
           <SectionAnchor id="installation" />
           <section className="mb-16">
             <SectionTitle>Installation</SectionTitle>
-            <SectionSubtitle>Available in the VS Code and Cursor marketplaces, on Open VSX for Antigravity, and as a Mac app.</SectionSubtitle>
+            <SectionSubtitle>Available in the VS Code and Cursor marketplaces, on Open VSX for Antigravity, and as a desktop app for macOS and Windows.</SectionSubtitle>
 
             <div className="space-y-0">
               <Step number={1} title="Via Extensions Marketplace">
@@ -229,19 +229,26 @@ export default function DocsPage() {
                 </p>
               </Step>
 
-              <Step number={5} title="WorkspaceGPT Desktop (macOS, no editor needed)">
-                <p>The same agent as a standalone Mac app, for Apple Silicon and Intel on macOS 12 or later. Paste this into Terminal:</p>
+              <Step number={5} title="WorkspaceGPT Desktop (macOS and Windows, no editor needed)">
+                <p>The same agent as a standalone app. On a Mac (Apple Silicon or Intel, macOS 12 or later), paste this into Terminal:</p>
                 <CodeBlock language="bash">curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh</CodeBlock>
                 <p>
                   The installer downloads the build for your Mac, checks its SHA-256 against the release, and installs it into{" "}
-                  <code className="bg-white/10 px-1 rounded text-xs">/Applications</code>. Prefer a DMG? Download it from the{" "}
+                  <code className="bg-white/10 px-1 rounded text-xs">/Applications</code>. Prefer a DMG or setup.exe? Download it from the{" "}
                   <a href="https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&amp;expanded=true" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
                     GitHub releases
                   </a>
                   . The app isn&apos;t notarized yet, so a DMG copy needs one <strong className="text-white">Open Anyway</strong> in System Settings → Privacy &amp; Security the first time; the Terminal installer doesn&apos;t.
                 </p>
                 <p className="text-slate-400">
-                  Desktop updates itself: it checks for a new version in the background, verifies its signature, and installs it the next time you quit or when you choose <strong className="text-white">Restart Now</strong>. Secrets live in your macOS Keychain. Windows and Linux builds are not available yet.
+                  Desktop updates itself: it checks for a new version in the background, verifies its signature, and installs it the next time you quit or when you choose <strong className="text-white">Restart Now</strong>. Secrets live in the macOS Keychain (or Windows Credential Manager).
+                </p>
+                <p>On Windows (x64), paste this into PowerShell:</p>
+                <CodeBlock language="powershell">irm https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | iex</CodeBlock>
+                <p>
+                  It checks the installer&apos;s SHA-256 and installs for your user only &mdash; no admin prompt. The installer isn&apos;t
+                  code-signed yet: this PowerShell line isn&apos;t stopped by SmartScreen, but a <code className="bg-white/10 px-1 rounded text-xs">-setup.exe</code> downloaded
+                  in a browser shows &ldquo;Windows protected your PC&rdquo; &mdash; choose <strong className="text-white">More info → Run anyway</strong>. Linux builds are not available yet.
                 </p>
               </Step>
             </div>
@@ -512,7 +519,7 @@ ollama pull mistral`}</CodeBlock>
             <div className="grid sm:grid-cols-2 gap-4 mt-4">
               <div className="p-5 bg-slate-900 border border-white/5 rounded-2xl text-sm">
                 <p className="text-slate-300 font-semibold mb-1">Token security</p>
-                <p className="text-slate-400">OAuth access + refresh tokens are stored in your editor&apos;s encrypted secret storage (the macOS Keychain on Desktop) — never in plaintext settings.</p>
+                <p className="text-slate-400">OAuth access + refresh tokens are stored in your editor&apos;s encrypted secret storage (the macOS Keychain or Windows Credential Manager on Desktop) — never in plaintext settings.</p>
               </div>
               <div className="p-5 bg-slate-900 border border-white/5 rounded-2xl text-sm">
                 <p className="text-slate-300 font-semibold mb-1">Disconnect anytime</p>
@@ -563,7 +570,7 @@ ollama pull mistral`}</CodeBlock>
               </Step>
               <Step number={3} title="Enter your organization URL and PAT">
                 <p>Provide your Azure DevOps organization URL (e.g. <code className="bg-white/10 px-1 rounded text-xs">https://dev.azure.com/your-org</code>) and the PAT you generated.</p>
-                <p className="text-slate-400">The PAT is kept in your editor&apos;s secret storage (the macOS Keychain on Desktop), never in plain settings.</p>
+                <p className="text-slate-400">The PAT is kept in your editor&apos;s secret storage (the macOS Keychain or Windows Credential Manager on Desktop), never in plain settings.</p>
               </Step>
               <Step number={4} title="Select project and sync">
                 <p>Your ADO projects will load automatically. Select a project and click <strong className="text-white">Start Sync</strong>.</p>
