@@ -55,6 +55,8 @@ const sidecar = {
     'workspacegpt-extension-hunks': path.join(extDir, 'src/services/agent/agentHunkLens.ts'),
     // Only for the WGPT_DESKTOP_TEST_DIFF review-panel test.
     'workspacegpt-extension-diff': path.join(extDir, 'src/services/agent/agentDiffProvider.ts'),
+    // The socket the Chrome extension's relay connects to — the same module chatService reads.
+    'workspacegpt-extension-browser': path.join(extDir, 'src/services/browser/browserBridge.ts'),
     'posthog-node': path.join(here, 'host/posthogShim.ts'),
     'posthog-node-real': realPosthog,
   },
@@ -76,6 +78,17 @@ const bridge = {
   target: ['safari15', 'chrome100'],
   format: 'iife',
   outfile: path.join(outBridge, 'bridge.js'),
+  logLevel: 'warning',
+};
+
+/** The native-messaging host Chrome launches (sidecar/host/browserHost.ts registers it). */
+const relay = {
+  entryPoints: [path.join(here, 'browser-relay.ts')],
+  bundle: true,
+  platform: 'node',
+  target: 'node22',
+  format: 'cjs',
+  outfile: path.join(outSidecar, 'browser-relay.js'),
   logLevel: 'warning',
 };
 
@@ -113,12 +126,12 @@ async function run() {
   for (const name of STATIC_BRIDGE_FILES) fs.copyFileSync(path.join(root, 'bridge', name), path.join(outBridge, name));
   linkExtensionDist();
   if (watch) {
-    const contexts = await Promise.all([esbuild.context(sidecar), esbuild.context(bridge), esbuild.context(shell)]);
+    const contexts = await Promise.all([esbuild.context(sidecar), esbuild.context(bridge), esbuild.context(shell), esbuild.context(relay)]);
     await Promise.all(contexts.map((c) => c.watch()));
     console.log('👀 desktop sidecar + bridge watching');
     return;
   }
-  await Promise.all([esbuild.build(sidecar), esbuild.build(bridge), esbuild.build(shell)]);
+  await Promise.all([esbuild.build(sidecar), esbuild.build(bridge), esbuild.build(shell), esbuild.build(relay)]);
   console.log('✅ desktop sidecar + bridge built → apps/desktop/dist');
 }
 

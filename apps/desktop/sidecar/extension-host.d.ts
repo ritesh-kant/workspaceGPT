@@ -24,4 +24,7 @@ declare module 'workspacegpt-extension-hunks' {
 declare module 'workspacegpt-extension-diff' {
   export function recordOriginalContent(fsPath: string, content: string): void;
 }
+declare module 'workspacegpt-extension-browser' {
+  export function startBrowserBridge(socketPath: string): void;
+}
 declare module 'posthog-node-real';

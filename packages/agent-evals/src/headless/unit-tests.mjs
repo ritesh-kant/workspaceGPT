@@ -2995,6 +2995,13 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
     assert.deepEqual(got, ['search_docs', 'get_confluence_page', 'search_tickets', 'get_ticket', 'search_web']);
   });
 
+  await t('browser tools are offered only while a browser is connected', () => {
+    const defs = mk('read_file', 'browser_read_page', 'browser_screenshot');
+    assert.deepEqual(names(scopeToolDefs(defs, { codebase: true, confluence: false, tickets: false })), ['read_file'], 'a host that predates the field offers none');
+    assert.deepEqual(names(scopeToolDefs(defs, { codebase: true, confluence: false, tickets: false, browser: false })), ['read_file']);
+    assert.deepEqual(names(scopeToolDefs(defs, { codebase: true, confluence: false, tickets: false, browser: true })), names(defs));
+  });
+
   await t('the requirements map covers every tool the worker defines', () => {
     // The worker entry cannot be imported headlessly (it reads workerData at
     // load), so the expected inventory is pinned here. Adding a tool to
@@ -3003,7 +3010,7 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
       'search_codebase', 'explore', 'find_symbol', 'find_references', 'go_to_definition', 'read_file',
       'list_directory', 'find_files', 'run_command', 'run_checks', 'get_diagnostics', 'git_status', 'git_diff',
       'git_log', 'git_blame', 'edit_file', 'create_file', 'delete_file', 'search_docs', 'get_confluence_page',
-      'search_tickets', 'get_ticket',
+      'search_tickets', 'get_ticket', 'browser_list_tabs', 'browser_read_page', 'browser_screenshot',
     ];
     assert.deepEqual(Object.keys(TOOL_REQUIREMENTS).sort(), expected.sort());
     assert.equal(TOOL_REQUIREMENTS.search_web, undefined, 'search_web is deliberately unscoped');

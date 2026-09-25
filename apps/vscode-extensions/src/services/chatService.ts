@@ -92,6 +92,7 @@ import {
   isAutonomousSafeCommand,
   describeAutonomousRefusal,
 } from './agent/commandTools';
+import { browserRequest, isBrowserConnected } from './browser/browserBridge';
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
@@ -969,6 +970,7 @@ export class ChatService {
         codebase: isCodebaseAvailable,
         confluence: isWorkMode && !!settings?.state?.config?.confluence?.isAuthenticated,
         tickets: isWorkMode && !!getActiveTicketProvider(this.context),
+        browser: isWorkMode && isBrowserConnected(),
       };
 
       // Read the @-mentioned files/folders while retrieval runs — they are
@@ -1620,6 +1622,16 @@ export class ChatService {
         return fetchConfluencePage(this.context, args?.pageId ?? '');
       case 'search_web':
         return searchWeb(this.context, args, (message) => this.postStatus(run, message));
+      case 'browser_list_tabs':
+        return browserRequest('tabs.list');
+      case 'browser_read_page':
+        return browserRequest('page.read', { tabId: args?.tabId });
+      case 'browser_screenshot': {
+        // Same shape as a ticket's images, so the worker sends it to the model
+        // as an image part instead of base64 in the tool text.
+        const shot = await browserRequest<{ tabId: number; url: string; title: string; dataUrl: string }>('page.screenshot', { tabId: args?.tabId });
+        return { tabId: shot.tabId, url: shot.url, title: shot.title, images: [{ name: 'screenshot.jpg', dataUrl: shot.dataUrl }] };
+      }
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -2196,6 +2208,12 @@ export class ChatService {
         };
       case 'run_checks':
         return { kind: 'command', title: `Ran ${args?.kind ?? 'test'}s for`, detail: String(args?.path ?? '').split('/').pop() ?? '' };
+      case 'browser_list_tabs':
+        return { kind: 'read', title: 'Listed browser tabs' };
+      case 'browser_read_page':
+        return { kind: 'read', title: 'Read browser tab' };
+      case 'browser_screenshot':
+        return { kind: 'read', title: 'Screenshot of browser tab' };
       default:
         return { kind: 'info', title: name };
     }
@@ -2264,6 +2282,11 @@ export class ChatService {
         return result?.state ? { summary: String(result.state) } : {};
       case 'get_confluence_page':
         return result?.title ? { summary: String(result.title) } : {};
+      case 'browser_list_tabs':
+        return { summary: plural(result?.tabs?.length ?? 0, 'tab') };
+      case 'browser_read_page':
+      case 'browser_screenshot':
+        return result?.title ? { summary: String(result.title) } : {};
       default:
         return {};
     }
@@ -2302,6 +2325,12 @@ export class ChatService {
         return `Reading Confluence page ${args?.pageId ?? ''}...`;
       case 'search_web':
         return `Searching the web for "${args?.query ?? ''}"...`;
+      case 'browser_list_tabs':
+        return 'Listing your browser tabs...';
+      case 'browser_read_page':
+        return 'Reading your browser tab...';
+      case 'browser_screenshot':
+        return 'Taking a screenshot of your browser tab...';
       case 'get_diagnostics':
         return args?.path ? `Checking problems in ${args.path}...` : 'Checking workspace problems...';
       case 'git_status':

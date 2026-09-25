@@ -1,5 +1,58 @@
 import React, { useEffect, useState } from 'react';
 import { ChromeSettings, decodeShareCode, isConfigured, loadSettings, saveSettings } from '../lib/storage';
+import { BRIDGE_PERMISSIONS, BRIDGE_STATUS_KEY, BROWSER_CONTROL_KEY, BridgeStatus } from '../lib/browserControl';
+
+/** The desktop agent's access to this browser — off until the user turns it on. */
+const BrowserAccess: React.FC = () => {
+  const [enabled, setEnabled] = useState(false);
+  const [status, setStatus] = useState<BridgeStatus | null>(null);
+
+  useEffect(() => {
+    chrome.storage.local.get([BROWSER_CONTROL_KEY, BRIDGE_STATUS_KEY]).then((s) => {
+      setEnabled(s[BROWSER_CONTROL_KEY] === true);
+      setStatus(s[BRIDGE_STATUS_KEY] ?? null);
+    });
+    const onChange = (changes: { [key: string]: chrome.storage.StorageChange }, area: string) => {
+      if (area === 'local' && BRIDGE_STATUS_KEY in changes) setStatus(changes[BRIDGE_STATUS_KEY].newValue ?? null);
+    };
+    chrome.storage.onChanged.addListener(onChange);
+    return () => chrome.storage.onChanged.removeListener(onChange);
+  }, []);
+
+  const [denied, setDenied] = useState(false);
+
+  // Must run straight from the click: Chrome only shows a permission prompt inside a user gesture.
+  const toggle = async (next: boolean) => {
+    setDenied(false);
+    if (next && !(await chrome.permissions.request(BRIDGE_PERMISSIONS))) {
+      setDenied(true);
+      return;
+    }
+    setEnabled(next);
+    await chrome.storage.local.set({ [BROWSER_CONTROL_KEY]: next });
+    if (!next) await chrome.permissions.remove(BRIDGE_PERMISSIONS).catch(() => undefined);
+  };
+
+  return (
+    <>
+      <div className='field-group-title' style={{ marginTop: 20 }}>WorkspaceGPT Desktop</div>
+      <label className='settings-hint' style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+        <input type='checkbox' checked={enabled} onChange={(e) => void toggle(e.target.checked)} />
+        <span>
+          Let WorkspaceGPT use this browser. The desktop agent can list your tabs, read a tab&apos;s text and take a
+          screenshot of the tab you are looking at — using the sites you are already signed in to. Chrome asks for
+          permission first; turning this off removes it.
+        </span>
+      </label>
+      {denied && <p className='settings-hint'>Chrome permission was not granted, so this stays off.</p>}
+      {enabled && status && (
+        <p className='settings-hint'>
+          {status.connected ? '✓ Connected to WorkspaceGPT Desktop' : `Not connected — ${status.error ?? 'waiting'}. Is WorkspaceGPT Desktop running?`}
+        </p>
+      )}
+    </>
+  );
+};
 
 interface Props {
   onClose: () => void;
@@ -90,6 +143,8 @@ const Settings: React.FC<Props> = ({ onClose }) => {
           Close
         </button>
       </div>
+
+      <BrowserAccess />
     </div>
   );
 };

@@ -87,6 +87,7 @@ fs.copyFileSync(node, path.join(out, path.basename(node)));
 if (platform !== 'win32') fs.chmodSync(path.join(out, path.basename(node)), 0o755);
 
 fs.copyFileSync(path.join(root, 'dist/sidecar/main.js'), path.join(out, 'sidecar/main.js'));
+fs.copyFileSync(path.join(root, 'dist/sidecar/browser-relay.js'), path.join(out, 'sidecar/browser-relay.js'));
 for (const name of ['workers', 'models', 'node_modules', 'mcp-server.js']) {
   copy(path.join(extDir, 'dist', name), path.join(out, 'sidecar', name));
 }
