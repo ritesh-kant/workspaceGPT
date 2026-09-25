@@ -214,6 +214,12 @@ node scripts/stage-runtime.mjs [--skip-build]      # just dist/runtime/
   the updater's `latest.json`, downloads this Mac's `.app.tar.gz` with curl
   (no quarantine flag), checks it against the release's `SHA256SUMS.txt`,
   installs to /Applications (or ~/Applications), verifies the signature.
+  **Keep it (and install.ps1) ASCII:** 0.0.3's `$PLATFORM…` failed as
+  "PLATFORM…: unbound variable" in every UTF-8 Terminal, since macOS /bin/sh
+  (bash 3.2) takes the multibyte `…` as part of the name; earlier runs used the
+  C locale. The build checks both scripts are ASCII, and `verify-published`
+  installs from the public URLs after each release (UTF-8 sh, Windows
+  PowerShell 5.1).
 - **`.github/workflows/desktop-publish.yml`**: tag `desktop-vX.Y.Z` → both Mac
   targets built on one macos-14 runner (x64 cross-compiles), release
   `desktop-vX.Y.Z` with DMGs, updater bundles, `.sig`s and `SHA256SUMS.txt`

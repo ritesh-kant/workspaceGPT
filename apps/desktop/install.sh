@@ -41,7 +41,9 @@ URL="$(plutil -extract "platforms.$PLATFORM.url" raw -o - "$TMP/latest.json" 2>/
 FILE="${URL##*/}"
 BASE="${URL%/*}"
 
-say "Downloading WorkspaceGPT $VERSION for $PLATFORM…"
+# Keep this file ASCII and brace variables before text: macOS /bin/sh (bash 3.2)
+# in a UTF-8 locale reads a following multibyte character as part of the name.
+say "Downloading WorkspaceGPT ${VERSION} for ${PLATFORM}..."
 curl -fL --progress-bar "$URL" -o "$TMP/$FILE" || die "download failed: $URL"
 curl -fsSL "$BASE/SHA256SUMS.txt" -o "$TMP/SHA256SUMS.txt" || die "could not download $BASE/SHA256SUMS.txt"
 EXPECTED="$(awk -v f="$FILE" '$2 == f || $2 == "*"f { print $1 }' "$TMP/SHA256SUMS.txt")"

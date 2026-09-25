@@ -71,6 +71,16 @@ jobs:
           fi
           echo "version=$app" >> "$GITHUB_OUTPUT"
 
+      # macOS /bin/sh (bash 3.2) in a UTF-8 locale reads a multibyte character
+      # after $VAR as part of the name ("PLATFORM…: unbound variable"), and
+      # Windows PowerShell 5.1 decodes an undeclared download as Latin-1.
+      - name: Check installers are ASCII
+        shell: bash
+        run: |
+          if LC_ALL=C grep -n '[^ -~	]' apps/desktop/install.sh apps/desktop/install.ps1; then
+            echo "install.sh / install.ps1 must be ASCII (lines above)"; exit 1
+          fi
+
       - run: pnpm install --frozen-lockfile
 
       - name: Build
@@ -179,3 +189,33 @@ jobs:
             gh release create desktop-latest --title "WorkspaceGPT Desktop (latest)" --latest=false --prerelease \
               --notes "Rolling pointer to the newest desktop release: latest.json (read by installed apps), install.sh (macOS) and install.ps1 (Windows). Download builds from the versioned desktop-v* releases."
           gh release upload desktop-latest out/latest.json apps/desktop/install.sh apps/desktop/install.ps1 --clobber
+
+  # Install from the published desktop-latest URLs exactly as the README says,
+  # in the shells users have: GitHub serves these assets as
+  # application/octet-stream, which the local-server install above never sees.
+  verify-published:
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: curl install.sh | sh (macOS, UTF-8 locale like Terminal)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          LC_ALL: en_US.UTF-8
+          WGPT_INSTALL_DIR: ${{ runner.temp }}/apps
+        run: |
+          v=${GITHUB_REF_NAME#desktop-v}
+          curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/desktop-latest/install.sh" | /bin/sh
+          got=$(plutil -extract CFBundleShortVersionString raw -o - "$WGPT_INSTALL_DIR/WorkspaceGPT.app/Contents/Info.plist")
+          [ "$got" = "$v" ] || { echo "installed $got, expected $v"; exit 1; }
+
+      - name: irm install.ps1 | iex (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          irm "https://github.com/$env:GITHUB_REPOSITORY/releases/download/desktop-latest/install.ps1" | iex
+          if (-not (Test-Path "$env:LOCALAPPDATA\WorkspaceGPT\WorkspaceGPT.exe")) { throw 'WorkspaceGPT.exe was not installed' }
