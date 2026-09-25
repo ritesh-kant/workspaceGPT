@@ -1,6 +1,6 @@
 {
   "name": "desktop",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "WorkspaceGPT Desktop \u2014 Tauri shell + Node sidecar running the VS Code extension host through a vscode compat module",
   "scripts": {

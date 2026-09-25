@@ -41,6 +41,10 @@ struct Running {
     child: Child,
     stdin: Option<ChildStdin>,
     generation: u64,
+    /// Windows' process group: the sidecar and everything it starts. Dropping
+    /// it (reap, stop, or the shell dying) kills whatever is still in it.
+    #[cfg(windows)]
+    _job: Option<job::Job>,
 }
 
 struct State {
@@ -166,10 +170,17 @@ impl Supervisor {
             use std::os::unix::process::CommandExt;
             cmd.process_group(0);
         }
-        // Windows: a Job Object with KILL_ON_JOB_CLOSE belongs here (Phase 2,
-        // untested on this machine). Until then the stdin watchdog is the net.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW: node.exe is a console program; without this a
+            // console window opens next to the app.
+            cmd.creation_flags(0x0800_0000);
+        }
 
         let mut child = cmd.spawn().map_err(|e| format!("could not start the sidecar ({}): {e}", node_binary()))?;
+        #[cfg(windows)]
+        let job = job::Job::for_child(&child);
         let mut stdin = child.stdin.take();
         if let Some(pipe) = stdin.as_mut() {
             let hello = serde_json::json!({ "type": "hello", "token": self.token });
@@ -177,7 +188,13 @@ impl Supervisor {
         }
         let stdout = child.stdout.take().expect("piped stdout");
         eprintln!("[shell] sidecar started (pid {}, generation {generation})", child.id());
-        st.running = Some(Running { child, stdin, generation });
+        st.running = Some(Running {
+            child,
+            stdin,
+            generation,
+            #[cfg(windows)]
+            _job: job,
+        });
         drop(st);
 
         let me = self.clone();
@@ -338,5 +355,61 @@ fn kill_group(pid: u32, only_stragglers: bool) {
     }
 }
 
+/// Windows has no process groups to signal: the sidecar's `Running.job` does
+/// that job, when it is dropped.
 #[cfg(not(unix))]
 fn kill_group(_pid: u32, _only_stragglers: bool) {}
+
+/// A Job Object with KILL_ON_JOB_CLOSE holding the sidecar (challenge #6 on
+/// Windows). Children the sidecar starts are in the job too (language server,
+/// agent commands), so closing the handle kills all of them. Handles close
+/// when `Running` is dropped, and also when the shell process dies, force-quit
+/// included. The sidecar opens browsers and editors through explorer.exe
+/// (host/opener.ts), so those are started by the Windows shell, outside the job.
+#[cfg(windows)]
+mod job {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    pub struct Job(HANDLE);
+    // The handle is only closed, from whichever thread drops `Running`.
+    unsafe impl Send for Job {}
+
+    impl Job {
+        pub fn for_child(child: &std::process::Child) -> Option<Job> {
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
+                    eprintln!("[shell] CreateJobObject failed; relying on the stdin watchdog");
+                    return None;
+                }
+                let job = Job(handle);
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let set = SetInformationJobObject(
+                    job.0,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                if set == 0 || AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) == 0 {
+                    eprintln!("[shell] could not put the sidecar in a job; relying on the stdin watchdog");
+                    return None;
+                }
+                Some(job)
+            }
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+}

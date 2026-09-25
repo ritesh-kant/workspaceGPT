@@ -1,6 +1,6 @@
 [package]
 name = "workspacegpt-desktop"
-version = "0.0.2"
+version = "0.0.3"
 description = "WorkspaceGPT Desktop — thin Tauri shell around the Node sidecar"
 edition = "2021"
 publish = false
@@ -23,6 +23,9 @@ tauri-plugin-notification = "2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 signal-hook = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [profile.release]
 strip = true
