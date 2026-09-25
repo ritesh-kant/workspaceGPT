@@ -209,7 +209,7 @@ export default function Home() {
                 The coding agent that knows <span className="text-brand">your whole org</span>
               </h1>
               <p className="text-lg sm:text-xl text-muted mb-8 sm:mb-10 max-w-2xl mx-auto lg:mx-0 leading-relaxed text-balance">
-                It searches and reads your code, edits files, and runs your tests &mdash; grounded in your Confluence docs and your Jira and Azure DevOps tickets, not just your repo. Every change is a diff you approve first, and your connected knowledge and its search index <span className="text-white font-medium">never leave your machine</span>.
+                Other coding agents start from your repo and a prompt. WorkspaceGPT starts from the ticket and the design doc &mdash; it reads your Confluence, Jira and Azure DevOps mid-task, then edits your code and runs your tests. Every change is a diff you approve first, and your org&apos;s knowledge and its search index <span className="text-white font-medium">never leave your machine</span>.
               </p>
               
               <div className="flex flex-wrap gap-4 justify-center lg:justify-start">
@@ -398,8 +398,8 @@ export default function Home() {
               <div className="bg-surface border border-line p-8 rounded-xl hover:border-line-strong transition-colors duration-500 relative overflow-hidden">
                 <div className="relative z-10">
                   <div className="w-14 h-14 rounded-xl bg-white/5 border border-line flex items-center justify-center mb-6 text-blue-400"><Icon name="file-text" size={26} /></div>
-                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Your org&apos;s knowledge</h3>
-                  <p className="text-muted">Confluence pages, Jira issues and Azure DevOps work items, synced and searchable. A run is grounded in the design page and the ticket that asked for it, not just the file.</p>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Your org&apos;s knowledge, mid-task</h3>
+                  <p className="text-muted">Confluence pages, Jira issues and Azure DevOps work items, synced and searchable. The agent pulls them mid-task, so a run is grounded in the design page and the ticket that asked for it &mdash; not just the file.</p>
                 </div>
               </div>
 
@@ -692,7 +692,7 @@ export default function Home() {
                 <div>
                   <div className="flex items-center gap-4 mb-4">
                     <div className="flex items-center justify-center w-8 h-8 rounded-full bg-brand/20 text-brand font-bold">3</div>
-                    <h3 className="text-2xl font-semibold text-white">Connect your knowledge</h3>
+                    <h3 className="text-2xl font-semibold text-white">Connect your org&apos;s knowledge</h3>
                   </div>
                   <div className="pl-12 text-muted space-y-6">
                     <div className="bg-surface border border-line p-5 rounded-xl relative overflow-hidden group">
@@ -700,7 +700,7 @@ export default function Home() {
                       <h4 className="text-blue-400 font-semibold mb-2 flex items-center gap-2">
                         Confluence and Jira
                       </h4>
-                      <p className="text-sm">In <code className="bg-black/50 px-1 rounded">Settings</code>, open Confluence or Jira and click <strong>Connect</strong> to sign in with your Atlassian account. Pick a space or project and sync.</p>
+                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Knowledge {`>`} Confluence</code> or <strong>Jira</strong> and click <strong>Connect</strong> to sign in with your Atlassian account. Pick a space or project and hit <strong>Sync</strong>.</p>
                     </div>
 
                     <div className="bg-surface border border-line p-5 rounded-xl relative overflow-hidden group">
@@ -708,7 +708,7 @@ export default function Home() {
                       <h4 className="text-purple-400 font-semibold mb-2 flex items-center gap-2">
                         Azure DevOps
                       </h4>
-                      <p className="text-sm">In <code className="bg-black/50 px-1 rounded">Settings {`>`} Azure DevOps</code>, enter your organization and a Personal Access Token to sync work items and the tickets behind <em>Your work</em>.</p>
+                      <p className="text-sm">Go to <code className="bg-black/50 px-1 rounded">Settings {`>`} Knowledge {`>`} Azure DevOps</code>, enter your organization and a Personal Access Token to sync work items and the tickets behind <em>Your work</em>.</p>
                     </div>
                   </div>
                 </div>
