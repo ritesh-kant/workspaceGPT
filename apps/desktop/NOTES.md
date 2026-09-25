@@ -613,8 +613,7 @@ The window is now a two-pane app rather than the chat panel alone:
   was confirmed live through the sidecar (11 messages each way on load), and
   WKWebView rendering was confirmed with `scripts/webkit-probe.swift`. See the
   manual checklist in the hand-off.
-- **Windows / Linux:** there's no Job Object yet (a comment marks the spot), and
-  none of this was run there.
+- **Windows:** the Job Object is in (see *Windows* below). **Linux:** not run.
 
 ### Dev hooks (all opt-in env vars, all read by the sidecar)
 
@@ -721,3 +720,36 @@ built with `--config '{"version":"0.0.2",…}'` and served by
   the ad-hoc-signed shell isn't what the ACL names. See the Phase 3 section.
 - An app installed in `/Applications` by an admin, then run by a non-admin
   user, can't replace itself. The plugin asks for elevation. Not tried.
+
+## Windows (built 2026-09-25, x64, no code signing)
+
+- **Process cleanup.** `src-tauri/src/sidecar.rs` puts the sidecar in a Job
+  Object with `KILL_ON_JOB_CLOSE`. The sidecar and everything it starts die
+  when the shell's handle closes: on reap, on stop, or when the shell itself
+  dies. `CREATE_NO_WINDOW` keeps node.exe from opening a console. The
+  extension already skips `detached` on Windows (`commandTools.ts`), so
+  agent commands stay windowless.
+- **Browsers and editors** open through `explorer.exe` (`host/opener.ts`),
+  the editor via `vscode://file/…` / `cursor://file/…`. The Windows shell
+  starts them, so a browser or editor that WorkspaceGPT cold-started isn't in
+  our job and doesn't close when we quit. `WGPT_EDITOR` and the notepad
+  fallback still start inside the job.
+- **Install without a certificate.** `install.ps1` (`irm …/install.ps1 | iex`)
+  reads latest.json, checks the installer against SHA256SUMS.txt, and runs the
+  NSIS installer silently, per user (`%LOCALAPPDATA%\WorkspaceGPT`, no admin).
+  Invoke-WebRequest writes no Zone.Identifier, so SmartScreen doesn't stop the
+  unsigned installer. A browser-downloaded `-setup.exe` still gets "Windows
+  protected your PC" (More info → Run anyway). Smart App Control, where it is
+  on, may block unsigned apps regardless.
+- **Updates:** NSIS in passive mode; the `-setup.exe` is the updater bundle
+  (tauri signs it: `-setup.exe.sig`), under `windows-x86_64` in latest.json.
+- **CI** (windows-latest, run 36118385389): the build installs via install.ps1
+  from a local http.server, then:
+  - `scripts/smoke-installed.mjs` passes 6/6: bundled node.exe serves the page;
+    a run_command child starts; after `taskkill /F` of the shell alone,
+    nothing from the install dir or the command survives.
+  - `secrets-chunk-test.mjs` passes, including a live Credential Manager round
+    trip: a 32 KB value stored as 28 entries under the 1280-unit cap.
+- **Not verified yet:** a hand run on a real Windows PC (window, WebView2
+  rendering, sign-in, a grounded answer), and an in-app update from one
+  Windows release to the next (first possible from 0.0.3 → 0.0.4).

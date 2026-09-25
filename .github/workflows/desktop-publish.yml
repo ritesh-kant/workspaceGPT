@@ -1,12 +1,13 @@
 name: Publish Desktop App
 
 # Builds and publishes the WorkspaceGPT desktop app (apps/desktop, Tauri) for
-# macOS arm64 and x64 (docs/design/desktop.md Phase 3). Windows and Linux are
-# not built yet: nothing has been run on them.
+# macOS arm64 and x64 and Windows x64 (docs/design/desktop.md Phase 3). Linux
+# is not built yet.
 #
-#   - Push a tag desktop-vX.Y.Z: build both targets, create release
-#     desktop-vX.Y.Z (DMGs, updater bundles + .sig, SHA256SUMS.txt), then point
-#     the rolling `desktop-latest` release's latest.json and install.sh at it.
+#   - Push a tag desktop-vX.Y.Z: build every target, create release
+#     desktop-vX.Y.Z (DMGs, the Windows installer, updater bundles + .sig,
+#     SHA256SUMS.txt), then point the rolling `desktop-latest` release's
+#     latest.json, install.sh and install.ps1 at it.
 #     Installed apps poll that latest.json (src-tauri/tauri.conf.json).
 #   - Manual run: build only, artifacts attached to the run, nothing released.
 #
@@ -29,11 +30,17 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        # Both on Apple Silicon: the x64 build cross-compiles (rustup target),
-        # stages the x64 Node + native packages (pnpm supportedArchitectures
-        # installs them all), and codesign doesn't care which CPU it signs for.
-        target: [darwin-arm64, darwin-x64]
-    runs-on: macos-14
+        include:
+          # Both Macs on Apple Silicon: the x64 build cross-compiles (rustup
+          # target), stages the x64 Node + native packages (pnpm
+          # supportedArchitectures installs them all), and codesign doesn't
+          # care which CPU it signs for.
+          - { target: darwin-arm64, os: macos-14, rust: "aarch64-apple-darwin,x86_64-apple-darwin" }
+          - { target: darwin-x64, os: macos-14, rust: "aarch64-apple-darwin,x86_64-apple-darwin" }
+          # Windows builds natively. No code-signing certificate: install.ps1
+          # downloads without the internet mark, so SmartScreen doesn't stop it.
+          - { target: win32-x64, os: windows-latest, rust: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +53,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.rust }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -76,13 +83,51 @@ jobs:
         shell: bash
         run: |
           v=${{ steps.version.outputs.version }}; t=${{ matrix.target }}
-          triple=$([ "$t" = darwin-arm64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)
-          b=apps/desktop/src-tauri/target/$triple/release/bundle
           mkdir -p out
-          cp "$b"/dmg/*.dmg "out/WorkspaceGPT_${v}_${t}.dmg"
-          cp "$b/macos/WorkspaceGPT.app.tar.gz" "out/WorkspaceGPT_${v}_${t}.app.tar.gz"
-          cp "$b/macos/WorkspaceGPT.app.tar.gz.sig" "out/WorkspaceGPT_${v}_${t}.app.tar.gz.sig"
+          case "$t" in
+            win32-x64)
+              b=apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle
+              cp "$b"/nsis/*-setup.exe "out/WorkspaceGPT_${v}_${t}-setup.exe"
+              cp "$b"/nsis/*-setup.exe.sig "out/WorkspaceGPT_${v}_${t}-setup.exe.sig" ;;
+            *)
+              triple=$([ "$t" = darwin-arm64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)
+              b=apps/desktop/src-tauri/target/$triple/release/bundle
+              cp "$b"/dmg/*.dmg "out/WorkspaceGPT_${v}_${t}.dmg"
+              cp "$b/macos/WorkspaceGPT.app.tar.gz" "out/WorkspaceGPT_${v}_${t}.app.tar.gz"
+              cp "$b/macos/WorkspaceGPT.app.tar.gz.sig" "out/WorkspaceGPT_${v}_${t}.app.tar.gz.sig" ;;
+          esac
           ls -la out
+
+      # Windows: install the way users will (install.ps1, against this build
+      # served locally), then smoke-test the installed app and the real
+      # Credential Manager.
+      - name: Install with install.ps1 and smoke-test (Windows)
+        if: matrix.target == 'win32-x64'
+        shell: pwsh
+        run: |
+          $v = '${{ steps.version.outputs.version }}'
+          $setup = "WorkspaceGPT_${v}_win32-x64-setup.exe"
+          Push-Location out
+          (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower() + "  $setup" | Out-File -Encoding ascii SHA256SUMS.txt
+          node ../apps/desktop/scripts/updater-manifest.mjs --version $v --base-url http://127.0.0.1:8799 --out latest.json "windows-x86_64=$setup"
+          $server = Start-Process -PassThru -WindowStyle Hidden python -ArgumentList '-m','http.server','8799','--bind','127.0.0.1'
+          Pop-Location
+          Start-Sleep 3
+          try {
+            $env:WGPT_MANIFEST_URL = 'http://127.0.0.1:8799/latest.json'
+            ./apps/desktop/install.ps1
+            node apps/desktop/scripts/smoke-installed.mjs --exe "$env:LOCALAPPDATA\WorkspaceGPT\WorkspaceGPT.exe"
+            if ($LASTEXITCODE -ne 0) { throw 'smoke test failed' }
+            node apps/desktop/scripts/secrets-chunk-test.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'secrets test failed' }
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+            Remove-Item out/SHA256SUMS.txt, out/latest.json -ErrorAction SilentlyContinue
+          }
+
+      - name: Smoke-test the app (macOS arm64)
+        if: matrix.target == 'darwin-arm64'
+        run: node apps/desktop/scripts/smoke-installed.mjs --exe apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/WorkspaceGPT.app/Contents/MacOS/WorkspaceGPT
 
       - uses: actions/upload-artifact@v4
         with:
@@ -110,13 +155,13 @@ jobs:
         run: |
           tag=${GITHUB_REF_NAME}; v=${tag#desktop-v}
           cd out
-          sha256sum WorkspaceGPT_${v}_*.dmg WorkspaceGPT_${v}_*.app.tar.gz > SHA256SUMS.txt
+          sha256sum WorkspaceGPT_${v}_*.dmg WorkspaceGPT_${v}_*.app.tar.gz WorkspaceGPT_${v}_*-setup.exe > SHA256SUMS.txt
           cat SHA256SUMS.txt
           # --latest=false: the repo's "Latest release" stays the extension's
           # (installed apps and install.sh use the rolling desktop-latest release instead).
           gh release create "$tag" --title "WorkspaceGPT Desktop $v" --latest=false \
-            --notes "WorkspaceGPT Desktop $v for macOS (Apple Silicon and Intel). Install: \`curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/desktop-latest/install.sh | sh\`. The DMG is not notarized: after dragging the app to Applications, open it once via System Settings → Privacy & Security → Open Anyway, or run \`xattr -dr com.apple.quarantine /Applications/WorkspaceGPT.app\`." \
-            WorkspaceGPT_${v}_*.dmg WorkspaceGPT_${v}_*.app.tar.gz WorkspaceGPT_${v}_*.app.tar.gz.sig SHA256SUMS.txt
+            --notes "WorkspaceGPT Desktop $v for macOS (Apple Silicon and Intel) and Windows (x64). macOS: \`curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/desktop-latest/install.sh | sh\`. The DMG is not notarized: after dragging the app to Applications, open it once via System Settings → Privacy & Security → Open Anyway, or run \`xattr -dr com.apple.quarantine /Applications/WorkspaceGPT.app\`. Windows, in PowerShell: \`irm https://github.com/${GITHUB_REPOSITORY}/releases/download/desktop-latest/install.ps1 | iex\`. The Windows installer is not code-signed: if you download the -setup.exe in a browser, SmartScreen says 'Windows protected your PC'; choose More info → Run anyway." \
+            WorkspaceGPT_${v}_*.dmg WorkspaceGPT_${v}_*.app.tar.gz WorkspaceGPT_${v}_*.app.tar.gz.sig WorkspaceGPT_${v}_*-setup.exe WorkspaceGPT_${v}_*-setup.exe.sig SHA256SUMS.txt
 
       - name: Point desktop-latest at it
         shell: bash
@@ -128,8 +173,9 @@ jobs:
             --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
             --out out/latest.json \
             darwin-aarch64=out/WorkspaceGPT_${v}_darwin-arm64.app.tar.gz \
-            darwin-x86_64=out/WorkspaceGPT_${v}_darwin-x64.app.tar.gz
+            darwin-x86_64=out/WorkspaceGPT_${v}_darwin-x64.app.tar.gz \
+            windows-x86_64=out/WorkspaceGPT_${v}_win32-x64-setup.exe
           gh release view desktop-latest >/dev/null 2>&1 || \
             gh release create desktop-latest --title "WorkspaceGPT Desktop (latest)" --latest=false --prerelease \
-              --notes "Rolling pointer to the newest desktop release: latest.json (read by installed apps) and install.sh. Download builds from the versioned desktop-v* releases."
-          gh release upload desktop-latest out/latest.json apps/desktop/install.sh --clobber
+              --notes "Rolling pointer to the newest desktop release: latest.json (read by installed apps), install.sh (macOS) and install.ps1 (Windows). Download builds from the versioned desktop-v* releases."
+          gh release upload desktop-latest out/latest.json apps/desktop/install.sh apps/desktop/install.ps1 --clobber

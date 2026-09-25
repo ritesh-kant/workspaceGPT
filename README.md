@@ -27,7 +27,7 @@ ext install Riteshkant.workspacegpt-extension
 
 VS Code installs from the Marketplace; the forks install from Open VSX.
 
-**As a Mac app, no editor needed**:
+**As a desktop app, no editor needed.** On macOS:
 
 ```bash
 curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh
@@ -40,7 +40,19 @@ curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop
 - DMGs are on the [releases page](https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&expanded=true).
   The app isn't notarized yet, so a DMG copy needs one **Open Anyway** (System
   Settings → Privacy & Security) the first time. The Terminal installer doesn't.
-- Windows and Linux builds aren't available yet.
+
+On Windows (x64), in PowerShell:
+
+```powershell
+irm https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | iex
+```
+
+- Installs for your user only (no admin prompt), after checking the
+  installer's SHA-256. Updates itself the same way the Mac app does.
+- The installer isn't code-signed. The PowerShell line above isn't blocked by
+  SmartScreen. A `-setup.exe` downloaded in a browser shows "Windows
+  protected your PC": choose **More info → Run anyway**.
+- Linux builds aren't available yet.
 
 ## What it does
 

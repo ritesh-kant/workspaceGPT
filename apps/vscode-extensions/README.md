@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
 [![Open VSX](https://img.shields.io/open-vsx/v/Riteshkant/workspacegpt-extension.svg?label=Open%20VSX)](https://open-vsx.org/extension/Riteshkant/workspacegpt-extension)
 
-> 🖥️ **No editor?** **WorkspaceGPT Desktop** runs the same agent as a Mac app (Apple Silicon and Intel, macOS 12+): `curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh`. [More](https://workspacegpt.in/#install)
+> 🖥️ **No editor?** **WorkspaceGPT Desktop** runs the same agent as an app for macOS (Apple Silicon and Intel, macOS 12+) and Windows (x64). macOS: `curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh`. Windows (PowerShell): `irm https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | iex`. [More](https://workspacegpt.in/#install)
 
 Visit our homepage: [workspacegpt.in](https://workspacegpt.in)
 

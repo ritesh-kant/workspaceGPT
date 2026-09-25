@@ -54,8 +54,8 @@ one handler per area (`Chat`, `Confluence`, `Jira`, `Ado`, `Tickets`,
 (`services/confluence`, `services/jira`, `services/ado`, `services/agent`,
 `services/remote`, …). Heavy work runs in worker threads: one per source for sync
 and embedding, and `workers/model/modelWorker.ts` for the agent. Credentials live
-in the host's secret storage (VS Code `context.secrets`; the macOS Keychain on
-Desktop). Settings and history live in the host's storage.
+in the host's secret storage (VS Code `context.secrets`; the macOS Keychain or
+Windows Credential Manager on Desktop). Settings and history live in the host's storage.
 
 **Webview (`webview/`).** React + Zustand (`chatStore`, `settingsStore`,
 `modelStore`, `uiStore`), built with Vite. The same bundle renders inside VS Code
@@ -143,9 +143,12 @@ Tauri shell (Rust)  ──spawn──►  Node sidecar (bundled Node 24)
   checksum-verified Node together with the sidecar and its native modules.
   Every Mach-O file except Node is ad-hoc signed; Node keeps its own Developer
   ID signature, so keychain access survives updates.
-- `.github/workflows/desktop-publish.yml` builds both Macs on each
+- On Windows the sidecar runs in a Job Object (kill-on-close), and browsers
+  and editors open through `explorer.exe` so they aren't part of it. The
+  installer is NSIS, per-user and not code-signed; `install.ps1` installs it.
+- `.github/workflows/desktop-publish.yml` builds both Macs and Windows on each
   `desktop-vX.Y.Z` tag. It publishes the release and points the rolling
-  `desktop-latest` release (`latest.json`, `install.sh`) at it. The app's
+  `desktop-latest` release (`latest.json`, `install.sh`, `install.ps1`) at it. The app's
   updater verifies each update's minisign signature and installs on quit.
 
 Plan and phases: [design/desktop.md](design/desktop.md). Measurements and
