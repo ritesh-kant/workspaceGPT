@@ -24,7 +24,11 @@ export type IconName =
   | 'at-sign'
   | 'git-branch'
   | 'plug'
-  | 'wifi-off';
+  | 'wifi-off'
+  | 'download'
+  | 'copy'
+  | 'check'
+  | 'refresh';
 
 /** Path geometry only — the <svg> wrapper below supplies the shared stroke. */
 const PATHS: Record<IconName, React.ReactNode> = {
@@ -127,6 +131,28 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M2 8.8a15 15 0 0 1 5-3.1" />
       <path d="M11 3.2a15 15 0 0 1 11 5.6" />
       <path d="M12 20h.01" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M12 3v12" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M4 21h16" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+    </>
+  ),
+  check: <path d="M5 12l5 5 9-10" />,
+  refresh: (
+    <>
+      <path d="M20 11a8 8 0 0 0-14.8-4" />
+      <path d="M4 3v4h4" />
+      <path d="M4 13a8 8 0 0 0 14.8 4" />
+      <path d="M20 21v-4h-4" />
     </>
   ),
 };

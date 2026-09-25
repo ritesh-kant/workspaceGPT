@@ -1,4 +1,4 @@
-# WorkspaceGPT VSCode Extension
+# WorkspaceGPT — the coding agent that knows your whole org
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ritesh-kant/workspacegpt-assets/main/1.png" alt="Screenshot 1" width="27%" style="margin-right: 2%" />
@@ -15,7 +15,7 @@ Visit our homepage: [workspacegpt.in](https://workspacegpt.in)
 
 **WorkspaceGPT is the coding agent that knows your whole org.**
 
-Every other coding agent starts from your repo and a prompt. The knowledge about *why* the code should change — the ticket, the design page, the release process — lives in Confluence, Jira and Azure DevOps, and you're expected to copy-paste it in. WorkspaceGPT reads it directly, mid-task.
+Other coding agents start from your repo and a prompt. The knowledge about *why* the code should change — the ticket, the design page, the release process — lives in Confluence, Jira and Azure DevOps, and you're expected to copy-paste it in. WorkspaceGPT reads it directly, mid-task.
 
 It's a full agent: it searches and reads your code, edits files, runs your tests, and shows you every change for approval before it touches disk.
 
@@ -38,9 +38,9 @@ Local mode never adds a network dependency.
 
 - 🧑‍💻 **Agentic coding**: The agent reads your code, makes multi-file edits, and runs commands to verify its own work
 - ✅ **Review before it writes**: Every file change is shown as a diff you approve or reject; one-click revert restores any checkpoint
-- 📄 **Confluence**: Connect with one-click Atlassian sign-in and put your team's documentation in the agent's reach
-- 🎫 **Jira**: The same one-click sign-in; issues are synced and searchable, and the agent reads the issue it's working on
-- 🔷 **Azure DevOps**: Work items synced and searchable, with your assigned items under *Your work*
+- 📄 **Your Confluence**: Connect your spaces with one-click Atlassian sign-in and the agent reads your team's design docs, runbooks and decisions mid-task — and cites them
+- 🎫 **Your Jira**: The same one-click sign-in; issues are synced and searchable, and the agent reads the issue it's working on
+- 🔷 **Your Azure DevOps**: Your assigned work items open under *Your work*; start a run straight from a ticket, grounded in its acceptance criteria and PR history
 - 🔎 **Codebase understanding**: ripgrep search, symbol/definition/reference lookup, and repo orientation via your editor's language server
 - 💬 **@-mentions**: Pull specific files and folders into the conversation
 - 🚀 **Release automation**: Config-sync and hotfix pipelines with a terraform-style plan → approve → apply flow
@@ -74,9 +74,9 @@ By default, WorkspaceGPT uses a lightweight model: `llama3.2:1b` when using Olla
 1. Open the **WorkspaceGPT** sidebar in VSCode
 2. Select your preferred AI provider from the settings menu
 3. Configure your selected provider (API keys for cloud providers or connection settings for Ollama)
-4. **Confluence**: Go to `Settings > Confluence`, click **Connect to Confluence** to sign in with Atlassian, pick a space and sync.
-5. **Jira**: Go to `Settings > Jira`, click **Connect to Jira**, pick a project and sync.
-6. **Azure DevOps (ADO)**: Go to `Settings > Azure DevOps`, enter your organization and a Personal Access Token, and sync.
+4. **Confluence**: Go to `Settings > Knowledge > Confluence`, click **Connect to Confluence** to sign in with Atlassian, pick a space and sync.
+5. **Jira**: Go to `Settings > Knowledge > Jira`, click **Connect to Jira**, pick a project and sync.
+6. **Azure DevOps (ADO)**: Go to `Settings > Knowledge > Azure DevOps`, enter your organization and a Personal Access Token, and sync.
 
 ### 🔁 Reset WorkspaceGPT
 
@@ -130,6 +130,10 @@ pnpm run vscode:publish-all
 ```
 
 > Manual install (any fork): `pnpm run vscode:package`, then use the IDE's **Install from VSIX** action.
+
+## 🧩 Chrome companion
+
+> A browser side panel for your Confluence & Azure DevOps questions. **Pairing is paused for new setups:** the panel reads your search index directly, and that index now lives only on your machine, so there is nothing for another browser to connect to. Existing installs are unaffected. The [Chrome listing](https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole) stays up while a hosted index is in progress.
 
 ## 📄 License
 

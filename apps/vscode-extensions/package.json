@@ -13,7 +13,26 @@
     "vscode": "^1.98.0"
   },
   "categories": [
+    "AI",
+    "Chat",
     "Other"
+  ],
+  "keywords": [
+    "confluence",
+    "azure devops",
+    "ado",
+    "work items",
+    "coding agent",
+    "ai agent",
+    "knowledge base",
+    "company knowledge",
+    "documentation",
+    "rag",
+    "local ai",
+    "ollama",
+    "privacy",
+    "offline",
+    "mcp"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
