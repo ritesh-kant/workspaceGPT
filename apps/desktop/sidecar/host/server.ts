@@ -6,7 +6,7 @@
  *   /view/<viewType>      that view's own HTML with the bridge injected
  *   /__desktop/ws?view=   one socket per view page
  *
- * Security (DESKTOP-TAURI-PLAN.md, Decision 3):
+ * Security (docs/design/desktop.md, Decision 3):
  *  - bound to 127.0.0.1 only, on a random port;
  *  - Host header must be our own loopback authority (blocks DNS rebinding);
  *  - the socket needs the per-launch token AND an allowed Origin, so another

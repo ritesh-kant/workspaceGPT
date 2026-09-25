@@ -1,4 +1,4 @@
-//! Auto-update (tauri-plugin-updater; DESKTOP-TAURI-PLAN.md challenge #15).
+//! Auto-update (tauri-plugin-updater; docs/design/desktop.md challenge #15).
 //!
 //!   1. 30 s after launch, then every 6 h, and on "Check for Updates…", fetch
 //!      `latest.json` from the endpoint in tauri.conf.json.

@@ -18,7 +18,7 @@ import { publishSyncState } from 'src/utils/syncStateStore';
  * Indexing into the 'JIRA' namespace — mirrors AdoEmbeddingService exactly,
  * reusing the SAME generic workers/common/{createEmbeddingForText,
  * searchProcess}.js (namespace-parameterized already; see
- * JIRA-INTEGRATION-DESIGN.md §5 P5 — this is the piece the design doc calls
+ * docs/design/jira.md §5 P5 — this is the piece the design doc calls
  * "reused unchanged").
  */
 export class JiraEmbeddingService {

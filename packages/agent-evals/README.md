@@ -1,6 +1,6 @@
 # agent-evals
 
-Phase 0.1 of [PHASES.md](../../PHASES.md): decide the agent's **edit format**
+Phase 0.1 of [docs/roadmap.md](../../docs/roadmap.md): decide the agent's **edit format**
 by testing three candidates against real edits on snapshotted files from this
 repo. Also the seed of the G3 eval harness (grow to ~50 tasks by Phase 4).
 
@@ -45,7 +45,7 @@ doesn't break evals). The `ambiguous-target` task is the discriminator for
 search/replace uniqueness handling; `large-file-edit` is the full-file killer;
 `multi-file-rename` tests cross-file edits.
 
-Write the decision into CODING-AGENT-ROADMAP.md open item 1 when done.
+Write the decision into docs/design/coding-agent-roadmap.md open item 1 when done.
 
 ## Benchmark suite (efficiency)
 
@@ -210,7 +210,7 @@ pnpm bench:full
 
 The end-to-end check for the agent harness: ticket-shaped tasks run through
 the **real** model worker and scored against behavioural oracles, under each
-harness profile. See `AGENT-PARITY-DESIGN.md` for what P1-P6 changed and why
+harness profile. See `docs/design/agent-parity.md` for what P1-P6 changed and why
 this is the only thing that can validate them.
 
 ```bash

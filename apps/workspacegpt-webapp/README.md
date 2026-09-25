@@ -1,36 +1,25 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# workspacegpt.in
 
-## Getting Started
+The WorkspaceGPT website and user docs: Next.js 15 (App Router) with Tailwind v4.
 
-First, run the development server:
+| Route | File |
+|---|---|
+| `/` | `src/app/page.tsx`: hero, modes, features, install (`#install`), getting started |
+| `/docs` | `src/app/docs/page.tsx`: the user guide, one page with anchored sections |
+| `/docs/deployment` | `src/app/docs/deployment/page.tsx`: deployment automation guide |
+| `/privacy`, `/support` | `src/app/privacy/page.tsx`, `src/app/support/page.tsx` |
+
+Shared pieces are in `src/app/_components/`: `SiteNav`, `Icon` (the site's
+stroke icon set; use it rather than emoji) and `Reveal` (fade-in on scroll for
+`data-reveal` sections). Colour tokens (`bg-surface`, `border-line`,
+`text-muted`, `text-brand`, …) are defined in `src/app/globals.css`. SEO
+metadata and JSON-LD live in `src/app/layout.tsx`; see also `sitemap.ts`,
+`robots.ts` and `opengraph-image.tsx`.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm --filter workspacegpt-webapp dev     # http://localhost:3000
+pnpm --filter workspacegpt-webapp build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Vercel deploys `main` to production. PRs get a preview deployment, and
+`vercel.json` skips builds when nothing here changed.

@@ -6,7 +6,7 @@ import { adfToText, markdownToAdf, mediaIdsFromAdf } from './adf';
 import { sniffImageMime } from '../tickets/imageSniff';
 
 /**
- * Live, by-key issue reads — the Jira half of JIRA-INTEGRATION-DESIGN.md §5
+ * Live, by-key issue reads — the Jira half of docs/design/jira.md §5
  * P4, mirroring adoWorkItemService.ts's fetchWorkItem/addWorkItemComment.
  *
  * Deliberately separate from a future sync path and from `search_tickets`,
@@ -57,7 +57,7 @@ async function jiraGet(ctx: JiraRequestContext, url: string, what: string): Prom
  *
  * Unlike parseWorkItemId's trailing-digit-run rule, the key IS the id — a
  * Jira key is never truncated to its trailing digits, because "123" alone
- * means nothing in Jira. See JIRA-INTEGRATION-DESIGN.md §3, the reason P0 had
+ * means nothing in Jira. See docs/design/jira.md §3, the reason P0 had
  * to land before any of this file could exist.
  */
 export function parseIssueKey(raw: string): string {

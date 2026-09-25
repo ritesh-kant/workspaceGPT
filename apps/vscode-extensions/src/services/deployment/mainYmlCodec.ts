@@ -6,7 +6,7 @@ import type { MainYmlCodec } from './machEnvTarget';
  *
  * This is a REASONABLE DEFAULT, not the confirmed org schema. Swap it once the
  * real `main.yml` + `update-main-file/action.yml` are known (open item #1 in
- * DEPLOYMENT-AUTOMATION-DESIGN.md) — e.g. if vars live under a nested `env:` map
+ * docs/design/deployment-automation.md) — e.g. if vars live under a nested `env:` map
  * or carry quoting/typing rules. `set` edits only the matching line so
  * surrounding formatting and comments survive, and appends when the key is
  * absent, mirroring `setComponentVersion`'s surgical-edit approach.

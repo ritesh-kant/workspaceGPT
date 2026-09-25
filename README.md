@@ -1,126 +1,125 @@
-# Workspace GPT 🧠🚀 (In Development)
+# WorkspaceGPT
 
-> 🧭 **Where this project is headed:** [NORTH-STAR.md](NORTH-STAR.md) — *the
-> coding agent that knows your whole org, and can prove it never stores your
-> data.* Read it before proposing or building any feature.
+**The coding agent that knows your whole org.**
 
-**Stop losing time searching for information!** Workspace GPT is an AI-powered knowledge assistant designed to break down data silos and make your organization's collective knowledge instantly accessible **from inside your IDE**. This **Retrieval-Augmented Generation (RAG)** system is **local-first**: by default it runs on a local model (**LLaMA 3.2** via [Ollama](https://ollama.com/)) with local embeddings and a local vector store, so your data can stay entirely on your machine. If you prefer, you can also plug in a cloud provider (OpenAI, Gemini, Groq, and others) — the tradeoff is yours to make.
+Other coding agents start from your repo and a prompt. The knowledge that says
+*why* the code should change lives elsewhere: the ticket, the design page, the
+release process. WorkspaceGPT reads your Confluence pages, Jira issues and Azure
+DevOps work items directly, mid-task. It searches and reads your code, edits
+files, runs your checks, and shows every change as a diff for you to approve.
 
-**Who is this for?** Workspace GPT is designed for developers, product owners, managers, and anyone in your organization who needs quick access to relevant information **without compromising data privacy**.
+Your connected knowledge and its search index **never leave your machine**, in
+either mode.
 
-Workspace GPT helps your organization work smarter, not harder. **All while keeping your data under your control.**
+[Website](https://workspacegpt.in) · [Docs](https://workspacegpt.in/docs) ·
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension) ·
+[Open VSX](https://open-vsx.org/extension/Riteshkant/workspacegpt-extension) ·
+[Desktop releases](https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&expanded=true)
 
-## 🔒 Key Principle: Local-First & Private by Default
+## Install
 
-**Workspace GPT is built with privacy in mind.** Data extraction, embedding, and storage happen on your machine, and when you use the default local model (Ollama) with a local vector store, **nothing leaves your environment.**
+**In your editor** (VS Code, Cursor, Antigravity, Windsurf, VSCodium): search
+for **WorkspaceGPT** in the Extensions view, or run
 
-> ⚠️ **Privacy is a choice you control.** If you configure a cloud model or embedding provider (e.g. OpenAI, Gemini, Groq) or a hosted Qdrant instance, the relevant data is sent to that provider. For a fully local setup, use Ollama + a local vector store.
+```
+ext install Riteshkant.workspacegpt-extension
+```
 
-## 🚀 Try it
+VS Code installs from the Marketplace; the forks install from Open VSX.
 
-The easiest way to use Workspace GPT is the **IDE extension** (VS Code, Cursor, and Antigravity via Open VSX):
+**As a Mac app, no editor needed**:
 
-*   **VS Code Marketplace:** search for `WorkspaceGPT` (`Riteshkant.workspacegpt-extension`)
-*   For a **100% local** setup, install [Ollama](https://ollama.com/) and pull a model (e.g. `ollama pull llama3.2`); embeddings and the vector store run locally by default.
+```bash
+curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh
+```
 
-The instructions below cover running the monorepo from source for development.
+- Runs on Apple Silicon and Intel Macs with macOS 12 or later. The installer
+  checks the download's SHA-256 and installs to `/Applications`.
+- Updates itself: each update's signature is verified, and it installs when
+  you quit.
+- DMGs are on the [releases page](https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&expanded=true).
+  The app isn't notarized yet, so a DMG copy needs one **Open Anyway** (System
+  Settings → Privacy & Security) the first time. The Terminal installer doesn't.
+- Windows and Linux builds aren't available yet.
 
-## 🧰 Prerequisites:
+## What it does
 
-Before you begin, ensure you have the following installed:
+- **Agentic coding.** It searches code (ripgrep plus language-server symbol,
+  definition and reference lookups), edits across files, and runs your linter,
+  type-checker and tests to verify its own work.
+- **Review before it writes.** Every change arrives as a diff with keep/undo
+  per hunk. A checkpoint is taken before the first write, so a whole turn can
+  be reverted.
+- **Your org's knowledge.** Confluence and Jira connect with one-click
+  Atlassian sign-in; Azure DevOps connects with a PAT. Everything is synced and
+  indexed on-device. Mention a ticket and the agent reads it; ask about a
+  decision and it cites the page. "Your work" lists your assigned tickets.
+- **Two modes.** *Local*: your own model, either Ollama (fully offline) or any
+  provider key (OpenAI, Claude, Gemini, Groq, OpenRouter, NVIDIA, or an
+  OpenAI-compatible endpoint). *Remote*: sign in with GitHub and use our managed
+  model on weekly credits. Only your question and the snippets retrieved for it
+  are sent, and nothing is retained. The mode moves inference only; the index
+  is always local.
+- **MCP server.** Exposes your Confluence, Jira, Azure DevOps and workspace
+  search to Claude Desktop, Claude Code, Cursor and Copilot.
+- **Deployment automation.** Config-sync and hotfix releases run as plan →
+  approve → apply.
+- **Web search** for what your own systems can't answer.
 
-*   **Node.js:** (v18 or later) - [https://nodejs.org/](https://nodejs.org/)
-*   **pnpm:** (latest version) - [https://pnpm.io/](https://pnpm.io/)
-*   **Python:** (3.10 or later) - [https://www.python.org/](https://www.python.org/)
-*   **Conda:** (latest version) - [https://docs.conda.io/en/latest/](https://docs.conda.io/en/latest/)
-*   **Ollama:** (latest version) - [https://ollama.com/](https://ollama.com/)
+## Repository
 
-## 🔹 Supported Data Sources:
+| Path | What it is |
+|---|---|
+| [`apps/vscode-extensions`](apps/vscode-extensions) | The product: extension host, React webview, agent and sync workers |
+| [`apps/desktop`](apps/desktop) | WorkspaceGPT Desktop: Tauri shell + Node sidecar running the extension unmodified |
+| [`apps/workspacegpt-mcp`](apps/workspacegpt-mcp) | MCP server over the local index |
+| [`apps/workspacegpt-api`](apps/workspacegpt-api) | Cloudflare Worker for Remote mode (GitHub sign-in, credits, inference proxy) |
+| [`apps/confluence-auth-proxy`](apps/confluence-auth-proxy) | Vercel functions holding OAuth client secrets (Atlassian, GitHub, Vercel) |
+| [`apps/workspacegpt-webapp`](apps/workspacegpt-webapp) | The website and docs |
+| [`apps/chrome-extension`](apps/chrome-extension) | Browser side panel (parked) |
+| `apps/confluence-extractor`, `apps/confluence-rag` | The original 2025 extractor and Python RAG (legacy) |
+| [`packages/agent-evals`](packages/agent-evals) | Agent eval harness and unit tests |
+| `packages/release-core`, `embedding-core`, `confluence-utils` | Shared libraries |
 
-*   **Atlassian Confluence:** ✅ (SUPPORTED) — Index Confluence spaces and pages.
-*   **Azure DevOps:** ✅ (SUPPORTED) — Index work items and query them in natural language.
-*   **Open workspace:** ✅ — Explore the repository currently open in the editor with live text search, file reads, and language-server navigation. No codebase index is created or stored.
-*   **Jira:** 🚧 (PLANNED) — Scaffolded, but not functional yet.
+How the pieces fit: [docs/architecture.md](docs/architecture.md). Direction:
+[docs/north-star.md](docs/north-star.md). Everything else is indexed in
+[docs/](docs/README.md).
 
-## 🔹 Key Features:
+## Develop
 
--   **Smart Q&A:** Developers can ask natural language questions about technical documentation, codebases, and internal best practices, and receive accurate, context-aware answers.
-    *   **Example Prompts:**
-        *   "How do I use the X library to make a network request?"
-        *   "What are the best practices for error handling in our codebase?"
-        * "What are the supported authentication methods?"
--   **Ticket Lookup (Azure DevOps):** Retrieve details on your Azure DevOps work items — status, assignees, and more — in natural language. *(Jira support is planned.)*
-    *   **Example Prompts:**
-        *   "What is the current status of work item 12345?"
-        *   "Who is assigned to this bug?"
--   **Codebase exploration:** Search and inspect the workspace currently open in VS Code using live tools. This reads the files you ask about; it does not build embeddings or a persistent codebase index.
-    *   **Example Prompts:**
-        *   "Where is the network call defined?"
-        *   "Show me examples of how to use the `calculate_total` function."
--   **Secure & Private:** Designed for internal use. Your indexed data is stored in your own vector database, and with the default local model + local vector store, **it stays on your machine.** Only if you opt into a cloud model/embedding provider is data sent to that provider.
+Requirements: Node 18 or later and pnpm 9. Desktop also needs Rust.
 
-## ⚙️ Installation & Setup:
+```bash
+pnpm install
+pnpm build            # whole monorepo (Turborepo)
+pnpm lint
+pnpm check-types
+```
 
-1.  **Install Dependencies and Prepare the Environment:**
-    *   Navigate to the root directory of the project in your terminal.
-    *   Run the following command to install the required packages:
-        ```bash
-        pnpm install
-        ```
+| Task | Command |
+|---|---|
+| Build the extension | `pnpm app:vscode-extension build` (then F5 in `apps/vscode-extensions` for an Extension Development Host) |
+| Agent unit tests | `pnpm --filter @workspace-gpt/agent-evals units` |
+| Desktop app (dev) | `pnpm --filter desktop dev` |
+| Desktop release build | `pnpm --filter desktop release` (see [apps/desktop](apps/desktop)) |
+| MCP server | `pnpm app:mcp-server build` |
+| Remote-mode API | `pnpm app:api dev` |
+| Website | `pnpm --filter workspacegpt-webapp dev` (port 3000) |
 
-2.  **Start the Confluence Extractor Service:**
-    *   This step extracts data from your confluence. This is a long-running process and can take a while, depending on the amount of data you are trying to pull and the `APP_MODE` setting in your `.env` file. **This process happens entirely locally.**
-    *   Run the following command to start the Confluence extractor service:
-        ```bash
-        pnpm extractor start
-        ```
-        *   **Note:** The duration of this process will depend on the `APP_MODE` setting in your `.env` file and the size of your Confluence data. The app will try to extract all the pages from confluence and put it in a vector database.
-        *   **Limitations:** The app can only extract content from pages. If you have a lot of attachments, they might not be extracted.
-        *   **Confluence Extraction Data:** Use `APP_MODE=LITE` in the .env file if you just want to try out the app; it's faster but might not cover all your needs. For better data extraction, use `APP_MODE=STANDARD` or `APP_MODE=EXPERT`.
-        *   **Confluence Data Update:** Data extraction is done once. If you need to refresh it, you have to run `pnpm reset:extractor`. This will **locally** clean up the database and restart the extraction.
+Conventions for contributors and coding agents are in [AGENTS.md](AGENTS.md).
 
-3.  **Activate conda environment**
+## Privacy
 
-    *   Activate the `workspacegpt` Conda environment.
-        ```bash
-        conda activate workspacegpt
-        ```
+- Indexing and embeddings run on your machine, and the vector index is written
+  to local files.
+- Credentials stay in your editor's secret storage (the macOS Keychain on
+  Desktop).
+- In Remote mode, requests are processed in memory and discarded.
+- Anonymous feature-usage events are the only telemetry, and they never
+  contain your content.
 
-4.  **Start the Confluence RAG Service:**
-    *   Now that the data is extracted, run the service that answers queries against it. **All processing happens locally**.
-    *   Run the following command to start the Confluence RAG service:
-        ```bash
-        pnpm workspaceGPT start
-        ```
-        *   **Note:** Run this command after each data extraction or if the server crashes.
+Details: [privacy policy](https://workspacegpt.in/privacy).
 
-5.  **Setup Complete!**
-    *   The RAG application setup is now complete! You are all set to use it **within your local environment**.
-    *   **Next time you want to use WorkspaceGPT, simply run:**
-        ```bash
-        pnpm workspaceGPT start
-        ```
-    *   If you have any issues, please check the logs or contact the development team.
+## License
 
-## 🚀 Future Enhancements:
-
-*   **Support for More Data Sources:**  We plan to add support for extracting data from other platforms like Slack, Google Drive, and more. **All these features will be implemented with the same commitment to local operation and privacy.**
-*   **Improved Code Analysis:** Deeper code understanding, including dependency graphs and code smells detection.
-*   **Customizable AI Models:** Allow users to choose and fine-tune their own AI models for specific use cases.
-*   **Scheduled Extraction**: Allow users to schedule the extraction of data from their different sources.
-
-*   **Near Term:** Support for GitHub Code
-*   **Mid Term:** Support for Google Drive/Slack.
-*   **Long Term:** Add a proper UI.
-
-## 🤝 Collaboration
-
-If you are interested in contributing or have ideas for more features, we welcome your collaboration! Please reach out to us or create a pull request with your proposed changes.
-
-## 🙏 Acknowledgments
-
-*   [Ollama](https://ollama.com/)
-
-## ⚠️ Disclaimer
-
-Workspace GPT is currently in active development. Features and functionality may change as the project evolves. **However, the core commitment to local operation and data privacy will remain a fundamental aspect of the project.**
+[MIT](LICENSE)

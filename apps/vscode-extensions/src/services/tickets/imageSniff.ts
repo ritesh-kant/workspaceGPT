@@ -2,7 +2,7 @@
  * Identifies an image from its magic bytes, returning null for anything that
  * isn't one of the formats vision models accept.
  *
- * Extracted out of adoWorkItemService.ts (JIRA-INTEGRATION-DESIGN.md §5 P3):
+ * Extracted out of adoWorkItemService.ts (docs/design/jira.md §5 P3):
  * this is generic byte-sniffing with nothing ADO-specific in it, and Jira's
  * attachment fetch needs exactly the same check for exactly the same reason —
  * neither tracker's HTTP `content-type` can be trusted (ADO serves

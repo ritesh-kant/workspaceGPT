@@ -3,7 +3,7 @@ import { WORKER_STATUS } from '../../../constants';
 import { adfToText } from '../../services/jira/adf';
 
 /**
- * Bulk sync — JIRA-INTEGRATION-DESIGN.md §5 P5, the JQL/search-jql
+ * Bulk sync — docs/design/jira.md §5 P5, the JQL/search-jql
  * counterpart to adoWorker.ts's WIQL/workitemsbatch. No vscode/host imports
  * here (matching adoWorker.ts): this runs in a worker_thread, and the auth
  * header is built host-side and passed in via workerData, exactly like

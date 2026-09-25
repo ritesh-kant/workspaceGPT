@@ -1,6 +1,6 @@
 //! WorkspaceGPT Desktop — the Tauri shell.
 //!
-//! Deliberately thin (DESKTOP-TAURI-PLAN.md): a window, a menu, a tray, a
+//! Deliberately thin (docs/design/desktop.md): a window, a menu, a tray, a
 //! folder picker, and the sidecar supervisor. All product logic is the VS Code
 //! extension's host code running in the Node sidecar; the window shows the
 //! sidecar's loopback page, which reaches the sidecar over its own WebSocket

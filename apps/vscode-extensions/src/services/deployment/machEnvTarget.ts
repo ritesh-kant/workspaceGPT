@@ -3,7 +3,7 @@ import { MachSyncTarget, type MachPullRef } from './machSyncTarget';
 
 /**
  * Parse/serialize the env-var half of mach `main.yml`. The exact schema is
- * org-specific (open item #1 in DEPLOYMENT-AUTOMATION-DESIGN.md), so it's
+ * org-specific (open item #1 in docs/design/deployment-automation.md), so it's
  * injected rather than baked into the target — swapping YAML layouts (or moving
  * to Doppler/Parameter-Store) is a codec change, not an engine change.
  */

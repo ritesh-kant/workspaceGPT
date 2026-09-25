@@ -11,7 +11,7 @@
 //!   Restart Now on the update notice; `@@WGPT_NOTIFY@@ {…}` when a run needs
 //!   the user or finished (notify.rs); everything else is log output, echoed here.
 //!
-//! No orphans (DESKTOP-TAURI-PLAN.md challenge #6):
+//! No orphans (docs/design/desktop.md challenge #6):
 //!   - the sidecar is its own process-group leader, and anything left in that
 //!     group is SIGKILLed after it exits;
 //!   - the shell holds the sidecar's stdin, so if the shell dies (force-quit),

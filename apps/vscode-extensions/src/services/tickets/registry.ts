@@ -7,7 +7,7 @@ import { TicketProvider } from './TicketProvider';
 /**
  * The tracker connected right now, or null.
  *
- * v1 is single-tracker (JIRA-INTEGRATION-DESIGN.md §2 principle 5): whichever
+ * v1 is single-tracker (docs/design/jira.md §2 principle 5): whichever
  * provider's own settings show it authenticated IS the active one. This is a
  * synchronous settings read, not a live connectivity check — the same
  * contract `toolAvailability.ado` had before this file existed, kept

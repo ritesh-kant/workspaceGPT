@@ -6,7 +6,7 @@ import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
 import { persistSyncState, publishSyncState } from '../../utils/syncStateStore';
 
-/** Background sync scheduling — mirrors AdoSyncScheduler exactly, see JIRA-INTEGRATION-DESIGN.md §5 P5. */
+/** Background sync scheduling — mirrors AdoSyncScheduler exactly, see docs/design/jira.md §5 P5. */
 export class JiraSyncScheduler {
   private intervalId?: NodeJS.Timeout;
   private syncStartedAt?: number;

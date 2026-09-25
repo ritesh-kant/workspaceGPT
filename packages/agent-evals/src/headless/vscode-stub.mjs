@@ -1,6 +1,6 @@
 /**
  * Minimal `vscode` module stub for HEADLESS testing of extension services
- * (P1.9 live validation, PHASES.md). Covers exactly the API surface touched
+ * (P1.9 live validation, docs/roadmap.md). Covers exactly the API surface touched
  * by agentWriteTools / commandTools / codebaseTools at import + prepare time.
  * applyWrite()'s WorkspaceEdit path is NOT faithfully emulated — the harness
  * applies PreparedWrites itself via fs; WorkspaceEdit semantics stay an

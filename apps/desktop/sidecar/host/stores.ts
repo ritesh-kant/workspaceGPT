@@ -4,7 +4,7 @@
  *
  * Deliberately NOT the VS Code extension's globalStorage directory: two
  * processes writing the same chats/*.json is exactly the stale-history
- * overwrite bug (DESKTOP-TAURI-PLAN.md, challenge #11).
+ * overwrite bug (docs/design/desktop.md, challenge #11).
  */
 import * as fs from 'node:fs';
 import * as os from 'node:os';

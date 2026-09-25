@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Phase 0.1 edit-format spike + seed of the agent eval harness (PHASES.md)",
+  "description": "Phase 0.1 edit-format spike + seed of the agent eval harness (docs/roadmap.md)",
   "scripts": {
     "selftest": "node src/run.mjs --selftest",
     "eval": "node src/run.mjs",

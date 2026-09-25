@@ -7,21 +7,21 @@
 </p>
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/Riteshkant.workspacegpt-extension.svg)](https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension)
-[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/gagogpeepmgaljpabdlpbcknjnbcaole.svg?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole)
+[![Open VSX](https://img.shields.io/open-vsx/v/Riteshkant/workspacegpt-extension.svg?label=Open%20VSX)](https://open-vsx.org/extension/Riteshkant/workspacegpt-extension)
 
-> 🧩 **WorkspaceGPT for Chrome** — a browser side panel for your Confluence & Azure DevOps questions. **Pairing is paused for new setups:** the panel reads your search index directly, and that index now lives only on your machine, so there is nothing for another browser to connect to. Existing installs are unaffected. The [Chrome listing](https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole) stays up while a hosted index is in progress.
+> 🖥️ **No editor?** **WorkspaceGPT Desktop** runs the same agent as a Mac app (Apple Silicon and Intel, macOS 12+): `curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh`. [More](https://workspacegpt.in/#install)
 
 Visit our homepage: [workspacegpt.in](https://workspacegpt.in)
 
 **WorkspaceGPT is the coding agent that knows your whole org.**
 
-Every other coding agent starts from your repo and a prompt. The knowledge about *why* the code should change — the ticket, the design page, the release process — lives in Confluence and Azure DevOps, and you're expected to copy-paste it in. WorkspaceGPT reads it directly, mid-task.
+Every other coding agent starts from your repo and a prompt. The knowledge about *why* the code should change — the ticket, the design page, the release process — lives in Confluence, Jira and Azure DevOps, and you're expected to copy-paste it in. WorkspaceGPT reads it directly, mid-task.
 
 It's a full agent: it searches and reads your code, edits files, runs your tests, and shows you every change for approval before it touches disk.
 
 ## 🧭 What makes it different
 
-- **It knows your org, not just your repo.** Your Confluence docs and ADO tickets are first-class context the agent can pull mid-task — ask about a ticket and it can find the design doc *and* the code that implements it.
+- **It knows your org, not just your repo.** Your Confluence docs and Jira and ADO tickets are first-class context the agent can pull mid-task — ask about a ticket and it can find the design doc *and* the code that implements it.
 - **Privacy is architecture, not a promise.** Embeddings and the search index are always on your machine — in *both* modes. In **Local mode** the model runs there too, so none of your content leaves it, and no account is needed. Other tools offer a privacy *policy*; this is a privacy *mode*.
 - **It participates in shipping.** Release config-sync and hotfix automation (plan → approve → apply) mean the work doesn't stop at "PR opened."
 
@@ -29,7 +29,7 @@ It's a full agent: it searches and reads your code, edits files, runs your tests
 
 The switch moves **one** thing: where answers are generated. Your embeddings and search index are always local, in both modes.
 
-- **Local mode** — bring your own model: [Ollama](https://ollama.com/) (fully offline), or any OpenAI-compatible provider (OpenAI, Gemini, Groq, OpenRouter…) with your own key. No account.
+- **Local mode** — bring your own model: [Ollama](https://ollama.com/) (fully offline), or your own key for OpenAI, Claude, Gemini, Groq, OpenRouter, NVIDIA, Requesty or any OpenAI-compatible endpoint. No account.
 - **Remote mode** — WorkspaceGPT's managed model. Sign in with GitHub; no model keys to supply. Your question and the snippets retrieved for it are sent to our inference endpoint; your documents and index stay on your machine.
 
 Local mode never adds a network dependency.
@@ -38,25 +38,25 @@ Local mode never adds a network dependency.
 
 - 🧑‍💻 **Agentic coding**: The agent reads your code, makes multi-file edits, and runs commands to verify its own work
 - ✅ **Review before it writes**: Every file change is shown as a diff you approve or reject; one-click revert restores any checkpoint
-- 📄 **Confluence integration**: Connect your space and put your team's documentation in the agent's reach
-- 🔷 **Azure DevOps integration**: Work items and PR context synced and searchable
+- 📄 **Confluence**: Connect with one-click Atlassian sign-in and put your team's documentation in the agent's reach
+- 🎫 **Jira**: The same one-click sign-in; issues are synced and searchable, and the agent reads the issue it's working on
+- 🔷 **Azure DevOps**: Work items synced and searchable, with your assigned items under *Your work*
 - 🔎 **Codebase understanding**: ripgrep search, symbol/definition/reference lookup, and repo orientation via your editor's language server
 - 💬 **@-mentions**: Pull specific files and folders into the conversation
 - 🚀 **Release automation**: Config-sync and hotfix pipelines with a terraform-style plan → approve → apply flow
+- 🔌 **MCP server**: Exposes your Confluence, Jira, ADO and workspace search to Claude Desktop, Claude Code, Cursor and Copilot
 - 🛡️ **Runs offline**: In Local mode, no remote APIs and no data leakage
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
-No specific prerequisites required! WorkspaceGPT now supports multiple AI providers:
+No specific prerequisites required. Pick **Remote mode** (sign in with GitHub, no model setup) or bring your own model in **Local mode**:
 
 1. **Ollama** - For 100% local operation
-2. **OpenAI** - For powerful cloud-based models
-3. **Gemini** - Google's advanced AI models
-4. **Groq** - High-performance inference
-5. **Requestly** - Custom API integration
-6. **OpenRouter** - For access to multiple models
+2. **OpenAI**, **Claude**, **Gemini**, **Groq**, **NVIDIA** - With your own API key
+3. **OpenRouter**, **Requesty** - One key for many models
+4. **Custom** - Any OpenAI-compatible endpoint (self-hosted, proxy or gateway)
 
 ### 🧠 Default Model
 
@@ -74,8 +74,9 @@ By default, WorkspaceGPT uses a lightweight model: `llama3.2:1b` when using Olla
 1. Open the **WorkspaceGPT** sidebar in VSCode
 2. Select your preferred AI provider from the settings menu
 3. Configure your selected provider (API keys for cloud providers or connection settings for Ollama)
-4. **Confluence**: Go to `Settings > Confluence Integration`, securely sign in with one click, and select workspaces to **"Start Sync"**.
-5. **Azure DevOps (ADO)**: Go to `Settings > Azure DevOps`, provide your details, and sync your ADO context to chat with tickets and PRs.
+4. **Confluence**: Go to `Settings > Confluence`, click **Connect to Confluence** to sign in with Atlassian, pick a space and sync.
+5. **Jira**: Go to `Settings > Jira`, click **Connect to Jira**, pick a project and sync.
+6. **Azure DevOps (ADO)**: Go to `Settings > Azure DevOps`, enter your organization and a Personal Access Token, and sync.
 
 ### 🔁 Reset WorkspaceGPT
 
@@ -138,7 +139,7 @@ This software is proprietary. See the [LICENSE.md](LICENSE.md) file for more det
 
 Have questions or issues?
 
-1. Check the [documentation](docs/)
+1. Check the [documentation](https://workspacegpt.in/docs)
 2. Open an issue on GitHub
 3. Email us at contact@workspacegpt.in
 4. Reach out to the maintainers

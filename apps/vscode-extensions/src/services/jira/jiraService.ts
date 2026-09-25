@@ -10,7 +10,7 @@ import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 /**
  * Sync orchestration — spawns jiraWorker.ts, tracks resumable progress,
  * writes synced issues to disk as markdown. Mirrors adoService.ts; see
- * JIRA-INTEGRATION-DESIGN.md §5 P5 for why this is a parallel file rather
+ * docs/design/jira.md §5 P5 for why this is a parallel file rather
  * than a shared abstraction with it.
  */
 

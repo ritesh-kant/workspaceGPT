@@ -7,7 +7,7 @@ import { MyTicketsResult } from '../services/tickets/types';
  * The one message that genuinely doesn't belong to either tracker's own
  * handler: "your work" is a property of whichever tracker is ACTIVE, not of
  * ADO or Jira specifically. This used to live in AdoMessageHandler, calling
- * adoWorkItemService.listMyWorkItems directly — JIRA-INTEGRATION-DESIGN.md
+ * adoWorkItemService.listMyWorkItems directly — docs/design/jira.md
  * §5 P6 is what finishes that migration (flagged as deferred in the P1
  * commit message) by routing through the same tickets/registry.ts seam
  * get_ticket already uses.

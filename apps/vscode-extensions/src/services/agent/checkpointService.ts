@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * Agent checkpoints via a SHADOW GIT REPO (decision: CODING-AGENT-ROADMAP.md
+ * Agent checkpoints via a SHADOW GIT REPO (decision: docs/design/coding-agent-roadmap.md
  * open item 2). A separate --git-dir lives under the extension's globalStorage
  * while the user's workspace is the --work-tree, so:
  *

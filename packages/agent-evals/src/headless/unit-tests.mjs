@@ -3552,7 +3552,7 @@ console.log('\ncontextBudget (the context window bounds a run — not a turn cou
     // never "we have had enough turns".
     assert.ok(/if \(contextNow\.exhausted\) \{/.test(src), 'a full context must end the run');
     assert.ok(/RUN_WALL_CLOCK_MS/.test(src), 'the wall clock must still bound a wedged run');
-    // Automatic summarizing compaction is deliberately not built yet (TODO.md);
+    // Automatic summarizing compaction is deliberately not built yet (docs/todo.md);
     // this asserts we have not half-built it and left it wired in.
     assert.ok(!/compactConversation/.test(src), 'the auto-summarizer was removed, not left dangling');
   });

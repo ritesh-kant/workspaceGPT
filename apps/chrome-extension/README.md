@@ -1,7 +1,15 @@
-# WorkspaceGPT — Architecture
+# WorkspaceGPT for Chrome (parked)
 
-WorkspaceGPT lets you ask questions over your Confluence & Azure DevOps
-knowledge base. It ships as two clients with **no backend of its own**:
+> **Status: parked.** New pairings are impossible: the share model below needs a
+> cloud-reachable index (Gemini embeddings + Qdrant cloud), and WorkspaceGPT's
+> index is now on-device only. The Chrome Web Store listing stays up and
+> existing installs keep working against what they were configured with. The
+> "Share to Chrome" UI is hidden in the VS Code extension. This README was the
+> repo's `ARCHITECTURE.md` until 2026-09-25; the system as a whole is described
+> in [docs/architecture.md](../../docs/architecture.md).
+
+This side panel lets you ask questions over your Confluence & Azure DevOps
+knowledge from Chrome. The share model has two clients and **no backend of its own**:
 
 - **VS Code extension** (`apps/vscode-extensions`) — the **master**. Syncs and
   indexes sources, holds all credentials, and is where everything is configured.

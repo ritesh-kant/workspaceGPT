@@ -6,7 +6,7 @@
  * (Confluence table layouts, Vercel/mach APIs, org-specific tag formats) lives
  * behind the adapter interfaces below — never in these types.
  *
- * See DEPLOYMENT-AUTOMATION-DESIGN.md (repo root) for the full design.
+ * See docs/design/deployment-automation.md (repo root) for the full design.
  */
 
 /**

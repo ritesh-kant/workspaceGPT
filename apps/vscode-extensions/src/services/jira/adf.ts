@@ -3,7 +3,7 @@
  *
  * Jira Cloud returns descriptions and comments as ADF — a JSON node tree —
  * not HTML, so adoWorkItemService.ts's `htmlToText` does not help here; this
- * is the genuinely net-new component JIRA-INTEGRATION-DESIGN.md §5 P3 calls
+ * is the genuinely net-new component docs/design/jira.md §5 P3 calls
  * out as the long pole on the critical path.
  *
  * `adfToText` deliberately matches `htmlToText`'s OUTPUT STYLE (plain text,

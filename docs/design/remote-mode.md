@@ -3,9 +3,8 @@
 > Status: **Implemented** · Owner: Ritesh · Last updated: 2026-08-31
 >
 > This describes what is in the tree, not a proposal. It replaces the lost
-> original of this file and supersedes the AWS/managed-index plan in
-> [REMOTE-MODE-SAAS-DESIGN.md](REMOTE-MODE-SAAS-DESIGN.md) for everything about
-> how remote mode works today.
+> original of this file and supersedes the original AWS/managed-index remote-mode plan (superseded; removed 2026-09-25, in git history) for everything about how remote
+> mode works today.
 
 ---
 
@@ -63,12 +62,12 @@ exists.
 ### Why an OpenAI-compatible proxy
 
 Every provider in the extension is reached through
-`new OpenAI({ apiKey, baseURL })` ([modelWorker.ts](apps/vscode-extensions/src/workers/model/modelWorker.ts)).
+`new OpenAI({ apiKey, baseURL })` ([modelWorker.ts](../../apps/vscode-extensions/src/workers/model/modelWorker.ts)).
 Making the Worker speak `POST /v1/chat/completions` means remote mode is that
 same client pointed at a different base URL — so streaming, the tool-calling
 agent loop, and key failover all keep working with **no new transport**. The
 client-side change is one branch in
-[getLlmSettings.ts](apps/vscode-extensions/src/utils/getLlmSettings.ts).
+[getLlmSettings.ts](../../apps/vscode-extensions/src/utils/getLlmSettings.ts).
 
 ---
 
@@ -91,7 +90,7 @@ GitHub token.
    KV with a 30-day TTL, and the Worker 302s back to the loopback with
    `?sessionToken=`.
 5. The extension stores it in `SecretStorage` and mirrors it into
-   [remoteSessionCache.ts](apps/vscode-extensions/src/services/remote/remoteSessionCache.ts).
+   [remoteSessionCache.ts](../../apps/vscode-extensions/src/services/remote/remoteSessionCache.ts).
 
 **Why the sync cache.** `getLlmSettings` is synchronous and called from
 synchronous paths (e.g. `DeploymentMessageHandler.hasLlm()`), but
@@ -105,7 +104,7 @@ fails closed with a 401.
 ## 4. Per-request validation
 
 Requirement: *every* inference request proves the caller is signed in and valid.
-[chat.ts](apps/workspacegpt-api/src/chat.ts) runs, in order:
+[chat.ts](../../apps/workspacegpt-api/src/chat.ts) runs, in order:
 
 | Step | Failure |
 |---|---|
@@ -118,7 +117,7 @@ Requirement: *every* inference request proves the caller is signed in and valid.
 
 There is **no client-side grace period**. An expired or revoked session stops
 working on its next request. The extension's own pre-send check
-([WebviewMessageHandler](apps/vscode-extensions/src/handlers/WebviewMessageHandler.ts))
+([WebviewMessageHandler](../../apps/vscode-extensions/src/handlers/WebviewMessageHandler.ts))
 is a local token-presence test only — a UX shortcut, explicitly not the
 security boundary. `Settings → Account` is the one place that round-trips
 `/v1/me`, so a server-side revocation shows up there as signed out.
@@ -177,11 +176,11 @@ Code each launched on call/message counting and each moved to token metering
 with an abstract unit on top; this follows them rather than repeating the
 migration later.
 
-[metering.ts](apps/workspacegpt-api/src/metering.ts) (pure) and
-[usage.ts](apps/workspacegpt-api/src/usage.ts) (D1). `pnpm test` in
+[metering.ts](../../apps/workspacegpt-api/src/metering.ts) (pure) and
+[usage.ts](../../apps/workspacegpt-api/src/usage.ts) (D1). `pnpm test` in
 `apps/workspacegpt-api` runs two files with no Cloudflare runtime:
-[test/run.mjs](apps/workspacegpt-api/test/run.mjs) drives the arithmetic
-directly, and [test/proxy.mjs](apps/workspacegpt-api/test/proxy.mjs) drives the
+[test/run.mjs](../../apps/workspacegpt-api/test/run.mjs) drives the arithmetic
+directly, and [test/proxy.mjs](../../apps/workspacegpt-api/test/proxy.mjs) drives the
 Worker's real `fetch` export end to end — the migrations applied to an
 in-memory `node:sqlite` standing in for D1, a Map for KV, a scripted upstream —
 and checks the tee'd stream reaches the client byte-identical, the
@@ -235,10 +234,10 @@ precedence first:
 |---|---|---|
 | 1 | a row in the `app_config` D1 table | **next request** — no deploy |
 | 2 | a `var` in `wrangler.jsonc` | next `wrangler deploy` |
-| 3 | constants in [config.ts](apps/workspacegpt-api/src/config.ts) | next deploy (last-resort fallback) |
+| 3 | constants in [config.ts](../../apps/workspacegpt-api/src/config.ts) | next deploy (last-resort fallback) |
 
 Layer 1 is read on **every** request, batched with the user lookup
-(`loadAccount` in [db.ts](apps/workspacegpt-api/src/db.ts)), so configurability
+(`loadAccount` in [db.ts](../../apps/workspacegpt-api/src/db.ts)), so configurability
 costs no extra round trip and there is no cache to wait out.
 
 ### Turning the knobs
@@ -334,17 +333,15 @@ OpenRouter key; the `wrangler` CLI already authenticates as the account owner.
 5. GitHub OAuth App: add the deployed callback
    `https://<worker>/auth/github/callback`.
 6. **Set `REMOTE_AUTH.API_BASE`** in
-   [constants.ts](apps/vscode-extensions/constants.ts) to the deployed
-   `*.workers.dev` URL. It still points at `http://127.0.0.1:8787` — remote mode
-   cannot work for any real user until this changes, since their machine has no
-   Worker on localhost. This is the single remaining blocker.
+   [constants.ts](../../apps/vscode-extensions/constants.ts) to the deployed
+   `*.workers.dev` URL. Done: it points at `https://workspacegpt-api.ritesh-kant47.workers.dev`.
 7. Pick the production model and weekly caps — the committed defaults are
    `google/gemini-2.5-flash` and free 200 / pro 5000 per week. Both are
    adjustable afterwards without a deploy (§7), so this is a starting point,
    not a commitment. Confirm the model supports tool calling.
 
 Pushes to `main` touching `apps/workspacegpt-api/**` deploy automatically via
-[deploy-workspacegpt-api.yml](.github/workflows/deploy-workspacegpt-api.yml).
+[deploy-workspacegpt-api.yml](../../.github/workflows/deploy-workspacegpt-api.yml).
 
 ---
 

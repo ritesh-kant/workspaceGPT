@@ -1,8 +1,8 @@
 # WorkspaceGPT — Ticket Entry Point (Design)
 
-> Status: **Draft for review** · Owner: Ritesh · Last updated: 2026-08-24
+> Status: **Built** — `get_ticket`, `TicketsMessageHandler` and the "Your work" home screen · Owner: Ritesh · Design last updated: 2026-08-24
 >
-> Makes the differentiator from [NORTH-STAR.md](NORTH-STAR.md) the *first thing
+> Makes the differentiator from [docs/north-star.md](../north-star.md) the *first thing
 > a user sees*: not an empty chat box, but **their own tickets**, ready to work
 > on. Two surfaces — a "Your work" list in the chat empty state, and `@`-mention
 > of tickets in the composer — plus the precise ticket fetch the agent needs to
@@ -23,8 +23,8 @@ Inverting that is cheap because the parts already exist:
 
 | Needed | Already there |
 |---|---|
-| Authenticated ADO WIQL queries | `AdoService.getTotalItems` runs WIQL with a PAT ([adoService.ts](apps/vscode-extensions/src/services/ado/adoService.ts)) |
-| Who "me" is | `config.ado.userDisplayName`, persisted by `fetchAndPersistUserIdentity` ([AdoMessageHandler.ts](apps/vscode-extensions/src/handlers/AdoMessageHandler.ts)) |
+| Authenticated ADO WIQL queries | `AdoService.getTotalItems` runs WIQL with a PAT ([adoService.ts](../../apps/vscode-extensions/src/services/ado/adoService.ts)) |
+| Who "me" is | `config.ado.userDisplayName`, persisted by `fetchAndPersistUserIdentity` ([AdoMessageHandler.ts](../../apps/vscode-extensions/src/handlers/AdoMessageHandler.ts)) |
 | Which sprint is current | `config.ado.currentSprint`, persisted alongside it |
 | Agent that can act | `search_docs`, `search_tickets`, edit/create/delete, `run_command`, diagnostics, git — all live in the tool loop |
 | Approval + rollback | write gate, diff cards, checkpoints |
@@ -56,7 +56,7 @@ So this is mostly **wiring**, not new capability. The one genuine gap is §3.
 ## 3. The real gap: `get_ticket`
 
 `search_tickets` is **semantic search over the synced RAG index**
-(`searchKnowledge('ADO', …)` in [chatService.ts](apps/vscode-extensions/src/services/chatService.ts)).
+(`searchKnowledge('ADO', …)` in [chatService.ts](../../apps/vscode-extensions/src/services/chatService.ts)).
 That is right for "find tickets about checkout latency" and **wrong** for
 "read TKT-1234":
 
@@ -81,7 +81,7 @@ get_ticket({ id: "1234" | "TKT-1234" })
   `Microsoft.VSTS.Common.AcceptanceCriteria` to plain text (ADO stores HTML).
 - Errors are actionable, in the pattern `searchKnowledge` established:
   404 → "no such work item"; 401/403 → "reconnect ADO in Settings".
-- Prompt guidance ([promptTemplates.ts](apps/vscode-extensions/src/utils/promptTemplates.ts)):
+- Prompt guidance ([promptTemplates.ts](../../apps/vscode-extensions/src/utils/promptTemplates.ts)):
   *ID in hand → `get_ticket`; describing a topic → `search_tickets`.*
 
 This tool is what makes the ticket→code flow trustworthy, and it's useful on
@@ -143,7 +143,7 @@ that the deployment feature already uses, and it makes the org-context step
 ## 5. Surface B — ticket `@`-mentions
 
 Today `MentionTarget` is `{ path, name, kind: 'file' | 'folder' }`
-([constants.ts](apps/vscode-extensions/constants.ts)). Extend it so tickets are
+([constants.ts](../../apps/vscode-extensions/constants.ts)). Extend it so tickets are
 mentionable in any sentence — "fix @TKT-1418 in @src/checkout/retry.ts" — which
 is exactly the code⊕org fusion nothing else offers.
 
@@ -163,7 +163,7 @@ export interface MentionTarget {
   parallel and merge. Ticket search triggers when the query looks like a ticket
   (`/^[A-Za-z]*-?\d+$/`) or matches a cached assigned-ticket title; files stay
   first for everything else so normal file mentioning is unaffected.
-- **Resolution**: `resolveMentions` ([mentionResolver.ts](apps/vscode-extensions/src/services/codebase/mentionResolver.ts))
+- **Resolution**: `resolveMentions` ([mentionResolver.ts](../../apps/vscode-extensions/src/services/codebase/mentionResolver.ts))
   tries file → folder → "could not read". Add a ticket branch **before** those,
   keyed off `kind`, returning the `get_ticket` payload as prompt text. The
   existing "never silently drop an unresolvable mention" rule carries over.

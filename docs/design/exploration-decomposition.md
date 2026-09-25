@@ -1,10 +1,10 @@
 # Exploration Decomposition — Design
 
-**Status:** design only, not implemented
+**Status:** built — `workers/model/explorationPhase.ts` and `exploreSubagent.ts`, wired into `modelWorker.ts`
 **Goal:** answer "understand the codebase" questions using *fewer* total tokens
 and a cleaner main-loop context, by moving bulk file reading out of the agent
 loop into disposable single-shot "explorer" completions. Decomposition here is
-**deterministic (code, not model)** — same philosophy as SKILLS-DESIGN.md: the
+**deterministic (code, not model)** — same philosophy as docs/proposals/skills.md: the
 model only answers, never plans the split.
 
 ---
