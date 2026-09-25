@@ -65,13 +65,13 @@ export default function SupportPage() {
           </Card>
 
           <Card title="Report a bug or request a feature" href={GITHUB_ISSUES} cta="Open a GitHub issue">
-            Found a bug or have an idea? Open an issue on GitHub. Include your browser
-            version and steps to reproduce so we can help faster.
+            Found a bug or have an idea? Open an issue on GitHub. Include your editor (or
+            WorkspaceGPT Desktop) and extension versions, and steps to reproduce, so we can help faster.
           </Card>
 
           <Card title="Read the docs" href="/docs" cta="Browse documentation">
-            Setup guides, AI provider configuration, Confluence and Azure DevOps
-            integration, and troubleshooting tips.
+            Setup guides for the extension and the Mac app, AI provider configuration,
+            connecting Confluence, Jira and Azure DevOps, and troubleshooting tips.
           </Card>
         </div>
 

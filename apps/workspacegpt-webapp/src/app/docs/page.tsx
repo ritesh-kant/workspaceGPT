@@ -11,11 +11,11 @@ const sections = [
   { id: "ai-providers", label: "AI Providers" },
   { id: "codebase", label: "Codebase Exploration" },
   { id: "embeddings", label: "Embeddings & Vector Storage" },
-  { id: "confluence", label: "Confluence Integration" },
+  { id: "confluence", label: "Confluence" },
+  { id: "jira", label: "Jira" },
   { id: "ado", label: "Azure DevOps" },
   { id: "deployment", label: "Deployment Automation" },
   { id: "mcp", label: "MCP Server" },
-  { id: "chrome", label: "Chrome Extension" },
   { id: "commands", label: "Commands & Shortcuts" },
   { id: "reset", label: "Reset & Clear Data" },
   { id: "troubleshooting", label: "Troubleshooting" },
@@ -166,11 +166,11 @@ export default function DocsPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-brand" />
               </span>
-              v2.0 — Local &amp; Remote modes
+              New: WorkspaceGPT Desktop for macOS
             </div>
-            <SectionTitle>WorkspaceGPT Extension Docs</SectionTitle>
+            <SectionTitle>WorkspaceGPT Docs</SectionTitle>
             <SectionSubtitle>
-              Everything you need to install, configure, and get the most out of WorkspaceGPT inside VS Code, Cursor, or Antigravity.
+              Everything you need to install, configure, and get the most out of WorkspaceGPT &mdash; in VS Code, Cursor or Antigravity, or as the WorkspaceGPT Desktop app on a Mac.
             </SectionSubtitle>
 
             <div className="grid sm:grid-cols-3 gap-4">
@@ -178,7 +178,7 @@ export default function DocsPage() {
                 <p>Indexing and embeddings run on-device and the vector index stays in local files — in <em>both</em> modes. We retain nothing.</p>
               </Card>
               <Card icon="🤖" title="Agentic" accent="brand">
-                <p>Reads and edits your code, then runs your checks to verify it. Retrieval over your Confluence docs and ADO tickets supplies the &ldquo;why&rdquo;.</p>
+                <p>Reads and edits your code, then runs your checks to verify it. Retrieval over your Confluence docs and Jira and Azure DevOps tickets supplies the &ldquo;why&rdquo;.</p>
               </Card>
               <Card icon="⚡" title="Zero Setup" accent="blue">
                 <p>Install from the marketplace and start chatting in under 2 minutes.</p>
@@ -190,7 +190,7 @@ export default function DocsPage() {
           <SectionAnchor id="installation" />
           <section className="mb-16">
             <SectionTitle>Installation</SectionTitle>
-            <SectionSubtitle>Available in the VS Code and Cursor marketplaces, and on Open VSX for Antigravity.</SectionSubtitle>
+            <SectionSubtitle>Available in the VS Code and Cursor marketplaces, on Open VSX for Antigravity, and as a Mac app.</SectionSubtitle>
 
             <div className="space-y-0">
               <Step number={1} title="Via Extensions Marketplace">
@@ -226,6 +226,22 @@ export default function DocsPage() {
                     Open VSX
                   </a>{" "}
                   instead of the Microsoft Marketplace. Search <strong className="text-white">WorkspaceGPT</strong> in the Extensions view, or open the Open VSX page and click <strong className="text-white">Download</strong>.
+                </p>
+              </Step>
+
+              <Step number={5} title="WorkspaceGPT Desktop (macOS, no editor needed)">
+                <p>The same agent as a standalone Mac app, for Apple Silicon and Intel on macOS 12 or later. Paste this into Terminal:</p>
+                <CodeBlock language="bash">curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh</CodeBlock>
+                <p>
+                  The installer downloads the build for your Mac, checks its SHA-256 against the release, and installs it into{" "}
+                  <code className="bg-white/10 px-1 rounded text-xs">/Applications</code>. Prefer a DMG? Download it from the{" "}
+                  <a href="https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&amp;expanded=true" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                    GitHub releases
+                  </a>
+                  . The app isn&apos;t notarized yet, so a DMG copy needs one <strong className="text-white">Open Anyway</strong> in System Settings → Privacy &amp; Security the first time; the Terminal installer doesn&apos;t.
+                </p>
+                <p className="text-slate-400">
+                  Desktop updates itself: it checks for a new version in the background, verifies its signature, and installs it the next time you quit or when you choose <strong className="text-white">Restart Now</strong>. Secrets live in your macOS Keychain. Windows and Linux builds are not available yet.
                 </p>
               </Step>
             </div>
@@ -302,7 +318,7 @@ export default function DocsPage() {
               back, then discarded. We do not write prompts, answers, or retrieved snippets to any database, any
               file, or any log &mdash; our servers log status codes and error types only. The entirety of what we
               store per account is: your GitHub id and handle, your plan and status, an opaque session token that
-              expires in 30 days, and a count of how many requests you made today.
+              expires in 30 days, and how many credits you have used this week.
             </p>
             <p className="text-slate-300 text-sm leading-relaxed mb-8">
               Generation itself is performed by an upstream model provider (currently OpenRouter) under its own
@@ -314,8 +330,7 @@ export default function DocsPage() {
             <div className="p-5 bg-slate-900 border border-yellow-500/20 rounded-2xl text-sm text-slate-300">
               <span className="text-yellow-400 font-semibold">Remote mode is in preview.</span> It is rolling out
               now, and models, limits and behaviour may change while we tune it. Local mode is generally
-              available and unaffected. Remote mode applies a fair-use daily request limit per account; you can
-              see today&apos;s usage under <code className="bg-white/10 px-1 rounded text-xs">Settings → Account</code>.
+              available and unaffected. Remote mode gives each account a weekly allowance of credits, metered by model tokens (one credit is about 1,000 tokens); you can see this week&apos;s usage and when it resets under <code className="bg-white/10 px-1 rounded text-xs">Settings → Account</code>.
             </div>
           </section>
 
@@ -346,7 +361,10 @@ export default function DocsPage() {
                     { name: "Gemini", privacy: "Cloud", key: "Yes", note: "Google's Gemini Pro/Flash models.", badge: "blue" },
                     { name: "Groq", privacy: "Cloud", key: "Yes", note: "High-speed inference on Llama / Mixtral.", badge: "purple" },
                     { name: "OpenRouter", privacy: "Cloud", key: "Yes", note: "Access 100+ models via one API key.", badge: "purple" },
-                    { name: "Requestly", privacy: "Cloud", key: "Yes", note: "Custom API endpoint proxy integration.", badge: "yellow" },
+                    { name: "Claude", privacy: "Cloud", key: "Yes", note: "Anthropic's Claude models.", badge: "blue" },
+                    { name: "NVIDIA", privacy: "Cloud", key: "Yes", note: "Models hosted on NVIDIA's API catalog.", badge: "purple" },
+                    { name: "Requesty", privacy: "Cloud", key: "Yes", note: "LLM router with one key for many providers.", badge: "yellow" },
+                    { name: "Custom", privacy: "You decide", key: "Yes", note: "Any OpenAI-compatible endpoint: self-hosted, proxy or gateway.", badge: "yellow" },
                   ].map((row) => (
                     <tr key={row.name} className="bg-slate-950 hover:bg-slate-900/60 transition-colors">
                       <td className="px-5 py-3 font-medium text-white">{row.name}</td>
@@ -412,7 +430,7 @@ ollama pull mistral`}</CodeBlock>
           <section className="mb-16">
             <SectionTitle>Embeddings &amp; Vector Storage</SectionTitle>
             <SectionSubtitle>
-              Connected Confluence and Azure DevOps sources are turned into vector embeddings so WorkspaceGPT can
+              Connected Confluence, Jira and Azure DevOps sources are turned into vector embeddings so WorkspaceGPT can
               retrieve the right context. Both halves &mdash; making the embeddings and storing them &mdash; happen
               entirely on your machine, in either mode.
             </SectionSubtitle>
@@ -439,7 +457,7 @@ ollama pull mistral`}</CodeBlock>
                     <td className="px-5 py-3 font-medium text-white">Text <Badge color="green">Bundled</Badge></td>
                     <td className="px-5 py-3 text-slate-400">Xenova/all-MiniLM-L6-v2 (384-dim)</td>
                     <td className="px-5 py-3 text-slate-400">Not needed</td>
-                    <td className="px-5 py-3 text-slate-400">Confluence pages and ADO work items. Runs on-device; first run downloads ~200&nbsp;MB.</td>
+                    <td className="px-5 py-3 text-slate-400">Confluence pages, Jira issues and ADO work items. Runs on-device; first run downloads ~200&nbsp;MB.</td>
                   </tr>
                 </tbody>
               </table>
@@ -467,17 +485,17 @@ ollama pull mistral`}</CodeBlock>
           {/* ── Confluence ─────────────────────────────────────── */}
           <SectionAnchor id="confluence" />
           <section className="mb-16">
-            <SectionTitle>Confluence Integration</SectionTitle>
+            <SectionTitle>Confluence</SectionTitle>
             <SectionSubtitle>
               Connect your Atlassian Confluence space with one-click OAuth 2.0 authentication.
             </SectionSubtitle>
 
             <div className="space-y-0">
               <Step number={1} title="Open Confluence settings">
-                <p>In the WorkspaceGPT sidebar, navigate to <code className="bg-white/10 px-1 rounded text-xs">Settings → Confluence Integration</code>.</p>
+                <p>In WorkspaceGPT, open <code className="bg-white/10 px-1 rounded text-xs">Settings → Confluence</code>.</p>
               </Step>
               <Step number={2} title="Sign in with Atlassian">
-                <p>Click <strong className="text-white">Sign In</strong>. A browser window will open to Atlassian&apos;s OAuth consent screen. Sign in and grant access — no passwords are stored.</p>
+                <p>Click <strong className="text-white">Connect to Confluence</strong>. A browser window will open to Atlassian&apos;s OAuth consent screen. Sign in and grant access — no passwords are stored.</p>
                 <p className="text-slate-400">The extension spins up a short-lived local HTTP server to capture the OAuth callback securely.</p>
               </Step>
               <Step number={3} title="Select a space">
@@ -494,7 +512,7 @@ ollama pull mistral`}</CodeBlock>
             <div className="grid sm:grid-cols-2 gap-4 mt-4">
               <div className="p-5 bg-slate-900 border border-white/5 rounded-2xl text-sm">
                 <p className="text-slate-300 font-semibold mb-1">Token security</p>
-                <p className="text-slate-400">OAuth access + refresh tokens are stored in VS Code&apos;s encrypted <code className="bg-white/10 px-1 rounded text-xs">context.secrets</code> — never in plaintext settings.</p>
+                <p className="text-slate-400">OAuth access + refresh tokens are stored in your editor&apos;s encrypted secret storage (the macOS Keychain on Desktop) — never in plaintext settings.</p>
               </div>
               <div className="p-5 bg-slate-900 border border-white/5 rounded-2xl text-sm">
                 <p className="text-slate-300 font-semibold mb-1">Disconnect anytime</p>
@@ -503,10 +521,34 @@ ollama pull mistral`}</CodeBlock>
             </div>
           </section>
 
+          {/* ── Jira ────────────────────────────────────────────── */}
+          <SectionAnchor id="jira" />
+          <section className="mb-16">
+            <SectionTitle>Jira</SectionTitle>
+            <SectionSubtitle>
+              Connect Jira with the same one-click Atlassian sign-in, so the agent can read the issue it is working on and find related ones.
+            </SectionSubtitle>
+
+            <div className="space-y-0">
+              <Step number={1} title="Open Jira settings">
+                <p>In WorkspaceGPT, open <code className="bg-white/10 px-1 rounded text-xs">Settings → Jira</code>.</p>
+              </Step>
+              <Step number={2} title="Connect with Atlassian">
+                <p>Click <strong className="text-white">Connect to Jira</strong> and approve access on Atlassian&apos;s consent screen. No password or API token is stored.</p>
+              </Step>
+              <Step number={3} title="Pick a project and sync">
+                <p>Choose your Jira site and project, pick how far back to sync (from the last month up to three years), and start the sync. Issues are embedded and indexed on your machine.</p>
+              </Step>
+              <Step number={4} title="Work from an issue">
+                <p>Mention an issue key such as <code className="bg-white/10 px-1 rounded text-xs">ENG-5012</code> in chat and the agent reads that issue directly, alongside the related docs and code.</p>
+              </Step>
+            </div>
+          </section>
+
           {/* ── ADO ─────────────────────────────────────────────── */}
           <SectionAnchor id="ado" />
           <section className="mb-16">
-            <SectionTitle>Azure DevOps Integration</SectionTitle>
+            <SectionTitle>Azure DevOps</SectionTitle>
             <SectionSubtitle>
               Connect Azure DevOps to chat with work items, user stories, and pull requests.
             </SectionSubtitle>
@@ -517,11 +559,11 @@ ollama pull mistral`}</CodeBlock>
                 <p>Grant at minimum: <Badge color="blue">Work Items — Read</Badge> <Badge color="blue">Code — Read</Badge></p>
               </Step>
               <Step number={2} title="Open ADO settings">
-                <p>In the WorkspaceGPT sidebar, go to <code className="bg-white/10 px-1 rounded text-xs">Settings → Azure DevOps Integration</code>.</p>
+                <p>In WorkspaceGPT, open <code className="bg-white/10 px-1 rounded text-xs">Settings → Azure DevOps</code>.</p>
               </Step>
               <Step number={3} title="Enter your organization URL and PAT">
                 <p>Provide your Azure DevOps organization URL (e.g. <code className="bg-white/10 px-1 rounded text-xs">https://dev.azure.com/your-org</code>) and the PAT you generated.</p>
-                <p className="text-slate-400">The PAT is stored in VS Code&apos;s <code className="bg-white/10 px-1 rounded text-xs">context.secrets</code>, never in <code className="bg-white/10 px-1 rounded text-xs">globalState</code>.</p>
+                <p className="text-slate-400">The PAT is kept in your editor&apos;s secret storage (the macOS Keychain on Desktop), never in plain settings.</p>
               </Step>
               <Step number={4} title="Select project and sync">
                 <p>Your ADO projects will load automatically. Select a project and click <strong className="text-white">Start Sync</strong>.</p>
@@ -575,7 +617,7 @@ ollama pull mistral`}</CodeBlock>
           <section className="mb-16">
             <SectionTitle>MCP Server</SectionTitle>
             <SectionSubtitle>
-              WorkspaceGPT ships a built-in MCP (Model Context Protocol) server for GitHub Copilot and Claude Code integration.
+              WorkspaceGPT ships an MCP (Model Context Protocol) server that gives other AI tools &mdash; GitHub Copilot, Cursor, Claude Desktop, Claude Code &mdash; search over your Confluence, Jira, Azure DevOps and workspace knowledge.
             </SectionSubtitle>
 
             <div className="space-y-0">
@@ -590,93 +632,6 @@ ollama pull mistral`}</CodeBlock>
 
             <div className="mt-4 p-5 bg-slate-900 border border-brand/20 rounded-2xl text-sm text-slate-300">
               <span className="text-brand font-semibold">Status bar indicator:</span> After connecting, a WorkspaceGPT button appears in the VS Code status bar showing MCP connection health.
-            </div>
-          </section>
-
-          {/* ── Chrome Extension ─────────────────────────────────── */}
-          <SectionAnchor id="chrome" />
-          <section className="mb-16">
-            <div className="mb-4 flex flex-wrap gap-2">
-              <Badge color="purple">Companion app</Badge>
-              <Badge color="yellow">Pairing unavailable</Badge>
-            </div>
-            <SectionTitle>Chrome Extension</SectionTitle>
-            <SectionSubtitle>
-              A browser side-panel that lets you (or a teammate) chat with your indexed Confluence pages and Azure DevOps
-              work items — without opening VS Code. It runs entirely in the browser, talking directly to your providers;
-              there&apos;s no WorkspaceGPT server in between.
-            </SectionSubtitle>
-
-            <div className="p-5 bg-slate-900 border border-yellow-500/20 rounded-2xl text-sm text-slate-300 mb-8">
-              <p className="text-yellow-400 font-semibold mb-1">New pairings are paused</p>
-              <p>
-                The companion reads your vector index directly, and that index now lives only on your machine &mdash;
-                so there is nothing for a browser on another device to connect to. The{" "}
-                <strong className="text-white">Share to Chrome</strong> action is hidden in the current extension, and
-                the setup steps below cannot be completed on a fresh install. Existing paired installs keep working
-                against whatever they were configured with. We will bring this back if and when a hosted index ships;
-                the steps are kept here for reference and for anyone already set up.
-              </p>
-            </div>
-
-            <div className="grid sm:grid-cols-3 gap-4 mb-8">
-              <Card icon="🧭" title="Side panel" accent="purple">
-                <p>Ask questions and read grounded answers from a panel docked in Chrome.</p>
-              </Card>
-              <Card icon="🔗" title="One share code" accent="brand">
-                <p>Connect by pasting a single code generated in VS Code — no separate setup.</p>
-              </Card>
-              <Card icon="🚫" title="No server" accent="green">
-                <p>Calls go browser → Gemini / Qdrant / your chat model directly. Nothing is proxied.</p>
-              </Card>
-            </div>
-
-            <h3 className="text-lg font-semibold text-white mb-3">Prerequisites</h3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-4">
-              Because the browser needs cloud-reachable services, the share flow required a cloud embedding provider, a{" "}
-              <strong className="text-white">Qdrant Cloud</strong> vector store, and a{" "}
-              <strong className="text-white">chat model</strong> with an API key, all configured in VS Code first.
-              Indexing is now on-device only (see{" "}
-              <a href="#embeddings" className="text-brand hover:underline">Embeddings &amp; Vector Storage</a>), which
-              is exactly why pairing is paused.
-            </p>
-
-            <h3 className="text-lg font-semibold text-white mb-4">Setup <span className="text-sm font-normal text-slate-500">(for reference)</span></h3>
-            <div className="space-y-0">
-              <Step number={1} title="Install from the Chrome Web Store">
-                <p>
-                  Add{" "}
-                  <a href="https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
-                    WorkspaceGPT for Chrome
-                  </a>{" "}
-                  to your browser.
-                </p>
-              </Step>
-              <Step number={2} title="Create a share code in VS Code">
-                <p>In the WorkspaceGPT sidebar, open <code className="bg-white/10 px-1 rounded text-xs">Settings → Share to Chrome</code> and click <strong className="text-white">Create share code</strong>. It&apos;s copied to your clipboard.</p>
-                <p className="text-yellow-400/90">This card is not shown in the current extension &mdash; see the notice above.</p>
-              </Step>
-              <Step number={3} title="Paste it into the extension">
-                <p>Open the Chrome side panel → <strong className="text-white">Settings</strong> → paste the code → <strong className="text-white">Connect</strong>. You&apos;ll see a confirmation with your Qdrant URL.</p>
-              </Step>
-              <Step number={4} title="Ask away">
-                <p>Close settings and chat. The extension mirrors VS Code&apos;s retrieval, so answers stay consistent across Confluence and ADO.</p>
-              </Step>
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-4 mt-4">
-              <div className="p-5 bg-slate-900 border border-red-500/20 rounded-2xl text-sm">
-                <p className="text-red-400 font-semibold mb-1">Treat the share code like a password</p>
-                <p className="text-slate-400">It contains your real Qdrant, Gemini, and chat-model API keys in plain form. Anyone with it can query your data and incur API costs. Share only with people you trust.</p>
-              </div>
-              <div className="p-5 bg-slate-900 border border-emerald-500/20 rounded-2xl text-sm">
-                <p className="text-emerald-400 font-semibold mb-1">Write creds are never shared</p>
-                <p className="text-slate-400">GitHub, Vercel, Confluence, and ADO tokens stay in VS Code secret storage and are excluded from the bundle. The share is read-only knowledge access.</p>
-              </div>
-            </div>
-
-            <div className="mt-4 p-5 bg-slate-900 border border-white/5 rounded-2xl text-sm text-slate-300">
-              <span className="text-slate-200 font-semibold">Scope:</span> the share covers <strong className="text-white">Confluence</strong> and <strong className="text-white">Azure DevOps</strong> knowledge. Live VS Code workspace exploration is not part of the share. Regenerate the code if you rotate your keys.
             </div>
           </section>
 
@@ -702,6 +657,10 @@ ollama pull mistral`}</CodeBlock>
                     { cmd: "WorkspaceGPT: Settings", shortcut: "—", desc: "Open the settings panel inside the sidebar." },
                     { cmd: "WorkspaceGPT: Chat History", shortcut: "—", desc: "Browse and restore previous chat sessions." },
                     { cmd: "WorkspaceGPT: Connect MCP Server", shortcut: "—", desc: "Register the MCP server for Copilot / Claude." },
+                    { cmd: "WorkspaceGPT: Open Chat in Editor", shortcut: "—", desc: "Move the chat into a full editor tab; several sessions can run at once." },
+                    { cmd: "WorkspaceGPT: Revert Agent Changes…", shortcut: "—", desc: "Roll the workspace back to a checkpoint taken before an agent run wrote files." },
+                    { cmd: "WorkspaceGPT: Sign In (Remote Mode)", shortcut: "—", desc: "Sign in with GitHub to use Remote mode's managed model." },
+                    { cmd: "WorkspaceGPT: Releases", shortcut: "—", desc: "Open deployment automation (config-sync and hotfix releases)." },
                     { cmd: "WorkspaceGPT: Clear All Data and Cache", shortcut: "—", desc: "Wipe all embeddings, state, and tokens." },
                   ].map((row) => (
                     <tr key={row.cmd} className="bg-slate-950 hover:bg-slate-900/60 transition-colors">

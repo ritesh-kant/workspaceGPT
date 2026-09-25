@@ -6,14 +6,14 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "Install WorkspaceGPT, pick an AI provider (Ollama, OpenAI, Gemini), and connect Confluence and Azure DevOps. Full setup and troubleshooting guide.",
+    "Install WorkspaceGPT in your editor or as a Mac app, pick an AI provider or Remote mode, and connect Confluence, Jira and Azure DevOps. Full setup and troubleshooting guide.",
   alternates: {
     canonical: "/docs",
   },
   openGraph: {
     title: "WorkspaceGPT Documentation",
     description:
-      "Installation, AI providers, live codebase exploration, Confluence and Azure DevOps integration, MCP server, and troubleshooting.",
+      "Installation (editor and Desktop), AI providers, live codebase exploration, Confluence, Jira and Azure DevOps, MCP server, and troubleshooting.",
     url: "/docs",
   },
 };

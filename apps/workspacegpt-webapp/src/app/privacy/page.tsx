@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "August 31, 2026";
+const UPDATED = "September 25, 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -34,9 +34,10 @@ export default function PrivacyPage() {
 
         <p className="mt-6 text-slate-300 leading-relaxed">
           WorkspaceGPT is a privacy-first AI assistant that lets you ask questions about your
-          own codebase, Confluence pages, and Azure DevOps work items. This policy describes
-          what data the WorkspaceGPT IDE extension (VS Code, Cursor, Antigravity) and the
-          WorkspaceGPT browser companion actually process, and where it goes. It is written to
+          own codebase, Confluence pages, Jira issues and Azure DevOps work items. This policy
+          describes what data the WorkspaceGPT IDE extension (VS Code, Cursor, Antigravity), the
+          WorkspaceGPT Desktop app for macOS, and the WorkspaceGPT browser companion actually
+          process, and where it goes. It is written to
           match how the software behaves, not to describe an aspiration.
         </p>
 
@@ -45,8 +46,9 @@ export default function PrivacyPage() {
           <ul className="list-disc pl-6 space-y-2 text-slate-300">
             <li>
               <strong className="text-white">Your content stays on your machine.</strong> Your
-              documents, work items and source code are indexed on-device, and the resulting
-              vector index is written to local files inside your IDE&rsquo;s storage. We never
+              documents and work items are indexed on-device, and the resulting vector index is
+              written to local files on your machine (your IDE&rsquo;s storage, or the Desktop
+              app&rsquo;s data folder). Source code is read where it is and is not indexed. We never
               upload, copy, or index your content on our infrastructure.
             </li>
             <li>
@@ -145,8 +147,8 @@ export default function PrivacyPage() {
               in. It expires automatically after 30 days and is deleted when you sign out.
             </li>
             <li>
-              <strong className="text-white">A count of requests you made today</strong>, to
-              enforce fair-use limits. A number only &mdash; not what you asked.
+              <strong className="text-white">How many credits you have used this week</strong>, to
+              enforce your plan&rsquo;s weekly allowance. A number only &mdash; not what you asked.
             </li>
           </ul>
           <p>
@@ -186,10 +188,11 @@ export default function PrivacyPage() {
 
         <Section title="Connected data sources">
           <p>
-            When you connect Confluence, Azure DevOps, GitHub, or Vercel, authentication happens
+            When you connect Confluence, Jira, Azure DevOps, GitHub, or Vercel, authentication happens
             directly between your machine and that service (OAuth, or a token you paste). The
-            resulting credentials are stored in your IDE&rsquo;s encrypted secret storage on your
-            own device and are never transmitted to us. Content synced from those sources is
+            resulting credentials are stored in your IDE&rsquo;s encrypted secret storage (in the
+            macOS Keychain for WorkspaceGPT Desktop) on your own device and are never transmitted
+            to us. Content synced from those sources is
             indexed locally.
           </p>
         </Section>
@@ -197,7 +200,7 @@ export default function PrivacyPage() {
         <div id="analytics" className="-mt-20 pt-20" />
         <Section title="Analytics">
           <p>
-            The extension sends anonymous product-usage events to{" "}
+            The extension and WorkspaceGPT Desktop send anonymous product-usage events to{" "}
             <strong className="text-white">PostHog</strong> (EU-hosted) to understand which
             features are used. This happens in <strong className="text-white">both</strong> Local
             and Remote mode.
@@ -215,7 +218,10 @@ export default function PrivacyPage() {
               your name, email, GitHub account, IP address, or machine id, and we cannot use it to
               identify you.
             </li>
-            <li>The extension version and your editor version.</li>
+            <li>
+              The extension version, your editor version, and whether the event came from the
+              editor extension or WorkspaceGPT Desktop.
+            </li>
             <li>
               Occasionally a coarse, non-identifying attribute of the action &mdash; for example
               which mode was active, or that a message was blocked because no model was selected.
