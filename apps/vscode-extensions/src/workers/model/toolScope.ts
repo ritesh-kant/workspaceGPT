@@ -58,8 +58,16 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   search_tickets: 'tickets',
   get_ticket: 'tickets',
   browser_list_tabs: 'browser',
+  browser_open_tab: 'browser',
+  browser_close_tab: 'browser',
+  browser_navigate: 'browser',
   browser_read_page: 'browser',
+  browser_read_tree: 'browser',
   browser_screenshot: 'browser',
+  browser_act: 'browser',
+  browser_eval: 'browser',
+  browser_console: 'browser',
+  browser_network: 'browser',
 };
 
 interface NamedToolDef {
