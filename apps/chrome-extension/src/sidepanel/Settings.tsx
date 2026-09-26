@@ -39,15 +39,20 @@ const BrowserAccess: React.FC = () => {
       <label className='settings-hint' style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
         <input type='checkbox' checked={enabled} onChange={(e) => void toggle(e.target.checked)} />
         <span>
-          Let WorkspaceGPT use this browser. The desktop agent can list your tabs, read a tab&apos;s text and take a
-          screenshot of the tab you are looking at — using the sites you are already signed in to. Chrome asks for
-          permission first; turning this off removes it.
+          Let WorkspaceGPT use this browser. The desktop agent can read your tabs, and open, click, type and fill
+          forms in its own &ldquo;WorkspaceGPT&rdquo; tab group or the tab you are looking at — using the sites you are
+          already signed in to. Chrome shows a &ldquo;debugging this browser&rdquo; bar while it acts; click Cancel there
+          to stop it. Chrome asks for permission first; turning this off removes it.
         </span>
       </label>
       {denied && <p className='settings-hint'>Chrome permission was not granted, so this stays off.</p>}
       {enabled && status && (
         <p className='settings-hint'>
-          {status.connected ? '✓ Connected to WorkspaceGPT Desktop' : `Not connected — ${status.error ?? 'waiting'}. Is WorkspaceGPT Desktop running?`}
+          {status.connected
+            ? '✓ Connected to WorkspaceGPT Desktop'
+            : /not found/i.test(status.error ?? '')
+              ? 'Not connected — WorkspaceGPT Desktop 0.0.5 or later is not installed. Install or update it, then open it once.'
+              : `Not connected — ${(status.error ?? 'waiting').replace(/\.+$/, '')}. Is WorkspaceGPT Desktop running?`}
         </p>
       )}
     </>

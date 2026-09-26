@@ -11,12 +11,6 @@ declare module 'workspacegpt-extension-host' {
 declare module 'workspacegpt-extension-commands' {
   export function executeCommand(command: string, cwd: string, timeoutSec?: number): Promise<{ exitCode: number | null }>;
 }
-declare module 'workspacegpt-extension-history' {
-  export class HistoryService {
-    constructor(context: unknown);
-    getHistoryList(): Promise<Array<{ id: string; title: string; updatedAt: number; assistantMode: 'chat' | 'work' }>>;
-  }
-}
 declare module 'workspacegpt-extension-hunks' {
   /** Line ranges are [start, end), 0-based. */
   export function computeHunks(original: string, current: string): Array<{ origStart: number; origEnd: number; curStart: number; curEnd: number }>;

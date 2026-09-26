@@ -141,6 +141,10 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     await this._view.webview.postMessage({
       type: MESSAGE_TYPES.SESSIONS_LIST,
       sessions,
+      // Work sessions are listed under the folder they were started in, and
+      // the open one's group is where a new session lands.
+      assistantMode: this.assistantMode,
+      currentWorkspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
       activeSessionId: this.activeSessionId,
       runningSessionIds: this.runningSessionIds,
       completedSessionIds: this.completedSessionIds,

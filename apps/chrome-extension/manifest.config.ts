@@ -3,7 +3,7 @@ import { defineManifest } from '@crxjs/vite-plugin';
 export default defineManifest({
   manifest_version: 3,
   name: 'WorkspaceGPT',
-  version: '0.2.0',
+  version: '0.3.0',
   description:
     'Ask questions about your Confluence & Azure DevOps knowledge, in the browser.',
   icons: {
@@ -28,11 +28,13 @@ export default defineManifest({
   side_panel: {
     default_path: 'sidepanel.html',
   },
-  // alarms/scripting carry no install warning, so adding them does not
-  // disable existing installs. The WorkspaceGPT Desktop browser bridge
-  // (src/lib/browserControl.ts) needs the two that do — native messaging and
-  // every site — and asks for them only when the user turns it on.
-  permissions: ['sidePanel', 'storage', 'alarms', 'scripting'],
+  // The WorkspaceGPT Desktop browser bridge (src/lib/browserControl.ts,
+  // browserActions.ts). debugger — real clicks and keys, console and network
+  // logs — can only be a required permission, so it disables existing
+  // installs until re-approved (decided 2026-09-25 for parity with Claude in
+  // Chrome / Codex). Native messaging and every-site access stay optional and
+  // are asked for only when the user turns the bridge on.
+  permissions: ['sidePanel', 'storage', 'alarms', 'scripting', 'debugger', 'tabGroups'],
   optional_permissions: ['nativeMessaging'],
   optional_host_permissions: ['<all_urls>'],
   // The extension talks directly to Gemini (query embedding), Qdrant (search),

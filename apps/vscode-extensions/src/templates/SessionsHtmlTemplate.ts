@@ -202,6 +202,66 @@ export class SessionsHtmlTemplate {
     }
     .row.active .meta { color: inherit; opacity: 0.8; }
     .diffs { display: flex; gap: 4px; font-weight: 600; font-size: 10px; }
+    /* Work mode: one collapsible group per folder, rows indented under it. */
+    .ws-header {
+      display: flex;
+      align-items: center;
+      margin-top: 4px;
+      border-radius: 6px;
+    }
+    .ws-header:hover { background: var(--vscode-list-hoverBackground); }
+    .ws-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+      min-width: 0;
+      height: 30px;
+      padding: 0 8px;
+      border: none;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      font: inherit;
+      font-size: 13px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .ws-header:hover .ws-toggle,
+    .ws-group.current .ws-toggle { color: var(--vscode-foreground); }
+    .ws-name {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ws-chevron { flex-shrink: 0; opacity: 0.7; transition: transform 0.12s ease; }
+    .ws-group.open .ws-chevron { transform: rotate(90deg); }
+    .ws-new {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 24px;
+      height: 24px;
+      margin-right: 3px;
+      padding: 0;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+    }
+    .ws-new:hover {
+      background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+      color: var(--vscode-foreground);
+    }
+    .ws-rows { display: none; }
+    .ws-group.open .ws-rows { display: block; }
+    .ws-empty {
+      padding: 4px 8px 6px 32px;
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
     .added { color: var(--vscode-charts-green, #3fb950); }
     .removed { color: var(--vscode-charts-red, #f85149); }
   </style>
@@ -248,6 +308,11 @@ export class SessionsHtmlTemplate {
     let runningIds = new Set();
     let completedIds = new Set();
     let erroredIds = new Set();
+    let mode = 'work';
+    let currentWorkspace = '';
+    // Folder groups the user opened or closed by hand; the rest default to
+    // open for the folder that is open now (and the active session's).
+    let wsOpen = (vscode.getState() || {}).wsOpen || {};
 
     const listEl = document.getElementById('list');
     const searchWrap = document.getElementById('searchWrap');
@@ -288,6 +353,8 @@ export class SessionsHtmlTemplate {
         runningIds = new Set(Array.isArray(msg.runningSessionIds) ? msg.runningSessionIds : []);
         completedIds = new Set(Array.isArray(msg.completedSessionIds) ? msg.completedSessionIds : []);
         erroredIds = new Set(Array.isArray(msg.erroredSessionIds) ? msg.erroredSessionIds : []);
+        if (msg.assistantMode === 'chat' || msg.assistantMode === 'work') mode = msg.assistantMode;
+        if (typeof msg.currentWorkspace === 'string') currentWorkspace = msg.currentWorkspace;
         render();
       }
       if (msg.type === MESSAGE_TYPES.SESSIONS_TOGGLE_SEARCH) {
@@ -344,6 +411,12 @@ export class SessionsHtmlTemplate {
         ? sessions.filter((s) => String(s.title || '').toLowerCase().includes(needle))
         : sessions;
 
+      const byFolder = mode === 'work' ? workspaceGroupsHtml(matching, now, !!needle) : '';
+      if (byFolder) {
+        listEl.innerHTML = byFolder;
+        return;
+      }
+
       if (!matching.length) {
         listEl.innerHTML = '<div class="empty">' +
           (sessions.length === 0
@@ -365,40 +438,112 @@ export class SessionsHtmlTemplate {
         const items = groups.get(label);
         if (!items || !items.length) continue;
         html += '<div class="group-header">' + label + '</div>';
-        for (const session of items) {
-          const active = session.id === activeId ? ' active' : '';
-          const running = runningIds.has(session.id) ? ' running' : '';
-          const errored = !running && erroredIds.has(session.id) ? ' errored' : '';
-          const completed = !running && !errored && completedIds.has(session.id) ? ' completed' : '';
-          const statusLabel = running ? ' - running' : errored ? ' - failed' : completed ? ' - done' : '';
-          const added = Number(session.added) || 0;
-          const removed = Number(session.removed) || 0;
-          let diffs = '';
-          if (added > 0 || removed > 0) {
-            diffs = '<span class="diffs">';
-            if (added > 0) diffs += '<span class="added">+' + added + '</span>';
-            if (removed > 0) diffs += '<span class="removed">-' + removed + '</span>';
-            diffs += '</span>';
-          }
-          const title = escapeHtml(session.title || 'New Chat');
-          const age = escapeHtml(formatAge(session.updatedAt || 0, now));
-          html += '<button class="row' + active + running + errored + completed + '" type="button" title="' +
-            title + escapeHtml(statusLabel) + '" data-id="' +
-            escapeHtml(session.id) + '">' +
-            '<span class="dot"></span>' +
-            '<span class="title">' + title + '</span>' +
-            '<span class="meta">' + diffs + '<span class="age">' + age + '</span></span>' +
-            '<span class="row-delete" data-delete-id="' + escapeHtml(session.id) + '" title="Delete chat" role="button" aria-label="Delete chat">' +
-            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
-            '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
-            '</svg></span>' +
-            '</button>';
-        }
+        for (const session of items) html += rowHtml(session, now);
       }
       listEl.innerHTML = html;
     }
 
+    function rowHtml(session, now) {
+      const active = session.id === activeId ? ' active' : '';
+      const running = runningIds.has(session.id) ? ' running' : '';
+      const errored = !running && erroredIds.has(session.id) ? ' errored' : '';
+      const completed = !running && !errored && completedIds.has(session.id) ? ' completed' : '';
+      const statusLabel = running ? ' - running' : errored ? ' - failed' : completed ? ' - done' : '';
+      const added = Number(session.added) || 0;
+      const removed = Number(session.removed) || 0;
+      let diffs = '';
+      if (added > 0 || removed > 0) {
+        diffs = '<span class="diffs">';
+        if (added > 0) diffs += '<span class="added">+' + added + '</span>';
+        if (removed > 0) diffs += '<span class="removed">-' + removed + '</span>';
+        diffs += '</span>';
+      }
+      const title = escapeHtml(session.title || 'New Chat');
+      const age = escapeHtml(formatAge(session.updatedAt || 0, now));
+      return '<button class="row' + active + running + errored + completed + '" type="button" title="' +
+        title + escapeHtml(statusLabel) + '" data-id="' +
+        escapeHtml(session.id) + '">' +
+        '<span class="dot"></span>' +
+        '<span class="title">' + title + '</span>' +
+        '<span class="meta">' + diffs + '<span class="age">' + age + '</span></span>' +
+        '<span class="row-delete" data-delete-id="' + escapeHtml(session.id) + '" title="Delete chat" role="button" aria-label="Delete chat">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+        '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg></span>' +
+        '</button>';
+    }
+
+    const CHEVRON = '<svg class="ws-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
+    /** Last path segment, or the last two where two folders share a name. */
+    function folderLabels(folders) {
+      const parts = (p) => p.split(/[\\\\/]+/).filter(Boolean);
+      const base = (p) => parts(p).slice(-1)[0] || p;
+      const count = new Map();
+      for (const f of folders) count.set(base(f), (count.get(base(f)) || 0) + 1);
+      return new Map(folders.map((f) => [f, count.get(base(f)) > 1 ? parts(f).slice(-2).join('/') : base(f)]));
+    }
+
+    /**
+     * Work mode: a group per folder, by name, so a group stays where it is as
+     * sessions come and go. The open folder's group is always shown (it is
+     * where "+" starts a session); sessions with no recorded folder go last.
+     */
+    function workspaceGroupsHtml(items, now, searching) {
+      const groups = new Map();
+      if (currentWorkspace && !searching) groups.set(currentWorkspace, []);
+      for (const session of items) {
+        const key = session.workspaceFolder || '';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(session);
+      }
+      const labels = folderLabels([...groups.keys()].filter(Boolean));
+      const keys = [...groups.keys()].sort(
+        (a, b) => !a - !b || labels.get(a).localeCompare(labels.get(b), undefined, { sensitivity: 'base' })
+      );
+      let html = '';
+      for (const key of keys) {
+        const inGroup = groups.get(key);
+        const current = key === currentWorkspace;
+        const open = searching || (key in wsOpen ? !!wsOpen[key] : current || inGroup.some((s) => s.id === activeId));
+        const label = key ? labels.get(key) : 'Other';
+        const tip = key || 'No recorded folder: started with no folder open, or before folders were recorded';
+        const newTip = key ? 'New session in ' + label : 'New session';
+        html += '<div class="ws-group' + (open ? ' open' : '') + (current ? ' current' : '') + '">' +
+          '<div class="ws-header">' +
+          '<button class="ws-toggle" type="button" data-ws="' + escapeHtml(key) + '" aria-expanded="' + open +
+          '" title="' + escapeHtml(tip) + '"><span class="ws-name">' + escapeHtml(label) + '</span>' + CHEVRON + '</button>' +
+          (current
+            ? '<button class="ws-new" type="button" title="' + escapeHtml(newTip) + '" aria-label="' + escapeHtml(newTip) + '">' + PLUS + '</button>'
+            : '') +
+          '</div><div class="ws-rows">' +
+          (inGroup.length ? inGroup.map((s) => rowHtml(s, now)).join('') : '<div class="ws-empty">No sessions yet</div>') +
+          '</div></div>';
+      }
+      return html;
+    }
+
     listEl.addEventListener('click', (event) => {
+      const toggle = event.target.closest('.ws-toggle');
+      if (toggle) {
+        const group = toggle.closest('.ws-group');
+        const open = !group.classList.contains('open');
+        group.classList.toggle('open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+        // A search opens every group it matches; that is not the user's choice.
+        if (!query.trim()) {
+          wsOpen = { ...wsOpen, [toggle.getAttribute('data-ws') || '']: open };
+          vscode.setState({ ...(vscode.getState() || {}), wsOpen });
+        }
+        return;
+      }
+      if (event.target.closest('.ws-new')) {
+        vscode.postMessage({ type: MESSAGE_TYPES.NEW_CHAT });
+        return;
+      }
       const deleteBtn = event.target.closest('.row-delete');
       if (deleteBtn) {
         event.stopPropagation();

@@ -13,6 +13,12 @@ export interface ChatSessionPreview {
    * play back then.
    */
   assistantMode: 'chat' | 'work';
+  /**
+   * The folder that was open when this chat was started — the one its agent
+   * worked in. Absent when none was open, and for chats saved before this
+   * was recorded (nothing in those files says which folder it was).
+   */
+  workspaceFolder?: string;
   /** Sum of agent turn diffs in this session; omitted when there were no edits. */
   added?: number;
   removed?: number;
@@ -104,7 +110,8 @@ export class HistoryService {
   public async saveHistory(
     sessionId: string,
     messages: ChatMessage[],
-    assistantMode?: 'chat' | 'work'
+    assistantMode?: 'chat' | 'work',
+    workspaceFolder?: string
   ): Promise<void> {
     if (deletedSessionIds.has(sessionId)) return;
     await this.initializeDirectory();
@@ -118,12 +125,17 @@ export class HistoryService {
     // value wins: re-filing a finished conversation because the switch was
     // flipped afterwards would move it out from under the user.
     let mode: 'chat' | 'work' = assistantMode === 'chat' ? 'chat' : 'work';
+    // The folder is kept the same way. A file written before folders were
+    // recorded stays without one (undefined, key left out) rather than being
+    // filed under whatever folder is open when it happens to be re-saved.
+    let folder: string | null | undefined = workspaceFolder || null;
     try {
       const existingBytes = await vscode.workspace.fs.readFile(filePath);
       const existingData = JSON.parse(new TextDecoder().decode(existingBytes));
       if (existingData.assistantMode === 'chat' || existingData.assistantMode === 'work') {
         mode = existingData.assistantMode;
       }
+      folder = 'workspaceFolder' in existingData ? existingData.workspaceFolder || null : undefined;
       
       // If the number of messages hasn't changed, and the last message content is the same,
       // it's a spurious save (e.g., from just viewing the chat). Preserve the old updatedAt.
@@ -149,6 +161,7 @@ export class HistoryService {
       title,
       updatedAt,
       assistantMode: mode,
+      ...(folder !== undefined && { workspaceFolder: folder }),
       messages,
     };
 
@@ -186,6 +199,7 @@ export class HistoryService {
               title,
               updatedAt: data.updatedAt,
               assistantMode: data.assistantMode === 'chat' ? 'chat' : 'work',
+              ...(typeof data.workspaceFolder === 'string' && data.workspaceFolder && { workspaceFolder: data.workspaceFolder }),
               ...(diffs ?? {}),
             });
           } catch (e) {
