@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 export const alt =
-  "WorkspaceGPT — the coding agent that knows your whole org. Install free for VS Code, Cursor & Antigravity.";
+  "WorkspaceGPT — the coding agent that knows your whole org. Free for VS Code, Cursor & Antigravity, or as a desktop app for macOS and Windows.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -59,8 +59,8 @@ export default function OpengraphImage() {
             textAlign: "center",
           }}
         >
-          The coding agent that knows your whole org &mdash; for VS Code,
-          Cursor &amp; Antigravity
+          The coding agent that knows your whole org &mdash; in VS Code,
+          Cursor &amp; Antigravity, or as a desktop app
         </div>
         <div
           style={{

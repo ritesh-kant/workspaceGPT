@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useState } from "react";
+import { Icon, type IconName } from "../../_components/Icon";
+import { SiteNav } from "../../_components/SiteNav";
+import { SiteFooter } from "../../_components/SiteFooter";
 
 const sections = [
   { id: "overview", label: "Overview & concepts" },
@@ -47,10 +49,10 @@ function CodeBlock({ children, language = "bash" }: { children: string; language
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <div className="relative group rounded-xl bg-slate-950 border border-white/10 overflow-hidden my-4">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-white/2">
-        <span className="text-xs text-slate-500 font-mono">{language}</span>
-        <button onClick={copy} className="text-xs text-slate-500 hover:text-white transition-colors">
+    <div className="relative group rounded-xl bg-background border border-line overflow-hidden my-4">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-line bg-surface-2">
+        <span className="text-xs text-faint font-mono">{language}</span>
+        <button onClick={copy} className="text-xs text-faint hover:text-white transition-colors">
           {copied ? "Copied!" : "Copy"}
         </button>
       </div>
@@ -71,36 +73,42 @@ function Step({ number, title, children }: { number: number; title: string; chil
       </div>
       <div className="flex-1 pb-8">
         <h4 className="text-white font-semibold text-base mb-2">{title}</h4>
-        <div className="text-slate-300 text-sm leading-relaxed space-y-2">{children}</div>
+        <div className="text-muted text-sm leading-relaxed space-y-2">{children}</div>
       </div>
     </div>
   );
 }
 
-function Card({ title, icon, children, accent = "brand" }: { title: string; icon: string; children: React.ReactNode; accent?: string }) {
+function Card({ title, icon, children, accent = "brand" }: { title: string; icon: IconName; children: React.ReactNode; accent?: string }) {
   const accents: Record<string, string> = {
     brand: "hover:border-brand/40",
     blue: "hover:border-blue-500/40",
     purple: "hover:border-purple-500/40",
     green: "hover:border-emerald-500/40",
   };
+  const tones: Record<string, string> = {
+    brand: "text-brand",
+    blue: "text-blue-400",
+    purple: "text-purple-400",
+    green: "text-emerald-400",
+  };
   return (
-    <div className={`bg-slate-900 border border-white/5 rounded-2xl p-6 ${accents[accent] ?? accents.brand} transition-colors duration-300`}>
+    <div className={`bg-surface border border-line rounded-xl p-6 ${accents[accent] ?? accents.brand} transition-colors duration-300`}>
       <div className="flex items-center gap-3 mb-3">
-        <span className="text-xl">{icon}</span>
+        <span className={tones[accent] ?? tones.brand}><Icon name={icon} size={18} /></span>
         <h4 className="text-white font-semibold">{title}</h4>
       </div>
-      <div className="text-slate-300 text-sm leading-relaxed space-y-2">{children}</div>
+      <div className="text-muted text-sm leading-relaxed space-y-2">{children}</div>
     </div>
   );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2 tracking-tight">{children}</h2>;
+  return <h2 className="text-2xl sm:text-3xl font-semibold text-white mb-2 tracking-tight">{children}</h2>;
 }
 
 function SectionSubtitle({ children }: { children: React.ReactNode }) {
-  return <p className="text-slate-400 mb-8 text-base">{children}</p>;
+  return <p className="text-muted mb-8 text-base">{children}</p>;
 }
 
 function H3({ children }: { children: React.ReactNode }) {
@@ -120,7 +128,7 @@ function Note({ children, color = "brand" }: { children: React.ReactNode; color?
     blue: "border-blue-500/20",
   };
   return (
-    <div className={`mt-2 p-5 bg-slate-900 border ${border[color] ?? border.brand} rounded-2xl text-sm text-slate-300`}>
+    <div className={`mt-2 p-5 bg-surface border ${border[color] ?? border.brand} rounded-xl text-sm text-muted`}>
       {children}
     </div>
   );
@@ -128,7 +136,7 @@ function Note({ children, color = "brand" }: { children: React.ReactNode; color?
 
 function PipelineDiagram() {
   return (
-    <div className="my-6 rounded-2xl border border-white/10 bg-slate-950 p-4 overflow-x-auto">
+    <div className="my-6 rounded-xl border border-line bg-background p-4 overflow-x-auto">
       <svg viewBox="0 0 760 240" className="w-full min-w-[680px]" role="img" aria-label="A deployment pipeline: a Source feeds Stages of Actions, then a review and apply step.">
         {/* Source */}
         <rect x="10" y="60" width="150" height="120" rx="12" fill="#60a5fa14" stroke="#60a5fa55" />
@@ -172,36 +180,22 @@ export default function DeploymentDocsPage() {
   const [activeSection, setActiveSection] = useState("overview");
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#030712] text-slate-200">
-      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-brand/5 blur-[150px] rounded-full pointer-events-none -z-10" />
-      <div className="fixed bottom-0 right-0 w-[400px] h-[400px] bg-brand-blue/10 blur-[120px] rounded-full pointer-events-none -z-10" />
+    <div className="flex flex-col min-h-screen bg-background text-foreground">
 
-      <header className="sticky top-0 z-40 border-b border-white/5 bg-[#030712]/80 backdrop-blur-md">
-        <div className="container mx-auto px-6 h-14 flex items-center justify-between gap-4">
-          <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-            <Image src="/icon.png" width={24} height={24} alt="WorkspaceGPT" className="opacity-90" />
-            <span className="font-bold text-white text-sm">WorkspaceGPT</span>
-            <span className="text-slate-500 text-sm hidden sm:inline">/ Docs / Deployment</span>
-          </Link>
-          <nav className="hidden md:flex items-center gap-5 text-sm text-slate-400">
-            <Link href="/docs" className="hover:text-white transition-colors">← All docs</Link>
-            <a href="https://github.com/ritesh-kant/workspaceGPT" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>
-          </nav>
-        </div>
-      </header>
+      <SiteNav />
 
       <div className="container mx-auto px-4 sm:px-6 flex gap-0 lg:gap-10 flex-1">
         <aside className="hidden lg:block w-56 xl:w-64 flex-shrink-0 py-10">
           <div className="sticky top-24 space-y-1">
-            <Link href="/docs" className="block px-3 mb-3 text-sm text-slate-400 hover:text-white">← Back to docs</Link>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4 px-3">On this page</p>
+            <Link href="/docs" className="block px-3 mb-3 text-sm text-muted hover:text-white">← Back to docs</Link>
+            <p className="text-xs font-semibold text-faint uppercase tracking-wider mb-4 px-3">On this page</p>
             {sections.map((s) => (
               <a
                 key={s.id}
                 href={`#${s.id}`}
                 onClick={() => setActiveSection(s.id)}
                 className={`block px-3 py-2 rounded-lg text-sm transition-colors ${
-                  activeSection === s.id ? "bg-brand/10 text-brand font-medium" : "text-slate-400 hover:text-white hover:bg-white/5"
+                  activeSection === s.id ? "bg-brand/10 text-brand font-medium" : "text-muted hover:text-white hover:bg-white/5"
                 }`}
               >
                 {s.label}
@@ -222,7 +216,7 @@ export default function DeploymentDocsPage() {
               inspired by AWS CodePipeline, and nothing is hardwired to one team&apos;s setup.
             </SectionSubtitle>
 
-            <p className="text-slate-300 text-sm leading-relaxed mb-2">
+            <p className="text-muted text-sm leading-relaxed mb-2">
               A deployment <strong className="text-white">pipeline</strong> has three parts: a{" "}
               <strong className="text-white">Source</strong> (where releases are described), ordered{" "}
               <strong className="text-white">Stages</strong>, and the <strong className="text-white">Actions</strong>{" "}
@@ -232,13 +226,13 @@ export default function DeploymentDocsPage() {
             <PipelineDiagram />
 
             <div className="grid sm:grid-cols-3 gap-4">
-              <Card icon="🧩" title="Pluggable" accent="purple">
+              <Card icon="puzzle" title="Pluggable" accent="purple">
                 <p>Pick a source, then add only the deploy actions your org uses. No provider is baked in; Mars MMS is just a preset.</p>
               </Card>
-              <Card icon="🛡️" title="Plan → Approve → Apply" accent="green">
+              <Card icon="shield-check" title="Plan → Approve → Apply" accent="green">
                 <p>Every change is previewed as a diff you approve. Backend changes open a pull request — never an auto-merge.</p>
               </Card>
-              <Card icon="🔍" title="Discover &amp; select" accent="blue">
+              <Card icon="search" title="Discover &amp; select" accent="blue">
                 <p>Repos, workflows, projects, and table columns are detected from your connected accounts — pick from dropdowns.</p>
               </Card>
             </div>
@@ -272,7 +266,7 @@ export default function DeploymentDocsPage() {
             <SectionSubtitle>The source answers “what are we releasing today, and what config does it want?”</SectionSubtitle>
 
             <H3>Confluence roster</H3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-2">
+            <p className="text-muted text-sm leading-relaxed mb-2">
               A wiki page with a table mapping each <strong className="text-white">date</strong> to a release{" "}
               <strong className="text-white">version</strong> (plus optional environment and pilot columns), and a
               per-release configuration table. WorkspaceGPT auto-detects the columns by their headers; if your
@@ -285,7 +279,7 @@ export default function DeploymentDocsPage() {
             </Note>
 
             <H4>Config target routing</H4>
-            <p className="text-slate-300 text-sm leading-relaxed mb-2">
+            <p className="text-muted text-sm leading-relaxed mb-2">
               A Confluence configuration table names an app/system per row but has no explicit{" "}
               <code className="bg-white/10 px-1 rounded text-xs">target</code> column, so WorkspaceGPT decides
               whether each variable syncs to <strong className="text-white">Vercel</strong> or{" "}
@@ -299,7 +293,7 @@ export default function DeploymentDocsPage() {
             </p>
 
             <H3>JSON file (Git repo)</H3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-2">
+            <p className="text-muted text-sm leading-relaxed mb-2">
               For teams that keep release info in version control instead of a wiki. Point the source at a repo,
               branch, and path; WorkspaceGPT reads it with the GitHub PAT. Expected shape:
             </p>
@@ -317,14 +311,14 @@ export default function DeploymentDocsPage() {
     }
   ]
 }`}</CodeBlock>
-            <p className="text-slate-400 text-sm">
+            <p className="text-muted text-sm">
               Use <code className="bg-white/10 px-1 rounded text-xs">value</code> for one value, or{" "}
               <code className="bg-white/10 px-1 rounded text-xs">values</code> to set per-environment values.{" "}
               <code className="bg-white/10 px-1 rounded text-xs">target</code> routes each var to an action (<code className="bg-white/10 px-1 rounded text-xs">vercel</code> or <code className="bg-white/10 px-1 rounded text-xs">mach</code>).
             </p>
 
             <H3>Manual / None</H3>
-            <p className="text-slate-300 text-sm leading-relaxed">
+            <p className="text-muted text-sm leading-relaxed">
               <strong className="text-white">Manual</strong> — you enter the version and environment at run time.{" "}
               <strong className="text-white">None</strong> — there&apos;s no config source; the desired state comes from
               the actions themselves (e.g. promoting component versions between environments).{" "}
@@ -337,25 +331,25 @@ export default function DeploymentDocsPage() {
           <section className="mb-16">
             <SectionTitle>Actions</SectionTitle>
             <SectionSubtitle>Each action is one deploy step, run by a provider. Add them to a stage and configure with dropdowns.</SectionSubtitle>
-            <div className="overflow-x-auto rounded-2xl border border-white/10 mb-6">
+            <div className="overflow-x-auto rounded-xl border border-line mb-6">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-white/10 bg-slate-900">
-                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">Provider</th>
-                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">What it does</th>
-                    <th className="text-left px-5 py-3 text-slate-300 font-semibold">How it applies</th>
+                  <tr className="border-b border-line bg-surface">
+                    <th className="text-left px-5 py-3 text-muted font-semibold">Provider</th>
+                    <th className="text-left px-5 py-3 text-muted font-semibold">What it does</th>
+                    <th className="text-left px-5 py-3 text-muted font-semibold">How it applies</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-line">
                   {[
                     { name: "Vercel — env config", does: "Pushes feature flags / env vars to a Vercel project for the target environment.", how: "Direct upsert via the Vercel API." },
                     { name: "GitHub — workflow dispatch", does: "Triggers a CI workflow that promotes component versions between environments.", how: "Opens a PR — never auto-merged." },
                     { name: "Repo — file patch", does: "Edits a config file in a repo (e.g. merging env vars into main.yml).", how: "Commits to the PR branch." },
                   ].map((row) => (
-                    <tr key={row.name} className="bg-slate-950 hover:bg-slate-900/60 transition-colors align-top">
+                    <tr key={row.name} className="bg-background hover:bg-surface-2 transition-colors align-top">
                       <td className="px-5 py-3 font-medium text-white">{row.name}</td>
-                      <td className="px-5 py-3 text-slate-400">{row.does}</td>
-                      <td className="px-5 py-3 text-slate-400">{row.how}</td>
+                      <td className="px-5 py-3 text-muted">{row.does}</td>
+                      <td className="px-5 py-3 text-muted">{row.how}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -363,7 +357,7 @@ export default function DeploymentDocsPage() {
             </div>
 
             <H3>Backend env vars land on the sync PR</H3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-2">
+            <p className="text-muted text-sm leading-relaxed mb-2">
               The <strong className="text-white">Vercel</strong> action diffs against live state and
               writes immediately. The backend is different: component versions and env vars live in a
               Git repo behind branch protection, so the <strong className="text-white">GitHub — workflow
@@ -381,10 +375,10 @@ export default function DeploymentDocsPage() {
               rather than diffing against the wrong branch.
             </Note>
 
-            <p className="text-slate-400 text-sm mt-6">
-              Reserved for future releases (the seams exist already): <strong className="text-slate-200">blue-green switch</strong>,{" "}
-              <strong className="text-slate-200">canary</strong>, <strong className="text-slate-200">health verify</strong>, and{" "}
-              <strong className="text-slate-200">rollback</strong>.
+            <p className="text-muted text-sm mt-6">
+              Reserved for future releases (the seams exist already): <strong className="text-foreground">blue-green switch</strong>,{" "}
+              <strong className="text-foreground">canary</strong>, <strong className="text-foreground">health verify</strong>, and{" "}
+              <strong className="text-foreground">rollback</strong>.
             </p>
           </section>
 
@@ -409,7 +403,7 @@ export default function DeploymentDocsPage() {
             </div>
 
             <H3>Vercel</H3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-2">
+            <p className="text-muted text-sm leading-relaxed mb-2">
               Connect via one-click OAuth. In the Vercel action you then pick the <strong className="text-white">project</strong>{" "}
               from a dropdown and map each environment (e.g. <em>stage → Preview</em>, <em>prod → Production</em>).
             </p>
@@ -421,7 +415,7 @@ export default function DeploymentDocsPage() {
             </Note>
 
             <H3>Confluence</H3>
-            <p className="text-slate-300 text-sm leading-relaxed">
+            <p className="text-muted text-sm leading-relaxed">
               Reused from the <Link href="/docs#confluence" className="text-brand hover:underline">Confluence integration</Link>.
               Needed only when your source is a Confluence roster.
             </p>
@@ -475,7 +469,7 @@ export default function DeploymentDocsPage() {
           <section className="mb-16">
             <SectionTitle>Hotfix flow</SectionTitle>
             <SectionSubtitle>Ship an urgent fix by ticket, without a full release.</SectionSubtitle>
-            <p className="text-slate-300 text-sm leading-relaxed mb-3">
+            <p className="text-muted text-sm leading-relaxed mb-3">
               The hotfix flow is a <strong className="text-white">separate pipeline</strong> from the config-sync
               release — the magenta card at the bottom of the Releases panel. Instead of config variables, its unit
               of work is <strong className="text-white">tickets → commits → components → tags</strong>. It reuses the
@@ -501,7 +495,7 @@ export default function DeploymentDocsPage() {
               and Re-plan to compute the tag. The engine never invents a version.
             </Note>
             <H4>Configuration</H4>
-            <p className="text-slate-300 text-sm leading-relaxed">
+            <p className="text-muted text-sm leading-relaxed">
               The hotfix repository, base branch, and tag template default from your GitHub workflow-dispatch action&apos;s
               repo topology (its release tags are repo-scoped), and can be overridden per install — the default tag
               template is <code className="bg-white/10 px-1 rounded text-xs">{'{component}-v{version}-hotfix.{n}'}</code>.
@@ -515,7 +509,7 @@ export default function DeploymentDocsPage() {
           <section className="mb-16">
             <SectionTitle>Environments &amp; promotion policy</SectionTitle>
             <SectionSubtitle>Declare your environments and the policy for each.</SectionSubtitle>
-            <p className="text-slate-300 text-sm leading-relaxed mb-3">
+            <p className="text-muted text-sm leading-relaxed mb-3">
               By default, promotions <strong className="text-white">never auto-merge</strong> — the safest behavior. In the{" "}
               <strong className="text-white">Environments</strong> section you can add an environment by name and opt it into
               auto-merge individually. Each stage also has a <strong className="text-white">gate</strong> (manual by default),
@@ -532,14 +526,14 @@ export default function DeploymentDocsPage() {
           <section className="mb-16">
             <SectionTitle>AI-assisted page reading</SectionTitle>
             <SectionSubtitle>How WorkspaceGPT reads a wiki page whose structure varies per team and release.</SectionSubtitle>
-            <p className="text-slate-300 text-sm leading-relaxed mb-3">
+            <p className="text-muted text-sm leading-relaxed mb-3">
               Roster and release-page layouts differ too much between orgs for a strict header parser to be reliable, so
               when a chat model is configured (<Link href="/docs#ai-providers" className="text-brand hover:underline">Settings → Model</Link>) WorkspaceGPT reads pages with AI by
               default — both resolving today&apos;s release from the roster and extracting config variables during{" "}
               <strong className="text-white">Prepare config sync</strong>. Strict header matching is used only as a fallback
               when no model is configured.
             </p>
-            <p className="text-slate-300 text-sm leading-relaxed mb-3">
+            <p className="text-muted text-sm leading-relaxed mb-3">
               Two toggles on the Confluence source let you tune this: <strong className="text-white">AI-assisted page
               reading</strong> (roster resolution) and <strong className="text-white">Always use AI for config
               sync</strong> (release-page extraction). When reading the config table, the model also decides each
@@ -559,7 +553,7 @@ export default function DeploymentDocsPage() {
           <section className="mb-16">
             <SectionTitle>Security model</SectionTitle>
             <SectionSubtitle>Write access is treated with care.</SectionSubtitle>
-            <ul className="list-disc list-inside text-slate-300 text-sm leading-relaxed space-y-2">
+            <ul className="list-disc list-inside text-muted text-sm leading-relaxed space-y-2">
               <li>Write-scoped credentials (GitHub PAT, Vercel token) live only in VS Code&apos;s encrypted secret storage.</li>
               <li>They are never written to plaintext settings and never logged.</li>
               <li>They are <strong className="text-white">excluded from the Chrome share bundle</strong> — sharing your setup never shares your write creds.</li>
@@ -588,14 +582,14 @@ export default function DeploymentDocsPage() {
                 { problem: "Hotfix: “no commits mapped to a component”", fix: "Commits are mapped by their Conventional-Commit scope, e.g. fix(mms-bff): …. Confirm the ticket id appears in the commit messages and that titles carry a (scope). Commits with no scope are listed as skipped." },
                 { problem: "Hotfix cherry-pick reports a conflict", fix: "The commit doesn't apply cleanly onto the hotfix branch. WorkspaceGPT stops and restores the branch head rather than writing a bad tree — resolve the conflict manually (cherry-pick locally) for that component." },
               ].map((item) => (
-                <details key={item.problem} className="group bg-slate-900 border border-white/5 rounded-2xl overflow-hidden">
+                <details key={item.problem} className="group bg-surface border border-line rounded-xl overflow-hidden">
                   <summary className="flex items-center justify-between px-5 py-4 cursor-pointer text-white font-medium hover:bg-white/5 transition-colors list-none">
-                    <span className="flex items-center gap-3"><span className="text-yellow-400 text-sm">⚠</span>{item.problem}</span>
-                    <svg className="w-4 h-4 text-slate-400 group-open:rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <span className="flex items-center gap-3"><span className="text-yellow-400"><Icon name="alert" size={16} /></span>{item.problem}</span>
+                    <svg className="w-4 h-4 text-muted group-open:rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </summary>
-                  <div className="px-5 pb-5 pt-1 text-sm text-slate-300 border-t border-white/5">{item.fix}</div>
+                  <div className="px-5 pb-5 pt-1 text-sm text-muted border-t border-line">{item.fix}</div>
                 </details>
               ))}
             </div>
@@ -614,19 +608,19 @@ export default function DeploymentDocsPage() {
                 { q: "Can other teams reuse this?", a: "Yes — that's the point. Start from Blank, pick your source, add your actions, connect your accounts. Mars MMS is just a preset, not the only shape." },
                 { q: "Where are my tokens stored?", a: "In VS Code's encrypted secret storage only. They're never in settings, never logged, and never shared via the Chrome bundle." },
               ].map((item) => (
-                <details key={item.q} className="group bg-slate-900 border border-white/5 rounded-2xl overflow-hidden">
+                <details key={item.q} className="group bg-surface border border-line rounded-xl overflow-hidden">
                   <summary className="flex items-center justify-between px-5 py-4 cursor-pointer text-white font-medium hover:bg-white/5 transition-colors list-none">
                     <span>{item.q}</span>
-                    <svg className="w-4 h-4 text-slate-400 group-open:rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-4 h-4 text-muted group-open:rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </summary>
-                  <div className="px-5 pb-5 pt-1 text-sm text-slate-300 border-t border-white/5">{item.a}</div>
+                  <div className="px-5 pb-5 pt-1 text-sm text-muted border-t border-line">{item.a}</div>
                 </details>
               ))}
             </div>
 
-            <div className="mt-8 p-6 bg-slate-900 border border-white/5 rounded-2xl">
+            <div className="mt-8 p-6 bg-surface border border-line rounded-xl">
               <h4 className="text-white font-semibold mb-2">Still need help?</h4>
               <div className="flex flex-wrap gap-4 text-sm">
                 <a href="https://github.com/ritesh-kant/workspaceGPT/issues" target="_blank" rel="noopener noreferrer" className="text-brand-blue hover:underline">Open a GitHub issue →</a>
@@ -637,16 +631,7 @@ export default function DeploymentDocsPage() {
         </main>
       </div>
 
-      <footer className="border-t border-white/5 py-8 bg-slate-950">
-        <div className="container mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-slate-500">
-          <p>© {new Date().getFullYear()} WorkspaceGPT. Proprietary Software.</p>
-          <div className="flex gap-6">
-            <Link href="/docs" className="hover:text-white transition-colors">All docs</Link>
-            <Link href="/" className="hover:text-white transition-colors">Home</Link>
-            <a href="mailto:contact@workspacegpt.in" className="hover:text-white transition-colors">Contact</a>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { SiteNav } from "../_components/SiteNav";
+import { SiteFooter } from "../_components/SiteFooter";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -10,40 +11,38 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "September 25, 2026";
+const UPDATED = "September 26, 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mt-10">
       <h2 className="text-xl font-semibold text-white mb-3">{title}</h2>
-      <div className="space-y-3 text-slate-300 leading-relaxed">{children}</div>
+      <div className="space-y-3 text-muted leading-relaxed">{children}</div>
     </section>
   );
 }
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-[#030712] text-slate-100">
+    <div className="flex flex-col min-h-screen bg-background text-foreground">
+    <SiteNav />
+    <main className="flex-grow">
       <div className="max-w-3xl mx-auto px-6 py-16">
-        <Link href="/" className="text-sm text-brand hover:underline">
-          ← Back to home
-        </Link>
+        <h1 className="text-3xl sm:text-4xl font-normal tracking-tight text-white">Privacy Policy</h1>
+        <p className="mt-2 text-sm text-faint">Last updated: {UPDATED}</p>
 
-        <h1 className="mt-6 text-3xl font-bold text-white">Privacy Policy</h1>
-        <p className="mt-2 text-sm text-slate-500">Last updated: {UPDATED}</p>
-
-        <p className="mt-6 text-slate-300 leading-relaxed">
+        <p className="mt-6 text-muted leading-relaxed">
           WorkspaceGPT is a privacy-first AI assistant that lets you ask questions about your
           own codebase, Confluence pages, Jira issues and Azure DevOps work items. This policy
           describes what data the WorkspaceGPT IDE extension (VS Code, Cursor, Antigravity), the
-          WorkspaceGPT Desktop app for macOS and Windows, and the WorkspaceGPT browser companion actually
+          WorkspaceGPT Desktop app for macOS and Windows, and the WorkspaceGPT Chrome extension actually
           process, and where it goes. It is written to
           match how the software behaves, not to describe an aspiration.
         </p>
 
-        <div className="mt-8 rounded-2xl border border-brand/20 bg-brand/5 p-6">
+        <div className="mt-8 rounded-xl border border-brand/20 bg-brand/5 p-6">
           <h2 className="text-lg font-semibold text-white mb-3">The short version</h2>
-          <ul className="list-disc pl-6 space-y-2 text-slate-300">
+          <ul className="list-disc pl-6 space-y-2 text-muted">
             <li>
               <strong className="text-white">Your content stays on your machine.</strong> Your
               documents and work items are indexed on-device, and the resulting vector index is
@@ -76,8 +75,8 @@ export default function PrivacyPage() {
             thing: where the answer is generated. It never changes where your content is stored.
           </p>
 
-          <div className="rounded-2xl border border-white/10 overflow-hidden mt-4">
-            <div className="border-b border-white/10 bg-slate-900 px-5 py-3">
+          <div className="rounded-xl border border-line overflow-hidden mt-4">
+            <div className="border-b border-line bg-surface px-5 py-3">
               <h3 className="font-semibold text-white">Local mode</h3>
             </div>
             <div className="px-5 py-4 space-y-2 text-sm">
@@ -95,8 +94,8 @@ export default function PrivacyPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/10 overflow-hidden mt-4">
-            <div className="border-b border-white/10 bg-slate-900 px-5 py-3 flex items-center gap-3">
+          <div className="rounded-xl border border-line overflow-hidden mt-4">
+            <div className="border-b border-line bg-surface px-5 py-3 flex items-center gap-3">
               <h3 className="font-semibold text-white">Remote mode</h3>
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-brand/10 text-brand border-brand/20">
                 Preview
@@ -119,7 +118,7 @@ export default function PrivacyPage() {
                 What is <em>not</em> sent: your vector index, your repository, your Confluence
                 or Azure DevOps corpus, or any credential for those systems.
               </p>
-              <p className="text-slate-400">
+              <p className="text-muted">
                 Remote mode is in preview and its behaviour may change; this policy will be
                 updated before any change to what is transmitted or retained.
               </p>
@@ -195,6 +194,12 @@ export default function PrivacyPage() {
             to us. Content synced from those sources is
             indexed locally.
           </p>
+          <p>
+            If you connect Confluence with page-editing access, the agent can change or create a
+            page only after you approve the exact change in a review card. The request goes from
+            your machine directly to Atlassian, under your own account; it does not pass through
+            us. Runs that apply edits without review never write to Confluence.
+          </p>
         </Section>
 
         <div id="analytics" className="-mt-20 pt-20" />
@@ -238,29 +243,45 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section title="Browser companion (Chrome)">
-          <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4 text-sm">
-            <p className="text-yellow-400 font-semibold">Pairing is currently unavailable.</p>
-            <p className="text-slate-300 mt-1">
-              The browser companion reads your search index directly, which now lives only on
-              your machine, so new setups cannot be paired. The section below describes how
-              existing installs behave.
-            </p>
-          </div>
-          <p className="mt-4">
-            The browser companion holds no server of ours. It is configured by pasting a
-            &ldquo;share code&rdquo; generated in the IDE extension, containing the endpoint and
-            credentials for a cloud-reachable index and model of your own. Those settings live in
-            your browser&rsquo;s extension storage
-            (<code className="text-brand">chrome.storage</code>) on your device, are used only to
-            reach the services named in them, and are never transmitted to us. Your questions go
-            from your browser straight to those services. Write-scoped credentials (GitHub,
-            Vercel, Confluence, Azure DevOps) are deliberately excluded from a share code.
+        <div id="browser" className="-mt-20 pt-20" />
+        <Section title="Chrome extension and browser control">
+          <p>
+            The WorkspaceGPT Chrome extension can let WorkspaceGPT Desktop use your browser. It is
+            off until you check <strong className="text-white">Let WorkspaceGPT use this
+            browser</strong> in the extension&rsquo;s settings; Chrome asks for your permission at that
+            point, and unchecking it removes that permission again.
           </p>
           <p>
-            Clearing the share code in the companion&rsquo;s settings, or uninstalling it, removes
-            all locally stored settings.
+            When it is on, the extension talks to WorkspaceGPT Desktop on the same computer through
+            Chrome&rsquo;s native messaging, a local channel between two programs on your machine. No
+            WorkspaceGPT server is involved. The extension does not export your cookies or saved
+            passwords; the agent works inside your browser session, the way you would.
           </p>
+          <p>
+            The agent acts only in its own &ldquo;WorkspaceGPT&rdquo; tab group or on the tab you are
+            looking at, and it refuses to type into password fields. Chrome shows a bar saying the
+            browser is being debugged whenever the agent is acting; clicking Cancel there stops it.
+          </p>
+          <p>
+            What the agent reads in the browser, such as page text, screenshots, and console or
+            network output, becomes part of the conversation, like any other context. It is sent
+            wherever your answers are generated: to your own model provider in Local mode (nowhere,
+            with a local model), or to our endpoint and the upstream model provider in Remote mode,
+            where it is processed in memory and not retained, as described above.
+          </p>
+          <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4 text-sm mt-4">
+            <p className="text-yellow-400 font-semibold">Older side-panel pairing</p>
+            <p className="text-muted mt-1">
+              Earlier versions of the extension could answer questions in a side panel after you
+              pasted a &ldquo;share code&rdquo; from the IDE extension. That pairing is unavailable
+              for new setups, because the search index now lives only on your machine. For existing
+              installs, the share code&rsquo;s settings stay in your browser&rsquo;s extension storage
+              (<code className="text-brand">chrome.storage</code>), are used only to reach the
+              services named in them, and are never transmitted to us. Write-scoped credentials are
+              never included in a share code. Clearing the share code or uninstalling the extension
+              removes them.
+            </p>
+          </div>
         </Section>
 
         <Section title="What we never do">
@@ -313,5 +334,7 @@ export default function PrivacyPage() {
         </Section>
       </div>
     </main>
+    <SiteFooter />
+    </div>
   );
 }
