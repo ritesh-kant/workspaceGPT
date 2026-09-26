@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "The coding agent that reads your Confluence docs and your Jira and Azure DevOps tickets mid-task — not just your repo — then edits and verifies your code. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor and Antigravity, or as a desktop app for macOS and Windows.",
+    "The coding agent that reads your Confluence docs and your Jira and Azure DevOps tickets mid-task — not just your repo — then edits and verifies your code, updates the Confluence page, and checks the fix in your own browser. Zero data retention: your documents and search index never leave your machine, in Local mode (your own model) or Remote mode (we run the model). For VS Code, Cursor and Antigravity, or as a desktop app for macOS and Windows.",
   applicationName: "WorkspaceGPT",
   keywords: [
     "AI coding assistant",
@@ -42,6 +42,10 @@ export const metadata: Metadata = {
     "AI coding agent for Mac",
     "AI coding agent for Windows",
     "Confluence grounded coding agent",
+    "AI agent that edits Confluence pages",
+    "update Confluence with AI",
+    "AI browser automation for developers",
+    "coding agent that controls Chrome",
     "zero data retention AI",
     "on-device embeddings",
     "no data retention coding assistant",
