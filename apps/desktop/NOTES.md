@@ -426,11 +426,12 @@ The window is now a two-pane app rather than the chat panel alone:
   title actions (New Chat → header "+", Settings → footer gear, History only
   when the sidebar is hidden). Clicks go back through the chat's socket, so
   the sidecar still honours only real title actions.
-- **All conversations in the sidebar.** VS Code's Sessions list shows only the
-  current mode's sessions; the desktop rewrites its `sessions-list` (a
-  `ViewSurface.outgoing` hook) to the full `HistoryService` list, and the shell
-  tags Chat-mode rows. Opening one already switches the chat to its mode
-  (`GET_CHAT_SESSION_RESPONSE`).
+- **The sidebar follows the Chat/Work switch**, as VS Code's Sessions list
+  does: Chat lists by date, Work groups sessions by the folder they were
+  started in (`workspaceFolder` in each chat file, recorded at birth; older
+  files have none and sit under "Other"). "+" on the open folder's group starts
+  a session there. (It used to list both modes, via a `ViewSurface.outgoing`
+  rewrite, with Chat rows tagged.)
 - Look: a neutral palette with its own accent (`--wgpt-d-*` in theme.css,
   light and dark), one centred reading column, composer card with the branch
   strip as its header, borderless assistant turns, grey user bubbles; the home

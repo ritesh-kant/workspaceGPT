@@ -43,10 +43,7 @@ import { createViewSurface, type ViewSurface } from './host/webviewHost';
 import { watchForAttention } from './host/notifier';
 import { registerBrowserHost } from './host/browserHost';
 import { startBrowserBridge } from 'workspacegpt-extension-browser';
-// Aliased to apps/vscode-extensions/src/services/historyService.ts (the same module extension.ts uses).
-import { HistoryService } from 'workspacegpt-extension-history';
 import { recordOriginalContent } from 'workspacegpt-extension-diff';
-import { MESSAGE_TYPES } from '../../vscode-extensions/constants';
 import { startServer, type DesktopServer } from './host/server';
 import { mergeLoginShellPath, type ShellPathResult } from './host/shellEnv';
 import { clipboardRead, clipboardWrite, openExternal, openInEditor } from './host/opener';
@@ -324,17 +321,8 @@ async function main(): Promise<void> {
   // working chat, and the shell falls back to the chat's own History button.
   const sessions = webviewViewProviders.get(SESSIONS_VIEW_ID);
   if (sessions) {
-    // VS Code's Sessions list shows only the mode the chat is in (Chat and
-    // Work keep separate histories). The desktop sidebar is the app's only
-    // conversation list, so it lists every session; opening one already
-    // switches the chat into that session's mode (GET_CHAT_SESSION_RESPONSE),
-    // and the shell tags Chat-mode rows. Same files, same HistoryService.
-    const history = new HistoryService(ctx.context);
-    sessionsSurface.outgoing = async (message) => {
-      const msg = message as { type?: string } | undefined;
-      if (msg?.type !== MESSAGE_TYPES.SESSIONS_LIST) return message;
-      return { ...msg, sessions: await history.getHistoryList() };
-    };
+    // As in VS Code, the list follows the chat's Chat/Work switch (the two
+    // keep separate histories), and Work sessions are grouped by folder.
     await sessions.provider.resolveWebviewView(sessionsSurface.view, { state: undefined }, new compat.CancellationTokenSource().token);
   } else {
     surfaces.delete(SESSIONS_VIEW_ID);

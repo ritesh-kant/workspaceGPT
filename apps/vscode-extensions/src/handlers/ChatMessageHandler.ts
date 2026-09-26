@@ -374,10 +374,12 @@ export class ChatMessageHandler {
       // one being saved (a backgrounded session saves itself while the user
       // is elsewhere). Only used when the file has no mode yet — see
       // saveHistory, where the first stored value wins.
+      // The folder is this host's: every run in it works in that folder.
       await this.historyService.saveHistory(
         data.sessionId,
         data.messages,
-        this.chatService?.assistantModeFor(data.sessionId)
+        this.chatService?.assistantModeFor(data.sessionId),
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
       );
     } catch (error) {
       console.error('Error saving chat history:', error);

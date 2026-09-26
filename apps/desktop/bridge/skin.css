@@ -479,16 +479,12 @@ html[data-wgpt-desktop="sessions"] .row.active {
   color: var(--wgpt-d-fg);
 }
 html[data-wgpt-desktop="sessions"] .row.active .title { font-weight: 500; }
-/* Rows from Chat mode (the desktop lists both modes; bridge/shell.ts tags them). */
-html[data-wgpt-desktop="sessions"] .row[data-wgpt-mode="chat"] .meta::before {
-  content: 'Chat';
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--wgpt-d-muted);
-  background: var(--wgpt-d-active);
-}
+html[data-wgpt-desktop="sessions"] .ws-header { border-radius: 8px; }
+html[data-wgpt-desktop="sessions"] .ws-toggle { height: 32px; color: var(--wgpt-d-muted); }
+html[data-wgpt-desktop="sessions"] .ws-header:hover .ws-toggle,
+html[data-wgpt-desktop="sessions"] .ws-group.current .ws-toggle { color: var(--wgpt-d-fg); }
+html[data-wgpt-desktop="sessions"] .ws-new { border-radius: 6px; color: var(--wgpt-d-muted); }
+html[data-wgpt-desktop="sessions"] .ws-new:hover { color: var(--wgpt-d-fg); }
 html[data-wgpt-desktop="sessions"] .search {
   height: 30px;
   border-radius: 8px;

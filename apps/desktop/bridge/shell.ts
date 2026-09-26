@@ -27,7 +27,6 @@ interface TitleAction {
 interface SessionPreview {
   id: string;
   title?: string;
-  assistantMode?: 'chat' | 'work';
 }
 
 (() => {
@@ -97,7 +96,6 @@ interface SessionPreview {
         // there should reveal the chat it just opened.
         if (NARROW.matches && sidebar === 'open' && activeSessionId !== previous) setSidebar('closed');
         renderTitle();
-        tagSessionRows();
         return;
       }
       if (viewType !== CHAT_VIEW) return;
@@ -234,45 +232,10 @@ interface SessionPreview {
     .catch(() => false)
     .then((ok) => {
       hasSessionsView = ok;
-      if (ok) {
-        sessionsFrame = frame(SESSIONS_VIEW, 'Sessions');
-        sessionsFrame.addEventListener('load', watchSessionRows);
-        $('sideBody').appendChild(sessionsFrame);
-      }
+      if (ok) $('sideBody').appendChild(frame(SESSIONS_VIEW, 'Sessions'));
       else app.classList.add('no-sessions');
       applySidebar();
     });
-
-  /**
-   * The sidebar lists both modes' sessions (main.ts widens the list), so rows
-   * from Chat mode get a tag. The list re-renders on every update and search
-   * keystroke, hence the observer rather than a one-off pass.
-   */
-  let sessionsFrame: HTMLIFrameElement | undefined;
-  function tagSessionRows(): void {
-    let doc: Document | null | undefined;
-    try {
-      doc = sessionsFrame?.contentDocument;
-    } catch {
-      return;
-    }
-    if (!doc) return;
-    const modes = new Map(sessions.map((s) => [s.id, s.assistantMode ?? 'work']));
-    doc.querySelectorAll<HTMLElement>('.row[data-id]').forEach((row) => {
-      const mode = modes.get(row.dataset.id ?? '');
-      if (mode && row.dataset.wgptMode !== mode) row.dataset.wgptMode = mode;
-    });
-  }
-  function watchSessionRows(): void {
-    try {
-      const list = sessionsFrame?.contentDocument?.getElementById('list');
-      if (!list) return;
-      new MutationObserver(tagSessionRows).observe(list, { childList: true });
-      tagSessionRows();
-    } catch {
-      /* not ours to read (should not happen: same origin) */
-    }
-  }
 
   const bridgeOf = (f: HTMLIFrameElement): { command(id: string): void } | undefined => {
     try {
