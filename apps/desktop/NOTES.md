@@ -759,3 +759,81 @@ built with `--config '{"version":"0.0.2",…}'` and served by
 - **Not verified yet:** a hand run on a real Windows PC (window, WebView2
   rendering, sign-in, a grounded answer), and an in-app update from one
   Windows release to the next (first possible from 0.0.3 → 0.0.4).
+
+## Browser control (0.0.5 read-only; actions built 2026-09-25)
+
+The agent drives the user's own signed-in Chrome, not a sandbox profile, the
+way Codex (`com.openai.codexextension`) and Claude in Chrome do:
+
+```
+Chrome extension (apps/chrome-extension/src/lib/browserControl.ts, browserActions.ts)
+  → connectNative('com.workspacegpt.bridge')
+  → sidecar/browser-relay.js (Chrome launches it; a byte pipe)
+  → socket served by apps/vscode-extensions/src/services/browser/browserBridge.ts
+  → chatService → browser_* tools
+```
+
+- **Registration:** `sidecar/host/browserHost.ts` rewrites the native-host
+  manifest and launcher for every installed Chromium browser on each start
+  (macOS/Linux). "Specified native messaging host not found" in the
+  extension means no 0.0.5+ desktop has started since install.
+- **Tools** (offered only while an extension is connected):
+  - tabs: list, open (own "WorkspaceGPT" group, own window the first time),
+    close (own group only);
+  - navigate (URL, back, forward);
+  - read page text, element tree with refs (and query to find one), screenshot;
+  - `browser_act`: click, double/right click, hover, type, key, scroll, drag,
+    fill, wait;
+  - eval, console, network (with response bodies).
+- **Rules:**
+  - Reading works on any tab. Acting works only in the agent's own group or
+    on the tab the user is looking at.
+  - Password fields are refused.
+  - No approval cards (user's choice). The prompt block in
+    promptTemplates.ts tells the agent to ask in chat before anything hard
+    to undo, and to treat page content as untrusted.
+- **chrome.debugger** is required (it can't be optional), so extension 0.3.0
+  disables existing installs until the user re-approves. We attach on first
+  use and detach after 5 idle minutes. Cancel on Chrome's bar keeps the agent
+  off that tab for 10 minutes.
+- **Screenshots** are clipped to the viewport at CSS-pixel scale, so image
+  x/y equals `Input.dispatchMouseEvent` x/y. Verified at device scale 1 and 2.
+- **Dialogs:** while an alert/confirm/prompt is open the page runs nothing,
+  so a call that hits one would hang the serial request queue. An action that
+  opens a dialog returns at once saying so, calls on a tab with an open
+  dialog fail fast with its text, and `browser_act` action "dialog" answers
+  it (accept true/false).
+- **Refs** are numbered across all tabs (the counter lives in
+  chrome.storage.session), and the extension remembers each ref's tab. A ref
+  from another tab is refused, and a ref with no tabId acts on its own tab.
+  Before this every page counted from ref_1, so a ref could click the
+  same-numbered element in a different tab.
+- **Covered window:** Chrome throttles a covered window. Clicks in the
+  agent's window took ~5.5s behind the user's window and ~0.4s with
+  `Emulation.setFocusEmulationEnabled`. Screenshots of a covered window paint
+  correctly.
+- **Verified** in Chrome for Testing 133 (`~/.cache/puppeteer`), loaded with
+  `--load-extension` and the optional permissions pre-granted in a copy of
+  dist (a headless browser can't click the permission prompt). It must run
+  outside the Bash sandbox.
+  - 74/74 checks, three runs, at device scale 1 and 2, covering:
+    - every action above, console (objects rendered), network, eval,
+      dialogs, 150% page zoom;
+    - refs: stale refs, refs across tabs, string tabIds;
+    - password refusal via fill, type and key, in shadow DOM and in a
+      cross-origin iframe;
+    - the extension's own detach, drag ref → ref, `display: contents`,
+      punctuation keys;
+    - background agent tabs and the tab rules.
+  - Headful: screenshots and clicks work on a covered agent window.
+  - Real site: YouTube, opened, search box found by name, typed, Enter →
+    results page.
+  - **Not verified:** the Allow click on Chrome's permission prompt, Cancel
+    on the debugging bar, and a full model run choosing these tools.
+  - **Known limits:**
+    - the element tree does not enter iframes (use x/y from a screenshot);
+    - native HTML5 drag-and-drop (draggable=true) is not driven by mouse
+      events;
+    - pinch-zoom offsets are not handled;
+    - if the user moves the agent's tab group into their own window,
+      opening a tab switches their view.

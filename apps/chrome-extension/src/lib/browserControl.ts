@@ -1,5 +1,7 @@
+import { handleBrowserRequest } from './browserActions';
+
 /**
- * Lets WorkspaceGPT Desktop's agent read the tabs in THIS profile — the one
+ * Lets WorkspaceGPT Desktop's agent use the tabs in THIS profile — the one
  * the user is already signed in to — without a separate sandbox browser.
  *
  * The service worker opens a native-messaging port to `com.workspacegpt.bridge`.
@@ -9,12 +11,8 @@
  * { type: 'response', id, result | error }.
  *
  * Off until the user turns it on in Settings (BROWSER_CONTROL_KEY), which is
- * also when Chrome asks for BRIDGE_PERMISSIONS. Both are optional in the
- * manifest on purpose: adding a permission that carries a warning disables an
- * existing install until the user re-approves it, and chrome.debugger cannot
- * be optional at all — so reading uses chrome.scripting and screenshots use
- * captureVisibleTab instead. Read-only for now: list tabs, read a tab's text,
- * screenshot the tab showing in a window.
+ * also when Chrome asks for BRIDGE_PERMISSIONS. What the agent can do once
+ * connected is in browserActions.ts.
  */
 
 export const BROWSER_CONTROL_KEY = 'browserControlEnabled';
@@ -31,7 +29,6 @@ export interface BridgeStatus {
 
 const HOST_NAME = 'com.workspacegpt.bridge';
 const RETRY_ALARM = 'wgpt-browser-bridge';
-const MAX_TEXT_CHARS = 100_000;
 
 let port: chrome.runtime.Port | null = null;
 
@@ -93,7 +90,7 @@ let queue: Promise<unknown> = Promise.resolve();
 
 async function onMessage(p: chrome.runtime.Port, msg: any): Promise<void> {
   if (msg?.type !== 'request' || typeof msg.id !== 'number') return;
-  const run = () => handle(String(msg.method), msg.params ?? {});
+  const run = () => handleBrowserRequest(String(msg.method), msg.params ?? {});
   const result = queue.then(run, run);
   queue = result.catch(() => undefined);
   try {
@@ -101,55 +98,4 @@ async function onMessage(p: chrome.runtime.Port, msg: any): Promise<void> {
   } catch (err) {
     p.postMessage({ type: 'response', id: msg.id, error: err instanceof Error ? err.message : String(err) });
   }
-}
-
-async function handle(method: string, params: { tabId?: number }): Promise<unknown> {
-  switch (method) {
-    case 'tabs.list': {
-      const tabs = await chrome.tabs.query({});
-      return {
-        tabs: tabs.map((t) => ({ id: t.id, windowId: t.windowId, active: t.active, title: t.title, url: t.url })),
-      };
-    }
-    case 'page.read': {
-      const tab = await resolveTab(params.tabId);
-      let page: { url: string; title: string; text: string };
-      try {
-        const [frame] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id! },
-          func: () => ({ url: location.href, title: document.title, text: (document.body && document.body.innerText) || '' }),
-        });
-        page = frame.result as typeof page;
-      } catch (err) {
-        // chrome://, the Web Store and other extensions' pages cannot be scripted.
-        throw new Error(`Cannot read this tab: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      return {
-        tabId: tab.id,
-        url: page.url,
-        title: page.title,
-        text: page.text.slice(0, MAX_TEXT_CHARS),
-        truncated: page.text.length > MAX_TEXT_CHARS,
-      };
-    }
-    case 'page.screenshot': {
-      const tab = await resolveTab(params.tabId);
-      // captureVisibleTab sees only what a window is showing; switching the
-      // user's tab for them would be a side effect, so say so instead.
-      if (!tab.active) {
-        throw new Error('Only the tab showing in its window can be captured. Omit tabId for the tab the user is looking at, or ask them to switch to it.');
-      }
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 70 });
-      return { tabId: tab.id, url: tab.url, title: tab.title, dataUrl };
-    }
-    default:
-      throw new Error(`Unknown browser method: ${method}`);
-  }
-}
-
-async function resolveTab(tabId?: number): Promise<chrome.tabs.Tab> {
-  if (typeof tabId === 'number') return chrome.tabs.get(tabId);
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab?.id) throw new Error('No active tab.');
-  return tab;
 }

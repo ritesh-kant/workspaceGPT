@@ -1648,14 +1648,45 @@ export class ChatService {
         return searchWeb(this.context, args, (message) => this.postStatus(run, message));
       case 'browser_list_tabs':
         return browserRequest('tabs.list');
+      case 'browser_open_tab':
+        return browserRequest('tabs.open', { url: args?.url }, 45_000);
+      case 'browser_close_tab':
+        return browserRequest('tabs.close', { tabId: args?.tabId });
+      case 'browser_navigate':
+        return browserRequest('page.navigate', { tabId: args?.tabId, url: args?.url }, 45_000);
       case 'browser_read_page':
         return browserRequest('page.read', { tabId: args?.tabId });
+      case 'browser_read_tree':
+        return browserRequest('page.tree', { tabId: args?.tabId, query: args?.query, filter: args?.filter });
       case 'browser_screenshot': {
         // Same shape as a ticket's images, so the worker sends it to the model
         // as an image part instead of base64 in the tool text.
-        const shot = await browserRequest<{ tabId: number; url: string; title: string; dataUrl: string }>('page.screenshot', { tabId: args?.tabId });
-        return { tabId: shot.tabId, url: shot.url, title: shot.title, images: [{ name: 'screenshot.jpg', dataUrl: shot.dataUrl }] };
+        const shot = await browserRequest<{ tabId: number; url: string; title: string; width: number; height: number; dataUrl: string }>(
+          'page.screenshot',
+          { tabId: args?.tabId }
+        );
+        return {
+          tabId: shot.tabId,
+          url: shot.url,
+          title: shot.title,
+          size: `${shot.width}x${shot.height} (browser_act x/y are in these pixels)`,
+          images: [{ name: 'screenshot.jpg', dataUrl: shot.dataUrl }],
+        };
       }
+      case 'browser_act': {
+        if (args?.action === 'wait') {
+          const seconds = Math.min(Math.max(Number(args?.seconds) || 1, 0), 10);
+          await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+          return { waited: seconds };
+        }
+        return browserRequest('page.act', args ?? {}, 30_000);
+      }
+      case 'browser_eval':
+        return browserRequest('page.eval', { tabId: args?.tabId, expression: args?.expression }, 30_000);
+      case 'browser_console':
+        return browserRequest('page.console', { tabId: args?.tabId, onlyErrors: args?.onlyErrors, pattern: args?.pattern, limit: args?.limit });
+      case 'browser_network':
+        return browserRequest('page.network', { tabId: args?.tabId, urlPattern: args?.urlPattern, requestId: args?.requestId, limit: args?.limit });
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -2309,8 +2340,24 @@ export class ChatService {
         return { kind: 'read', title: 'Listed browser tabs' };
       case 'browser_read_page':
         return { kind: 'read', title: 'Read browser tab' };
+      case 'browser_read_tree':
+        return { kind: 'read', title: args?.query ? 'Found in browser tab' : 'Read page elements', detail: args?.query ?? '' };
       case 'browser_screenshot':
         return { kind: 'read', title: 'Screenshot of browser tab' };
+      case 'browser_console':
+        return { kind: 'read', title: 'Read browser console' };
+      case 'browser_network':
+        return { kind: 'read', title: 'Read browser network log' };
+      case 'browser_open_tab':
+        return { kind: 'command', title: 'Opened in browser', detail: args?.url ?? '' };
+      case 'browser_close_tab':
+        return { kind: 'command', title: 'Closed browser tab' };
+      case 'browser_navigate':
+        return { kind: 'command', title: 'Navigated browser', detail: args?.url ?? '' };
+      case 'browser_act':
+        return { kind: 'command', title: `Browser: ${String(args?.action ?? 'act').replace('_', ' ')}`, detail: args?.ref ?? args?.keys ?? '' };
+      case 'browser_eval':
+        return { kind: 'command', title: 'Ran JavaScript in browser', detail: String(args?.expression ?? '').slice(0, 80) };
       default:
         return { kind: 'info', title: name };
     }
@@ -2383,7 +2430,17 @@ export class ChatService {
         return { summary: plural(result?.tabs?.length ?? 0, 'tab') };
       case 'browser_read_page':
       case 'browser_screenshot':
+      case 'browser_open_tab':
+      case 'browser_navigate':
         return result?.title ? { summary: String(result.title) } : {};
+      case 'browser_read_tree':
+        return { summary: plural(result?.tree ? String(result.tree).split('\n').length : 0, 'element') };
+      case 'browser_act':
+        return result?.detail ? { summary: String(result.detail) } : result?.waited !== undefined ? { summary: `waited ${result.waited}s` } : {};
+      case 'browser_console':
+        return { summary: plural(result?.entries?.length ?? 0, 'message') };
+      case 'browser_network':
+        return result?.requests ? { summary: plural(result.requests.length, 'request') } : {};
       case 'update_confluence_page':
       case 'create_confluence_page':
         return result?.applied ? { summary: `+${result.added ?? 0} −${result.removed ?? 0}` } : {};
@@ -2437,8 +2494,24 @@ export class ChatService {
         return 'Listing your browser tabs...';
       case 'browser_read_page':
         return 'Reading your browser tab...';
+      case 'browser_read_tree':
+        return 'Reading the page elements...';
       case 'browser_screenshot':
         return 'Taking a screenshot of your browser tab...';
+      case 'browser_open_tab':
+        return `Opening ${args?.url ?? 'a page'} in your browser...`;
+      case 'browser_close_tab':
+        return 'Closing a browser tab...';
+      case 'browser_navigate':
+        return `Navigating to ${args?.url ?? ''}...`;
+      case 'browser_act':
+        return `Browser: ${String(args?.action ?? 'acting').replace('_', ' ')}...`;
+      case 'browser_eval':
+        return 'Running JavaScript in your browser...';
+      case 'browser_console':
+        return 'Reading the browser console...';
+      case 'browser_network':
+        return 'Reading the browser network log...';
       case 'get_diagnostics':
         return args?.path ? `Checking problems in ${args.path}...` : 'Checking workspace problems...';
       case 'git_status':
