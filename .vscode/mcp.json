@@ -3,9 +3,9 @@
     "workspacegpt": {
       "command": "node",
       "args": [
-        "/Users/ritesh/.vscode/extensions/riteshkant.workspacegpt-extension-1.0.2/dist/mcp-server.js",
+        "/Users/ritesh/codebase/ritesh-codebase/workspaceGPT/apps/vscode-extensions/dist/mcp-server.js",
         "--data-dir",
-        "/Users/ritesh/Library/Application Support/Code/User/globalStorage/riteshkant.workspacegpt-extension"
+        "/Users/ritesh/Library/Application Support/WorkspaceGPT Desktop/storage"
       ],
       "type": "stdio"
     }
