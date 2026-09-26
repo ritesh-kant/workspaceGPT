@@ -2374,6 +2374,106 @@ button:disabled {
   display: none;
 }
 
+/* New-chat folder + branch chips above the composer (WorkspaceControls.tsx, desktop only). */
+.workspace-controls {
+  margin: 0.25rem 0.5rem 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-chip-container {
+  position: relative;
+  min-width: 0;
+}
+
+.workspace-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--wgpt-border, var(--vscode-editor-lineHighlightBorder));
+  border-radius: 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.workspace-chip:hover:not(:disabled) {
+  background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.workspace-chip:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.workspace-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.workspace-chip svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.workspace-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+/* Opens upward: the chips sit on the bottom edge of the window. */
+.workspace-chip-container .workspace-chip-menu {
+  top: auto;
+  bottom: 100%;
+  right: auto;
+  width: max-content;
+  min-width: 240px;
+  max-width: min(360px, calc(100vw - 24px));
+  margin: 0 0 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-dropdown-background));
+  border-color: var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
+}
+
+.workspace-chip-menu .searchable-dropdown-item {
+  padding: 5px 10px;
+  font-size: 0.75rem;
+}
+
+.workspace-chip-menu .searchable-dropdown-item .item-title {
+  font-weight: 400;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-chip-menu .searchable-dropdown-item .item-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-controls-error {
+  font-size: 0.72rem;
+  color: var(--vscode-errorForeground, #f48771);
+}
+
 .git-status-bar {
   border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
   border-radius: var(--wgpt-radius-md, 6px);

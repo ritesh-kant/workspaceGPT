@@ -392,6 +392,20 @@ How the shell is wired (`src-tauri/src/`):
 - **Open Folder….** Native picker, then the sidecar restarts with
   `--workspace`, the same way VS Code restarts the extension host on a folder
   change.
+- **Folder and branch chips** (new-chat screen, `WorkspaceControls.tsx`,
+  gated on `isDesktopHost()`). The folder chip lists recent folders
+  (`workspacegpt.recentFolders` in globalState, recorded on activation), takes
+  a typed path, or opens the picker. It calls the real VS Code commands
+  `vscode.openFolder` / `workbench.action.files.openFolder`; vscode-compat
+  turns them into one stdout line, `@@WGPT_OPEN_FOLDER@@ {"path":…|null}`, and
+  the shell runs the same restart (or picker) as the menu item. The branch
+  chip checks out a local branch, refused while tracked files are dirty, or
+  creates one from HEAD. Both are refused while any chat has a run in flight.
+  Tested 2026-09-26 with a stand-in shell (a Node script speaking the
+  `--parent-stdio` protocol): `tauri dev` hands off to an installed
+  WorkspaceGPT.app through the single-instance plugin, because both use the
+  identifier `dev.workspacegpt.desktop`, so quit the installed app to test in
+  the real window.
 - **Navigation.** The window only navigates to its own loopback page; any other
   http(s) link opens in the system browser.
 - **Window state.** Persisted with `tauri-plugin-window-state`.

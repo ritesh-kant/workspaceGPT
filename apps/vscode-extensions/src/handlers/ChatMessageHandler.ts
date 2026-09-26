@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as os from 'os';
 import { MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { ChatService } from '../services/chatService';
 import { HistoryService } from '../services/historyService';
@@ -10,6 +11,7 @@ import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
 import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
+import { getRecentFolders, listBranches, openFolder, switchBranch } from '../services/agent/workspaceControls';
 
 const fileExists = async (absPath: string): Promise<boolean> => {
   try {
@@ -106,6 +108,34 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.AGENT_SHIP_ALL:
         this.analyticsService.trackEvent('agent_ship_all_triggered');
         await this.handleShipAll(data.requestId);
+        return true;
+      case MESSAGE_TYPES.GET_RECENT_FOLDERS:
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.RECENT_FOLDERS,
+          current: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
+          recent: getRecentFolders(this.context),
+          home: os.homedir(),
+        });
+        return true;
+      case MESSAGE_TYPES.OPEN_WORKSPACE_FOLDER:
+        this.analyticsService.trackEvent('workspace_folder_switch', { picker: typeof data.path !== 'string' });
+        // 'pick-folder' answers once the picker closes, picked or cancelled;
+        // a picked folder then restarts the host like 'open-folder' does.
+        await this.runWorkspaceAction(typeof data.path === 'string' ? 'open-folder' : 'pick-folder', () =>
+          openFolder(typeof data.path === 'string' ? data.path : undefined)
+        );
+        return true;
+      case MESSAGE_TYPES.LIST_GIT_BRANCHES:
+        await this.handleListGitBranches();
+        return true;
+      case MESSAGE_TYPES.SWITCH_GIT_BRANCH:
+        this.analyticsService.trackEvent('git_branch_switch', { create: !!data.create });
+        await this.runWorkspaceAction('switch-branch', async () => {
+          const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          if (!cwd) throw new Error('No folder is open.');
+          await switchBranch(cwd, String(data.branch ?? ''), !!data.create);
+          await this.handleGetGitStatus();
+        });
         return true;
       case MESSAGE_TYPES.SEARCH_MENTION_TARGETS:
         await this.handleSearchMentionTargets(data);
@@ -258,6 +288,40 @@ export class ChatMessageHandler {
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.GIT_STATUS, ...status });
     } catch (error) {
       this.handleError('Error getting git status:', error);
+    }
+  }
+
+  private async handleListGitBranches(): Promise<void> {
+    const reply = (payload: Record<string, unknown>) =>
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.GIT_BRANCHES, ...payload });
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!cwd) {
+      reply({ branches: [], error: 'No folder is open.' });
+      return;
+    }
+    try {
+      reply(await listBranches(cwd));
+    } catch (error) {
+      reply({ branches: [], error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  /**
+   * Folder and branch switches from the new-chat screen. Both change the files
+   * every chat's agent is working on, so they wait until no run is in flight.
+   */
+  private async runWorkspaceAction(action: string, work: () => Promise<void>): Promise<void> {
+    const reply = (ok: boolean, error?: string) =>
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.WORKSPACE_ACTION_RESULT, action, ok, error });
+    if (this.chatService?.hasRunInFlight()) {
+      reply(false, 'A chat is still running. Stop it or let it finish first.');
+      return;
+    }
+    try {
+      await work();
+      reply(true);
+    } catch (error) {
+      reply(false, error instanceof Error ? error.message : String(error));
     }
   }
 

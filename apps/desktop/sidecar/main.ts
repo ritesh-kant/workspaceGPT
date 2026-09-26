@@ -59,6 +59,8 @@ export const READY_PREFIX = '@@WGPT_READY@@ ';
 const UPDATE_RESTART_PREFIX = '@@WGPT_UPDATE_RESTART@@';
 /** src-tauri/src/notify.rs: a run needs the user (approval, question) or finished. */
 const NOTIFY_PREFIX = '@@WGPT_NOTIFY@@ ';
+/** src-tauri/src/sidecar.rs: open this folder (`path`), or the folder picker when `path` is null. */
+const OPEN_FOLDER_PREFIX = '@@WGPT_OPEN_FOLDER@@ ';
 const CHAT_VIEW_ID = 'workspacegpt.chatView';
 /**
  * In VS Code this list sits in the primary sidebar while the chat is
@@ -271,6 +273,10 @@ async function main(): Promise<void> {
     openInEditor,
     clipboardWrite,
     clipboardRead,
+    ...(args.parentStdio && {
+      openFolder: (folder: string | undefined) =>
+        process.stdout.write(`${OPEN_FOLDER_PREFIX}${JSON.stringify({ path: folder ?? null })}\n`),
+    }),
   });
   setWorkspaceFolders(folders);
 

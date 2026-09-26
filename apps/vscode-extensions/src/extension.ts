@@ -10,6 +10,7 @@ import { AdoSyncScheduler } from './services/ado/adoSyncScheduler';
 import { JiraSyncScheduler } from './services/jira/jiraSyncScheduler';
 import { McpUiManager } from './utils/mcpUiManager';
 import { syncContextKeys } from './utils/syncContextKeys';
+import { recordRecentFolder } from './services/agent/workspaceControls';
 import { migrateModeSettings } from './utils/migrateModeSettings';
 import { UpdateChecker } from './utils/updateChecker';
 import { RemoteSignInService, describeRemoteAuthError, webviewFieldsFromProfile } from './services/remote/remoteSignInService';
@@ -27,6 +28,8 @@ export async function activate(context: vscode.ExtensionContext) {
   analyticsService.trackInstall();
   analyticsService.trackEvent('extension_activated');
   analyticsService.startSession();
+  // The new-chat screen's folder chip lists the folders this app has opened.
+  void recordRecentFolder(context, vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
 
   // Initialize and start background sync scheduler
   syncScheduler = new ConfluenceSyncScheduler(context);

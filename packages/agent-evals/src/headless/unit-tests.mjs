@@ -4168,6 +4168,61 @@ console.log('\nsync sources (a background or resumed run is visible, stoppable, 
   });
 }
 
+// ── new-chat folder + branch chips (workspaceControls) ──
+{
+  const wc = await import(path.join(outDir, 'workspaceControls.mjs'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-branches-'));
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args]).toString().trim();
+  git('init', '--quiet', '-b', 'main');
+  git('config', 'user.email', 'u@x');
+  git('config', 'user.name', 'u');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  git('add', '-A');
+  git('commit', '--quiet', '-m', 'init');
+  git('branch', 'feature-x');
+
+  await t('listBranches: current branch and every local branch', async () => {
+    const { current, branches } = await wc.listBranches(repo);
+    assert.equal(current, 'main');
+    assert.deepEqual([...branches].sort(), ['feature-x', 'main']);
+  });
+
+  await t('switchBranch: refuses while a tracked file has uncommitted changes', async () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'changed\n');
+    await rejects(wc.switchBranch(repo, 'feature-x', false), /1 file has uncommitted changes/);
+    assert.equal(git('branch', '--show-current'), 'main');
+  });
+
+  await t('switchBranch: creating a branch keeps the uncommitted change', async () => {
+    await wc.switchBranch(repo, 'wgpt/new', true);
+    assert.equal(git('branch', '--show-current'), 'wgpt/new');
+    assert.equal(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8'), 'changed\n');
+    git('checkout', '--quiet', '--', 'a.txt');
+  });
+
+  await t('switchBranch: an untracked file alone does not block a switch', async () => {
+    fs.writeFileSync(path.join(repo, 'scratch.txt'), 'x');
+    await wc.switchBranch(repo, 'feature-x', false);
+    assert.equal(git('branch', '--show-current'), 'feature-x');
+  });
+
+  await t('switchBranch: rejects an invalid branch name before running git switch', async () => {
+    await rejects(wc.switchBranch(repo, 'bad..name', true), /not a valid branch name/);
+    await rejects(wc.switchBranch(repo, '  ', false), /empty/);
+  });
+
+  await t('recent folders: most recent first, deduplicated, missing folders dropped', async () => {
+    const store = new Map();
+    const ctx = { globalState: { get: (k) => store.get(k), update: async (k, v) => void store.set(k, v) } };
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-recent-'));
+    await wc.recordRecentFolder(ctx, repo);
+    await wc.recordRecentFolder(ctx, other);
+    await wc.recordRecentFolder(ctx, repo);
+    await wc.recordRecentFolder(ctx, path.join(other, 'gone'));
+    assert.deepEqual(wc.getRecentFolders(ctx), [repo, other]);
+  });
+}
+
 // ── summary ──
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {
