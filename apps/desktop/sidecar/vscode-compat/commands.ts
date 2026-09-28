@@ -101,6 +101,24 @@ export const BUILTIN_COMMANDS: Record<string, BuiltinCommand> = {
     kind: 'unsupported',
     why: 'no formatter providers; format-on-save is off by default so this is only reached if the user enables it',
   },
+  // Like VS Code, a new folder means a new extension host: the shell restarts
+  // the sidecar on it (src-tauri/src/main.rs), which ends this one.
+  'vscode.openFolder': {
+    kind: 'implemented',
+    why: 'the shell restarts the sidecar on the folder, as Open Folder… does',
+    run: async (uri?: Uri) => {
+      if (!runtime.openFolder) throw new NotSupportedInDesktop("command 'vscode.openFolder'", 'no desktop shell to restart the sidecar (headless)');
+      runtime.openFolder(uri?.fsPath);
+    },
+  },
+  'workbench.action.files.openFolder': {
+    kind: 'implemented',
+    why: 'the shell’s native folder picker, then the same restart as Open Folder…',
+    run: async () => {
+      if (!runtime.openFolder) throw new NotSupportedInDesktop("command 'workbench.action.files.openFolder'", 'no desktop shell to show a folder picker (headless)');
+      runtime.openFolder(undefined);
+    },
+  },
   'vscode.diff': {
     kind: 'implemented',
     why: 'the review panel drawn over the chat (host/diffPanel.ts), with the hunk lenses’ keep/revert buttons',

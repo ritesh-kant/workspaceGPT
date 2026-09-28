@@ -25,7 +25,7 @@ export interface GitStatusSnapshot {
 const EMPTY_STATUS: GitStatusSnapshot = { isRepo: false, added: 0, removed: 0, filesChanged: 0, hasRemote: false };
 const GIT_TIMEOUT_MS = 10_000;
 
-function git(cwd: string, args: string[]): Promise<string> {
+export function git(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) reject(new Error((stderr || err.message).trim()));

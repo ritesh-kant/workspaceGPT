@@ -114,6 +114,19 @@ export const MESSAGE_TYPES = {
   AGENT_SHIP_ALL: 'agent-ship-all',
   AGENT_SHIP_ALL_DONE: 'agent-ship-all-done',
 
+  // New-chat screen folder + branch chips (desktop). Webview → host:
+  // GET_RECENT_FOLDERS, OPEN_WORKSPACE_FOLDER {path?} (no path: system picker),
+  // LIST_GIT_BRANCHES, SWITCH_GIT_BRANCH {branch, create}. Host → webview:
+  // RECENT_FOLDERS {current, recent}, GIT_BRANCHES {current, branches, error?},
+  // WORKSPACE_ACTION_RESULT {action: 'open-folder' | 'pick-folder' | 'switch-branch', ok, error?}.
+  GET_RECENT_FOLDERS: 'get-recent-folders',
+  RECENT_FOLDERS: 'recent-folders',
+  OPEN_WORKSPACE_FOLDER: 'open-workspace-folder',
+  LIST_GIT_BRANCHES: 'list-git-branches',
+  GIT_BRANCHES: 'git-branches',
+  SWITCH_GIT_BRANCH: 'switch-git-branch',
+  WORKSPACE_ACTION_RESULT: 'workspace-action-result',
+
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',
   GET_CHAT_HISTORY_LIST: 'get-chat-history-list',

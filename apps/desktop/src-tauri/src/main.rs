@@ -11,6 +11,7 @@ mod notify;
 mod sidecar;
 mod updater;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
@@ -96,14 +97,18 @@ fn open_folder(app: &AppHandle) {
     let app2 = app.clone();
     app.dialog().file().set_title("Open a folder for WorkspaceGPT").pick_folder(move |picked| {
         let Some(path) = picked.and_then(|p| p.into_path().ok()) else { return };
-        eprintln!("[shell] opening folder {}", path.display());
-        let sup = app2.state::<sidecar::Supervisor>().inner().clone();
-        // Restarting blocks until the old sidecar is gone — keep it off the UI thread.
-        std::thread::spawn(move || {
-            if let Err(e) = sup.restart_with_workspace(path) {
-                eprintln!("[shell] {e}");
-            }
-        });
+        restart_on_folder(&app2, path);
+    });
+}
+
+fn restart_on_folder(app: &AppHandle, path: PathBuf) {
+    eprintln!("[shell] opening folder {}", path.display());
+    let sup = app.state::<sidecar::Supervisor>().inner().clone();
+    // Restarting blocks until the old sidecar is gone — keep it off the UI thread.
+    std::thread::spawn(move || {
+        if let Err(e) = sup.restart_with_workspace(path) {
+            eprintln!("[shell] {e}");
+        }
     });
 }
 
@@ -201,6 +206,7 @@ fn main() {
     let gave_up_slot = handle_slot.clone();
     let update_slot = handle_slot.clone();
     let notify_slot = handle_slot.clone();
+    let open_folder_slot = handle_slot.clone();
     let supervisor = sidecar::Supervisor::new(
         token,
         Arc::new(move |port| {
@@ -226,6 +232,18 @@ fn main() {
         Arc::new(move |json| {
             if let Some(app) = notify_slot.lock().unwrap().as_ref() {
                 notify::from_sidecar(app, json);
+            }
+        }),
+        // The chat's folder chip (vscode.openFolder in vscode-compat).
+        Arc::new(move |path| {
+            if let Some(app) = open_folder_slot.lock().unwrap().as_ref() {
+                match path {
+                    Some(path) => restart_on_folder(app, path),
+                    None => {
+                        let app2 = app.clone();
+                        let _ = app.run_on_main_thread(move || open_folder(&app2));
+                    }
+                }
             }
         }),
     );

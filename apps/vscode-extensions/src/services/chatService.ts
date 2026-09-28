@@ -751,6 +751,11 @@ export class ChatService {
     this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS });
   }
 
+  /** A model turn is running in some session (a worker is alive, including one parked on an approval). */
+  public hasRunInFlight(): boolean {
+    return [...this.runs.values()].some((run) => !!run.worker);
+  }
+
   /**
    * Stops one session's run (or, with no sessionId, every run — the dispose
    * path). Later output from the stopped run is swallowed by `post`.

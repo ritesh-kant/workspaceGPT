@@ -104,6 +104,12 @@ export interface DesktopRuntime {
   languageService?: DesktopLanguageService;
   /** `vscode.diff`: the desktop's review panel (host/diffPanel.ts). */
   showDiff?(left: Uri, right: Uri, title?: string): Promise<void>;
+  /**
+   * `vscode.openFolder` / `workbench.action.files.openFolder`: ask the shell
+   * to restart the sidecar on `folder`, or to show its folder picker first
+   * when `folder` is undefined. Undefined when there is no shell (headless).
+   */
+  openFolder?(folder: string | undefined): void;
 }
 
 const logOnlyUi: DesktopUi = {

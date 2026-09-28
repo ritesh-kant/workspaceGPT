@@ -17,6 +17,7 @@ import HomeGreeting from './components/HomeGreeting';
 import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowledgeSources';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
+import WorkspaceControls from './components/WorkspaceControls';
 import UsageLimitBar from './components/UsageLimitBar';
 import ContextMeter from './components/ContextMeter';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
@@ -26,7 +27,7 @@ import Releases from './components/Releases';
 import Onboarding from './components/onboarding/Onboarding';
 import SearchableDropdown from './components/settings/SearchableDropdown';
 import type { DropdownOption } from './components/settings/SearchableDropdown';
-import { VSCodeAPI } from './vscode';
+import { isDesktopHost, VSCodeAPI } from './vscode';
 import {
   setModelState,
   useChatStore,
@@ -2523,6 +2524,9 @@ const App: React.FC = () => {
               </button>
             </div>
           </div>
+        )}
+        {isDesktopHost() && messages.length === 0 && hasWorkspaceFolder !== null && (
+          <WorkspaceControls busy={allRunningSessionIds.size > 0} />
         )}
         <div className='composer-status-bars'>
           {/*
