@@ -28,6 +28,9 @@ const ModelSettings: React.FC = () => {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [copilot, setCopilot] = useState<CopilotStatus | null>(null);
   const [copilotConnecting, setCopilotConnecting] = useState(false);
+  // While Copilot is in use the API-key providers fold away behind a link, so
+  // the model pickers sit right under the card they belong to.
+  const [showKeyProviders, setShowKeyProviders] = useState(false);
 
   const selectedModelProvider = useSelectedModelProvider();
 
@@ -213,6 +216,7 @@ const ModelSettings: React.FC = () => {
       <div className='settings-form'>
         {copilot?.available && renderSubscriptions(copilot)}
 
+        {(!copilotInUse || showKeyProviders) && (
         <div className='form-group'>
           <label htmlFor='provider-select'>{copilot?.available ? 'Or use an API key' : 'Select Provider'}</label>
           <select
@@ -237,6 +241,7 @@ const ModelSettings: React.FC = () => {
             ))}
           </select>
         </div>
+        )}
 
         {isCustomProvider && (
           <div className='form-group'>
@@ -313,7 +318,7 @@ const ModelSettings: React.FC = () => {
 
         {showSelectModelValidator() && (
           <div className='form-group'>
-            <label htmlFor='model-select'>Select Model</label>
+            <label htmlFor='model-select'>{copilotInUse ? 'GitHub Copilot model' : 'Select Model'}</label>
             <SearchableDropdown
               value={selectedModelProvider?.selectedModel ?? ''}
               options={(selectedModelProvider?.availableModels ?? []).map((model) => ({
@@ -352,6 +357,12 @@ const ModelSettings: React.FC = () => {
             </small>
           </div>
         )}
+
+        {copilotInUse && !showKeyProviders && (
+          <button type='button' className='link-like' onClick={() => setShowKeyProviders(true)}>
+            Use an API key instead
+          </button>
+        )}
       </div>
     </SectionShell>
   );
@@ -363,6 +374,7 @@ const ModelSettings: React.FC = () => {
    */
   function renderSubscriptions(status: CopilotStatus) {
     const connect = () => {
+      setShowKeyProviders(false);
       setCopilotConnecting(true);
       setApiKeyError(null);
       changeProviderHandler(COPILOT_PROVIDER, true);
@@ -406,7 +418,14 @@ const ModelSettings: React.FC = () => {
                 </button>
               )}
               {!copilotConnecting && status.connected && !copilotInUse && (
-                <button type='button' className='source-action' onClick={() => changeProviderHandler(COPILOT_PROVIDER)}>
+                <button
+                  type='button'
+                  className='source-action'
+                  onClick={() => {
+                    setShowKeyProviders(false);
+                    changeProviderHandler(COPILOT_PROVIDER);
+                  }}
+                >
                   Use
                 </button>
               )}
