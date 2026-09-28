@@ -29,6 +29,33 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-28",
+    releases: [
+      { product: "Desktop", version: "0.0.8" },
+      { product: "Extension", version: "2.0.45" },
+    ],
+    title: "Bring your GitHub Copilot plan",
+    summary:
+      "No API key needed: WorkspaceGPT can run on the Copilot subscription you already pay for.",
+    items: [
+      {
+        icon: "plug",
+        title: "GitHub Copilot in VS Code",
+        body: "Open Settings → Model and, under “Use a subscription”, pick GitHub Copilot. WorkspaceGPT goes through VS Code's own Language Model API, so it uses the Copilot plan you're signed in to. VS Code asks once to allow it, and requests count toward your Copilot usage. Only models with enough room for an agent run are listed.",
+      },
+      {
+        icon: "alert",
+        title: "GitHub Copilot on the desktop (unofficial)",
+        body: "GitHub doesn't offer Copilot to desktop apps, so the desktop app signs in the way LiteLLM does: as VS Code's Copilot client. It's off until you click Connect and accept a warning. It can stop working at any time, heavy use can get your Copilot access warned or suspended, and your organization's Copilot policy may not allow it. Sign out from the same card.",
+      },
+      {
+        icon: "pen",
+        title: "Confluence editing in the extension",
+        body: "Editing and creating Confluence pages, first shipped in Desktop 0.0.6, now works in the VS Code extension too. Reconnect Confluence once to give it edit access.",
+      },
+    ],
+  },
+  {
     date: "2026-09-26",
     releases: [
       { product: "Desktop", version: "0.0.6" },

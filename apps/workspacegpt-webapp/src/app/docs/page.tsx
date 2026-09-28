@@ -285,7 +285,7 @@ export default function DocsPage() {
             <div className="grid sm:grid-cols-2 gap-4 mb-8">
               <Card icon="lock" title="Local" accent="green">
                 <p>Everything runs on your machine: the chat model, the embeddings, the index, the retrieval.</p>
-                <p>Use Ollama for a fully offline setup, or supply your own key for OpenAI, Claude, Gemini, Groq, OpenRouter, NVIDIA, or any OpenAI-compatible endpoint. No WorkspaceGPT account needed.</p>
+                <p>Use Ollama for a fully offline setup, use your GitHub Copilot plan, or supply your own key for OpenAI, Claude, Gemini, Groq, OpenRouter, NVIDIA, or any OpenAI-compatible endpoint. No WorkspaceGPT account needed.</p>
               </Card>
               <Card icon="zap" title="Remote" accent="brand">
                 <div className="mb-2"><Badge color="brand">Preview</Badge></div>
@@ -311,7 +311,7 @@ export default function DocsPage() {
                     ["Vector index", "Local files", "Local files"],
                     ["Question + retrieved snippets", "To your chosen provider, or nowhere with Ollama", "To our endpoint, then the upstream model"],
                     ["Account", "None", "GitHub sign-in, verified per request"],
-                    ["Model keys you supply", "Yours, or none with Ollama", "None"],
+                    ["Model keys you supply", "Yours, or none with Ollama or GitHub Copilot", "None"],
                     ["Stored by WorkspaceGPT", "Nothing", "Nothing but your account row"],
                   ].map(([label, local, remote]) => (
                     <tr key={label} className="bg-background align-top">
@@ -369,6 +369,7 @@ export default function DocsPage() {
                 <tbody className="divide-y divide-line">
                   {[
                     { name: "Ollama", privacy: "100% Local", key: "No", note: "Default. Run llama3.2:1b or any local model.", badge: "green" },
+                    { name: "GitHub Copilot", privacy: "Cloud", key: "No", note: "Your Copilot plan. Official in VS Code; unofficial on the desktop (see below).", badge: "blue" },
                     { name: "OpenAI", privacy: "Cloud", key: "Yes", note: "GPT-4o, GPT-4-turbo, GPT-3.5 etc.", badge: "blue" },
                     { name: "Gemini", privacy: "Cloud", key: "Yes", note: "Google's Gemini Pro/Flash models.", badge: "blue" },
                     { name: "Groq", privacy: "Cloud", key: "Yes", note: "High-speed inference on Llama / Mixtral.", badge: "purple" },
@@ -406,6 +407,28 @@ ollama pull mistral`}</CodeBlock>
               <Step number={3} title="Select in WorkspaceGPT">
                 <p>Open the WorkspaceGPT sidebar → <code className="bg-white/10 px-1 rounded text-xs">Settings → Providers → Ollama</code>. Your locally running models will appear automatically.</p>
               </Step>
+            </div>
+
+            <div id="github-copilot" className="-mt-20 pt-20" />
+            <h3 className="text-lg font-semibold text-white mt-8 mb-4 flex items-center gap-3">
+              Using your GitHub Copilot plan <Badge color="brand">New</Badge>
+            </h3>
+            <p className="text-muted text-sm mb-4">
+              Open <code className="bg-white/10 px-1 rounded text-xs">Settings → Model</code>. GitHub Copilot sits under{" "}
+              <strong className="text-white">Use a subscription</strong>, above the API-key providers. Click{" "}
+              <strong className="text-white">Connect</strong> (or <strong className="text-white">Use</strong> once connected),
+              then pick a model. There is no key to paste, and requests count toward your Copilot plan.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-4 mb-8">
+              <Card icon="shield-check" title="In VS Code" accent="green">
+                <p>WorkspaceGPT uses VS Code&apos;s own Language Model API, which is GitHub&apos;s supported way for extensions to use Copilot. It runs on the Copilot plan you&apos;re signed in to in VS Code, and VS Code asks once to allow it.</p>
+                <p>Editors without GitHub Copilot, such as some VS Code forks, don&apos;t show the option.</p>
+              </Card>
+              <Card icon="alert" title="In WorkspaceGPT Desktop" accent="brand">
+                <div className="mb-2"><Badge color="yellow">Unofficial</Badge></div>
+                <p>GitHub doesn&apos;t offer Copilot to desktop apps, so the desktop app signs in the way LiteLLM does: as VS Code&apos;s Copilot client, with a GitHub device code. It stays off until you click Connect and accept a warning.</p>
+                <p>It can stop working at any time, heavy use can get your Copilot access warned or suspended, and your organization&apos;s Copilot policy may not allow it. The GitHub sign-in is kept in your OS keychain; Sign out removes it.</p>
+              </Card>
             </div>
 
             <h3 className="text-lg font-semibold text-white mt-8 mb-4">Configuring Cloud Providers</h3>
@@ -588,7 +611,7 @@ ollama pull mistral`}</CodeBlock>
               Read, edit and create pages <Badge color="brand">New</Badge>
             </h3>
             <p className="text-muted text-sm leading-relaxed mb-6">
-              New in WorkspaceGPT Desktop 0.0.6, and coming to the editor extension in its next release.
+              In WorkspaceGPT Desktop 0.0.6 and later, and in the editor extension from 2.0.45.
             </p>
             <div className="grid sm:grid-cols-3 gap-4 mb-6">
               <Card icon="file-text" title="Read a pasted link" accent="blue">

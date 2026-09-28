@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   },
 };
 
-const UPDATED = "September 26, 2026";
+const UPDATED = "September 28, 2026";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -90,6 +90,13 @@ export default function PrivacyPage() {
                 endpoint), then your question and the snippets retrieved for it are sent
                 directly from your machine to <em>that</em> provider, under your own account and
                 their privacy policy. WorkspaceGPT is not in the path and never sees the request.
+              </p>
+              <p>
+                The same applies if you use your GitHub Copilot plan: your question and the retrieved
+                snippets go from your machine to GitHub Copilot, under your GitHub account and
+                GitHub&rsquo;s terms. In VS Code they go through VS Code&rsquo;s Language Model API; in
+                the desktop app, directly to Copilot&rsquo;s API, with the GitHub sign-in kept in your
+                operating system&rsquo;s keychain.
               </p>
             </div>
           </div>
