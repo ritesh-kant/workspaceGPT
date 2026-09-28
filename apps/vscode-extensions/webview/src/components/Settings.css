@@ -2111,6 +2111,15 @@ input.dep-preset-dropdown {
   text-underline-offset: 3px;
 }
 
+/* A row that isn't a link (Settings → Model's subscription card). */
+.source-main--static {
+  cursor: default;
+}
+
+.source-main--static:hover .source-name {
+  text-decoration: none;
+}
+
 .source-name {
   display: flex;
   align-items: center;
@@ -2162,6 +2171,25 @@ input.dep-preset-dropdown {
   }
   .source-action {
     margin-left: calc(34px + 0.9rem);
+  }
+}
+
+/* Several actions on one row (the subscription card) wrap as a group. */
+.source-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+@media (max-width: 599px) {
+  .source-main--static {
+    flex-basis: calc(100% - 34px - 0.9rem);
+  }
+  .source-actions {
+    margin-left: calc(34px + 0.9rem);
+  }
+  .source-actions .source-action {
+    margin-left: 0;
   }
 }
 

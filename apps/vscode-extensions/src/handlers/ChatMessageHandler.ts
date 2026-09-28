@@ -3,8 +3,8 @@ import * as path from 'path';
 import * as os from 'os';
 import { COPILOT_PROVIDER, MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { ChatService } from '../services/chatService';
-import { ensureCopilotBridge, listCopilotModels } from '../services/copilotBridge';
-import { ensureDirectCopilotReady, usesDirectCopilot } from '../services/copilotDirect';
+import { ensureCopilotBridge, getCopilotStatus, listCopilotModels } from '../services/copilotBridge';
+import { ensureDirectCopilotReady, signOutDirectCopilot, usesDirectCopilot } from '../services/copilotDirect';
 import { HistoryService } from '../services/historyService';
 import { AnalyticsService } from '../services/analyticsService';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
@@ -145,6 +145,13 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.FETCH_AVAILABLE_MODELS:
         this.analyticsService.trackEvent('models_fetched');
         await this.handleFetchAvailableModels(data);
+        return true;
+      case MESSAGE_TYPES.COPILOT_STATUS:
+        await this.postCopilotStatus();
+        return true;
+      case MESSAGE_TYPES.COPILOT_SIGN_OUT:
+        await signOutDirectCopilot();
+        await this.postCopilotStatus();
         return true;
       case MESSAGE_TYPES.SAVE_CHAT_HISTORY:
         await this.handleSaveChatHistory(data);
@@ -410,6 +417,10 @@ export class ChatMessageHandler {
     });
   }
 
+  private async postCopilotStatus(): Promise<void> {
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.COPILOT_STATUS_RESPONSE, ...(await getCopilotStatus()) });
+  }
+
   private async handleFetchAvailableModels(data: any) {
     if (data.provider === COPILOT_PROVIDER) {
       // Selecting Copilot is what starts its loopback bridge; the bridge's URL
@@ -417,7 +428,8 @@ export class ChatMessageHandler {
       const bridge = await ensureCopilotBridge().catch(() => undefined);
       // Desktop: no vscode.lm, so picking Copilot opens the (unofficial,
       // opt-in) GitHub sign-in — see copilotDirect.ts.
-      const directError = bridge && usesDirectCopilot() ? await ensureDirectCopilotReady() : undefined;
+      const directError = bridge && usesDirectCopilot() ? await ensureDirectCopilotReady(!!data.signIn) : undefined;
+      await this.postCopilotStatus();
       // No models: not signed in to Copilot, or a window without it (the
       // Extension Development Host doesn't load the built-in Copilot).
       if (!bridge || directError || (!usesDirectCopilot() && !(await listCopilotModels().catch(() => [])).length)) {

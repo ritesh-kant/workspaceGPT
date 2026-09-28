@@ -108,16 +108,19 @@ export const handleInputChange = (
 export const fetchAvailableModels = (
   providerName: string,
   apiKeyToUse?: string,
-  baseUrl?: string
+  baseUrl?: string,
+  /** GitHub Copilot on the desktop: start the GitHub sign-in if not signed in (the Connect button). */
+  signIn?: boolean
 ) => {
   vscode.postMessage({
     type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS,
     provider: providerName,
     apiKey: apiKeyToUse,
     baseUrl,
+    signIn,
   });
 };
-export function changeProviderHandler(provider: string) {
+export function changeProviderHandler(provider: string, signIn?: boolean) {
   const modelProviders = useModelStore.getState().modelProviders;
   const selectedModelProvider = modelProviders.find((p) => p.provider === provider);
 
@@ -134,5 +137,5 @@ export function changeProviderHandler(provider: string) {
   if(!selectedModelProvider?.apiKey){
     return
   }
-  fetchAvailableModels(provider, selectedModelProvider.apiKey, selectedModelProvider.baseUrl);
+  fetchAvailableModels(provider, selectedModelProvider.apiKey, selectedModelProvider.baseUrl, signIn);
 }

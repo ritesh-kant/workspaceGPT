@@ -52,13 +52,26 @@ export function usesDirectCopilot(): boolean {
   return !vscode.lm?.selectChatModels;
 }
 
+/** A GitHub sign-in is stored (it may still turn out to be revoked on first use). */
+export async function hasDirectCopilotSignIn(): Promise<boolean> {
+  return !!(await secrets?.get(STORAGE_KEYS.COPILOT_GITHUB_TOKEN));
+}
+
+/** Forget the GitHub sign-in; the next Connect asks again. */
+export async function signOutDirectCopilot(): Promise<void> {
+  session = undefined;
+  await secrets?.delete(STORAGE_KEYS.COPILOT_GITHUB_TOKEN);
+}
+
 /**
- * Signed in and at least one usable model, signing in first if needed. Returns
- * an error message for Settings instead of throwing.
+ * Signed in and at least one usable model. Signs in first only when asked
+ * (the Connect button), so merely opening Settings never pops the dialog.
+ * Returns an error message for Settings instead of throwing.
  */
-export async function ensureDirectCopilotReady(): Promise<string | undefined> {
+export async function ensureDirectCopilotReady(allowSignIn: boolean): Promise<string | undefined> {
   try {
-    if (!(await secrets?.get(STORAGE_KEYS.COPILOT_GITHUB_TOKEN))) {
+    if (!(await hasDirectCopilotSignIn())) {
+      if (!allowSignIn) return 'GitHub Copilot is not connected. Use Connect under "Use a subscription".';
       signingIn ??= signIn().finally(() => (signingIn = undefined));
       await signingIn;
     }
@@ -130,14 +143,14 @@ export async function getDirectCopilotContextWindow(modelId: string): Promise<nu
 async function copilotSession(): Promise<{ token: string; api: string }> {
   if (session && session.expiresAt - 120_000 > Date.now()) return session;
   const githubToken = await secrets?.get(STORAGE_KEYS.COPILOT_GITHUB_TOKEN);
-  if (!githubToken) throw new Error('Sign in to GitHub Copilot in Settings → Model.');
+  if (!githubToken) throw new Error('GitHub Copilot is not connected. Use Connect in Settings → Model.');
   const res = await fetch(COPILOT_TOKEN_URL, {
     headers: { ...EDITOR_HEADERS, accept: 'application/json', authorization: `token ${githubToken}` },
   });
   if (res.status === 401) {
     // Revoked or expired GitHub sign-in: forget it so Settings asks again.
     await secrets?.delete(STORAGE_KEYS.COPILOT_GITHUB_TOKEN);
-    throw new Error('Your GitHub sign-in for Copilot has expired. Pick GitHub Copilot in Settings → Model to sign in again.');
+    throw new Error('Your GitHub sign-in for Copilot has expired. Use Connect in Settings → Model to sign in again.');
   }
   if (res.status === 403 || res.status === 404) {
     throw new Error('This GitHub account has no active Copilot plan, or its organization does not allow this client.');
@@ -209,5 +222,5 @@ async function signIn(): Promise<void> {
       throw new Error(body.error_description ?? `GitHub sign-in failed (${body.error ?? tokenRes.status}).`);
     }
   }
-  throw new Error('GitHub sign-in timed out. Pick GitHub Copilot in Settings → Model to try again.');
+  throw new Error('GitHub sign-in timed out. Use Connect in Settings → Model to try again.');
 }

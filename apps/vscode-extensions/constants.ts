@@ -273,6 +273,12 @@ export const MESSAGE_TYPES = {
   FETCH_AVAILABLE_MODELS: 'fetch-available-models',
   FETCH_AVAILABLE_MODELS_RESPONSE: 'fetch-available-models-response',
   FETCH_AVAILABLE_MODELS_ERROR: 'fetch-available-models-error',
+  // GitHub Copilot's "Use a subscription" card: whether it's offered and
+  // connected, and (desktop) signing out. Connecting is FETCH_AVAILABLE_MODELS
+  // with signIn: true.
+  COPILOT_STATUS: 'copilot-status',
+  COPILOT_STATUS_RESPONSE: 'copilot-status-response',
+  COPILOT_SIGN_OUT: 'copilot-sign-out',
 
   GET_WORKSPACE_PATH: 'get-workspace-path',
   WORKSPACE_PATH: 'workspace-path',

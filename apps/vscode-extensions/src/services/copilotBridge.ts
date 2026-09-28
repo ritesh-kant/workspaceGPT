@@ -2,7 +2,13 @@ import * as vscode from 'vscode';
 import * as http from 'http';
 import * as crypto from 'crypto';
 import { COPILOT_PROVIDER, STORAGE_KEYS } from '../../constants';
-import { forwardToCopilot, getDirectCopilotContextWindow, initDirectCopilot, usesDirectCopilot } from './copilotDirect';
+import {
+  forwardToCopilot,
+  getDirectCopilotContextWindow,
+  hasDirectCopilotSignIn,
+  initDirectCopilot,
+  usesDirectCopilot,
+} from './copilotDirect';
 
 /**
  * GitHub Copilot as a model provider, through VS Code's Language Model API.
@@ -70,6 +76,18 @@ export function startCopilotBridgeIfSelected(context: vscode.ExtensionContext): 
   const model = context.globalState.get(STORAGE_KEYS.MODEL) as any;
   if (model?.state?.selectedModelProvider?.provider !== COPILOT_PROVIDER) return;
   ensureCopilotBridge().catch((err) => console.error('[copilotBridge] failed to start:', err));
+}
+
+/**
+ * For Settings' subscription card. `available`: this host can offer Copilot at
+ * all (VS Code with the Copilot extension, or the desktop). `connected`: VS
+ * Code lists Copilot models / the desktop holds a GitHub sign-in.
+ */
+export async function getCopilotStatus(): Promise<{ available: boolean; connected: boolean; unofficial: boolean }> {
+  if (usesDirectCopilot()) return { available: true, connected: await hasDirectCopilotSignIn(), unofficial: true };
+  const available = !!vscode.extensions.getExtension(COPILOT_EXTENSION_ID);
+  const connected = available && (await listCopilotModels().catch(() => [])).length > 0;
+  return { available, connected, unofficial: false };
 }
 
 /** Copilot's input limit for a model, which is often below the model's native window. */

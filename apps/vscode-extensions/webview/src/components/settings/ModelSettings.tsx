@@ -2,13 +2,32 @@ import React, { useState } from 'react';
 import { useEffect, useCallback } from 'react';
 import { useModelActions, useSelectedModelProvider } from '../../store';
 import { COPILOT_PROVIDER, MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
-import { isDesktopHost } from '../../vscode';
+import { VSCodeAPI } from '../../vscode';
 import { changeProviderHandler, fetchAvailableModels } from './utils';
 import SearchableDropdown from './SearchableDropdown';
 import SectionShell from './SectionShell';
+import StatusDot from './StatusDot';
+
+/** What the host says about GitHub Copilot (see getCopilotStatus in copilotBridge.ts). */
+interface CopilotStatus {
+  available: boolean;
+  connected: boolean;
+  /** Desktop: signs in as VS Code's Copilot client — see copilotDirect.ts. */
+  unofficial: boolean;
+}
+
+/* A generic assistant-head glyph in currentColor (no brand mark, like the Knowledge icons). */
+const COPILOT_ICON = (
+  <svg viewBox='0 0 24 24' width='18' height='18' fill='none' aria-hidden='true'>
+    <path d='M4.5 11.5c0-3.6 3.4-6 7.5-6s7.5 2.4 7.5 6v3.2c0 1.6-3.4 3.8-7.5 3.8s-7.5-2.2-7.5-3.8v-3.2z' stroke='currentColor' strokeWidth='1.7' strokeLinejoin='round' />
+    <path d='M9.3 12.2v1.6M14.7 12.2v1.6' stroke='currentColor' strokeWidth='1.9' strokeLinecap='round' />
+  </svg>
+);
 
 const ModelSettings: React.FC = () => {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+  const [copilot, setCopilot] = useState<CopilotStatus | null>(null);
+  const [copilotConnecting, setCopilotConnecting] = useState(false);
 
   const selectedModelProvider = useSelectedModelProvider();
 
@@ -37,6 +56,7 @@ const ModelSettings: React.FC = () => {
   );
 
   const isCustomProvider = selectedModelProvider.provider === 'Custom';
+  const copilotInUse = selectedModelProvider.provider === COPILOT_PROVIDER;
 
   const updateBaseUrl = (value: string) => {
     updateModelProvider(selectedModelProvider.provider, 'baseUrl', value);
@@ -85,6 +105,18 @@ const ModelSettings: React.FC = () => {
     next.splice(i, 1, ...parts);
     setApiKeys(next);
   };
+
+  useEffect(() => {
+    VSCodeAPI().postMessage({ type: MESSAGE_TYPES.COPILOT_STATUS });
+    const onStatus = (event: MessageEvent) => {
+      if (event.data?.type !== MESSAGE_TYPES.COPILOT_STATUS_RESPONSE) return;
+      const { available, connected, unofficial } = event.data;
+      setCopilot({ available, connected, unofficial });
+      setCopilotConnecting(false);
+    };
+    window.addEventListener('message', onStatus);
+    return () => window.removeEventListener('message', onStatus);
+  }, []);
 
   useEffect(() => {
     // Fetch available models for the selected provider whenever component mounts or selectedProvider changes
@@ -179,39 +211,32 @@ const ModelSettings: React.FC = () => {
       needsAttention={configuredKeyCount === 0 || !!apiKeyError}
     >
       <div className='settings-form'>
+        {copilot?.available && renderSubscriptions(copilot)}
+
         <div className='form-group'>
-          <label htmlFor='provider-select'>Select Provider</label>
+          <label htmlFor='provider-select'>{copilot?.available ? 'Or use an API key' : 'Select Provider'}</label>
           <select
             id='provider-select'
             className='select-larger'
-            value={selectedModelProvider.provider}
+            value={copilotInUse ? '' : selectedModelProvider.provider}
             onChange={(e) => changeProviderHandler(e.target.value)}
           >
-            {MODEL_PROVIDERS.map((provider) => (
+            {copilotInUse && (
+              <option value='' disabled>
+                Choose a provider…
+              </option>
+            )}
+            {/* Subscriptions sign in from their card above, not from this list. */}
+            {MODEL_PROVIDERS.filter((p) => p.MODEL_PROVIDER !== COPILOT_PROVIDER).map((provider) => (
               <option
                 key={provider.MODEL_PROVIDER}
                 value={provider.MODEL_PROVIDER}
               >
                 {provider.MODEL_PROVIDER}
-                {provider.MODEL_PROVIDER === COPILOT_PROVIDER && isDesktopHost() ? ' (unofficial)' : ''}
               </option>
             ))}
           </select>
         </div>
-
-        {selectedModelProvider.provider === COPILOT_PROVIDER && !isDesktopHost() && (
-          <small className='form-text'>
-            Uses the GitHub Copilot plan you're signed in to in VS Code. VS Code asks once to allow
-            WorkspaceGPT; requests count toward your Copilot usage.
-          </small>
-        )}
-        {selectedModelProvider.provider === COPILOT_PROVIDER && isDesktopHost() && (
-          <small className='form-text'>
-            Unofficial: GitHub doesn't offer Copilot to desktop apps, so WorkspaceGPT signs in the way
-            LiteLLM does. It can break at any time, heavy use can get your Copilot access suspended, and
-            your organization's Copilot policy may not allow it. Requests count toward your Copilot plan.
-          </small>
-        )}
 
         {isCustomProvider && (
           <div className='form-group'>
@@ -330,6 +355,80 @@ const ModelSettings: React.FC = () => {
       </div>
     </SectionShell>
   );
+
+  /**
+   * "Use a subscription": providers you sign in to rather than paste a key
+   * for. Connect / Use make it the provider; the model list below then shows
+   * its models.
+   */
+  function renderSubscriptions(status: CopilotStatus) {
+    const connect = () => {
+      setCopilotConnecting(true);
+      setApiKeyError(null);
+      changeProviderHandler(COPILOT_PROVIDER, true);
+    };
+    const statusText = copilotConnecting
+      ? status.unofficial
+        ? 'Waiting for GitHub sign-in…'
+        : 'Connecting…'
+      : status.connected
+        ? copilotInUse
+          ? 'Connected · in use'
+          : 'Connected'
+        : status.unofficial
+          ? 'Not connected'
+          : 'Not signed in to Copilot in VS Code';
+    return (
+      <div className='form-group'>
+        <label>Use a subscription</label>
+        <div className='sources-list'>
+          <div className='source-row'>
+            <span className='source-icon'>{COPILOT_ICON}</span>
+            <div className='source-main source-main--static'>
+              <span className='source-name'>
+                GitHub Copilot
+                {status.unofficial && <span className='beta-badge'>Unofficial</span>}
+              </span>
+              <span className='source-desc'>
+                {status.unofficial
+                  ? "GitHub doesn't offer Copilot to desktop apps, so this signs in the way LiteLLM does. It can break, and heavy use can get Copilot access suspended."
+                  : 'Your Copilot plan, through VS Code. No API key; requests count toward your Copilot usage.'}
+              </span>
+              <span className='source-status'>
+                <StatusDot tone={status.connected ? 'ok' : 'off'} />
+                {statusText}
+              </span>
+            </div>
+            <div className='source-actions'>
+              {!copilotConnecting && !status.connected && (
+                <button type='button' className='source-action' onClick={connect}>
+                  Connect
+                </button>
+              )}
+              {!copilotConnecting && status.connected && !copilotInUse && (
+                <button type='button' className='source-action' onClick={() => changeProviderHandler(COPILOT_PROVIDER)}>
+                  Use
+                </button>
+              )}
+              {!copilotConnecting && status.connected && status.unofficial && (
+                <button
+                  type='button'
+                  className='source-action source-action--quiet'
+                  onClick={() => {
+                    VSCodeAPI().postMessage({ type: MESSAGE_TYPES.COPILOT_SIGN_OUT });
+                    // Refresh the model list so an in-use Copilot shows it's no longer connected.
+                    if (copilotInUse) fetchAvailableModels(COPILOT_PROVIDER, selectedModelProvider.apiKey);
+                  }}
+                >
+                  Sign out
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   function showSelectModelValidator() {
     return (
