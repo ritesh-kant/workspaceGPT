@@ -265,7 +265,7 @@
     "vscode:publish-all": "node scripts/publish-targets.mjs",
     "vscode:publish-pre-release-all": "node scripts/publish-targets.mjs --pre-release",
     "vscode:package-targets": "node scripts/publish-targets.mjs --package-only",
-    "vscode:test": "vsce package --no-dependencies && code --install-extension workspacegpt-extension-${npm_package_version}.vsix",
+    "vscode:test": "vsce package --no-dependencies && code --install-extension workspacegpt-extension-$(node -p \"require('./package.json').version\").vsix",
     "build-webview": "cd webview && pnpm install --ignore-workspace --prod=false && pnpm run build",
     "lint": "eslint src --ext ts",
     "check-types": "tsc --noEmit -p tsconfig.json",

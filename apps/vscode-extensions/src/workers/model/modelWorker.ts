@@ -2355,14 +2355,14 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         commitNarrowingApplied ? 'narrowed' : '',
       ].filter(Boolean);
       out +=
-        `\n\n<sub>Run diagnostics: ${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · ${HARNESS_PROFILE} harness · 0 edits applied` +
+        `\n\n---\n*Run diagnostics: ${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · ${HARNESS_PROFILE} harness · 0 edits applied` +
         `${anyWriteAttempted ? ' (writes attempted but none landed)' : ' (no write ever attempted)'}` +
         ` · tool budget ${pct}% used${budgetExhausted ? ' — EXHAUSTED, honesty gates skipped' : ''}` +
         ` · nudges fired: ${nudgesFired.length ? nudgesFired.join(', ') : 'none'}` +
         // The reason the loop ACTUALLY ended, next to the counters that
         // otherwise contradict it: #1384667's footer read "62 turns (cap 200)
         // · tool budget 49% used" under a heading that blamed the step limit.
-        ` · stopped: ${stopReason === 'none' ? 'model concluded (no harness limit hit)' : HARNESS_LIMIT_PHRASE[stopReason]}</sub>`;
+        ` · stopped: ${stopReason === 'none' ? 'model concluded (no harness limit hit)' : HARNESS_LIMIT_PHRASE[stopReason]}*`;
     }
     return out;
   };
