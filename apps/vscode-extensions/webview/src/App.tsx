@@ -43,7 +43,7 @@ import { modelDefaultConfig } from './store/modelStore';
 // The word the Resume button sends, defined next to the patterns the host
 // parses it with — see continuationIntent's header for why it must be bare.
 import { RESUME_MESSAGE } from '../../src/utils/continuationIntent';
-import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS } from './constants';
+import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS, isResearchWorkItem, researchWorkItemPrompt, publishSpikePrompt } from './constants';
 import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
 
@@ -246,7 +246,10 @@ function buildSuggestions(
   const suggestions: Suggestion[] = [];
   const [first, second] = items;
 
-  if (first) {
+  if (first && isResearchWorkItem(first.type)) {
+    // A spike is researched, not fixed (#1537001).
+    suggestions.push({ label: `Research spike #${first.id}`, prompt: researchWorkItemPrompt(first.id) });
+  } else if (first) {
     suggestions.push({
       label: `Fix #${first.id}`,
       prompt:
@@ -868,6 +871,7 @@ const App: React.FC = () => {
             ticketId: message.ticketId,
             refs: message.refs,
             shippable: !!message.shippable,
+            spikeDoc: message.spikeDoc,
           });
           break;
         case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
@@ -1046,6 +1050,7 @@ const App: React.FC = () => {
             ticketId: message.ticketId,
             refs: message.refs,
             shippable: !!message.shippable,
+            spikeDoc: message.spikeDoc,
           });
           break;
         case MESSAGE_TYPES.AGENT_REVERT_DONE: {
@@ -1925,6 +1930,13 @@ const App: React.FC = () => {
    * was actually wanted for.
    */
   const handleSelectWorkItem = (item: WorkItemSummary) => {
+    // A spike is answered, not implemented — seeding "implement the fix"
+    // would hand it an implement mandate the user never gave (#1537001).
+    if (isResearchWorkItem(item.type)) {
+      setInputValue(researchWorkItemPrompt(item.id));
+      inputRef.current?.focus();
+      return;
+    }
     setInputValue(
       `Work on ticket ${item.id} (${item.title}) — read the ticket and any design doc behind it, ` +
         'find the code it affects, then implement the fix. Show me the diffs as you go. ' +
@@ -1961,12 +1973,13 @@ const App: React.FC = () => {
       });
       return;
     }
-    const promptText =
-      `Work on ticket ${item.id} (${item.title}) autonomously — read the ticket and any design doc behind it, ` +
-      'find the code it affects, implement the fix, verify with diagnostics and the relevant tests, ' +
-      'and report the result against each acceptance criterion. ' +
-      'If, after reading the ticket, the docs, and the code, a decision the ticket should have made ' +
-      "is genuinely missing, stop and report exactly what's unclear instead of guessing.";
+    const promptText = isResearchWorkItem(item.type)
+      ? researchWorkItemPrompt(item.id)
+      : `Work on ticket ${item.id} (${item.title}) autonomously — read the ticket and any design doc behind it, ` +
+        'find the code it affects, implement the fix, verify with diagnostics and the relevant tests, ' +
+        'and report the result against each acceptance criterion. ' +
+        'If, after reading the ticket, the docs, and the code, a decision the ticket should have made ' +
+        "is genuinely missing, stop and report exactly what's unclear instead of guessing.";
     setChatModePersisted('agent');
     resetStreamBuffer();
     let sessionId = currentSessionId;
@@ -2183,6 +2196,33 @@ const App: React.FC = () => {
       // do — a resume must not silently re-grant autonomy the user has since
       // switched off.
       ...modeFlags(),
+    });
+  };
+
+  /**
+   * "Publish to Confluence" on a spike report. Sent WITHOUT the autonomous
+   * flag whatever the mode dial says: the user just clicked, so they are here
+   * to answer where the page goes and which template to follow — the
+   * autonomous block's "nobody will answer" would be false. The page itself is
+   * still reviewed on a card before anything reaches Confluence.
+   */
+  const handlePublishSpike = (doc: { path: string; ticketId: string }) => {
+    if (isLoading || isStreaming) return;
+    const promptText = publishSpikePrompt(doc.path, doc.ticketId);
+    if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
+    resetStreamBuffer();
+    addMessage({ content: promptText, isUser: true, timestamp: Date.now() });
+    setIsLoading(true);
+    setIsStreaming(false);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId: currentSessionId,
+      message: promptText,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+      assistantMode,
     });
   };
 
@@ -2460,6 +2500,11 @@ const App: React.FC = () => {
                     // transcript is long gone.
                     message.isError && message.resumable && index === messages.length - 1 && !isLoading && !isStreaming
                       ? handleResume
+                      : undefined
+                  }
+                  onPublishSpike={
+                    !message.isUser && message.turnSummary?.spikeDoc && !isLoading && !isStreaming
+                      ? handlePublishSpike
                       : undefined
                   }
                   onEdit={

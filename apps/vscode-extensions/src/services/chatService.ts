@@ -11,6 +11,7 @@ import {
   STORAGE_KEYS,
   ChatAttachment,
   COPILOT_PROVIDER,
+  isResearchWorkItem,
 } from '../../constants';
 import { getCopilotContextWindow } from './copilotBridge';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
@@ -84,7 +85,7 @@ import { decideTurnRouting } from 'src/utils/turnRouting';
 import { TicketPromptContext } from 'src/utils/promptTemplates';
 import { formatModelHistory } from 'src/utils/chatHistory';
 import { classifyIntentWithJev } from './jevIntentClassifier';
-import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE, hasWriteIntent, IMPLEMENT_MANDATE_RE } from 'src/workers/model/answerGates';
+import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE, hasWriteIntent, IMPLEMENT_MANDATE_RE, SPIKE_TERMINAL_RE } from 'src/workers/model/answerGates';
 import { randomUUID } from 'crypto';
 import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/inspectTools';
 import {
@@ -1499,12 +1500,16 @@ export class ChatService {
       // fresh worker, i.e. a fresh tool budget — exactly what exhaustion
       // needs. One attempt only: if the resumed run still stalls, deliver
       // what we have rather than looping.
+      const researchTicket = !!ticketContext && isResearchWorkItem(ticketContext.type);
       if (
         run.autonomous &&
         ticketContext &&
         run.lastAnswerStallShaped &&
         run.agentTranscript?.length &&
-        !run.cancelled
+        !run.cancelled &&
+        // A spike that delivered its answer — or its questions for the user —
+        // is finished, however question-shaped its wording.
+        !(researchTicket && SPIKE_TERMINAL_RE.test(modelResponse))
       ) {
         run.chatHistory.push({ role: 'assistant', content: modelResponse });
         // The report just streamed is SUPERSEDED by the one this second
@@ -1518,7 +1523,11 @@ export class ChatService {
         this.post(run, { type: MESSAGE_TYPES.RECEIVE_MESSAGE_RESTART });
         this.postStatus(run, 'Run ended without finishing — resuming with a fresh tool budget...');
         modelResponse = await callModel(
-          'Continue the ticket run from where the previous turn stopped — the investigation so far is carried over above. ' +
+          researchTicket
+            ? 'Continue the spike from where the previous turn stopped — the research so far is carried over above. ' +
+                'Finish it now: research what is still open, create the spike document, and answer in the SPIKE REPORT FORMAT. ' +
+                'Change no code. Questions only the user can answer go under "Questions for you" with the "❓ Needs your input" heading.'
+            : 'Continue the ticket run from where the previous turn stopped — the investigation so far is carried over above. ' +
             'Finish it now: apply the fix with your edit tools, or end with a "## Blocked" / "## No change needed" section. Do not re-investigate what is already read. ' +
             'If the transcript above shows the fix already applied AND verified, do not redo or re-verify it — deliver the final report. ' +
             // This resume exists BECAUSE the previous segment ended without
@@ -1949,17 +1958,15 @@ export class ChatService {
    * to Confluence until the user approves. There is no checkpoint to revert
    * to — Confluence's own page history is the undo, and the result says so.
    *
-   * Autonomous runs refuse outright: an unreviewed change to shared org docs
-   * is outward-facing in a way a revertible workspace edit is not.
+   * Autonomous runs get the SAME card rather than a refusal. An unreviewed
+   * change to shared org docs is outward-facing in a way a revertible
+   * workspace edit is not, so it never skips review — but "Agent" is the
+   * composer's default mode (and ▶ leaves it there), so refusing made
+   * "publish this spike to Confluence" impossible for a user sitting right
+   * at the keyboard. Autonomy covers workspace edits only; this write waits
+   * for a human whatever the mode.
    */
   private async gatedConfluenceWrite(run: SessionRun, write: PreparedConfluenceWrite): Promise<unknown> {
-    if (run.autonomous) {
-      await this.audit(write.kind, write.summary, 'rejected', 'skipped', 'autonomous run');
-      throw new Error(
-        'Autonomous runs do not write to Confluence — nobody is present to approve a change to shared docs. ' +
-          'Put the proposed page content in your report instead.'
-      );
-    }
     const { id, decision } = run.writeGate.await({ kind: write.kind, summary: write.summary });
     this.post(run, {
       type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
@@ -2971,6 +2978,13 @@ Query: "${query}"`;
             // ticket) are simply empty for a turn that ran no codebase tools.
             {
               const shippable = codebaseRoots?.length ? run.turnFilesChanged.size > 0 : false;
+              // A research ticket's run that wrote its spike document gets a
+              // "Publish to Confluence" action on the card — from facts (the
+              // ticket's type, the file the run created), not the answer's wording.
+              const spikeDocPath =
+                ticketContext && isResearchWorkItem(ticketContext.type)
+                  ? [...run.turnFilesChanged.values()].find((f) => f.kind === 'create' && /\.md$/i.test(f.path))?.path
+                  : undefined;
               this.post(run, {
                 type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
                 durationMs: Date.now() - run.turnStartMs,
@@ -2981,6 +2995,7 @@ Query: "${query}"`;
                 ticketId: ticketContext?.id,
                 refs: run.turnRefs.length ? [...run.turnRefs] : undefined,
                 shippable,
+                ...(spikeDocPath && ticketContext ? { spikeDoc: { path: spikeDocPath, ticketId: ticketContext.id } } : {}),
                 // Carried so "Create PR" can re-arm itself from the persisted
                 // transcript alone — the host's own run.lastShip is in-memory
                 // only and does not survive an extension host restart.
@@ -3143,10 +3158,13 @@ Query: "${query}"`;
                 // A tool the model just decided to call — surfaced as a
                 // transient status label, and also as a persistent structured
                 // step so the exploration remains visible in the transcript.
-                // Autonomous runs park no review — writes auto-apply, commands
-                // auto-run or are refused — so drop the "awaiting" claim.
+                // Autonomous runs park no review for workspace writes — they
+                // auto-apply, commands auto-run or are refused — so drop the
+                // "awaiting" claim. Confluence writes are reviewed in every
+                // mode (gatedConfluenceWrite), so theirs stays true.
                 const toolStatus = this.describeToolCall(result.name!, result.arguments);
-                this.postStatus(run, run.autonomous ? toolStatus.replace(' (awaiting your review)', '') : toolStatus);
+                const reviewedAnyway = result.name === 'update_confluence_page' || result.name === 'create_confluence_page';
+                this.postStatus(run, run.autonomous && !reviewedAnyway ? toolStatus.replace(' (awaiting your review)', '') : toolStatus);
                 this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,
                   id: result.id,

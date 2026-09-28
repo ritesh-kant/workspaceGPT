@@ -1205,3 +1205,67 @@ export const UPDATE_CHECK = {
   FIRST_CHECK_DELAY_MS: 30 * 1000, // 30 seconds
   REQUEST_TIMEOUT_MS: 5 * 1000,
 };
+
+/**
+ * Is this work item a piece of RESEARCH rather than a change to make?
+ *
+ * Read off the work-item TYPE — a structured field ADO already gives us and
+ * buildTicketBlock already prints — never off the user's phrasing. Ticket
+ * #1536998 is the case this exists for: a Spike, correctly labelled "Spike" in
+ * its own header line, was handed a prompt block ending "an investigation
+ * report ... is NOT a valid ending", so the run edited four files and stamped
+ * the result shippable while the spike's three open questions and its "High
+ * level estimation" deliverable went unanswered.
+ *
+ * Types, not keywords in prose: these are the values teams actually put in the
+ * type field across ADO/Jira process templates. Lives here (not in
+ * promptTemplates) so the webview's work-item buttons read the same list.
+ */
+const RESEARCH_WORK_ITEM_TYPES = new Set([
+  'spike',
+  'research',
+  'investigation',
+  'analysis',
+  'discovery',
+  'poc',
+  'proof of concept',
+]);
+
+export function isResearchWorkItem(type?: string): boolean {
+  return RESEARCH_WORK_ITEM_TYPES.has(String(type ?? '').trim().toLowerCase());
+}
+
+/**
+ * The prompt the My Work buttons send for a research item.
+ *
+ * The host reads the user's message for an implement mandate
+ * (IMPLEMENT_MANDATE_RE / hasWriteIntent), and a button's prompt IS the
+ * user's message. The generic ticket prompt says "implement the fix", so on
+ * #1537001 (a Spike) the product's own boilerplate granted the mandate and the
+ * run edited two files nobody asked it to touch. This text therefore must
+ * never match either pattern — a unit test pins that — and it carries no
+ * ticket title, because a title like "Support Venmo" would match on its own.
+ * The ticket block already gives the model the title.
+ */
+export function researchWorkItemPrompt(id: string): string {
+  return (
+    `Research spike #${id} — read the ticket and any design doc behind it, dig through the codebase, Confluence, ` +
+    'related tickets and the web for what it needs, answer every question it raises, and write up the spike report. ' +
+    'Leave the code as it is. If a decision or fact only I can give is missing, ask me instead of guessing.'
+  );
+}
+
+/**
+ * The prompt behind a spike report's "Publish to Confluence" button. Like
+ * researchWorkItemPrompt it must carry no write intent: the ticket it names is
+ * then prefetched lookup-only, so this turn publishes the document instead of
+ * being handed the spike instructions and re-running the research.
+ */
+export function publishSpikePrompt(path: string, ticketId: string): string {
+  return (
+    `Publish the spike document \`${path}\` for #${ticketId} to Confluence. Read the file first. ` +
+    'Find the format our existing spike pages use (open 2–3 recent ones in the space) and follow it; ' +
+    'if there is no clear format, ask me for a template page URL. ' +
+    'Ask me where the page should go before creating it, then create it as a draft for me to review.'
+  );
+}

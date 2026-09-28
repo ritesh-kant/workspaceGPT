@@ -294,6 +294,8 @@ interface ChatMessageProps {
   resumable?: { steps: number; writesApplied?: number };
   /** Picks the interrupted run back up instead of starting the task over. */
   onResume?: () => void;
+  /** Present on a spike report whose document was written — starts the Confluence publish turn. */
+  onPublishSpike?: (doc: { path: string; ticketId: string }) => void;
   /**
    * Rewrite this user message and re-ask from here. Absent while a run is in
    * flight (forking a live conversation would race the answer being streamed).
@@ -325,6 +327,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   onRetry,
   resumable,
   onResume,
+  onPublishSpike,
   onEdit,
   onEditingChange,
   onFeedback,
@@ -541,6 +544,19 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
           {turnSummary && turnSummary.filesChanged.length > 0 && (
             <FilesChangedBar summary={turnSummary} />
           )}
+          {turnSummary?.spikeDoc && onPublishSpike && (
+            <div className="spike-publish">
+              <span className="spike-publish-text">Share this spike with your team as a Confluence page.</span>
+              <button
+                type="button"
+                className="error-resume-button"
+                onClick={() => onPublishSpike(turnSummary.spikeDoc!)}
+                title="Turn this spike document into a Confluence page in your team's spike format — you choose where it goes and review it before it is created (as a draft)"
+              >
+                Publish to Confluence
+              </button>
+            </div>
+          )}
           {isError && resumable && onResume && (
             <div className="error-resume">
               <span className="error-resume-text">
@@ -639,5 +655,6 @@ export default React.memo(ChatMessage, (prev, next) => (
   prev.resumable?.steps === next.resumable?.steps &&
   prev.resumable?.writesApplied === next.resumable?.writesApplied &&
   !!prev.onResume === !!next.onResume &&
+  !!prev.onPublishSpike === !!next.onPublishSpike &&
   !!prev.onEdit === !!next.onEdit
 ));

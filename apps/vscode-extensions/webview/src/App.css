@@ -1287,6 +1287,23 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+/* ── Spike report: "Publish to Confluence" (reuses .error-resume-button) ── */
+.spike-publish {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.spike-publish-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: 0.75rem;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+
 /* ── Files-changed rollup bar ("1 file changed +2 −2 · Review") ──────── */
 .files-changed-bar {
   margin-top: 0.5rem;

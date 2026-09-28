@@ -568,7 +568,8 @@ const TOOL_DEFS = [
     function: {
       name: 'create_confluence_page',
       description:
-        "Create a new Confluence page from markdown, in the space/parent the user chose (see find_confluence_location). Created as a DRAFT only the user can see unless they asked to publish. The user reviews the full page and its location before it is created. Same markdown rules as update_confluence_page; no ⟦keep⟧ tokens in a new page.",
+        "Create a new Confluence page from markdown, in the space/parent the user chose (see find_confluence_location). Created as a DRAFT only the user can see unless they asked to publish. The user reviews the full page and its location before it is created. Same markdown rules as update_confluence_page; no ⟦keep⟧ tokens in a new page. " +
+        "FORMAT: when the page is a kind the org already writes (a spike, SDR, RFC, runbook, postmortem…), first open 2–3 recent pages of that kind in the target space with get_confluence_page (search_docs / find_confluence_location surface them) and follow their title pattern and section order, carrying your content into their sections. If there are none, or they disagree, ASK the user for a template or example page URL and wait — never invent a house style.",
       parameters: {
         type: 'object',
         properties: {

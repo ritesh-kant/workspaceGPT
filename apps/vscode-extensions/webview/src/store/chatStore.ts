@@ -97,6 +97,8 @@ export interface TurnSummary {
    * message so a reload shows the pushed branch, not a fresh "Create PR".
    */
   shipped?: ShippedTurn;
+  /** A research ticket's run wrote its spike document here — the card offers "Publish to Confluence". */
+  spikeDoc?: { path: string; ticketId: string };
 }
 
 export interface ShippedTurn {

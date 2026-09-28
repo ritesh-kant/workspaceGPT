@@ -1127,6 +1127,89 @@ console.log('\npromptTemplates (operating norms — ticket #1534774 read-forever
   });
 }
 
+console.log('\nspike runs (research tickets — #1537001 edited code under an implement-shaped button prompt)');
+{
+  const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
+  const { researchWorkItemPrompt, publishSpikePrompt, isResearchWorkItem } = await import(path.join(outDir, 'constants.mjs'));
+  const { SPIKE_TERMINAL_RE } = await import(path.join(outDir, 'answerGates.mjs'));
+  const spike = {
+    id: '1537001',
+    title: 'Support Venmo payment method for US',
+    type: 'Spike',
+    state: 'In Progress',
+    url: 'https://dev.azure.com/example/_workitems/edit/1537001',
+    description: 'Goal: enable Venmo. Reference: https://docs.adyen.com/payment-methods/paypal#venmo',
+  };
+  const bug = { ...spike, id: '1234567', type: 'Bug', url: 'https://dev.azure.com/example/_workitems/edit/1234567' };
+
+  await t('the research button prompt grants no implement mandate and still names the ticket', () => {
+    const prompt = researchWorkItemPrompt('1537001');
+    assert.ok(!IMPLEMENT_MANDATE_RE.test(prompt), 'IMPLEMENT_MANDATE_RE matched the spike prompt');
+    assert.ok(!hasWriteIntent(prompt), 'hasWriteIntent matched the spike prompt');
+    assert.strictEqual(detectTicketId(prompt), '1537001');
+  });
+
+  await t('the publish button prompt is a lookup turn, not a write or implement turn', () => {
+    const prompt = publishSpikePrompt('docs/spikes/1537001-venmo.md', '1537001');
+    assert.ok(!IMPLEMENT_MANDATE_RE.test(prompt));
+    assert.ok(!hasWriteIntent(prompt));
+    assert.strictEqual(detectTicketId(prompt), '1537001');
+  });
+
+  await t('research types are read from the type field', () => {
+    assert.ok(isResearchWorkItem('Spike') && isResearchWorkItem(' poc ') && !isResearchWorkItem('Bug') && !isResearchWorkItem(undefined));
+  });
+
+  await t('autonomous spike run: research block, document, questions, references — no implement block', () => {
+    const prompt = createStructuredPrompt([], researchWorkItemPrompt('1537001'), '', undefined, null, {
+      codebaseToolsEnabled: true,
+      ticketContext: spike,
+      autonomous: true,
+      implementMandate: false,
+    });
+    assert.ok(prompt.includes('## AUTONOMOUS SPIKE RUN'), 'spike autonomous block missing');
+    assert.ok(!prompt.includes('NO ONE IS WATCHING'), 'implement-shaped autonomous block leaked');
+    assert.ok(!prompt.includes('## FINAL REPORT FORMAT'), 'implement report format leaked');
+    assert.ok(prompt.includes('## SPIKE REPORT FORMAT') && prompt.includes('## SPIKE DOCUMENT FORMAT'));
+    assert.ok(prompt.includes('docs/spikes/<id>-<short-kebab-title>.md'));
+    assert.ok(prompt.includes('Needs your input') && prompt.includes('Questions for you'));
+    assert.ok(prompt.includes('### References'));
+    assert.ok(prompt.includes('`search_web`'), 'web research not taught');
+    assert.ok(prompt.includes('**Do not change code.**'));
+    assert.ok(prompt.includes('https://docs.adyen.com/payment-methods/paypal#venmo → external reference; read what it says'));
+  });
+
+  await t('a spike the user asked to implement keeps both formats and drops the no-code rule', () => {
+    const prompt = createStructuredPrompt([], 'implement the fix for #1537001', '', undefined, null, {
+      codebaseToolsEnabled: true,
+      ticketContext: spike,
+      autonomous: true,
+      implementMandate: true,
+    });
+    assert.ok(prompt.includes('## FINAL REPORT FORMAT') && prompt.includes('## SPIKE REPORT FORMAT'));
+    assert.ok(!prompt.includes('**Do not change code.**'));
+    assert.ok(prompt.includes('NO ONE IS WATCHING'), 'an implement run keeps the implement autonomous block');
+  });
+
+  await t('a non-research ticket is unchanged: implement block, final report, no spike sections', () => {
+    const prompt = createStructuredPrompt([], 'Work on ticket 1234567 autonomously', '', undefined, null, {
+      codebaseToolsEnabled: true,
+      ticketContext: bug,
+      autonomous: true,
+      implementMandate: true,
+    });
+    assert.ok(prompt.includes('NO ONE IS WATCHING') && prompt.includes('## FINAL REPORT FORMAT'));
+    assert.ok(!prompt.includes('SPIKE'));
+  });
+
+  await t('SPIKE_TERMINAL_RE: a complete or needs-input spike is finished; partial is not', () => {
+    assert.ok(SPIKE_TERMINAL_RE.test('## 🔍 Spike complete — Venmo rides on the PayPal component'));
+    assert.ok(SPIKE_TERMINAL_RE.test('## ❓ Needs your input — is Venmo enabled on the Adyen account?'));
+    assert.ok(!SPIKE_TERMINAL_RE.test('## ⚠️ Spike partially answered — step limit reached'));
+    assert.ok(!SPIKE_TERMINAL_RE.test('### Questions for you'));
+  });
+}
+
 console.log('\nprompt efficiency (lean context without weaker grounding)');
 {
   const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));

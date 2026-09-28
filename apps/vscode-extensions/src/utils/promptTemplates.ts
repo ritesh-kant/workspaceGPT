@@ -1,5 +1,6 @@
 import { EmbeddingSearchResult } from 'src/types/types';
 import { HARNESS_LIMIT_NOUN, LimitKind } from '../workers/model/resumeHygiene';
+import { isResearchWorkItem } from '../../constants';
 
 /** The turn-scoped extras a user message can carry, shared by both prompt builders below. */
 interface TurnExtras {
@@ -61,33 +62,9 @@ export interface TicketPromptContext {
   comments?: { author: string; date?: string; text: string }[];
 }
 
-/**
- * Is this work item a piece of RESEARCH rather than a change to make?
- *
- * Read off the work-item TYPE — a structured field ADO already gives us and
- * buildTicketBlock already prints — never off the user's phrasing. Ticket
- * #1536998 is the case this exists for: a Spike, correctly labelled "Spike" in
- * its own header line, was handed a prompt block ending "an investigation
- * report ... is NOT a valid ending", so the run edited four files and stamped
- * the result shippable while the spike's three open questions and its "High
- * level estimation" deliverable went unanswered.
- *
- * Types, not keywords in prose: these are the values teams actually put in the
- * type field across ADO/Jira process templates.
- */
-const RESEARCH_WORK_ITEM_TYPES = new Set([
-  'spike',
-  'research',
-  'investigation',
-  'analysis',
-  'discovery',
-  'poc',
-  'proof of concept',
-]);
-
-export function isResearchWorkItem(type?: string): boolean {
-  return RESEARCH_WORK_ITEM_TYPES.has(String(type ?? '').trim().toLowerCase());
-}
+// Research-type detection lives with the shared constants so the webview's
+// work-item buttons and this prompt read the same list.
+export { isResearchWorkItem };
 
 const TICKET_DESCRIPTION_MAX_CHARS = 4_000;
 const TICKET_AC_MAX_CHARS = 2_000;
@@ -200,8 +177,12 @@ The user reads ONLY your final answer, in a narrow side panel that renders this 
 
 ## 🔍 Spike complete — <the answer the spike was raised to get, in ≤ 25 words>
 Use exactly one of these instead when it applies:
+  ## ❓ Needs your input — <the decision(s) only the user can make, ≤ 25 words>
+      Use it whenever "Questions for you" below is non-empty. It is a finished spike that hands the user its open decisions, not a failure.
   ## ⚠️ Spike partially answered — <which question is still open> · <WHY: the exact obstacle>
   ## 🚫 Blocked — <the ONE decision or access the spike cannot proceed without>
+
+Spike document: \`docs/spikes/<id>-<short-kebab-title>.md\` (the file you created — one line)
 
 ### Findings
 - <one fact per bullet, each anchored to \`path/from/repo/root.ts:L12-L20\`, a doc, or a ticket — what IS true in the code today, not what should change>
@@ -212,6 +193,9 @@ Use exactly one of these instead when it applies:
 | <the ticket's question, ≤ 12 words> | <the answer, or "Unresolved — <what it needs>"> | <ONE item: file:line, doc link, or test output> |
 Every question the ticket asks gets a row. An unresolved one says what would resolve it — never leave it out, and never invent a question the ticket does not ask.
 
+### Questions for you  (omit when there are none)
+1. <a decision or fact only a person can supply — a business call, a vendor-account setting you cannot see, a scope the ticket leaves open> — <why the answer changes the recommendation> · <your suggested answer, if you have one>
+
 ### Recommended change
 - \`path/from/repo/root.ts:L12\` — what to change and why, one line each (the change set, NOT applied unless you were asked to apply it)
 - <or "None — <why the current code already satisfies the goal>">
@@ -219,15 +203,55 @@ Every question the ticket asks gets a row. An unresolved one says what would res
 ### Estimate
 <Size the recommended change: the files/flows touched and what dominates the effort. One or two lines. If the ticket asks for a high-level estimate, this section is mandatory.>
 
+### References
+- [<page title>](<url>) — <what it established, ≤ 10 words>
+  Every web page, Confluence page and ticket you used, as a markdown link. Only pages you actually retrieved this run (a search result you did not read is not a reference); if a link the ticket points at could not be retrieved, list it with "(could not retrieve)".
+
 ### Verification
 - ✅ \`<exact command or search run>\` — <one-line result>
   (use ⚠️ for anything you could NOT verify, and say what it would take)
 
 ### Notes  (optional, at most 3 bullets)
-- Assumption: <a default you acted on>
+- Assumption: <a default you acted on — implementation details only; a product decision belongs in "Questions for you">
 - Out of scope: <related work you deliberately did not do>
 
-Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they become clickable. Write a work-item reference as a bare \`#<id>\` OUTSIDE backticks. No process narration ("this turn", "I re-ran"), no restating the ticket. Everything outside the tables stays under ~200 words.
+Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they become clickable. Write a work-item reference as a bare \`#<id>\` OUTSIDE backticks. No process narration ("this turn", "I re-ran"), no restating the ticket. Everything outside the tables and References stays under ~250 words — the spike document carries the full write-up.
+`;
+
+/**
+ * The spike's written deliverable, saved to the workspace.
+ *
+ * The chat card is a ~250-word summary for a 350px panel; the team needs the
+ * full write-up somewhere they can review, commit and later publish to
+ * Confluence (#1537001 asked for "Documentation" and got only the card). The
+ * sections are the ones a spike page conventionally carries, so the publish
+ * step has little to reshape when the org's own template differs.
+ */
+export const SPIKE_DOCUMENT_FORMAT = `## SPIKE DOCUMENT FORMAT
+Create it with \`create_file\` at \`docs/spikes/<id>-<short-kebab-title>.md\` (relative to the workspace root) once the research is done and BEFORE your final answer. Markdown, in this order:
+
+# Spike #<id>: <ticket title>
+<one line: ticket link · date · status (Complete / Needs input / Partially answered)>
+
+## Summary
+<3–5 sentences: the answer, the recommendation, the size of the work>
+## Goal and requirements
+<the ticket's goal and each business requirement, one bullet each — every one is answered somewhere below>
+## Findings
+<grouped by area; each fact with its evidence: \`path:line\`, a Confluence page, a ticket, or a web page>
+## Answers to the ticket's questions
+<table: question · answer · evidence>
+## Options considered  (only when there is more than one viable way)
+<each option with pros and cons, and which one you recommend>
+## Recommendation
+<the change set as \`path:line\` — what and why; not applied>
+## Estimate
+<size, the files/flows touched, what dominates the effort>
+## Risks and dependencies
+## Open questions
+<every "Questions for you" item, plus anything for other teams or vendors>
+## References
+<every code file, Confluence page, ticket and web page used — each as a markdown link with its URL>
 `;
 
 /**
@@ -267,7 +291,7 @@ function buildTicketLinks(t: TicketPromptContext): string {
       .map((u) =>
         isConfluenceUrl(u)
           ? `- ${u} → call \`get_confluence_page\` with this URL (live; the synced docs index may predate the page)`
-          : `- ${u} → external reference; use \`search_web\` if you need what it says`
+          : `- ${u} → external reference; read what it says (\`search_web\` for its subject, or open it with the browser tools when available) and cite it`
       )
       .join('\n') +
     `\nIf one of these cannot be retrieved, say so in your report — do not silently substitute a search result for the document the ticket points at.`
@@ -314,16 +338,30 @@ function buildTicketBlock(
   // the ticket asks for is "NOT a valid ending" (#1536998).
   if (isResearchWorkItem(t.type)) {
     lines.push(
-      `\nThis work item is a **${t.type}** — research, not a change to ship. Its definition of done is the ANSWER: every question the description asks, settled with evidence, plus the change set you recommend (as \`file:line\`) and the estimate the ticket asks for. ` +
-        `Investigate the real code and docs as thoroughly as you would for an implementation — a spike answered from assumption is worthless — but reaching a well-evidenced recommendation IS the valid ending here, and leaving the tree untouched is not a stall. ` +
-        `Do NOT edit files to "prove" the recommendation` +
+      `\nThis work item is a **${t.type}** — research, not a change to ship. Its definition of done is the ANSWER: every question the description asks and every business requirement it lists, settled with evidence, plus the change set you recommend (as \`file:line\`) and the estimate the ticket asks for. ` +
+        `Investigate as thoroughly as you would for an implementation — a spike answered from assumption is worthless — but reaching a well-evidenced recommendation IS the valid ending here, and leaving the code untouched is not a stall.\n` +
+        // #1537001: the run read the code well, ran two Confluence searches
+        // but opened no page (the space holds a "SPIKE - PayPal" and an
+        // "Adyen Express payment" spike), and never looked at the Adyen doc
+        // the ticket itself links — then left the one vendor question it
+        // could have answered "Unresolved".
+        `**Research every source that can answer it, not only the code:**\n` +
+        `- Codebase — the code paths the ticket touches (\`explore\` for broad questions).\n` +
+        `- Confluence — earlier pages on the same subject (prior spikes, SDRs, designs for related features): open the relevant ones with \`get_confluence_page\`; a search snippet is not a reading. If the ticket links a design doc, READ IT by URL or id rather than relying on a search index that may predate it.\n` +
+        `- Tickets — the parent and related work items (\`search_tickets\`).\n` +
+        `- The web — every external product, vendor, library or API the ticket names or links: look up its current documentation with \`search_web\` (and read a linked page itself with the browser tools when they are available). What a vendor supports is a fact to look up, never to assume.\n` +
         (implementMandate
-          ? `, EXCEPT that the user's instruction for this run also asks you to implement: do both — answer the spike's questions first, then apply the change and verify it, and add a "### Changes" and per-criterion "### Acceptance criteria" section after the spike sections.`
-          : `; if the change turns out to be trivial, say so in "Recommended change" and let the user ask for it.`) +
-        ` If the ticket links a design doc (SDR, RFC, Confluence page), READ IT before concluding — fetch it by URL or id rather than relying on a search index that may predate it, and if you could not retrieve it, say so in the report instead of answering around it. ` +
-        `Your final answer MUST follow the SPIKE REPORT FORMAT given below. Never invent a question the ticket does not ask.`
+          ? `The user's instruction for this run also asks you to implement: do both — answer the spike's questions first, then apply the change and verify it, and add a "### Changes" and per-criterion "### Acceptance criteria" section after the spike sections.\n`
+          : `**Do not change code.** Do not edit or delete any file: the ONE file this run creates is the spike document. If the change turns out to be trivial, say so in "Recommended change" and let the user ask for it.\n`) +
+        `**Write the spike document** (SPIKE DOCUMENT FORMAT below) with \`create_file\`, then give the SPIKE REPORT FORMAT answer as its summary.\n` +
+        // HOW TO WORK tells every run to settle open questions with a default.
+        // That is right for implementation details and wrong for a spike,
+        // whose open product questions ARE part of its output.
+        `**Ask, don't guess.** HOW TO WORK's "settle it with a default" covers implementation details only. When an answer depends on something only a person can supply — a business decision, a setting in a vendor account or dashboard you cannot see, a scope the ticket leaves open — finish everything the tools CAN answer, then list it under "Questions for you" and use the "❓ Needs your input" heading. Never present a guess as a finding.\n` +
+        `**Cite what you read.** Every web page, Confluence page and ticket you used goes under References with its URL. If a link the ticket points at could not be retrieved, say so rather than answering around it. ` +
+        `Never invent a question the ticket does not ask.`
     );
-    return lines.join('\n') + '\n' + SPIKE_REPORT_FORMAT + (implementMandate ? '\n' + FINAL_REPORT_FORMAT : '');
+    return lines.join('\n') + '\n' + SPIKE_REPORT_FORMAT + '\n' + SPIKE_DOCUMENT_FORMAT + (implementMandate ? '\n' + FINAL_REPORT_FORMAT : '');
   }
   lines.push(
     `\nTreat the acceptance criteria (or, absent explicit ones, the description's expected behavior) as the definition of done. ` +
@@ -577,8 +615,21 @@ Do NOT call edit_file/create_file/delete_file this turn. The user will approve t
   // asking permission is a turn wasted — and a run that stalls on a question
   // simply dies. The block replaces the human-in-the-loop framing, not the
   // grounding rules: hallucinated edits are WORSE unattended.
+  // A research ticket's autonomous run gets its own block: "implement, then
+  // VERIFY" and "NEVER ask" are exactly wrong for a spike, whose deliverable
+  // is an answer and whose open product decisions belong to the user
+  // (#1537001 edited two files under the implement-shaped block).
+  const researchRun =
+    !!options?.ticketContext && !options?.ticketLookupOnly && isResearchWorkItem(options.ticketContext.type) && !options?.implementMandate;
   const autonomousBlock =
-    codebaseToolsEnabled && options?.autonomous
+    codebaseToolsEnabled && options?.autonomous && researchRun
+      ? `## AUTONOMOUS SPIKE RUN — RESEARCH, THEN REPORT
+This run was started with a single click and nobody will answer questions mid-task.
+- Never stop mid-research to ask. Use every tool that can answer — code, Confluence, tickets, the web — until the only questions left are ones a person must answer.
+- Change no code. The one write this run makes is creating the spike document (it applies automatically and is shown to the user afterwards). Do not publish to Confluence in this run — the report card offers the user that step.
+- Finish with the SPIKE REPORT FORMAT (below). Decisions only the user can make go under "Questions for you" with the "❓ Needs your input" heading — that is a complete ending for a spike, not a stall.
+`
+      : codebaseToolsEnabled && options?.autonomous
       ? `## AUTONOMOUS RUN — NO ONE IS WATCHING
 This run was started with a single click and nobody will answer questions mid-task.
 - NEVER ask for permission, confirmation, or feedback. File writes apply automatically (each one is checkpointed and shown to the user afterwards as a reviewable diff).

@@ -196,6 +196,16 @@ export const REPORT_STATUS_HEADING_RE =
   /^##\s+(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(done|partially done|partial|blocked|no change (is )?needed|nothing to change|already (fixed|implemented|resolved)|complete|completed|fixed|implemented)\b.*$/imu;
 
 /**
+ * A spike report's finished status heading (SPIKE_REPORT_FORMAT): the answer
+ * is in, or it is in and hands the user the decisions only they can make.
+ * Either is a complete ending for a research ticket, so the host must not
+ * auto-resume it as a stall — "❓ Needs your input" is question-shaped by
+ * design and would otherwise read as a permission ask.
+ */
+export const SPIKE_TERMINAL_RE =
+  /^##\s+(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)?(spike complete|needs your input)\b/imu;
+
+/**
  * Drop a narrated preamble ahead of the report's status heading — "Diagnostics
  * are clean across the whole Checkout folder. Now let me write the final
  * report." (observed live) — so the webview's status banner is the first thing
