@@ -450,11 +450,11 @@ export default function Home() {
                   <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Everything runs locally</h3>
                   <p className="text-muted leading-relaxed mb-6">
                     Your model, your hardware. With Ollama, none of your content leaves your computer &mdash; no
-                    account, no cloud round-trip. Prefer a bigger model? Plug in your own provider key and you still
-                    decide exactly where your data goes.
+                    account, no cloud round-trip. Prefer a bigger model? Use your GitHub Copilot plan or plug in your own
+                    provider key, and you still decide exactly where your data goes.
                   </p>
                   <ul className="space-y-2.5 text-sm text-muted">
-                    <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> Chat model on your machine via Ollama &mdash; or your own API key</li>
+                    <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> Chat model on your machine via Ollama &mdash; or your GitHub Copilot plan, or your own API key</li>
                     <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> Embeddings generated on-device</li>
                     <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> Vector index in local files</li>
                     <li className="flex gap-3"><span className="text-emerald-400 flex-shrink-0">✓</span> No account &mdash; runs offline with a local model</li>
@@ -657,7 +657,7 @@ export default function Home() {
                     <li className="flex gap-3"><span className="text-brand flex-shrink-0 mt-0.5"><Icon name="check" size={16} /></span> Paste a page link and it reads the page with its tables and structure intact</li>
                   </ul>
                   <p className="text-xs text-faint mt-auto leading-relaxed">
-                    Connected Confluence before this release? Reconnect once to give it edit access. Coming to the editor extension in its next release.{" "}
+                    Connected Confluence before this release? Reconnect once to give it edit access. In the desktop app and the editor extension.{" "}
                     <Link href="/docs#confluence-write" className="text-brand hover:underline">How it works</Link>
                   </p>
                 </div>
@@ -918,7 +918,7 @@ export default function Home() {
                         <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 mt-[0.4rem]"></div>
                         <div className="leading-relaxed">
                           <span className="font-medium text-slate-200">Local</span> &mdash; bring your own model. Ollama for fully offline (default{" "}
-                          <code className="font-mono text-xs bg-white/10 px-1 py-0.5 rounded text-muted">llama3.2:1b</code>), or your own
+                          <code className="font-mono text-xs bg-white/10 px-1 py-0.5 rounded text-muted">llama3.2:1b</code>), your GitHub Copilot plan, or your own
                           OpenAI / Claude / Gemini / Groq / OpenRouter key &mdash; or any OpenAI-compatible endpoint.
                         </div>
                       </li>
