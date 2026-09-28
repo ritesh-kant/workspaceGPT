@@ -87,6 +87,11 @@ export const MESSAGE_TYPES = {
   // Host → webview: every parked review was auto-rejected (stop/worker death);
   // cards should collapse their buttons instead of dangling as live no-ops.
   AGENT_WRITE_REVIEWS_CLOSED: 'agent-write-reviews-closed',
+  // Host → webview: what became of an approved review — 'applied' once the
+  // write landed (or the command was released to run), 'failed' if it threw,
+  // 'stopped' when the decision arrived after its gate died with the run.
+  // The card only says "Applied" on this, never on the click itself.
+  AGENT_WRITE_OUTCOME: 'agent-write-outcome',
   // Webview → host: open a reviewed file (edit/create/delete) in the editor.
   OPEN_FILE_IN_EDITOR: 'open-file-in-editor',
   // Webview → host: open an http(s) URL in the user's browser — the ticket
@@ -495,6 +500,9 @@ export const STORAGE_KEYS = {
   // client-side "last validated" grace window: the Worker re-checks the
   // session on every /v1/chat/completions call.
   REMOTE_SESSION_TOKEN: 'remote-session-token',
+  // GitHub user token for Copilot on the desktop host (SecretStorage) — see
+  // src/services/copilotDirect.ts. VS Code uses its own Copilot sign-in.
+  COPILOT_GITHUB_TOKEN: 'copilot-github-token',
 };
 
 // Extension Constants
@@ -578,6 +586,8 @@ export const MODEL = {
   DEFAULT_CODE_EMBEDDING_DIMENSIONS: 768, // Default dimensions for the embedding model
   DEFAULT_CODE_EMBEDDING_MODEL: 'jinaai/jina-embeddings-v2-base-code',
 };
+/** On the desktop host (no `vscode.lm`) it runs the unofficial direct path — see copilotDirect.ts. */
+export const COPILOT_PROVIDER = 'GitHub Copilot';
 export const MODEL_PROVIDERS = [
   {
     MODEL_PROVIDER: 'Ollama',
@@ -645,6 +655,17 @@ export const MODEL_PROVIDERS = [
     requireApiKey: true,
     BASE_URL: 'https://zenmux.ai/api/v1',
     DEFAULT_CHAT_MODEL: 'openai/gpt-5',
+  },
+  {
+    // The user's GitHub Copilot plan via VS Code's Language Model API (desktop:
+    // Copilot's own API, unofficial — src/services/copilotDirect.ts). No key
+    // or URL of its own: both come from the loopback bridge at lookup time
+    // (src/services/copilotBridge.ts, getLlmSettings.ts). API_KEY is a
+    // placeholder so the webview treats it as configured, like Ollama.
+    MODEL_PROVIDER: COPILOT_PROVIDER,
+    API_KEY: 'COPILOT',
+    BASE_URL: '',
+    DEFAULT_CHAT_MODEL: undefined,
   },
   {
     // OpenAI-compatible provider with a user-supplied base URL (self-hosted,

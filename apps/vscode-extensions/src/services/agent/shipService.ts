@@ -5,6 +5,7 @@ import { NamedRoot, resolveAgainstRoots } from '../codebase/codebaseTools';
 import { getActiveTicketProvider } from '../tickets/registry';
 import {
   CONVENTIONAL_TYPES,
+  cutAtWord,
   deriveShipTitle,
   turnCommitType,
   inferConventionalType,
@@ -50,6 +51,8 @@ export interface ShipResult {
   baseBranch: string;
   commitSha: string;
   prUrl?: string;
+  /** Whether the branch reached `origin`. False = committed locally only (no remote, or the push failed). */
+  pushed: boolean;
   ticketCommented: boolean;
   warnings: string[];
 }
@@ -111,7 +114,7 @@ export async function shipChanges(
   // sends one), so the client-payload fallback used after a host restart
   // would otherwise land here as undefined.
   const title = deriveShipTitle(input.title, input.report);
-  const shortTitle = title.replace(/\s+/g, ' ').trim().slice(0, 72);
+  const shortTitle = cutAtWord(title.replace(/\s+/g, ' ').trim(), 72);
   const commitType = turnCommitType({ ...input, title });
   const slug = slugify(input.ticketId ? `${input.ticketId}-${title}` : title);
   let branch = `${commitType}/${slug}`;
@@ -139,11 +142,13 @@ export async function shipChanges(
   const commitSha = await git(gitCwd, ['rev-parse', 'HEAD']);
 
   let prUrl: string | undefined;
+  let pushed = false;
   const remote = await git(gitCwd, ['remote', 'get-url', 'origin']).catch(() => '');
   if (remote) {
     onStatus(`Pushing ${branch} to origin…`);
     try {
       await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch]);
+      pushed = true;
       prUrl = pullRequestUrl(remote, baseBranch, branch, shortTitle, input.report);
       if (prUrl) {
         onStatus('Opening the pull-request page…');
@@ -171,7 +176,7 @@ export async function shipChanges(
     }
   }
 
-  return { branch, baseBranch, commitSha, prUrl, ticketCommented, warnings };
+  return { branch, baseBranch, commitSha, prUrl, pushed, ticketCommented, warnings };
 }
 
 export interface ShipAllResult {
@@ -179,6 +184,8 @@ export interface ShipAllResult {
   baseBranch: string;
   commitSha: string;
   prUrl?: string;
+  /** Whether the branch reached `origin` — see ShipResult.pushed. */
+  pushed: boolean;
   warnings: string[];
 }
 
@@ -240,11 +247,13 @@ export async function shipAllChanges(
   const commitSha = await git(gitCwd, ['rev-parse', 'HEAD']);
 
   let prUrl: string | undefined;
+  let pushed = false;
   const remote = await git(gitCwd, ['remote', 'get-url', 'origin']).catch(() => '');
   if (remote) {
     onStatus(`Pushing ${branch} to origin…`);
     try {
       await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch]);
+      pushed = true;
       prUrl = pullRequestUrl(remote, baseBranch, branch, commitSubject, '');
       if (prUrl) {
         onStatus('Opening the pull-request page…');
@@ -259,5 +268,5 @@ export async function shipAllChanges(
     warnings.push('No "origin" remote — committed locally only.');
   }
 
-  return { branch, baseBranch, commitSha, prUrl, warnings };
+  return { branch, baseBranch, commitSha, prUrl, pushed, warnings };
 }

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { MODEL_PROVIDERS, REMOTE_INFERENCE_BASE_URL, REMOTE_MODEL, STORAGE_KEYS } from '../../constants';
+import { COPILOT_PROVIDER, MODEL_PROVIDERS, REMOTE_INFERENCE_BASE_URL, REMOTE_MODEL, STORAGE_KEYS } from '../../constants';
+import { getCopilotBridge } from '../services/copilotBridge';
 import { getCachedRemoteSessionToken } from '../services/remote/remoteSessionCache';
 import { getMode } from './getModeSettings';
 
@@ -53,6 +54,18 @@ export function getLlmSettings(context: vscode.ExtensionContext): LlmSettings {
   const model = context.globalState.get(STORAGE_KEYS.MODEL) as any;
   const sel = model?.state?.selectedModelProvider;
   if (!sel) return { apiKeys: [] };
+  // GitHub Copilot is served by the loopback bridge: its URL and per-session
+  // token stand in for a provider URL and key. No key until it has started.
+  if (sel.provider === COPILOT_PROVIDER) {
+    const bridge = getCopilotBridge();
+    return {
+      provider: sel.provider,
+      model: sel.selectedModel,
+      apiKey: bridge?.token,
+      apiKeys: bridge ? [bridge.token] : [],
+      baseUrl: bridge?.baseUrl,
+    };
+  }
   // 'Custom' (and any future user-configurable provider) stores its own base
   // URL per-config; that always wins over the static per-provider table.
   const baseUrl =

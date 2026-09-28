@@ -10,9 +10,15 @@ import * as path from 'path';
  *
  *  - snapshots capture only the files an approved agent action is about to
  *    change, never the user's entire working tree or unrelated credentials;
- *  - revert is one atomic `reset --hard` across modified/created/deleted files;
- *  - files the shadow repo never tracked (user's untracked work created after
- *    the last checkpoint) survive reverts;
+ *  - each checkpoint RECORDS the files it was scoped to (a commit trailer),
+ *    including files that did not exist yet. A commit's tree is not the
+ *    workspace: it holds only what was snapshotted so far, and each file at its
+ *    last snapshot. So revert never trusts the tree for a file the checkpoint
+ *    did not record. It restores each file recorded at or after the target,
+ *    from its earliest such record. It deletes a file only when that record
+ *    says the file did not exist yet (the agent created it);
+ *  - files no checkpoint since the target recorded (user's own work, files
+ *    first snapshotted by an earlier turn) survive reverts;
  *  - the user's real .git — index, HEAD, reflog, status — is never touched;
  *  - the workspace's own .gitignore is respected automatically (gitignore is
  *    worktree-level), so node_modules etc. stay out of snapshots.
@@ -46,6 +52,16 @@ export interface ChangedFile {
 }
 
 const GIT_TIMEOUT_MS = 60_000;
+
+/** Commit-message trailer carrying a checkpoint's scoped files as a JSON array. */
+const RECORDED_FILES_TRAILER = 'Checkpoint-Files: ';
+
+export interface RevertResult {
+  /** Files written back to their recorded content. */
+  restored: string[];
+  /** Files removed because the agent created them after the target. */
+  removed: string[];
+}
 
 export class CheckpointService {
   private queue: Promise<unknown> = Promise.resolve();
@@ -152,7 +168,22 @@ export class CheckpointService {
         return normalized;
       });
       await this.ensureInit();
-      await this.git(['add', '-A', '--', ...scopedFiles]);
+      // A file that does not exist yet is recorded as absent: `git add` fails
+      // on a path it has never seen, so drop it from the index instead.
+      const exists = (file: string) => {
+        try {
+          fs.lstatSync(path.join(this.worktree, file));
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const present = scopedFiles.filter(exists);
+      const missing = scopedFiles.filter((file) => !exists(file));
+      if (present.length) await this.git(['add', '-A', '--', ...present]);
+      if (missing.length) {
+        await this.git(['--literal-pathspecs', 'rm', '--cached', '--quiet', '--ignore-unmatch', '--', ...missing]);
+      }
       const hasStagedChanges = await this.git(['diff', '--cached', '--quiet']).then(
         () => false,
         () => true,
@@ -161,33 +192,99 @@ export class CheckpointService {
         (s) => s.trim() !== '',
         () => false,
       );
+      // Reuse HEAD only when it already recorded these files: an unchanged
+      // file that HEAD merely carries is not recorded there.
       if (!hasStagedChanges && hasHead) {
-        const sha = (await this.git(['rev-parse', 'HEAD'])).trim();
-        return { sha, label, timestamp: Date.now() };
+        const recorded = await this.recordedFiles('HEAD');
+        if (scopedFiles.every((file) => recorded.includes(file))) {
+          const sha = (await this.git(['rev-parse', 'HEAD'])).trim();
+          return { sha, label, timestamp: Date.now() };
+        }
       }
-      if (!hasStagedChanges && !allowEmpty) {
+      if (!hasStagedChanges && !hasHead && !allowEmpty) {
         throw new Error(`No checkpointable change was found for: ${scopedFiles.join(', ')}`);
       }
-      await this.git(['commit', '--quiet', '--no-verify', ...(allowEmpty ? ['--allow-empty'] : []), '-m', label]);
+      await this.git([
+        'commit',
+        '--quiet',
+        '--no-verify',
+        '--allow-empty',
+        '-m',
+        label,
+        '-m',
+        RECORDED_FILES_TRAILER + JSON.stringify(scopedFiles),
+      ]);
       const sha = (await this.git(['rev-parse', 'HEAD'])).trim();
-      // Tag every checkpoint: revertTo() resets HEAD backwards, which would
-      // otherwise leave later checkpoints unreachable (invisible to list(),
-      // eventually GC-ed) — reverting must never destroy the redo timeline.
+      // Tag every checkpoint: older builds' revertTo() reset HEAD backwards,
+      // which would otherwise leave later checkpoints unreachable (invisible
+      // to list(), eventually GC-ed) — reverting must never destroy the redo
+      // timeline.
       await this.git(['tag', '--force', `cp-${sha.slice(0, 12)}`, sha]);
       return { sha, label, timestamp: Date.now() };
     });
   }
 
   /**
-   * Atomically restore the working tree to a checkpoint: modified files are
-   * reverted, deleted files restored, and files created since (and tracked by
-   * a later checkpoint) removed. Files the shadow repo never tracked are left
-   * alone.
+   * Files a checkpoint recorded. Checkpoints written before the trailer
+   * existed fall back to the files that commit changed.
    */
-  revertTo(sha: string): Promise<void> {
+  private async recordedFiles(commit: string): Promise<string[]> {
+    const message = await this.git(['log', '-1', '--format=%B', commit]);
+    const trailer = message
+      .split('\n')
+      .reverse()
+      .find((line) => line.startsWith(RECORDED_FILES_TRAILER));
+    if (trailer) {
+      try {
+        const files = JSON.parse(trailer.slice(RECORDED_FILES_TRAILER.length));
+        if (Array.isArray(files)) return files.filter((file): file is string => typeof file === 'string');
+      } catch {
+        // Malformed trailer: use the fallback below.
+      }
+    }
+    const changed = await this.git(['diff-tree', '--root', '--no-commit-id', '-r', '--name-only', '-z', commit]);
+    return changed.split('\0').filter(Boolean);
+  }
+
+  /**
+   * Undo everything checkpointed since `sha`: every file recorded by `sha` or
+   * a later checkpoint goes back to its earliest such record. A record with
+   * the file present restores that content. A record with the file absent
+   * means the agent created it, so it is removed. Files no checkpoint since
+   * `sha` recorded are left alone. HEAD is not moved, so later checkpoints
+   * stay on the timeline (and tagged) for redo.
+   */
+  revertTo(sha: string): Promise<RevertResult> {
     return this.enqueue(async () => {
       await this.ensureInit();
-      await this.git(['reset', '--hard', '--quiet', sha]);
+      const target = (await this.git(['rev-parse', '--verify', `${sha}^{commit}`])).trim();
+      const later = (await this.git(['rev-list', '--reverse', '--ancestry-path', `${target}..HEAD`]))
+        .split('\n')
+        .filter(Boolean);
+      const earliest = new Map<string, string>();
+      for (const commit of [target, ...later]) {
+        for (const file of await this.recordedFiles(commit)) {
+          if (!earliest.has(file)) earliest.set(file, commit);
+        }
+      }
+      const restoreFrom = new Map<string, string[]>();
+      const removed: string[] = [];
+      for (const [file, commit] of earliest) {
+        const present = await this.git(['cat-file', '-e', `${commit}:${file}`]).then(
+          () => true,
+          () => false,
+        );
+        if (present) restoreFrom.set(commit, [...(restoreFrom.get(commit) ?? []), file]);
+        else removed.push(file);
+      }
+      for (const [commit, files] of restoreFrom) {
+        await this.git(['--literal-pathspecs', 'checkout', commit, '--', ...files]);
+      }
+      if (removed.length) {
+        await this.git(['--literal-pathspecs', 'rm', '-f', '--quiet', '--ignore-unmatch', '--', ...removed]);
+        for (const file of removed) fs.rmSync(path.join(this.worktree, file), { force: true });
+      }
+      return { restored: [...restoreFrom.values()].flat(), removed };
     });
   }
 

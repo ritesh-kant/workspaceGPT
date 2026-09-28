@@ -19,6 +19,9 @@ const CreatePrButton: React.FC = () => {
   const createPrForTurn = useGitStatusStore((s) => s.createPrForTurn);
   const messages = useChatStore((s) => s.messages);
   const sessionId = useChatStore((s) => s.currentSessionId);
+  // Mid-run the turn's files are still being written: shipping now would
+  // commit a half-made change, so wait for the run to finish.
+  const runInProgress = useChatStore((s) => s.isLoading || s.isStreaming);
 
   // Newest turn that still has changes the host is holding ready to ship.
   const turn = useMemo(() => {
@@ -65,8 +68,8 @@ const CreatePrButton: React.FC = () => {
       type='button'
       className='git-status-ship'
       onClick={onClick}
-      disabled={running || (!turn && !status?.branch)}
-      title={title}
+      disabled={running || runInProgress || (!turn && !status?.branch)}
+      title={runInProgress ? 'Available once the run finishes' : title}
     >
       {running ? 'Creating…' : 'Create PR'}
     </button>

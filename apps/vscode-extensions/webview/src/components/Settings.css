@@ -1146,7 +1146,10 @@ input:checked + .slider:before {
 
 .select-larger {
   height: 36px; /* Increased height */
-  padding: 8px;
+  /* No vertical padding: WebKit (desktop) adds its own inner padding to a
+     native select, so 8px top/bottom pushed the text past the fixed height.
+     The height alone centers the text in every engine. */
+  padding: 0 8px;
   font-size: 14px;
 }
 

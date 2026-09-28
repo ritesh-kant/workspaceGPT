@@ -4,8 +4,20 @@
     {
       "name": "webapp",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "workspacegpt-webapp", "dev"],
+      "runtimeArgs": [
+        "--filter",
+        "workspacegpt-webapp",
+        "dev"
+      ],
       "port": 3000
+    },
+    {
+      "name": "webview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps/vscode-extensions/webview/tools/preview.mjs"
+      ],
+      "port": 7391
     }
   ]
 }

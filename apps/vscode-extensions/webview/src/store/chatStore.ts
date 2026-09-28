@@ -17,8 +17,14 @@ export interface WriteReview {
   command?: string;
   /** The Confluence page (or parent page) a Confluence write opens to. */
   url?: string;
-  /** Set once the user decides; collapses the buttons into a badge. */
-  decision?: 'approved' | 'rejected';
+  /**
+   * Collapses the buttons into a badge. 'approved' (shown as Applied), 'failed'
+   * and 'stopped' come only from the host (AGENT_WRITE_OUTCOME /
+   * AGENT_WRITE_REVIEWS_CLOSED); a click sets `applying` or 'rejected'.
+   */
+  decision?: 'approved' | 'rejected' | 'failed' | 'stopped';
+  /** Approve was clicked and the host has not confirmed the write yet. */
+  applying?: boolean;
 }
 
 /**
@@ -97,6 +103,10 @@ export interface ShippedTurn {
   branch: string;
   prUrl?: string;
   ticketCommented: boolean;
+  /** Whether the branch reached `origin`. Absent on turns shipped before this was recorded. */
+  pushed?: boolean;
+  /** The branch the user was on — the ship checks the new branch out in its place. */
+  baseBranch?: string;
 }
 
 interface Message {
@@ -316,12 +326,27 @@ const finalizeIn = (s: TurnSlice, fallbackContent: string): TurnSlice | null => 
   };
 };
 
+// An `applying` card is left alone: its decision already reached the host,
+// which answers it with AGENT_WRITE_OUTCOME whether or not the run lives.
 const closePendingReviewsIn = (messages: Message[]): Message[] =>
   messages.map((m) =>
-    m.writeReview && !m.writeReview.decision
-      ? { ...m, writeReview: { ...m.writeReview, decision: 'rejected' as const } }
+    m.writeReview && !m.writeReview.decision && !m.writeReview.applying
+      ? { ...m, writeReview: { ...m.writeReview, decision: 'stopped' as const } }
       : m
   );
+
+const patchReviewIn = (messages: Message[], reviewId: string, patch: Partial<WriteReview>): Message[] =>
+  messages.map((m) => (m.writeReview?.id === reviewId ? { ...m, writeReview: { ...m.writeReview, ...patch } } : m));
+
+/**
+ * The user pressed Stop: nothing still parked can be applied, and the turn's
+ * unattached timeline must stay in the transcript under a marker saying it
+ * was stopped — it used to vanish with the loading indicator.
+ */
+const stopTurnIn = (s: TurnSlice, marker: string): TurnSlice => {
+  const closed = { ...s, messages: closePendingReviewsIn(s.messages) };
+  return finalizeIn(closed, marker) ?? addMessageIn(closed, { content: marker, isUser: false });
+};
 
 interface ChatState {
   messages: Message[];
@@ -413,6 +438,7 @@ interface ChatState {
   bgFinalizeTurn: (sessionId: string, fallbackContent: string) => void;
   bgPatch: (sessionId: string, patch: Partial<Pick<LiveSession, 'isLoading' | 'isStreaming' | 'statusText'>>) => void;
   bgCloseAllPendingWriteReviews: (sessionId: string) => void;
+  bgSetWriteReviewDecision: (sessionId: string, reviewId: string, decision: NonNullable<WriteReview['decision']>) => void;
   clearMessages: () => void;
   setInputValue: (value: string) => void;
   setIsLoading: (isLoading: boolean) => void;
@@ -423,8 +449,11 @@ interface ChatState {
   setContextSelection: (selection: string) => void;
   setAssistantMode: (mode: 'chat' | 'work') => void;
   setStatusText: (text: string) => void;
-  setWriteReviewDecision: (reviewId: string, decision: 'approved' | 'rejected') => void;
+  setWriteReviewDecision: (reviewId: string, decision: NonNullable<WriteReview['decision']>) => void;
+  markWriteReviewApplying: (reviewId: string) => void;
   closeAllPendingWriteReviews: () => void;
+  /** Close the visible turn on Stop: see stopTurnIn. */
+  stopAgentTurn: (marker: string) => void;
   resetStore: () => void;
 }
 
@@ -625,6 +654,16 @@ export const useChatStore = create<ChatState>()(
           },
         };
       }),
+      bgSetWriteReviewDecision: (sessionId, reviewId, decision) => set((state) => {
+        const entry = state.liveSessions[sessionId];
+        if (!entry) return {};
+        return {
+          liveSessions: {
+            ...state.liveSessions,
+            [sessionId]: { ...entry, messages: patchReviewIn(entry.messages, reviewId, { decision }) },
+          },
+        };
+      }),
       clearMessages: () => set({ messages: [], agentSteps: [], pendingTurnSummary: null }),
       setInputValue: (inputValue) => set({ inputValue }),
       setIsLoading: (isLoading) => set({ isLoading }),
@@ -641,11 +680,15 @@ export const useChatStore = create<ChatState>()(
           m.writeReview?.id === reviewId ? { ...m, writeReview: { ...m.writeReview, decision } } : m
         ),
       })),
+      markWriteReviewApplying: (reviewId) => set((state) => ({
+        messages: patchReviewIn(state.messages, reviewId, { applying: true }),
+      })),
       // Stop/worker-death auto-rejects every parked gate host-side; mirror
       // that on any card still showing live buttons.
       closeAllPendingWriteReviews: () => set((state) => ({
         messages: closePendingReviewsIn(state.messages),
       })),
+      stopAgentTurn: (marker) => set((state) => stopTurnIn(state, marker)),
       resetStore: () => {
         const vscode = VSCodeAPI();
         vscode.setState({});

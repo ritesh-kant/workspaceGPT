@@ -290,7 +290,9 @@ console.log('\ncheckpointService (shadow git lifecycle)');
   // the file about to be written, see chatService.applyPreparedWrite).
   let cp1, cp2;
   await t('checkpoint captures initial state', async () => {
-    cp1 = await svc.checkpoint('before agent run', ['a.txt', 'b.txt']);
+    // agent-new.txt does not exist yet: the checkpoint records it as absent,
+    // which is what lets a revert delete it once the agent creates it.
+    cp1 = await svc.checkpoint('before agent run', ['a.txt', 'b.txt', 'agent-new.txt']);
     assert.match(cp1.sha, /^[0-9a-f]{40}$/);
   });
   await t('idempotent: no changes → same sha, no empty commit', async () => {
@@ -364,6 +366,110 @@ console.log('\ncheckpointService (shadow git lifecycle)');
     fs.writeFileSync(path.join(ws, 'c1.txt'), '1');
     const results = await Promise.all([svc.checkpoint('r1', ['c1.txt']), svc.checkpoint('r2', ['c1.txt']), svc.list()]);
     assert.ok(results[0].sha && results[1].sha);
+  });
+}
+
+// ═══ checkpointService — Undo never deletes a file the agent did not create ═══
+// QA 2026-09-26: a turn edited src/cart.js, then src/cart.test.js. Undo ran
+// `reset --hard` to the turn's first checkpoint, whose tree held only
+// src/cart.js, and git deleted src/cart.test.js and README.md (a later
+// session's file). Both existed before the agent touched them.
+console.log('\ncheckpointService (Undo restores what it recorded, deletes only agent-created files)');
+{
+  const original = {
+    'README.md': '# shop\n',
+    'src/cart.js': 'export const total = (xs) => xs.reduce((a, b) => a + b, 0);\n',
+    'src/cart.test.js': "test('total', () => {});\n",
+  };
+  const setup = () => {
+    const ws = tempWorkspace(original);
+    execFileSync('git', ['init', '--quiet'], { cwd: ws });
+    execFileSync('git', ['-C', ws, 'config', 'user.email', 'u@x'], {});
+    execFileSync('git', ['-C', ws, 'config', 'user.name', 'u'], {});
+    execFileSync('git', ['-C', ws, 'add', '-A'], {});
+    execFileSync('git', ['-C', ws, 'commit', '--quiet', '-m', 'user-initial'], {});
+    const gitDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-shadow-')), 'cp');
+    return { ws, gitDir, svc: new CheckpointService(gitDir, ws) };
+  };
+  const read = (ws, rel) => fs.readFileSync(path.join(ws, rel), 'utf8');
+  // Mirrors chatService.gatedWrite: checkpoint the one file about to change
+  // (allowEmpty for a create), apply the write, then track a created file.
+  const agentWrite = async (svc, ws, rel, content, kind = 'edit') => {
+    const cp = await svc.checkpoint(`${kind} ${rel}`, [rel], kind === 'create');
+    const abs = path.join(ws, rel);
+    if (kind === 'delete') fs.unlinkSync(abs);
+    else {
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content);
+    }
+    if (kind === 'create') await svc.checkpoint(`Track created file: ${rel}`, [rel]);
+    return cp.sha;
+  };
+
+  await t('two-file turn: Undo restores both files and deletes neither', async () => {
+    const { ws, svc } = setup();
+    const turnStart = await agentWrite(svc, ws, 'src/cart.js', 'agent cart\n');
+    await agentWrite(svc, ws, 'src/cart.test.js', 'agent test\n');
+    const result = await svc.revertTo(turnStart);
+    for (const [rel, content] of Object.entries(original)) assert.strictEqual(read(ws, rel), content, rel);
+    assert.deepStrictEqual(result.removed, []);
+    assert.deepStrictEqual(result.restored.sort(), ['src/cart.js', 'src/cart.test.js']);
+  });
+  await t("cross-session: a later session's file survives Undo of an earlier turn", async () => {
+    const { ws, svc } = setup();
+    const turnStart = await agentWrite(svc, ws, 'src/cart.js', 'agent cart\n');
+    await agentWrite(svc, ws, 'src/cart.test.js', 'agent test\n');
+    // Another chat on the same workspace shares this shadow repo.
+    await agentWrite(svc, ws, 'README.md', '# shop (session B)\n');
+    const result = await svc.revertTo(turnStart);
+    assert.ok(fs.existsSync(path.join(ws, 'README.md')), 'README.md survives');
+    // Its edit came after this message, so Undo returns it to its pre-agent content.
+    assert.strictEqual(read(ws, 'README.md'), original['README.md']);
+    assert.strictEqual(read(ws, 'src/cart.test.js'), original['src/cart.test.js']);
+    assert.deepStrictEqual(result.removed, []);
+  });
+  await t('Undo deletes a file only when the agent created it', async () => {
+    const { ws, svc } = setup();
+    const turnStart = await agentWrite(svc, ws, 'src/cart.js', 'agent cart\n');
+    await agentWrite(svc, ws, 'src/discount.js', 'export const SAVE20 = 0.2;\n', 'create');
+    await agentWrite(svc, ws, 'src/cart.test.js', '', 'delete');
+    const result = await svc.revertTo(turnStart);
+    assert.strictEqual(fs.existsSync(path.join(ws, 'src/discount.js')), false, 'agent-created file removed');
+    assert.strictEqual(read(ws, 'src/cart.test.js'), original['src/cart.test.js'], 'agent-deleted file restored');
+    assert.deepStrictEqual(result.removed, ['src/discount.js']);
+  });
+  await t("Undo of a later turn leaves an earlier turn's edits alone", async () => {
+    const { ws, svc } = setup();
+    await agentWrite(svc, ws, 'src/cart.js', 'turn 1 cart\n');
+    const turn2 = await agentWrite(svc, ws, 'src/cart.test.js', 'turn 2 test\n');
+    await svc.revertTo(turn2);
+    assert.strictEqual(read(ws, 'src/cart.js'), 'turn 1 cart\n');
+    assert.strictEqual(read(ws, 'src/cart.test.js'), original['src/cart.test.js']);
+  });
+  await t('a file HEAD merely carries is recorded afresh, so a re-edit after Undo still undoes', async () => {
+    const { ws, svc } = setup();
+    const turn1 = await agentWrite(svc, ws, 'src/cart.js', 'turn 1 cart\n');
+    await agentWrite(svc, ws, 'src/cart.test.js', 'turn 1 test\n');
+    await svc.revertTo(turn1);
+    // src/cart.js is back to what HEAD's tree carries, but HEAD recorded only the test file.
+    const turn2 = await agentWrite(svc, ws, 'src/cart.js', 'turn 2 cart\n');
+    await svc.revertTo(turn2);
+    assert.strictEqual(read(ws, 'src/cart.js'), original['src/cart.js']);
+  });
+  await t('legacy history (no recorded-files trailer) never deletes a pre-existing file', async () => {
+    // Shadow history as older builds wrote it: one plain commit per file.
+    const { ws, gitDir, svc } = setup();
+    await svc.list(); // initializes the shadow repo
+    const g = (...args) => execFileSync('git', [`--git-dir=${gitDir}`, `--work-tree=${ws}`, ...args]).toString();
+    let first;
+    for (const rel of ['src/cart.js', 'src/cart.test.js', 'README.md']) {
+      g('add', '-A', '--', rel);
+      g('commit', '--quiet', '--no-verify', '-m', `edit ${rel}`);
+      first ??= g('rev-parse', 'HEAD').trim();
+      fs.writeFileSync(path.join(ws, rel), 'agent\n');
+    }
+    await svc.revertTo(first);
+    for (const [rel, content] of Object.entries(original)) assert.strictEqual(read(ws, rel), content, rel);
   });
 }
 
@@ -1714,7 +1820,7 @@ This is a one-line behavioral fix in three files; I did not apply it because all
 {
   const { planVerification } = await import(path.join(outDir, 'verifyTools.mjs'));
   const { computeHunks } = await import(path.join(outDir, 'agentHunkLens.mjs'));
-  const { pullRequestUrl, pullRequestUrlTemplate, slugify, reportToHtml, turnCommitType } = await import(path.join(outDir, 'shipHelpers.mjs'));
+  const { pullRequestUrl, pullRequestUrlTemplate, slugify, reportToHtml, turnCommitType, deriveShipTitle, cutAtWord } = await import(path.join(outDir, 'shipHelpers.mjs'));
   const fs = await import('fs');
   const os = await import('os');
 
@@ -1753,11 +1859,31 @@ This is a one-line behavioral fix in three files; I did not apply it because all
   await t('turnCommitType: other verbs and the path fallback', () => {
     const base = { report: '## Done', files: ['src/a.ts'] };
     assert.equal(turnCommitType({ ...base, title: 'Refactor the mapper' }), 'refactor');
-    assert.equal(turnCommitType({ ...base, title: 'Update README' }), 'docs');
-    assert.equal(turnCommitType({ ...base, title: 'Cover the mapper with tests' }), 'test');
+    assert.equal(turnCommitType({ ...base, title: 'Update README', files: ['README.md'] }), 'docs');
+    assert.equal(turnCommitType({ ...base, title: 'Cover the mapper with tests', files: ['src/a.test.ts'] }), 'test');
     assert.equal(turnCommitType({ ...base, title: 'Tweak the mapper' }), 'chore');
     assert.equal(turnCommitType({ ...base, title: 'Tweak the mapper', hasNewFiles: true }), 'feat');
     assert.equal(turnCommitType({ title: 'Tweak', report: '', files: ['docs/guide.md'] }), 'docs');
+  });
+  await t('ship naming: a "Done —" feature report branches as feat/, with a clean subject and slug', () => {
+    // Live QA 2026-09-26: shipped as fix/done-applydiscount-now-supports-save20-2 with the
+    // subject "Done — `applyDiscount` now supports SAVE20 (20% off), with a passing tes".
+    const report = '## ✅ Done — `applyDiscount` now supports SAVE20 (20% off), with a passing test\n\n### Root cause\nNot established — feature addition, no defect investigated.\n\n### Changes\n- x';
+    const title = deriveShipTitle(undefined, report);
+    assert.equal(title, 'applyDiscount now supports SAVE20 (20% off), with a passing test');
+    assert.equal(turnCommitType({ title, report, files: ['src/cart.js', 'src/cart.test.js'] }), 'feat');
+    assert.equal(slugify(title), 'applydiscount-now-supports-save20-20-off');
+    // A filled Root cause slot is still a fix; so is a ticket title, taken verbatim.
+    assert.equal(turnCommitType({ title: 'Stale entry', report: '### Root cause\n**Not** cleared on reupload.', files: ['a.ts'] }), 'fix');
+    assert.equal(deriveShipTitle('Done — keep `this` verbatim', report), 'Done — keep `this` verbatim');
+    assert.equal(deriveShipTitle(undefined, '## ⚠️ Partially done — see [the doc](https://x.y) · step limit'), 'see the doc · step limit');
+  });
+  await t('cutAtWord: cuts at the last separator, never mid-word', () => {
+    assert.equal(cutAtWord('short', 72), 'short');
+    assert.equal(cutAtWord('alpha beta gamma', 12), 'alpha beta');
+    assert.equal(cutAtWord('alpha beta, gamma', 11), 'alpha beta');
+    assert.equal(cutAtWord('abcdefghij', 4), 'abcd');
+    assert.equal(cutAtWord('ab-cd-ef', 5, '-'), 'ab-cd');
   });
   await t('run_checks: jest package runs the sibling test file from the package dir', () => {
     const plan = planVerification(roots, { path: 'apps/web/src/features/step/useStep.ts', kind: 'test' });

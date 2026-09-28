@@ -10,7 +10,9 @@ import {
   MODEL_PROVIDERS,
   STORAGE_KEYS,
   ChatAttachment,
+  COPILOT_PROVIDER,
 } from '../../constants';
+import { getCopilotContextWindow } from './copilotBridge';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
 import { JiraEmbeddingService } from './jira/jiraEmbeddingService';
 import { AnalyticsService } from './analyticsService';
@@ -62,7 +64,7 @@ import { recordOriginalContent } from './agent/agentDiffProvider';
 import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs } from './agent/verifyTools';
 import { shipChanges, ShipInput } from './agent/shipService';
 import { deriveShipTitle } from './agent/shipHelpers';
-import { CheckpointService, checkpointServiceFor } from './agent/checkpointService';
+import { CheckpointService, RevertResult, checkpointServiceFor } from './agent/checkpointService';
 import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
 import { TicketDetail } from './ado/adoWorkItemService';
 import { getActiveTicketProvider } from './tickets/registry';
@@ -743,6 +745,15 @@ export class ChatService {
     // the only honest place to count what this turn actually surfaced.
     if (payload.type === MESSAGE_TYPES.AGENT_STEP) run.turnStepsPosted++;
     this.webviewView.webview.postMessage({ ...payload, sessionId: run.sessionId });
+  }
+
+  /**
+   * Reports what became of a reviewed write. Bypasses `post`'s cancelled
+   * check on purpose: a write approved just before Stop still lands, and the
+   * card must say so rather than stay "Applying…" or claim it was stopped.
+   */
+  private postWriteOutcome(run: SessionRun, id: string, outcome: 'applied' | 'failed'): void {
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_WRITE_OUTCOME, id, outcome, sessionId: run.sessionId });
   }
 
   /** Local-only: Worker already 401'd this session. Keep the Account card in sync. */
@@ -1917,6 +1928,7 @@ export class ChatService {
       } else {
         decisionKind = 'approved';
       }
+      this.postWriteOutcome(run, id, 'applied');
     }
 
     this.postStatus(run, `Running: ${command}`);
@@ -1968,6 +1980,7 @@ export class ChatService {
     }
     try {
       const applied = await write.apply();
+      this.postWriteOutcome(run, id, 'applied');
       await this.audit(write.kind, `${write.summary} → ${applied.url}`, 'approved', 'applied');
       const diff = buildReviewDiff(write.before, write.after);
       return {
@@ -1980,6 +1993,7 @@ export class ChatService {
             : 'Saved as a new page version — the previous one stays in the page history. Give the user the link.',
       };
     } catch (e) {
+      this.postWriteOutcome(run, id, 'failed');
       await this.audit(write.kind, write.summary, 'approved', 'failed', e instanceof Error ? e.message : String(e));
       throw e;
     }
@@ -2083,8 +2097,10 @@ export class ChatService {
     // (revertible per turn), recorded in the files-changed bar with a Review
     // diff, and audited with decision 'auto'.
     const decisionKind: 'auto' | 'approved' = run.autonomous ? 'auto' : 'approved';
+    let reviewId: string | null = null;
     if (!run.autonomous) {
       const { id, decision } = run.writeGate.await(write);
+      reviewId = id;
       this.post(run, {
         type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
         id,
@@ -2127,13 +2143,15 @@ export class ChatService {
     recordOriginalContent(write.uri.fsPath, write.before);
     try {
       await applyWrite(write);
+      if (reviewId) this.postWriteOutcome(run, reviewId, 'applied');
     } catch (e) {
+      if (reviewId) this.postWriteOutcome(run, reviewId, 'failed');
       await this.audit(write.kind, write.summary, decisionKind, 'failed', e instanceof Error ? e.message : String(e));
       throw e;
     }
-    // A create's pre-write checkpoint is intentionally empty: the target did
-    // not exist yet. Commit the newly created file afterwards so resetting to
-    // that pre-write checkpoint removes it again.
+    // A create's pre-write checkpoint records the target as absent, which is
+    // what lets Undo remove it again. Commit the newly created file afterwards
+    // so the checkpoint history also holds what the agent wrote.
     if (write.kind === 'create') {
       try {
         const root = roots.find((candidate) =>
@@ -2214,7 +2232,8 @@ export class ChatService {
       const result = await shipChanges(this.context, roots, shipInput, (text) => (run ? this.postStatus(run, text) : undefined));
       if (run) this.postStatus(run, '');
       const summary =
-        `Branch ${result.branch} pushed` +
+        (result.pushed ? `Branch ${result.branch} pushed` : `Committed locally on ${result.branch} (not pushed)`) +
+        ` — your working copy is now on ${result.branch} (was ${result.baseBranch})` +
         (result.prUrl ? ' — pull-request page opened' : '') +
         (result.ticketCommented ? ` — report posted on #${shipInput.ticketId}` : '');
       if (run) {
@@ -2224,7 +2243,7 @@ export class ChatService {
         }
         run.lastShip = null;
       }
-      reply({ ok: true, branch: result.branch, prUrl: result.prUrl, ticketCommented: result.ticketCommented, warnings: result.warnings });
+      reply({ ok: true, branch: result.branch, baseBranch: result.baseBranch, pushed: result.pushed, prUrl: result.prUrl, ticketCommented: result.ticketCommented, warnings: result.warnings });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (run) {
@@ -2249,13 +2268,13 @@ export class ChatService {
     return service;
   }
 
-  /** Per-message "Undo changes up to this point" — hard-resets to a turn's first checkpoint. */
-  public async revertToCheckpoint(sha: string): Promise<void> {
+  /** Per-message "Undo changes up to this point" — undoes everything checkpointed since a turn's first checkpoint. */
+  public async revertToCheckpoint(sha: string): Promise<RevertResult> {
     const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
     if (!roots.length) throw new Error('No workspace folder is open.');
     const rootPath = this.checkpointRootsBySha.get(sha);
     const root = roots.find((candidate) => candidate.uri.fsPath === rootPath) ?? roots[0];
-    await this.checkpointsFor(root).revertTo(sha);
+    return this.checkpointsFor(root).revertTo(sha);
   }
 
   /** Webview AGENT_WRITE_DECISION handler — resolves the parked write gate. */
@@ -2264,6 +2283,10 @@ export class ChatService {
     for (const run of this.runs.values()) {
       if (run.writeGate.resolve(id, approved, feedback, scope)) return;
     }
+    // No parked gate: its run was stopped (or died) before the click, so
+    // nothing will be applied. Say so, instead of letting the card claim it.
+    // Unstamped: the click came from the chat on screen.
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_WRITE_OUTCOME, id, outcome: 'stopped' });
   }
 
   /**
@@ -2339,8 +2362,12 @@ export class ChatService {
           title: (args?.description ?? '').trim() || 'Ran',
           detail: args?.command ?? '',
         };
-      case 'run_checks':
-        return { kind: 'command', title: `Ran ${args?.kind ?? 'test'}s for`, detail: String(args?.path ?? '').split('/').pop() ?? '' };
+      case 'run_checks': {
+        // The file goes in the title: command rows hide `detail` behind the
+        // output toggle, which left the row reading "Ran tests for".
+        const file = String(args?.path ?? '').split('/').pop();
+        return { kind: 'command', title: `Ran ${args?.kind ?? 'test'}s${file ? ` for ${file}` : ''}` };
+      }
       case 'browser_list_tabs':
         return { kind: 'read', title: 'Listed browser tabs' };
       case 'browser_read_page':
@@ -2818,6 +2845,10 @@ Query: "${query}"`;
           apiKey: apiKeys[0],
           apiKeys: apiKeys,
           baseUrl,
+          // Copilot caps each model's input below its native window, and says
+          // by how much — the one provider that reports it, so use it.
+          contextWindowOverride:
+            provider === COPILOT_PROVIDER ? await getCopilotContextWindow(modelId ?? this.currentModel) : undefined,
           currentUserName: currentUserName || undefined,
           currentSprint: currentSprint || undefined,
           codebaseTools: codebaseRoots ? { enabled: true } : undefined,
@@ -3112,7 +3143,10 @@ Query: "${query}"`;
                 // A tool the model just decided to call — surfaced as a
                 // transient status label, and also as a persistent structured
                 // step so the exploration remains visible in the transcript.
-                this.postStatus(run, this.describeToolCall(result.name!, result.arguments));
+                // Autonomous runs park no review — writes auto-apply, commands
+                // auto-run or are refused — so drop the "awaiting" claim.
+                const toolStatus = this.describeToolCall(result.name!, result.arguments);
+                this.postStatus(run, run.autonomous ? toolStatus.replace(' (awaiting your review)', '') : toolStatus);
                 this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,
                   id: result.id,

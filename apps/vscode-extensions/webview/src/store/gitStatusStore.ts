@@ -24,7 +24,7 @@ export type ShipScope = 'turn' | 'tree';
 export type ShipState =
   | { phase: 'idle' }
   | { phase: 'running'; requestId: string; scope: ShipScope }
-  | { phase: 'done'; scope: ShipScope; branch: string; prUrl?: string; warnings: string[]; ticketCommented?: boolean; ticketId?: string }
+  | { phase: 'done'; scope: ShipScope; branch: string; baseBranch?: string; pushed: boolean; prUrl?: string; warnings: string[]; ticketCommented?: boolean; ticketId?: string }
   | { phase: 'error'; scope: ShipScope; error: string };
 
 /** What the composer's Create PR ships when the latest turn is shippable. */

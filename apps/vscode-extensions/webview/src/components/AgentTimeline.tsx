@@ -197,7 +197,7 @@ const StepRow: React.FC<{ step: AgentStep; live?: boolean }> = ({ step, live }) 
           <span className='agent-step-title' title={step.detail}>
             {step.title}
           </span>
-          {!labelled && <code className='agent-step-command'>{step.detail}</code>}
+          {!labelled && step.detail && <code className='agent-step-command'>{step.detail}</code>}
           {step.summary && <span className='agent-step-summary'>{step.summary}</span>}
           {expanded && (
             <button

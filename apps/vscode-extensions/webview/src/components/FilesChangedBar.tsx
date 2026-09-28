@@ -65,7 +65,16 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
       </div>
       {shipped && (
         <div className='files-changed-ship-result'>
-          <span className='stat-added'>✓</span> Pushed <code>{shipped.branch}</code>
+          {/* `pushed` absent = shipped before it was recorded; those keep their old wording. */}
+          {shipped.pushed === false ? (
+            <>
+              Committed locally on <code>{shipped.branch}</code> (not pushed)
+            </>
+          ) : (
+            <>
+              <span className='stat-added'>✓</span> Pushed <code>{shipped.branch}</code>
+            </>
+          )}
           {shipped.prUrl && (
             <>
               {' · '}
@@ -75,6 +84,11 @@ const FilesChangedBar: React.FC<FilesChangedBarProps> = ({ summary }) => {
             </>
           )}
           {shipped.ticketCommented && summary.ticketId ? ` · report posted on #${summary.ticketId}` : ''}
+          {shipped.baseBranch && (
+            <>
+              {' · '}you're now on it (was <code>{shipped.baseBranch}</code>)
+            </>
+          )}
         </div>
       )}
       {expanded && (

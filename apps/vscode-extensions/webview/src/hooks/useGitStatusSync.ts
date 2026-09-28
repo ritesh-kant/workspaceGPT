@@ -47,6 +47,8 @@ export function useGitStatusSync(enabled: boolean): void {
                   phase: 'done',
                   scope,
                   branch: m.branch,
+                  baseBranch: m.baseBranch,
+                  pushed: !!m.pushed,
                   prUrl: m.prUrl,
                   warnings: m.warnings ?? [],
                   ticketCommented: !!m.ticketCommented,
@@ -56,6 +58,9 @@ export function useGitStatusSync(enabled: boolean): void {
         );
         // The tree is (likely) clean now — refresh so the diff stats catch up.
         setTimeout(requestStatus, 300);
+      } else if (m?.type === MESSAGE_TYPES.AGENT_REVERT_DONE) {
+        // An Undo rewrote files — don't show the pre-undo stats until the next poll.
+        requestStatus();
       }
     };
 

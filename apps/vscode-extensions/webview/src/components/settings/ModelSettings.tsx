@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useEffect, useCallback } from 'react';
 import { useModelActions, useSelectedModelProvider } from '../../store';
-import { MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
+import { COPILOT_PROVIDER, MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
+import { isDesktopHost } from '../../vscode';
 import { changeProviderHandler, fetchAvailableModels } from './utils';
 import SearchableDropdown from './SearchableDropdown';
 import SectionShell from './SectionShell';
@@ -192,10 +193,25 @@ const ModelSettings: React.FC = () => {
                 value={provider.MODEL_PROVIDER}
               >
                 {provider.MODEL_PROVIDER}
+                {provider.MODEL_PROVIDER === COPILOT_PROVIDER && isDesktopHost() ? ' (unofficial)' : ''}
               </option>
             ))}
           </select>
         </div>
+
+        {selectedModelProvider.provider === COPILOT_PROVIDER && !isDesktopHost() && (
+          <small className='form-text'>
+            Uses the GitHub Copilot plan you're signed in to in VS Code. VS Code asks once to allow
+            WorkspaceGPT; requests count toward your Copilot usage.
+          </small>
+        )}
+        {selectedModelProvider.provider === COPILOT_PROVIDER && isDesktopHost() && (
+          <small className='form-text'>
+            Unofficial: GitHub doesn't offer Copilot to desktop apps, so WorkspaceGPT signs in the way
+            LiteLLM does. It can break at any time, heavy use can get your Copilot access suspended, and
+            your organization's Copilot policy may not allow it. Requests count toward your Copilot plan.
+          </small>
+        )}
 
         {isCustomProvider && (
           <div className='form-group'>

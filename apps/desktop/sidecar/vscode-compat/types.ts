@@ -5,7 +5,7 @@
  * the host.
  */
 import * as path from 'node:path';
-import { notSupportedClass } from './notSupported';
+import { notSupported, notSupportedClass } from './notSupported';
 
 // ── Disposable / events ─────────────────────────────────────────────────────
 
@@ -400,3 +400,25 @@ export const McpStdioServerDefinition = notSupportedClass(
   'vscode.McpStdioServerDefinition',
   'MCP server registration with the editor is a VS Code feature'
 );
+
+// Language Model API values, used only by the GitHub Copilot bridge
+// (src/services/copilotBridge.ts). `vscode.lm` is undefined here, so on the
+// desktop the bridge forwards to Copilot directly (copilotDirect.ts) and never
+// reaches these.
+const LM_REASON = "GitHub Copilot models come from VS Code's Language Model API";
+export const LanguageModelTextPart = notSupportedClass('vscode.LanguageModelTextPart', LM_REASON);
+export const LanguageModelToolCallPart = notSupportedClass('vscode.LanguageModelToolCallPart', LM_REASON);
+export const LanguageModelToolResultPart = notSupportedClass('vscode.LanguageModelToolResultPart', LM_REASON);
+export const LanguageModelChatMessage = Object.assign(notSupportedClass('vscode.LanguageModelChatMessage', LM_REASON), {
+  User: notSupported('vscode.LanguageModelChatMessage.User', LM_REASON),
+  Assistant: notSupported('vscode.LanguageModelChatMessage.Assistant', LM_REASON),
+});
+export const LanguageModelError = Object.assign(notSupportedClass('vscode.LanguageModelError', LM_REASON), {
+  NoPermissions: notSupported('vscode.LanguageModelError.NoPermissions', LM_REASON),
+  NotFound: notSupported('vscode.LanguageModelError.NotFound', LM_REASON),
+  Blocked: notSupported('vscode.LanguageModelError.Blocked', LM_REASON),
+});
+export enum LanguageModelChatToolMode {
+  Auto = 1,
+  Required = 2,
+}

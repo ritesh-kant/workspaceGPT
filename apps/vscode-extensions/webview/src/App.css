@@ -2334,6 +2334,9 @@ button:disabled {
 .agent-write-decision { padding: 6px 10px; font-weight: 600; font-size: 11px; }
 .agent-write-decision.approved { color: var(--vscode-charts-green, #3fb950); }
 .agent-write-decision.rejected { color: var(--vscode-charts-red, #f85149); }
+.agent-write-decision.failed { color: var(--vscode-charts-red, #f85149); }
+.agent-write-decision.stopped,
+.agent-write-decision.applying { color: var(--vscode-descriptionForeground); }
 .agent-write-kind.kind-command { background: rgba(200, 140, 255, 0.18); color: var(--vscode-charts-purple, #b180d7); }
 .agent-command-text { font-weight: 600; }
 

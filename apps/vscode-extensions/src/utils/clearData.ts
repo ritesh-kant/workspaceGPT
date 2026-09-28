@@ -28,6 +28,7 @@ const SECRET_KEYS = [
   STORAGE_KEYS.VERCEL_OAUTH_TOKENS,
   STORAGE_KEYS.GITHUB_MACH_PAT,
   STORAGE_KEYS.REMOTE_SESSION_TOKEN,
+  STORAGE_KEYS.COPILOT_GITHUB_TOKEN,
 ];
 
 export async function clearWorkspaceGPTData(context: vscode.ExtensionContext): Promise<void> {

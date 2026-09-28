@@ -13,6 +13,7 @@ import { syncContextKeys } from './utils/syncContextKeys';
 import { recordRecentFolder } from './services/agent/workspaceControls';
 import { migrateModeSettings } from './utils/migrateModeSettings';
 import { UpdateChecker } from './utils/updateChecker';
+import { startCopilotBridgeIfSelected } from './services/copilotBridge';
 import { RemoteSignInService, describeRemoteAuthError, webviewFieldsFromProfile } from './services/remote/remoteSignInService';
 
 let analyticsService: AnalyticsService;
@@ -62,6 +63,9 @@ export async function activate(context: vscode.ExtensionContext) {
     // icons (Releases, Share to Chrome) hide themselves declaratively.
     syncContextKeys(context),
   ]);
+
+  // GitHub Copilot users: bring the loopback bridge up before the first chat.
+  startCopilotBridgeIfSelected(context);
 
   // Search workers are warmed by the chat webview itself (WebviewMessageHandler → ChatService.prewarm),
   // so the warmup lands on the exact service instances the chat queries.

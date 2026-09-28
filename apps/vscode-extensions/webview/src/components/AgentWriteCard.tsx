@@ -8,7 +8,7 @@ import { WriteReview } from '../store/chatStore';
  * Reject. The agent's tool loop is BLOCKED on this decision host-side, so the
  * card is the safety mechanism — the diff must be honest and the buttons
  * unambiguous. Once decided, buttons collapse into a badge (the gate is
- * single-shot; a stale card after reload no-ops harmlessly).
+ * single-shot; the host answers a click on a dead gate with 'stopped').
  */
 
 interface AgentWriteCardProps {
@@ -23,6 +23,13 @@ const KIND_LABEL: Record<WriteReview['kind'], string> = {
   command: 'Command',
   'confluence-edit': 'Confluence edit',
   'confluence-create': 'New Confluence page',
+};
+
+const DECISION_LABEL: Record<NonNullable<WriteReview['decision']>, string> = {
+  approved: '✓ Applied',
+  rejected: '✕ Rejected',
+  failed: '✕ Failed to apply',
+  stopped: 'Not applied — run stopped',
 };
 
 /** Shared with the pinned review bar in App.tsx. */
@@ -120,8 +127,11 @@ const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) =>
 
       {review.decision ? (
         <div className={`agent-write-decision ${review.decision}`}>
-          {review.decision === 'approved' ? '✓ Applied' : '✕ Rejected'}
+          {DECISION_LABEL[review.decision]}
         </div>
+      ) : review.applying ? (
+        // Approved, but "Applied" waits for the host to confirm the write.
+        <div className='agent-write-decision applying'>Applying…</div>
       ) : rejecting ? (
         <div className='agent-write-actions' data-review-actions={review.id}>
           <input

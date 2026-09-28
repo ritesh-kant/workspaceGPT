@@ -11,9 +11,24 @@ export function deriveShipTitle(ticketTitle: string | undefined, report: string)
       .split('\n')
       .find((l) => /^##\s/.test(l))
       ?.replace(/^##\s*/, '')
-      .replace(/^[^\w`]+/, '') ||
+      .replace(/^[^\w`]+/, '')
+      // The FINAL REPORT FORMAT's status label ("Done — <what now works>") is
+      // the outcome of the run, not the change; the title is what follows it.
+      .replace(/^(done|partially done|blocked|no change needed)\s*[—–:-]+\s*/i, '')
+      // A commit subject is plain text: keep link text, drop code/emphasis marks.
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/[`*]/g, '')
+      .trim() ||
     'Agent changes'
   );
+}
+
+/** `text` cut to at most `max` characters at the last `sep`, not mid-word; a single over-long word is cut hard. */
+export function cutAtWord(text: string, max: number, sep = ' '): string {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max + 1);
+  const at = head.lastIndexOf(sep);
+  return (at > 0 ? head.slice(0, at) : text.slice(0, max)).replace(/[\s,;:—–-]+$/, '');
 }
 
 /** ADO work item type (e.g. "Bug", "User Story", "Feature", "Task") → Conventional Commits branch type. */
@@ -64,12 +79,17 @@ export function turnCommitType(input: {
   if (input.ticketType && fromTicket !== 'chore') return fromTicket;
   const title = input.title.toLowerCase();
   if (/\b(fix(es|ed|ing)?|bug(s|fix)?|defect|crash(es|ing)?|regression|broken|hotfix|patch)\b/.test(title)) return 'fix';
-  if (/^#{2,4}\s+root cause\b/im.test(input.report)) return 'fix';
+  // "Not established — …" is the format's own way of leaving the slot empty
+  // (a feature run that wrote the heading anyway), so it is no evidence of a fix.
+  if (/^#{2,4}\s+root cause\b.*\n+\s*(?![*_]*not established\b|#)\S/im.test(input.report)) return 'fix';
   if (/\b(refactor(s|ed|ing)?|rename[sd]?|clean ?up|extract(s|ed)?|simplif(y|ies|ied))\b/.test(title)) return 'refactor';
-  if (/\b(docs?|readme|documentation)\b/.test(title)) return 'docs';
-  if (/\b(tests?|spec|coverage)\b/.test(title)) return 'test';
-  if (/\b(add(s|ed)?|implement(s|ed)?|introduce[sd]?|support|feature|new|enable[sd]?)\b/.test(title)) return 'feat';
-  return inferConventionalType(input.files, !!input.hasNewFiles);
+  // docs:/test: mean ONLY docs or tests changed — a title that mentions them
+  // ("…, with a passing test") does not make a source change one.
+  const byPaths = inferConventionalType(input.files, !!input.hasNewFiles);
+  if (/\b(docs?|readme|documentation)\b/.test(title) && byPaths === 'docs') return 'docs';
+  if (/\b(tests?|spec|coverage)\b/.test(title) && byPaths === 'test') return 'test';
+  if (/\b(add(s|ed)?|implement(s|ed)?|introduce[sd]?|support(s|ed)?|feature|new|enable[sd]?)\b/.test(title)) return 'feat';
+  return byPaths;
 }
 
 /**
@@ -111,12 +131,12 @@ export function parsePorcelain(porcelain: string): { paths: string[]; hasNewFile
 }
 
 export function slugify(text: string, max = 40): string {
-  return text
+  const slug = text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, max)
-    .replace(/-+$/g, '') || 'agent-change';
+    .replace(/^-+|-+$/g, '');
+  // At a word boundary: "…-save20-20-off" is not cut to "…-save20-2".
+  return cutAtWord(slug, max, '-') || 'agent-change';
 }
 
 /** `git@host:org/repo.git`, `https://host/org/repo`, `ssh://git@host/org/repo` → [host, repoPath]. */

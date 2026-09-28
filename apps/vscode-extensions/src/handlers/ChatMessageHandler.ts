@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
-import { MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
+import { COPILOT_PROVIDER, MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { ChatService } from '../services/chatService';
+import { ensureCopilotBridge, listCopilotModels } from '../services/copilotBridge';
+import { ensureDirectCopilotReady, usesDirectCopilot } from '../services/copilotDirect';
 import { HistoryService } from '../services/historyService';
 import { AnalyticsService } from '../services/analyticsService';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
@@ -349,13 +351,13 @@ export class ChatMessageHandler {
         reply({ ok: false, cancelled: true });
         return;
       }
-      reply({ ok: true, branch: result.branch, prUrl: result.prUrl, warnings: result.warnings });
+      reply({ ok: true, branch: result.branch, baseBranch: result.baseBranch, pushed: result.pushed, prUrl: result.prUrl, warnings: result.warnings });
     } catch (error) {
       reply({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
 
-  /** Webview AGENT_REVERT_CHECKPOINT handler — confirm, then hard-reset to that turn's snapshot. */
+  /** Webview AGENT_REVERT_CHECKPOINT handler — confirm, then undo everything checkpointed since that turn began. */
   private async handleRevertCheckpoint(sha: string): Promise<void> {
     if (!sha) return;
     try {
@@ -368,8 +370,14 @@ export class ChatMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
-      await this.chatService.revertToCheckpoint(sha);
-      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_REVERT_DONE, sha, ok: true });
+      const { restored, removed } = await this.chatService.revertToCheckpoint(sha);
+      this.webviewView.webview.postMessage({
+        type: MESSAGE_TYPES.AGENT_REVERT_DONE,
+        sha,
+        ok: true,
+        restored: restored.length,
+        removed: removed.length,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       vscode.window.showErrorMessage(`WorkspaceGPT: could not undo — ${errorMessage}`);
@@ -403,6 +411,27 @@ export class ChatMessageHandler {
   }
 
   private async handleFetchAvailableModels(data: any) {
+    if (data.provider === COPILOT_PROVIDER) {
+      // Selecting Copilot is what starts its loopback bridge; the bridge's URL
+      // and token then stand in for the provider's (see copilotBridge.ts).
+      const bridge = await ensureCopilotBridge().catch(() => undefined);
+      // Desktop: no vscode.lm, so picking Copilot opens the (unofficial,
+      // opt-in) GitHub sign-in — see copilotDirect.ts.
+      const directError = bridge && usesDirectCopilot() ? await ensureDirectCopilotReady() : undefined;
+      // No models: not signed in to Copilot, or a window without it (the
+      // Extension Development Host doesn't load the built-in Copilot).
+      if (!bridge || directError || (!usesDirectCopilot() && !(await listCopilotModels().catch(() => [])).length)) {
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.FETCH_AVAILABLE_MODELS_ERROR,
+          provider: data.provider,
+          models: [],
+          message:
+            directError ?? 'No GitHub Copilot models found. Sign in to GitHub Copilot in VS Code, then reopen Settings.',
+        });
+        return;
+      }
+      data = { ...data, baseUrl: bridge.baseUrl, apiKey: bridge.token };
+    }
     const baseURL =
       data.baseUrl || MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === data.provider)?.BASE_URL;
     const apiKey = data.apiKey;

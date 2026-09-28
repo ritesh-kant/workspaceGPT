@@ -209,8 +209,12 @@ const TURN_SCOPED_TYPES = new Set<string>([
   MESSAGE_TYPES.AGENT_TURN_SUMMARY,
   MESSAGE_TYPES.AGENT_WRITE_REVIEW,
   MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED,
+  MESSAGE_TYPES.AGENT_WRITE_OUTCOME,
   MESSAGE_TYPES.ERROR_CHAT,
 ]);
+
+/** Map a host AGENT_WRITE_OUTCOME onto the card's badge. */
+const OUTCOME_DECISION = { applied: 'approved', failed: 'failed', stopped: 'stopped' } as const;
 
 /**
  * Starter prompts double as positioning: the first two show the thing no other
@@ -329,7 +333,9 @@ const App: React.FC = () => {
     statusText,
     setStatusText,
     setWriteReviewDecision,
+    markWriteReviewApplying,
     closeAllPendingWriteReviews,
+    stopAgentTurn,
     agentSteps,
     addAgentStep,
     updateAgentStep,
@@ -560,6 +566,10 @@ const App: React.FC = () => {
   // Sha currently being reverted to — disables the triggering message's undo
   // button until the host confirms (AGENT_REVERT_DONE).
   const [revertingSha, setRevertingSha] = useState<string | null>(null);
+  // Outcome of the last Undo, shown above the composer for a few seconds.
+  // Not statusText: that only renders while a run is loading.
+  const [undoNotice, setUndoNotice] = useState<string | null>(null);
+  const undoNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // ── Stick-to-bottom ──────────────────────────────────────────────────────
@@ -880,6 +890,12 @@ const App: React.FC = () => {
           store.bgCloseAllPendingWriteReviews(sessionId);
           store.bgPatch(sessionId, { statusText: '' });
           break;
+        case MESSAGE_TYPES.AGENT_WRITE_OUTCOME: {
+          const decision = OUTCOME_DECISION[message.outcome as keyof typeof OUTCOME_DECISION];
+          if (message.id && decision) store.bgSetWriteReviewDecision(sessionId, message.id, decision);
+          saveBg();
+          break;
+        }
         case MESSAGE_TYPES.ERROR_CHAT:
           store.bgAddMessage(sessionId, {
             content: formatChatError(message.message || 'An unknown error occurred.'),
@@ -903,6 +919,8 @@ const App: React.FC = () => {
           branch: message.branch,
           prUrl: message.prUrl,
           ticketCommented: !!message.ticketCommented,
+          pushed: !!message.pushed,
+          baseBranch: message.baseBranch,
         });
       }
 
@@ -930,7 +948,12 @@ const App: React.FC = () => {
       // to the visible chat, matching the previous behavior.
       if (TURN_SCOPED_TYPES.has(message.type)) {
         const sid: string | null = message.sessionId ?? currentSessionIdRef.current;
-        if (sid && stoppedSessionsRef.current.has(sid)) return;
+        // A stopped session still takes the host's word on its review cards:
+        // closing them is what Stop means, and a write approved just before
+        // Stop may still land.
+        const reviewClosing =
+          message.type === MESSAGE_TYPES.AGENT_WRITE_OUTCOME || message.type === MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED;
+        if (sid && stoppedSessionsRef.current.has(sid) && !reviewClosing) return;
         if (sid && sid !== currentSessionIdRef.current) {
           applyBackgroundTurnMessage(sid, message);
           return;
@@ -1025,19 +1048,35 @@ const App: React.FC = () => {
             shippable: !!message.shippable,
           });
           break;
-        case MESSAGE_TYPES.AGENT_REVERT_DONE:
+        case MESSAGE_TYPES.AGENT_REVERT_DONE: {
           setRevertingSha(null);
-          if (message.ok) {
-            setStatusText('Undone.');
-            setTimeout(() => setStatusText(''), 2000);
-          }
+          const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
+          const restored = message.restored ?? 0;
+          const removed = message.removed ?? 0;
+          setUndoNotice(
+            !message.ok
+              ? `Undo failed: ${message.error || 'unknown error'}`
+              : restored || removed
+                ? `Undone: restored ${files(restored)}` +
+                  (removed ? `, removed ${files(removed)} the agent created.` : '.')
+                : 'Nothing to undo: no checkpointed changes since this message.'
+          );
+          if (undoNoticeTimerRef.current) clearTimeout(undoNoticeTimerRef.current);
+          undoNoticeTimerRef.current = setTimeout(() => setUndoNotice(null), 5000);
           break;
+        }
         case MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED:
           // Host auto-rejected every parked review (user hit Stop / run died).
           // Mark the cards so their buttons don't dangle as live-looking no-ops.
           closeAllPendingWriteReviews();
           setStatusText('');
           break;
+        case MESSAGE_TYPES.AGENT_WRITE_OUTCOME: {
+          // The only way a card reaches "Applied": the host confirming the write.
+          const decision = OUTCOME_DECISION[message.outcome as keyof typeof OUTCOME_DECISION];
+          if (message.id && decision) setWriteReviewDecision(message.id, decision);
+          break;
+        }
         case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
           // A proposed agent write — render the diff card. The agent run is
           // still alive host-side, parked on this decision, so keep isLoading.
@@ -1348,7 +1387,7 @@ const App: React.FC = () => {
     if (!isLoading && !isStreaming) return null;
     for (let i = messages.length - 1; i >= 0; i--) {
       const review = messages[i].writeReview;
-      if (review && !review.decision) return review;
+      if (review && !review.decision && !review.applying) return review;
     }
     return null;
   }, [messages, isLoading, isStreaming]);
@@ -1485,7 +1524,9 @@ const App: React.FC = () => {
 
   /** Shared tail of both decision paths (card buttons and pinned bar). */
   const handleReviewDecided = (id: string, decision: 'approved' | 'rejected') => {
-    setWriteReviewDecision(id, decision);
+    // Approve only marks the card applying; AGENT_WRITE_OUTCOME settles it.
+    if (decision === 'approved') markWriteReviewApplying(id);
+    else setWriteReviewDecision(id, decision);
     // The run resumes host-side; stop claiming we're waiting.
     setStatusText('');
     // Deciding means following the run again.
@@ -1755,6 +1796,8 @@ const App: React.FC = () => {
       sessionId: currentSessionId,
     });
     resetStreamBuffer();
+    // Keep what the turn did on screen, and say it was stopped.
+    stopAgentTurn('Stopped.');
     setIsLoading(false);
     setIsStreaming(false);
     setStatusText('');
@@ -2058,6 +2101,19 @@ const App: React.FC = () => {
       sessionId,
     });
     forgetDeletedSession(sessionId);
+  };
+
+  /**
+   * The checkpoint a user turn's Undo reverts to. It rides the turn's rollup,
+   * which review cards push past index + 1 — so look across the whole turn
+   * (up to the next user message), not at the next message alone.
+   */
+  const turnCheckpointSha = (userIndex: number): string | undefined => {
+    let sha: string | undefined;
+    for (let i = userIndex + 1; i < messages.length && !messages[i].isUser; i++) {
+      sha = messages[i].turnSummary?.checkpointSha ?? sha;
+    }
+    return sha;
   };
 
   const handleUndo = (sha: string) => {
@@ -2389,10 +2445,8 @@ const App: React.FC = () => {
                   agentSteps={message.agentSteps}
                   turnSummary={message.turnSummary}
                   timestamp={message.timestamp}
-                  checkpointSha={message.isUser ? messages[index + 1]?.turnSummary?.checkpointSha : undefined}
-                  isReverting={
-                    message.isUser && revertingSha === messages[index + 1]?.turnSummary?.checkpointSha
-                  }
+                  checkpointSha={message.isUser ? turnCheckpointSha(index) : undefined}
+                  isReverting={message.isUser && revertingSha === turnCheckpointSha(index)}
                   onUndo={handleUndo}
                   onRetry={
                     message.isUser && messages[index + 1]?.isError
@@ -2529,6 +2583,11 @@ const App: React.FC = () => {
           <WorkspaceControls busy={allRunningSessionIds.size > 0} />
         )}
         <div className='composer-status-bars'>
+          {undoNotice && (
+            <div className='composer-run-status' role='status'>
+              {undoNotice}
+            </div>
+          )}
           {/*
             Lives outside the scrolling message list on purpose: the in-list
             indicator further up is invisible whenever the user has scrolled

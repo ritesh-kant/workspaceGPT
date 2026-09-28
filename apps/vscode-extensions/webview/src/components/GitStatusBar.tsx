@@ -72,7 +72,15 @@ const GitStatusBar: React.FC = () => {
       </div>
       {ship.phase === 'done' && ship.scope === 'tree' && (
         <div className='git-status-ship-result'>
-          <span className='stat-added'>✓</span> Pushed <code>{ship.branch}</code>
+          {ship.pushed ? (
+            <>
+              <span className='stat-added'>✓</span> Pushed <code>{ship.branch}</code>
+            </>
+          ) : (
+            <>
+              Committed locally on <code>{ship.branch}</code> (not pushed)
+            </>
+          )}
           {ship.prUrl && (
             <>
               {' · '}
@@ -82,6 +90,11 @@ const GitStatusBar: React.FC = () => {
             </>
           )}
           {ship.ticketCommented && ship.ticketId ? ` · report posted on #${ship.ticketId}` : ''}
+          {ship.baseBranch && (
+            <>
+              {' · '}you're now on it (was <code>{ship.baseBranch}</code>)
+            </>
+          )}
           {ship.warnings.map((w, i) => (
             <div key={i} className='git-status-ship-warning'>
               {w}
