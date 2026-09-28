@@ -76,8 +76,10 @@ export async function ensureDirectCopilotReady(allowSignIn: boolean): Promise<st
       await signingIn;
     }
     const models = await listDirectCopilotModels();
+    console.log(`[copilot] ready: ${models.length} usable model(s): ${models.map((m) => m.id).join(', ')}`);
     return models.length ? undefined : 'Your GitHub Copilot plan has no chat models WorkspaceGPT can use.';
   } catch (err) {
+    console.warn('[copilot] not ready:', err instanceof Error ? err.message : err);
     return err instanceof Error ? err.message : String(err);
   }
 }
@@ -215,6 +217,7 @@ async function signIn(): Promise<void> {
     if (body.access_token) {
       await secrets?.store(STORAGE_KEYS.COPILOT_GITHUB_TOKEN, body.access_token);
       session = undefined;
+      console.log('[copilot] GitHub sign-in stored');
       return;
     }
     if (body.error === 'slow_down') interval += 5000;
