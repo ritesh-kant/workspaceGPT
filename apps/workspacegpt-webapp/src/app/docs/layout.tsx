@@ -6,14 +6,14 @@ export const metadata: Metadata = {
     template: "%s | WorkspaceGPT",
   },
   description:
-    "Install WorkspaceGPT in your editor or as a desktop app (macOS, Windows), pick an AI provider or Remote mode, and connect Confluence, Jira and Azure DevOps. Full setup and troubleshooting guide.",
+    "Install WorkspaceGPT in your editor or as a desktop app (macOS, Windows), pick an AI provider or Remote mode, connect Confluence, Jira and Azure DevOps, let the agent edit Confluence pages and use your browser. Full setup and troubleshooting guide.",
   alternates: {
     canonical: "/docs",
   },
   openGraph: {
     title: "WorkspaceGPT Documentation",
     description:
-      "Installation (editor and Desktop), AI providers, live codebase exploration, Confluence, Jira and Azure DevOps, MCP server, and troubleshooting.",
+      "Installation (editor and Desktop), AI providers, Chat and Work modes, Confluence page editing, Jira and Azure DevOps, browser control, MCP server, and troubleshooting.",
     url: "/docs",
   },
 };

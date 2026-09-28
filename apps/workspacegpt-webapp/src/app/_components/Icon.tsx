@@ -28,7 +28,23 @@ export type IconName =
   | 'download'
   | 'copy'
   | 'check'
-  | 'refresh';
+  | 'refresh'
+  | 'globe'
+  | 'pen'
+  | 'folder'
+  | 'git-pull-request'
+  | 'bell'
+  | 'sliders'
+  | 'pointer'
+  | 'arrow-right'
+  | 'external-link'
+  | 'alert'
+  | 'terminal'
+  | 'settings'
+  | 'plus'
+  | 'clock'
+  | 'puzzle'
+  | 'database';
 
 /** Path geometry only — the <svg> wrapper below supplies the shared stroke. */
 const PATHS: Record<IconName, React.ReactNode> = {
@@ -153,6 +169,117 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M4 3v4h4" />
       <path d="M4 13a8 8 0 0 0 14.8 4" />
       <path d="M20 21v-4h-4" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3a14 14 0 0 1 0 18" />
+      <path d="M12 3a14 14 0 0 0 0 18" />
+    </>
+  ),
+  pen: (
+    <>
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z" />
+      <path d="M14.5 5.5l3 3" />
+    </>
+  ),
+  folder: (
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  ),
+  'git-pull-request': (
+    <>
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="6" cy="18" r="2.5" />
+      <circle cx="18" cy="18" r="2.5" />
+      <path d="M6 8.5v7" />
+      <path d="M18 15.5V9a3 3 0 0 0-3-3h-4" />
+      <path d="M13 3.5L10.5 6 13 8.5" />
+    </>
+  ),
+  bell: (
+    <>
+      <path d="M18 16V11a6 6 0 0 0-12 0v5l-2 2h16z" />
+      <path d="M10 21h4" />
+    </>
+  ),
+  sliders: (
+    <>
+      <path d="M4 7h10" />
+      <path d="M18 7h2" />
+      <circle cx="16" cy="7" r="2" />
+      <path d="M4 17h2" />
+      <path d="M10 17h10" />
+      <circle cx="8" cy="17" r="2" />
+    </>
+  ),
+  pointer: (
+    <>
+      <path d="M5 3l6.5 17 2.3-7.2L21 10.5z" />
+      <path d="M14 14l5 5" />
+    </>
+  ),
+  'arrow-right': (
+    <>
+      <path d="M5 12h14" />
+      <path d="M13 6l6 6-6 6" />
+    </>
+  ),
+  'external-link': (
+    <>
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-9 9" />
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+    </>
+  ),
+  alert: (
+    <>
+      <path d="M10.3 4.2L2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z" />
+      <path d="M12 10v4" />
+      <path d="M12 17.5h.01" />
+    </>
+  ),
+  terminal: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9l3 3-3 3" />
+      <path d="M13 15h4" />
+    </>
+  ),
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v3" />
+      <path d="M12 19v3" />
+      <path d="M4.9 4.9l2.1 2.1" />
+      <path d="M17 17l2.1 2.1" />
+      <path d="M2 12h3" />
+      <path d="M19 12h3" />
+      <path d="M4.9 19.1L7 17" />
+      <path d="M17 7l2.1-2.1" />
+    </>
+  ),
+  plus: (
+    <>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </>
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
+  puzzle: (
+    <path d="M10 3a2 2 0 0 1 4 0v2h4a1 1 0 0 1 1 1v4h-2a2 2 0 0 0 0 4h2v4a1 1 0 0 1-1 1h-4v-2a2 2 0 0 0-4 0v2H6a1 1 0 0 1-1-1v-4h2a2 2 0 0 0 0-4H5V6a1 1 0 0 1 1-1h4z" />
+  ),
+  database: (
+    <>
+      <ellipse cx="12" cy="5.5" rx="8" ry="2.5" />
+      <path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13" />
+      <path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5" />
     </>
   ),
 };
