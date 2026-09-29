@@ -58,8 +58,9 @@ import {
   LimitKind,
   pruneStaleHarnessMessages,
 } from './resumeHygiene';
-import { AutoVerifyTracker, CheckResultLike, CheckKindName, PendingCheck } from './autoVerify';
+import { AutoVerifyTracker, CheckResultLike, CheckKindName, PendingCheck, AUTO_CHECKABLE_FILE_RE } from './autoVerify';
 import { stripLineNumbers } from '../../services/codebase/lineNumbers';
+import { logPromptCall } from './promptTokenDebug';
 
 interface WorkerData {
   prompt: string;
@@ -352,14 +353,13 @@ const TOOL_DEFS = [
       name: 'explore',
       description:
         'Delegate a QUESTION about the codebase to a read-only investigator that searches and reads on its own budget, and returns a short list of findings with file:line citations. Its file contents never enter your context — you get the conclusions, not the files.\n' +
-        'Reach for it when answering something would mean opening more than about three files you have not read: "where is the rejection status decided and who writes it", "which of these four hooks writes to storage", "what does this mapper actually receive on first render". One call replaces that whole survey.\n' +
-        'Do NOT use it for a file you already know you need — read_file that directly. It cannot change anything, and its findings are leads: open the exact range it cites before you edit against it. If it reports nothing citable, investigate yourself.',
+        'Reach for it when answering would mean opening more than about three files you have not read (e.g. "which of these four hooks writes to storage"). Not for a file you already know you need — read_file that. Its findings are leads: open the exact range it cites before you edit against it.',
       parameters: {
         type: 'object',
         properties: {
           question: {
             type: 'string',
-            description: 'One specific question, phrased so a short factual answer settles it. Not a task ("fix the mapper") and not a topic ("the mapper") — a question ("which mapper overwrites the rejected status, and where is it called from?").',
+            description: 'One specific question a short factual answer settles — not a task ("fix the mapper") or a topic ("the mapper").',
           },
           scope: {
             type: 'string',
@@ -390,7 +390,7 @@ const TOOL_DEFS = [
     function: {
       name: 'find_references',
       description:
-        'Find every place a symbol is used, via the editor\'s language services. Point it at one known occurrence (file + line + symbol text) and it returns all reference sites of THAT symbol, resolved by type — not other symbols that share its name. Use it before renaming a symbol or changing its signature, to get exactly the call sites to update, and to trace how/where a symbol is consumed. Returns up to 30 sites; `truncated: true` means there are more.',
+        'Find every place a symbol is used, via the editor\'s language services. Point it at one known occurrence (file + line + symbol text); it returns the reference sites of THAT symbol, resolved by type — not other symbols that share its name. Use it before renaming or changing a signature. Returns up to 30 sites; `truncated: true` means there are more.',
       parameters: {
         type: 'object',
         properties: {
@@ -426,7 +426,7 @@ const TOOL_DEFS = [
       description:
         'Read a file in the workspace, optionally restricted to a line range. Returns up to 2000 lines (64 KB) per call, so most files come back whole in ONE call — do not page through a file in 400-line slices. ' +
         'Every line is prefixed with its number as `  12→code`; cite those numbers directly as `path/to/file.ts:L12-L20` in your answer. When you copy code into `edit_file`\'s oldString, copy the code only, WITHOUT the `12→` prefix (if you leave it on, the harness strips it for you and says so). ' +
-        'Reading several files is one turn, not several: issue all the read_file calls you need together and they run in parallel. The result also reports `startLine`/`endLine` and `totalLines`, so a follow-up call can name the exact next range instead of re-reading from the top.',
+        'Issue all the read_file calls you need in one turn — they run in parallel. The result reports `startLine`/`endLine`/`totalLines`, so a follow-up can name the exact next range.',
       parameters: {
         type: 'object',
         properties: {
@@ -596,7 +596,7 @@ const TOOL_DEFS = [
     function: {
       name: 'search_web',
       description:
-        "Live web search for anything the codebase and org docs can't answer — an unfamiliar library/API/product, current documentation, or something that changed since training. Use it when a name or concept is unrecognized rather than guessing. Returns a synthesized answer (when available) plus source snippets with URLs — cite the URLs when you use them. Without a Tavily key configured, this falls back to a lower-reliability public search — don't over-trust unlabeled results in that mode. Never use this for Azure DevOps or Confluence links — it cannot reach private instances; use get_ticket/get_confluence_page (they take a URL directly) or search_tickets/search_docs instead.",
+        "Live web search for what the codebase and org docs can't answer — an unfamiliar library/API/product, current documentation, something that changed since training. Returns a synthesized answer (when available) plus source snippets with URLs — cite the URLs you use. Without a Tavily key it falls back to a lower-reliability public search. It cannot reach private Azure DevOps or Confluence instances — for their links use get_ticket/get_confluence_page, which take a URL.",
       parameters: {
         type: 'object',
         properties: {
@@ -617,7 +617,7 @@ const TOOL_DEFS = [
         type: 'object',
         properties: {
           command: { type: 'string', description: 'The shell command to run, e.g. "npm test -- --run" or "npx tsc --noEmit".' },
-          description: { type: 'string', description: 'REQUIRED. What this command is for, 3-6 words, sentence case, no trailing period — e.g. "Run the checkout step tests", "Typecheck the webview". This is the label the user sees in the run timeline; the raw command is shown only when they expand the row. Write it for someone who does not read shell.' },
+          description: { type: 'string', description: 'REQUIRED. What this command is for, 3-6 words, sentence case, no trailing period — e.g. "Run the checkout step tests". The label the user sees in the run timeline instead of the raw command; write it for someone who does not read shell.' },
           cwd: { type: 'string', description: 'Workspace-relative working directory. Defaults to the first workspace root; in a multi-root workspace prefix it with the root folder name ("my-repo" or "my-repo/apps/web") to run inside that root. Package-manager commands (pnpm --filter, npm run) must run from the repo that owns the package.' },
           timeoutSec: { type: 'number', description: 'Kill the command after this many seconds (default 60, max 300).' },
         },
@@ -630,7 +630,7 @@ const TOOL_DEFS = [
     function: {
       name: 'run_checks',
       description:
-        'Run the tests, lint, or typecheck that cover ONE FILE — the host derives the command itself: the nearest package, its package manager (pnpm/npm/yarn/bun), its runner (jest/vitest/eslint/tsc or the package script), the sibling test file, and the right working directory. Prefer this over run_command for verification: it cannot pick the wrong directory or an unapproved command, and autonomous runs execute it without a gate. Call it with kind "lint", "typecheck" and "test" for every source or test file you changed; FIX failures before declaring the task done. If you skip it, the run does it FOR you before your answer is accepted — the failures land in your transcript either way, so run it yourself while you still have the context to fix them. Re-running the same derived command without changing a file first replays the previous result instead of running again. Returns the exact command it ran, exit code and output.',
+        'Run the tests, lint, or typecheck that cover ONE FILE — the host derives the command (nearest package, package manager, runner or package script, sibling test file, working directory). Prefer it over run_command for verification: it cannot pick the wrong directory or an unapproved command, and autonomous runs execute it without a gate. Call it for every file you changed and FIX failures; if you skip it, the run does it for you before your answer is accepted. An identical command with no write since replays the previous result. Returns the command, exit code and output.',
       parameters: {
         type: 'object',
         properties: {
@@ -1205,6 +1205,40 @@ for (const name of ['browser_open_tab', 'browser_close_tab', 'browser_navigate',
 
 /** File-mutating subset whose success must be verified by diagnostics before the run may end. */
 const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file']);
+
+/**
+ * Prose files: no language service reports problems for them and no runner
+ * checks them, so a write to one arms neither the auto-diagnostics pass nor
+ * (via AUTO_CHECKABLE_FILE_RE) auto-verification. A README edit used to cost a
+ * forced get_diagnostics round whose only possible answer was "nothing here".
+ */
+const DOC_FILE_RE = /\.(md|mdx|markdown|txt|rst|adoc)$/i;
+
+/**
+ * The one line a write's result tells the model about verifying that file,
+ * from what the host could derive for it (`checks`, see derivableChecks in
+ * verifyTools.ts). Facts, not advice: without it the model runs typecheck on a
+ * repo with no typecheck, or get_diagnostics on a README.
+ */
+function describeWriteChecks(rawArgs: string, checks: Record<string, string>): string {
+  let file = '';
+  try {
+    file = String((JSON.parse(rawArgs || '{}') as { path?: unknown }).path ?? '');
+  } catch {
+    /* unparseable args — describe from the checks alone */
+  }
+  if (DOC_FILE_RE.test(file)) {
+    return 'No diagnostics, lint, typecheck or test covers this file type — nothing to verify for it.';
+  }
+  if (file && !AUTO_CHECKABLE_FILE_RE.test(file)) {
+    return 'No lint, typecheck or test runner covers this file type — get_diagnostics is the only check.';
+  }
+  const kinds = (['lint', 'typecheck', 'test'] as const).filter((k) => checks[k]);
+  const missing = (['lint', 'typecheck', 'test'] as const).filter((k) => !checks[k]);
+  return kinds.length
+    ? `run_checks can run ${kinds.join(', ')} for this file${missing.length ? ` (no ${missing.join('/')} runner applies to it)` : ''}.`
+    : 'No lint, typecheck or test runner applies to this file — get_diagnostics is the only check.';
+}
 
 /**
  * Writes that land OUTSIDE the workspace (a Confluence page). They are real
@@ -1935,6 +1969,12 @@ async function runToolTurn(
   // to actually answer instead of just think.
   const reasoningContent: string = (message as any)?.reasoning_content ?? (message as any)?.reasoning ?? '';
   const rawUsage = (response as any)?.usage;
+  logPromptCall(
+    !withTools ? 'final' : (tools as any[]).some((t) => t?.function?.name === 'edit_file') ? 'main' : 'explore-subagent',
+    messages,
+    withTools ? tools : undefined,
+    rawUsage
+  );
   const usage: TurnUsage = {
     promptTokens: rawUsage?.prompt_tokens ?? 0,
     completionTokens: rawUsage?.completion_tokens ?? 0,
@@ -2847,6 +2887,97 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
   }
 
+  /**
+   * One synthetic round of the outstanding lint / typecheck / test checks
+   * (see autoVerify above): the calls, their results, and the follow-up that
+   * tells the model what a failure means. Used when the model tries to finish,
+   * and when it is already verifying on its own (see the end of each round).
+   */
+  const runAutoCheckRound = async (checkBatch: PendingCheck[], assistantContent: string | null, turnIndex: number): Promise<void> => {
+    const round = ++autoVerifyRounds;
+    const jobs = planCheckJobs(checkBatch);
+    const calls = jobs.map((job, n) => ({
+      id: `auto_checks_${round}_${n}`,
+      type: 'function' as const,
+      function: { name: 'run_checks', arguments: JSON.stringify(job.args) },
+    }));
+    messages.push({ role: 'assistant', content: assistantContent, tool_calls: calls });
+    const failures: string[] = [];
+    const brokenRunners: string[] = [];
+    const runJob = async (job: CheckJob): Promise<unknown> => {
+      // The primary is marked BEFORE the call, so a check that keeps
+      // throwing costs one round rather than repeating forever. The rest
+      // of a batched lint are marked from what the host says it actually
+      // covered — a path dropped for living in another package must stay
+      // pending, not be recorded as verified by a process that skipped it.
+      autoVerify.markRunning(job.args.path, job.args.kind);
+      const transportId = randomUUID();
+      parentPort?.postMessage({
+        type: 'tool_status',
+        id: transportId,
+        name: 'run_checks',
+        arguments: { ...job.args, auto: true },
+      });
+      let result: unknown;
+      try {
+        result = await requestTool('run_checks', job.args, transportId);
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+      const covered = (result as { coveredPaths?: unknown } | null)?.coveredPaths;
+      // No coveredPaths in the result means the batch was not honoured —
+      // only the primary ran. Leaving the rest pending re-runs them next
+      // round; assuming they passed would report unlinted files as clean.
+      const coveredSet = new Set((Array.isArray(covered) ? covered : []).map(String));
+      for (const c of job.covers) {
+        if (c.path !== job.args.path && coveredSet.has(c.path)) autoVerify.markRunning(c.path, c.kind);
+      }
+      return result;
+    };
+    // Lint and typecheck are single-process and cheap on memory, so they
+    // overlap; tests stay strictly serial. A jest run already forks
+    // cores-1 workers, and two of them at once is how ticket #1534774 put
+    // the machine into swap — concurrency here must not re-open that.
+    const results: unknown[] = new Array(jobs.length);
+    await Promise.all(
+      jobs.map(async (job, n) => {
+        if (job.args.kind === 'test') return;
+        results[n] = await runJob(job);
+      })
+    );
+    for (let n = 0; n < jobs.length; n++) {
+      if (jobs[n].args.kind === 'test') results[n] = await runJob(jobs[n]);
+    }
+    for (let n = 0; n < jobs.length; n++) {
+      const job = jobs[n];
+      const verdict = autoVerify.noteOutcome(job.args.kind, results[n] as CheckResultLike);
+      if (verdict === 'failed') failures.push(`${job.args.kind} for ${job.covers.map((c) => c.path).join(', ')}`);
+      if (verdict === 'unavailable') brokenRunners.push(job.args.kind);
+      messages.push({ role: 'tool', tool_call_id: calls[n].id, content: serializeToolResult(results[n]) });
+      recordToolResult('run_checks', turnIndex, messages[messages.length - 1].content);
+    }
+    if (failures.length > 0) {
+      messages.push({
+        role: 'user',
+        content:
+          `VERIFICATION FAILED — ${failures.join('; ')} exited non-zero (output above). The task is NOT complete. ` +
+          'Read the failure output, find the cause in the code, and FIX it now with your write tools — the checks re-run after your fix. ' +
+          'If the failure is genuinely unrelated to your change (it fails the same way on code you did not touch), say so explicitly and name the evidence; do not assume it. ' +
+          'Do not report success, and do not answer with a plan for fixing it — apply the fix.',
+      });
+    } else if (brokenRunners.length > 0) {
+      // The runner never started (no config, missing script, timeout).
+      // Say so plainly, or the model reads the non-zero exit above as its
+      // own breakage and starts "fixing" the repo's tooling.
+      messages.push({
+        role: 'user',
+        content:
+          `The ${[...new Set(brokenRunners)].join(' and ')} runner could not start in this workspace (see the output above) — that is this project's tooling, NOT your change, and not yours to fix. ` +
+          'Do not edit config or install anything to make it run. Finish your answer, and record that check as "could not verify" with the reason.',
+      });
+    }
+  };
+
   for (let i = 0; i < iterationCap; i++) {
     // ── Wall clock: the only thing that ENDS a healthy run early ──
     if (Date.now() - runStarted > RUN_WALL_CLOCK_MS) {
@@ -2950,6 +3081,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         autoVerify.settled() &&
         REPORT_SHAPED_RE.test(outcome.content);
       if (finishedReport) lastReportAnswer = outcome.content;
+      // Set when this round's synthetic diagnostics exchange is already in
+      // `messages`, so the checks below join the SAME round instead of costing
+      // another model turn.
+      let diagnosticsJoined = false;
       // The model wants to finish — but unverified writes block that. Run
       // get_diagnostics OURSELVES as a synthetic tool exchange (deterministic,
       // unlike nudging): the model then sees the result and either confirms or
@@ -2974,95 +3109,18 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         messages.push({ role: 'tool', tool_call_id: diagCallId, content: serializeToolResult(diagResult) });
         recordToolResult('get_diagnostics', i, messages[messages.length - 1].content);
         writesSinceDiagnostics = 0;
-        continue;
+        // Every model turn resends the whole prompt, so the outstanding
+        // lint/typecheck/test run in this same round rather than after one
+        // more turn spent reading the diagnostics alone.
+        if (autoVerify.nextBatch().length === 0) continue;
+        diagnosticsJoined = true;
       }
       // Diagnostics are clean but the change is still unverified: run the
       // lint / typecheck / tests that cover each changed file ourselves (see
       // autoVerify above), batched into one synthetic round.
       const checkBatch = autoVerify.nextBatch();
       if (checkBatch.length > 0) {
-        const round = ++autoVerifyRounds;
-        const jobs = planCheckJobs(checkBatch);
-        const calls = jobs.map((job, n) => ({
-          id: `auto_checks_${round}_${n}`,
-          type: 'function' as const,
-          function: { name: 'run_checks', arguments: JSON.stringify(job.args) },
-        }));
-        messages.push({ role: 'assistant', content: outcome.content || null, tool_calls: calls });
-        const failures: string[] = [];
-        const brokenRunners: string[] = [];
-        const runJob = async (job: CheckJob): Promise<unknown> => {
-          // The primary is marked BEFORE the call, so a check that keeps
-          // throwing costs one round rather than repeating forever. The rest
-          // of a batched lint are marked from what the host says it actually
-          // covered — a path dropped for living in another package must stay
-          // pending, not be recorded as verified by a process that skipped it.
-          autoVerify.markRunning(job.args.path, job.args.kind);
-          const transportId = randomUUID();
-          parentPort?.postMessage({
-            type: 'tool_status',
-            id: transportId,
-            name: 'run_checks',
-            arguments: { ...job.args, auto: true },
-          });
-          let result: unknown;
-          try {
-            result = await requestTool('run_checks', job.args, transportId);
-          } catch (e) {
-            return { error: e instanceof Error ? e.message : String(e) };
-          }
-          const covered = (result as { coveredPaths?: unknown } | null)?.coveredPaths;
-          // No coveredPaths in the result means the batch was not honoured —
-          // only the primary ran. Leaving the rest pending re-runs them next
-          // round; assuming they passed would report unlinted files as clean.
-          const coveredSet = new Set((Array.isArray(covered) ? covered : []).map(String));
-          for (const c of job.covers) {
-            if (c.path !== job.args.path && coveredSet.has(c.path)) autoVerify.markRunning(c.path, c.kind);
-          }
-          return result;
-        };
-        // Lint and typecheck are single-process and cheap on memory, so they
-        // overlap; tests stay strictly serial. A jest run already forks
-        // cores-1 workers, and two of them at once is how ticket #1534774 put
-        // the machine into swap — concurrency here must not re-open that.
-        const results: unknown[] = new Array(jobs.length);
-        await Promise.all(
-          jobs.map(async (job, n) => {
-            if (job.args.kind === 'test') return;
-            results[n] = await runJob(job);
-          })
-        );
-        for (let n = 0; n < jobs.length; n++) {
-          if (jobs[n].args.kind === 'test') results[n] = await runJob(jobs[n]);
-        }
-        for (let n = 0; n < jobs.length; n++) {
-          const job = jobs[n];
-          const verdict = autoVerify.noteOutcome(job.args.kind, results[n] as CheckResultLike);
-          if (verdict === 'failed') failures.push(`${job.args.kind} for ${job.covers.map((c) => c.path).join(', ')}`);
-          if (verdict === 'unavailable') brokenRunners.push(job.args.kind);
-          messages.push({ role: 'tool', tool_call_id: calls[n].id, content: serializeToolResult(results[n]) });
-          recordToolResult('run_checks', i, messages[messages.length - 1].content);
-        }
-        if (failures.length > 0) {
-          messages.push({
-            role: 'user',
-            content:
-              `VERIFICATION FAILED — ${failures.join('; ')} exited non-zero (output above). The task is NOT complete. ` +
-              'Read the failure output, find the cause in the code, and FIX it now with your write tools — the checks re-run after your fix. ' +
-              'If the failure is genuinely unrelated to your change (it fails the same way on code you did not touch), say so explicitly and name the evidence; do not assume it. ' +
-              'Do not report success, and do not answer with a plan for fixing it — apply the fix.',
-          });
-        } else if (brokenRunners.length > 0) {
-          // The runner never started (no config, missing script, timeout).
-          // Say so plainly, or the model reads the non-zero exit above as its
-          // own breakage and starts "fixing" the repo's tooling.
-          messages.push({
-            role: 'user',
-            content:
-              `The ${[...new Set(brokenRunners)].join(' and ')} runner could not start in this workspace (see the output above) — that is this project's tooling, NOT your change, and not yours to fix. ` +
-              'Do not edit config or install anything to make it run. Finish your answer, and record that check as "could not verify" with the reason.',
-          });
-        }
+        await runAutoCheckRound(checkBatch, diagnosticsJoined ? null : outcome.content || null, i);
         continue;
       }
       // Everything attempted so far errored → the model has zero facts from
@@ -3643,10 +3701,15 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     const pendingImageTurns: { role: 'user'; content: unknown }[] = [];
     toolCalls.forEach((tc, idx) => {
       const rawResult = results[idx];
+      // A write's `checks` is bookkeeping for autoVerify, not for the model.
+      const writeChecks = FILE_WRITE_TOOL_NAMES.has(tc.name) ? (rawResult as { checks?: Record<string, string> } | null)?.checks : undefined;
+      const modelResult = writeChecks
+        ? { ...(rawResult as Record<string, unknown>), checks: undefined, verify: describeWriteChecks(tc.args, writeChecks) }
+        : rawResult;
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
-        content: serializeToolResult(stripImagesForToolText(tc.name, rawResult), tc.name),
+        content: serializeToolResult(stripImagesForToolText(tc.name, modelResult), tc.name),
       });
       recordToolResult(tc.name, i, messages[messages.length - 1].content);
 
@@ -3686,14 +3749,15 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         anyWriteAttempted = true;
         if (!failed) {
           writesApplied++;
-          writesSinceDiagnostics++;
+          // Prose files have no diagnostics provider — see DOC_FILE_RE.
+          if (!DOC_FILE_RE.test(argPath)) writesSinceDiagnostics++;
           commandRunSinceWrite = false;
         }
         if (argPath) lastWriteOutcome.set(argPath, !failed);
         // The file changed, so any check that ran against its old content is
         // void — re-arming it is what turns a failing check into a
         // fix-then-re-verify cycle instead of a one-shot complaint.
-        if (!failed) autoVerify.noteWrite(argPath, { deleted: tc.name === 'delete_file' });
+        if (!failed) autoVerify.noteWrite(argPath, { deleted: tc.name === 'delete_file', checks: writeChecks });
       }
       if (EXTERNAL_WRITE_TOOL_NAMES.has(tc.name)) {
         anyWriteAttempted = true;
@@ -3718,6 +3782,15 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     });
     messages.push(...pendingImageTurns);
     toolCallsExecuted += toolCalls.length;
+
+    // The model is verifying on its own (it called get_diagnostics or
+    // run_checks after writing): run whatever checks are still owed in this
+    // same round. Otherwise they run only once it tries to finish — one more
+    // model turn, and a final report written twice (before and after them).
+    if (writesApplied > 0 && toolCalls.some((tc) => tc.name === 'get_diagnostics' || tc.name === 'run_checks')) {
+      const owed = autoVerify.nextBatch();
+      if (owed.length > 0) await runAutoCheckRound(owed, null, i);
+    }
 
     // ── Did this turn learn anything? (contextBudget.ts) ──
     // The runaway backstop that replaces the turn cap. "Progress" is new

@@ -354,6 +354,26 @@ export function planVerification(roots: NamedRoot[], args: RunChecksArgs): Verif
   throw new Error(`${pkg.name} (${displayCwd}) has no typecheck script and no tsconfig.json.`);
 }
 
+/**
+ * The checks that can actually run for a file, kind → `cwd::command`, from the
+ * same derivation run_checks uses. Handed to the agent loop with each write so
+ * auto-verification never schedules a check the file has no runner for (no
+ * typecheck script and no tsconfig, no test file) and runs a command shared by
+ * several changed files once. A kind whose derivation throws is simply absent.
+ */
+export function derivableChecks(roots: NamedRoot[], filePath: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const kind of ['lint', 'typecheck', 'test'] as CheckKind[]) {
+    try {
+      const plan = planVerification(roots, { path: filePath, kind });
+      out[kind] = `${plan.cwd}::${plan.command}`;
+    } catch {
+      /* no runner for this kind here */
+    }
+  }
+  return out;
+}
+
 // ── Remembered recipes ──
 
 interface Recipe {

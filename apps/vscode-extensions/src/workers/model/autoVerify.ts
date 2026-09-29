@@ -105,6 +105,16 @@ export class AutoVerifyTracker {
   private readonly done = new Set<string>();
   private readonly unavailable = new Set<string>();
   private readonly derivationFailures = new Map<string, number>();
+  /**
+   * Per file, the checks the host could actually derive for it at write time,
+   * kind → the command that check would run (see derivableChecks in
+   * verifyTools.ts). A kind missing from the map has no runner for that file —
+   * no typecheck script and no tsconfig, no test file — so it is never
+   * scheduled. Two files whose check derives the SAME command (a package lint
+   * script, a source file and its own test file) owe that command once. A file
+   * with no entry (older host, resumed run) is owed every kind, as before.
+   */
+  private readonly derived = new Map<string, Record<string, string>>();
   private executed = 0;
 
   constructor(config: AutoVerifyConfig) {
@@ -123,18 +133,30 @@ export class AutoVerifyTracker {
    * A successful write landed. The file's old check results are void, so
    * re-arm them; a delete takes the file out of scope entirely.
    */
-  noteWrite(path: string, opts: { deleted?: boolean } = {}): void {
+  noteWrite(path: string, opts: { deleted?: boolean; checks?: Record<string, string> } = {}): void {
     if (!path) return;
     // Delete-then-add so insertion order is write order: `pending` works
     // newest-first, and a re-edited file is the newest again.
     this.written.delete(path);
     if (!opts.deleted) this.written.add(path);
+    if (opts.checks && typeof opts.checks === 'object') this.derived.set(path, opts.checks);
+    else this.derived.delete(path);
     for (const kind of this.kinds) this.done.delete(`${path}::${kind}`);
   }
 
-  /** A check ran for this file (the model's own call, or one of ours). */
+  /**
+   * A check ran for this file (the model's own call, or one of ours). Every
+   * other changed file whose same check derives the identical command is
+   * covered by that one run too.
+   */
   noteCheckRan(path: string, kind: string): void {
-    if (path && kind) this.done.add(`${path}::${kind}`);
+    if (!path || !kind) return;
+    this.done.add(`${path}::${kind}`);
+    const command = this.derived.get(path)?.[kind];
+    if (!command) return;
+    for (const other of this.written) {
+      if (this.derived.get(other)?.[kind] === command) this.done.add(`${other}::${kind}`);
+    }
   }
 
   /** One of OUR checks is about to run: mark it done and spend the budget. */
@@ -176,10 +198,19 @@ export class AutoVerifyTracker {
       .reverse()
       .filter((p) => AUTO_CHECKABLE_FILE_RE.test(p))
       .slice(0, this.maxFiles);
+    const owedCommands = new Set<string>();
     for (const path of paths) {
+      const derived = this.derived.get(path);
       for (const kind of this.kinds) {
         if (this.unavailable.has(kind)) continue;
-        if (!this.done.has(`${path}::${kind}`)) out.push({ path, kind });
+        if (derived && !derived[kind]) continue;
+        if (this.done.has(`${path}::${kind}`)) continue;
+        if (derived) {
+          const key = `${kind}::${derived[kind]}`;
+          if (owedCommands.has(key)) continue;
+          owedCommands.add(key);
+        }
+        out.push({ path, kind });
       }
     }
     return out;

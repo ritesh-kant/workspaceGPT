@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
 import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
 import { extractBalancedJsonObjects } from './jsonExtract';
+import { logPromptCall } from './promptTokenDebug';
 
 /**
  * Exploration decomposition — see docs/design/exploration-decomposition.md.
@@ -553,6 +554,7 @@ async function runOneExplorer(
     raw = (response as any)?.choices?.[0]?.message?.content ?? '';
     const rawUsage = (response as any)?.usage;
     deps.noteCredits?.(rawUsage, responseHeaders);
+    logPromptCall('explorer', [{ role: 'system', content: EXPLORER_SYSTEM_PREAMBLE }, { role: 'user', content: userContent }], undefined, rawUsage);
     promptTokens = rawUsage?.prompt_tokens ?? 0;
     completionTokens = rawUsage?.completion_tokens ?? 0;
   } catch {

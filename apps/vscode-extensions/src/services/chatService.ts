@@ -63,7 +63,7 @@ import {
 } from './agent/agentWriteTools';
 import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { recordOriginalContent } from './agent/agentDiffProvider';
-import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs } from './agent/verifyTools';
+import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs, derivableChecks } from './agent/verifyTools';
 import { shipChanges, ShipInput } from './agent/shipService';
 import { deriveShipTitle } from './agent/shipHelpers';
 import { CheckpointService, RevertResult, checkpointServiceFor } from './agent/checkpointService';
@@ -87,6 +87,7 @@ import { TicketPromptContext } from 'src/utils/promptTemplates';
 import { formatModelHistory } from 'src/utils/chatHistory';
 import { classifyIntentWithJev } from './jevIntentClassifier';
 import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE, hasWriteIntent, IMPLEMENT_MANDATE_RE, SPIKE_TERMINAL_RE } from 'src/workers/model/answerGates';
+import { logPromptCall } from 'src/workers/model/promptTokenDebug';
 import { randomUUID } from 'crypto';
 import { getDiagnostics, gitBlame, gitDiff, gitLog, gitStatus } from './agent/inspectTools';
 import {
@@ -1819,10 +1820,23 @@ export class ChatService {
           meta: { output: `$ ${plan.command}\n(replayed — already ran this turn, no write since)\n` },
         });
       }
+      // The full output is already in the model's transcript from the run
+      // being replayed; re-sending it re-bills it on every later turn. Keep
+      // the verdict, and the output's tail only when it failed (the part that
+      // says why — and what autoVerify reads to tell a broken runner apart).
+      const prev = cached.result as Record<string, unknown>;
+      const failed = prev.exitCode !== 0;
+      const output = typeof prev.output === 'string' ? prev.output : '';
       return {
-        ...(cached.result as Record<string, unknown>),
+        kind: prev.kind,
+        command: prev.command,
+        cwd: prev.cwd,
+        exitCode: prev.exitCode,
+        timedOut: prev.timedOut,
+        ...(failed && output ? { output: output.length > 1500 ? '…' + output.slice(-1500) : output } : {}),
+        ...(plan.coveredPaths ? { coveredPaths: plan.coveredPaths } : {}),
         cached: true,
-        note: 'This exact command already ran this turn and no write has landed since — the result above is that run, not a new one. Do not run it again unless you change a file first.',
+        note: 'This exact command already ran this turn and no write has landed since — this is that run\'s result (full output earlier in the conversation), not a new one. Do not run it again unless you change a file first.',
       };
     }
     // Already running — join it rather than starting a second copy.
@@ -2192,7 +2206,17 @@ export class ChatService {
       added: (prior?.added ?? 0) + diff.added,
       removed: (prior?.removed ?? 0) + diff.removed,
     });
-    return { applied: true, path: write.displayPath, summary: write.summary, added: diff.added, removed: diff.removed };
+    return {
+      applied: true,
+      path: write.displayPath,
+      summary: write.summary,
+      added: diff.added,
+      removed: diff.removed,
+      // For the agent loop's auto-verification (the worker strips it before
+      // the model sees the result): which checks this file can run, and with
+      // what command — see derivableChecks.
+      ...(write.kind !== 'delete' ? { checks: derivableChecks(roots, write.displayPath) } : {}),
+    };
   }
 
   /**
@@ -2769,6 +2793,7 @@ Query: "${query}"`;
       // Part of this turn's bill, though it runs before the worker does.
       addCreditTally(run.turnCredits, creditTallyForCall(response.usage, responseHeaders));
 
+      logPromptCall('intent-classifier', [{ role: 'user', content: prompt }], undefined, (response as any)?.usage);
       const raw = response.choices[0]?.message?.content?.trim() || '{}';
       // Strip markdown code fences if present
       const jsonStr = raw.replace(/^```[a-z]*\n?/i, '').replace(/```$/,'').trim();
@@ -2829,7 +2854,11 @@ Query: "${query}"`;
 
       // Persist the complete transcript for the UI/history while bounding only
       // the copy sent to the model on each new request.
-      const formattedChatHistory = formatModelHistory(run.chatHistory);
+      // The last entry is this turn's own message, which the prompt already
+      // carries as the User Question — formatting it here too sent it twice.
+      const priorHistory =
+        run.chatHistory[run.chatHistory.length - 1]?.role === 'user' ? run.chatHistory.slice(0, -1) : run.chatHistory;
+      const formattedChatHistory = formatModelHistory(priorHistory);
 
       // Give codebase turns an upfront map of the workspace (file tree +
       // README head) so the model doesn't burn its first tool-call rounds on

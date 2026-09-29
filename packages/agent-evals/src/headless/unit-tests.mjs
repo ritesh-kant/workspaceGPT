@@ -1891,6 +1891,17 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     assert.match(describeAutonomousRefusal('pnpm test && rm -rf dist'), /never execute shell chaining/);
     assert.match(describeAutonomousRefusal('pnpm install'), /outside that allowlist/);
   });
+  await t('autonomous allowlist runs node\'s own test runner, and nothing else through node', () => {
+    const { isAutonomousSafeCommand } = commandTools;
+    // Observed 2026-09-26: `node --test src/cart.test.js` refused, then `npx node --test …` refused — two wasted rounds.
+    assert.ok(isAutonomousSafeCommand('node --test src/cart.test.js'));
+    assert.ok(isAutonomousSafeCommand('npx node --test src/cart.test.js'));
+    assert.ok(isAutonomousSafeCommand('node --test --test-reporter=spec src/'));
+    assert.ok(!isAutonomousSafeCommand('node src/cart.test.js'), 'plain node runs arbitrary code');
+    assert.ok(!isAutonomousSafeCommand('node --test -e "require(\'fs\').rmSync(\'x\')"'));
+    assert.ok(!isAutonomousSafeCommand('node --require ./evil.js --test'));
+    assert.ok(!isAutonomousSafeCommand('node --import ./evil.mjs --test src/'));
+  });
   await t('report shape needs a section heading, not prose', () => {
     assert.ok(REPORT_SHAPED_RE.test('### Acceptance criteria\n| a | b | c |'));
     assert.ok(REPORT_SHAPED_RE.test('**Verification**\n- ✅ jest — 5 passed'));
@@ -2185,6 +2196,36 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     // Two non-starts for lint retires it; test saw one non-start and one real failure.
     assert.ok(av.noteOutcome('lint', { exitCode: 2, output: 'command not found: eslint' }) === 'unavailable');
     assert.ok(!av.pending().some((c) => c.kind === 'lint'));
+  });
+
+  await t('a check the file has no runner for is never scheduled', () => {
+    // Observed on 2026-09-26: typecheck ran (and failed) twice on a repo with
+    // no typecheck script and no tsconfig. The write now carries what the host
+    // could derive, and a kind missing from it is not owed.
+    const av = new AutoVerifyTracker({ limit: 99 });
+    av.noteWrite('src/cart.js', { checks: { lint: '/r::npm run lint', test: '/r::npm run test -- src/cart.test.js' } });
+    assert.deepEqual(av.pending().map((c) => c.kind), ['lint', 'test']);
+    // No checks map (older host, resumed run): every kind, as before.
+    av.noteWrite('src/legacy.ts');
+    assert.deepEqual(av.pending().filter((c) => c.path === 'src/legacy.ts').map((c) => c.kind), ['lint', 'typecheck', 'test']);
+  });
+
+  await t('two files whose check derives the same command owe it once', () => {
+    // A source file and its own test file both derive `npm run test -- src/cart.test.js`;
+    // a package lint script covers both. Each used to run twice (the second a replay).
+    const av = new AutoVerifyTracker({ limit: 99 });
+    const lint = '/r::npm run lint';
+    const test = '/r::npm run test -- src/cart.test.js';
+    av.noteWrite('src/cart.js', { checks: { lint, test } });
+    av.noteWrite('src/cart.test.js', { checks: { lint, test } });
+    const batch = av.nextBatch();
+    assert.equal(batch.length, 2, JSON.stringify(batch));
+    for (const c of batch) av.markRunning(c.path, c.kind);
+    assert.equal(av.pending().length, 0, 'the one run covers both files');
+    assert.ok(av.settled());
+    // A write re-arms only the file written — and the shared command is owed once again.
+    av.noteWrite('src/cart.js', { checks: { lint, test } });
+    assert.deepEqual(av.pending().map((c) => c.kind), ['lint', 'test']);
   });
 
   await t('a replayed command is free; a real one is not', () => {

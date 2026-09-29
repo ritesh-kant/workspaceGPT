@@ -357,6 +357,20 @@ const AUTONOMOUS_VERBS = new Set([
 const HARMLESS_SUFFIX_RE = /(\s+2>&1)?(\s*\|\s*(tail|head)(\s+-n\s*\d+|\s+-\d+)?)?\s*$/;
 
 /**
+ * Node's built-in test runner — `node --test [files…]`, optionally via
+ * `npx node`. The verification equivalent of `jest <file>` for a repo whose
+ * test script is `node --test`: refusing it cost a live run two rounds (the
+ * model retried with `npx node --test …`). Only `--test`/`--test-*` flags and
+ * plain path arguments are accepted, so it cannot carry `-e`/`--eval`,
+ * `--require` or `--import` code alongside.
+ */
+function isNodeTestRun(tokens: string[]): boolean {
+  const args = tokens[0] === 'npx' && tokens[1] === 'node' ? tokens.slice(2) : tokens[0] === 'node' ? tokens.slice(1) : null;
+  if (!args || !args.includes('--test')) return false;
+  return args.every((t) => /^--test(-[a-z-]+(=\S+)?)?$/.test(t) || !t.startsWith('-'));
+}
+
+/**
  * Verification commands an autonomous run may execute without a human — test,
  * lint, type-check, build. Everything else (installs, publishes, deploys, git
  * mutations, arbitrary scripts) stays human-gated even where
@@ -370,6 +384,7 @@ export function isAutonomousSafeCommand(command: string): boolean {
   const binary = tokens[0];
   if (AUTONOMOUS_READONLY.has(binary)) return true;
   if (AUTONOMOUS_STANDALONE.has(binary)) return true;
+  if (isNodeTestRun(tokens)) return true;
   if (!AUTONOMOUS_BINARIES.has(binary)) return false;
   return tokens.slice(1).some((t) => AUTONOMOUS_VERBS.has(t));
 }
@@ -389,7 +404,7 @@ export function describeAutonomousRefusal(command: string): string {
     );
   }
   return (
-    `Command refused: autonomous runs may only execute verification commands (test / lint / type-check / build via pnpm, npm, yarn, npx, tsc, jest, vitest, pytest, go, cargo, make) — "${command}" is outside that allowlist. ` +
+    `Command refused: autonomous runs may only execute verification commands (test / lint / type-check / build via pnpm, npm, yarn, npx, tsc, jest, vitest, pytest, node --test, go, cargo, make) — "${command}" is outside that allowlist. ` +
     'Do not retry it. Use run_checks with the file path instead — it derives an allowed command in the right directory — or note the command in your final report for the user to run.'
   );
 }
