@@ -191,6 +191,66 @@ export function estimateTokensFromChars(requestBodyChars: number): number {
   return Math.ceil(requestBodyChars / 4);
 }
 
+/** What one served response costs: the units recorded against the week, and the tokens behind them. */
+export interface ResponseCharge {
+  /** Fixed-point credit units ({@link CREDIT_UNIT_SCALE}), from the cache-rebated total. */
+  creditUnits: number;
+  /** The vendor's RAW total (or the estimate), so the usage row reconciles against the vendor's bill. */
+  tokens: number;
+  /** True when the vendor reported no usage and the charge is {@link estimateTokensFromChars}. */
+  estimated: boolean;
+}
+
+/**
+ * The charge for one completed upstream response body. This is the only
+ * place a response becomes credits, so the number the Worker records and the
+ * number it reports back to the client ({@link CREDITS_CHARGED_HEADER}) are
+ * the same number by construction.
+ *
+ * Charges the REBATED total ({@link billableTokens}): cache-hit prompt tokens
+ * cost about a fifth of fresh ones upstream, and an agent run is mostly cache
+ * hits after its first round.
+ */
+export function chargeForResponse(
+  bodyText: string,
+  contentType: string | null | undefined,
+  requestBodyChars: number,
+  tokensPerCredit: number
+): ResponseCharge {
+  const usage = extractUsage(bodyText, contentType);
+  if (usage) {
+    return {
+      creditUnits: creditUnitsForTokens(billableTokens(usage), tokensPerCredit),
+      tokens: usage.totalTokens,
+      estimated: false,
+    };
+  }
+  const tokens = estimateTokensFromChars(requestBodyChars);
+  return { creditUnits: creditUnitsForTokens(tokens, tokensPerCredit), tokens, estimated: true };
+}
+
+/**
+ * Response header carrying what that one call was charged, in credits to six
+ * decimals (the resolution of {@link CREDIT_UNIT_SCALE}), e.g. `2.381400`.
+ *
+ * Why it exists: the extension's per-message credit number used to be its own
+ * reconstruction — raw prompt + completion tokens over `tokens_per_credit` —
+ * which knew nothing of the cache rebate, so a warm agent run showed two to
+ * three times what the week was actually charged (80 shown against a balance
+ * that moved far less, on 2026-09-26). Reporting the charge itself lets the
+ * client add up numbers the Worker computed instead of running a second meter.
+ *
+ * Only a non-streamed response can carry it — a streamed one sends its
+ * headers before its tokens exist. The client computes those with the same
+ * formula from the final usage chunk.
+ */
+export const CREDITS_CHARGED_HEADER = 'X-WorkspaceGPT-Credits-Charged';
+
+export function formatCreditsCharged(creditUnits: number): string {
+  const units = Number.isFinite(creditUnits) && creditUnits > 0 ? Math.trunc(creditUnits) : 0;
+  return (units / CREDIT_UNIT_SCALE).toFixed(6);
+}
+
 export interface AdmissionInput {
   weeklyUsed: number;
   weeklyLimit: number;

@@ -107,6 +107,7 @@ import { browserRequest, isBrowserConnected } from './browser/browserBridge';
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
+import { addCreditTally, creditTallyForCall, CreditTally, emptyCreditTally } from '../utils/creditTally';
 import { readLastSyncTime, SyncSection } from 'src/utils/syncStateStore';
 
 interface ChatMessage {
@@ -274,6 +275,8 @@ interface SessionRun {
   /** Tokens the current turn has spent so far, from the worker's 'metrics' message — carried onto the turn summary to estimate its credit cost. */
   turnPromptTokens: number;
   turnCompletionTokens: number;
+  /** What the current turn's calls were charged, host- and worker-side (creditTally.ts) — the turn's credit footer. */
+  turnCredits: CreditTally;
   /** File-change rollup for the current agent turn (path → cumulative counts). */
   turnFilesChanged: Map<string, TurnFileChange>;
   /**
@@ -713,6 +716,7 @@ export class ChatService {
         turnStartMs: 0,
         turnPromptTokens: 0,
         turnCompletionTokens: 0,
+        turnCredits: emptyCreditTally(),
         turnFilesChanged: new Map(),
         turnRefs: [],
         turnStepsPosted: 0,
@@ -917,6 +921,7 @@ export class ChatService {
       run.turnStartMs = Date.now();
       run.turnPromptTokens = 0;
       run.turnCompletionTokens = 0;
+      run.turnCredits = emptyCreditTally();
       run.userAskedRepoWide = REPO_WIDE_REQUEST_RE.test(message);
       run.turnFilesChanged.clear();
       run.turnRefs.length = 0;
@@ -2740,6 +2745,7 @@ Respond with a JSON object only, no markdown: {"intent": "<intent>", "sources": 
 
 Query: "${query}"`;
 
+      let responseHeaders: { get(name: string): string | null } | null = null;
       const response = await withKeyFailover(
         effApiKeys,
         (apiKey) => {
@@ -2753,10 +2759,15 @@ Query: "${query}"`;
             messages: [{ role: 'user', content: prompt }],
             max_tokens: 60,
             temperature: 0,
+          }).withResponse().then(({ data, response }) => {
+            responseHeaders = response.headers;
+            return data;
           });
         },
         (message) => this.postStatus(run, message),
       );
+      // Part of this turn's bill, though it runs before the worker does.
+      addCreditTally(run.turnCredits, creditTallyForCall(response.usage, responseHeaders));
 
       const raw = response.choices[0]?.message?.content?.trim() || '{}';
       // Strip markdown code fences if present
@@ -3010,6 +3021,8 @@ Query: "${query}"`;
                 durationMs: Date.now() - run.turnStartMs,
                 promptTokens: run.turnPromptTokens,
                 completionTokens: run.turnCompletionTokens,
+                chargedCreditMicros: run.turnCredits.chargedMicros,
+                unmeteredBillableTokens: run.turnCredits.unmeteredTokens,
                 filesChanged: [...run.turnFilesChanged.values()],
                 checkpointSha: shippable ? run.turnFirstCheckpointSha ?? undefined : undefined,
                 ticketId: ticketContext?.id,
@@ -3136,6 +3149,8 @@ Query: "${query}"`;
             /** metrics: this turn's token spend, carried onto the turn summary. */
             promptTokens?: number;
             completionTokens?: number;
+            /** metrics / usage: what the worker's calls were charged (creditTally.ts). */
+            credits?: Partial<CreditTally>;
             /** agent_transcript: the worker's model-facing messages — full replacement, or an append. */
             reset?: unknown[];
             append?: unknown[];
@@ -3374,6 +3389,7 @@ Query: "${query}"`;
                 // token count out to the webview for an estimated credit cost.
                 run.turnPromptTokens = Number(result.promptTokens) || 0;
                 run.turnCompletionTokens = Number(result.completionTokens) || 0;
+                addCreditTally(run.turnCredits, result.credits);
                 // Where the run's wall clock went, in the same channel as the
                 // command log — so the next "why did that take twenty minutes"
                 // is one line to read instead of an audit-log reconstruction.
@@ -3391,6 +3407,11 @@ Query: "${query}"`;
                       (byName ? `\n  top tools: ${byName}` : '')
                   );
                 }
+                break;
+
+              case 'usage':
+                // The streamed (non-agent) path's credits — it sends no 'metrics'.
+                addCreditTally(run.turnCredits, result.credits);
                 break;
 
               case 'agent_transcript':

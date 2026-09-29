@@ -68,6 +68,12 @@ export interface ExplorationDeps {
   onProgress?: (label: string) => void;
   /** Forwarded to withKeyFailover so key rotation is visible in the UI, same as the main loop. */
   notifyRotate?: (message: string) => void;
+  /**
+   * Handed every explorer response's usage and headers the moment it lands, so
+   * the turn's credits include explorers whose results the phase timeout then
+   * discards (see creditTally.ts).
+   */
+  noteCredits?: (usage: unknown, headers: { get(name: string): string | null } | null) => void;
 }
 
 export interface ExplorationStats {
@@ -517,6 +523,7 @@ async function runOneExplorer(
   let raw = '';
   let promptTokens = 0;
   let completionTokens = 0;
+  let responseHeaders: { get(name: string): string | null } | null = null;
   try {
     const response = await withKeyFailover(
       apiKeys,
@@ -536,12 +543,16 @@ async function runOneExplorer(
           max_tokens: cfg.explorerMaxTokens,
           stream: false,
           ...((cfg.extraBody ?? {}) as any),
+        }).withResponse().then(({ data, response }) => {
+          responseHeaders = response.headers;
+          return data;
         });
       },
       deps.notifyRotate
     );
     raw = (response as any)?.choices?.[0]?.message?.content ?? '';
     const rawUsage = (response as any)?.usage;
+    deps.noteCredits?.(rawUsage, responseHeaders);
     promptTokens = rawUsage?.prompt_tokens ?? 0;
     completionTokens = rawUsage?.completion_tokens ?? 0;
   } catch {

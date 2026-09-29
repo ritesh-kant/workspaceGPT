@@ -23,6 +23,12 @@ export interface StreamOutcome {
   reasoningChars: number;
   /** The provider's finish reason; 'length' means the token budget ran out. */
   finishReason: string | null;
+  /**
+   * The stream's token usage: the last non-null `usage` a chunk carried (the
+   * final, choices-less chunk when `stream_options.include_usage` is on, which
+   * the remote-mode Worker forces). Undefined if no chunk had one.
+   */
+  usage?: unknown;
 }
 
 /** Minimal shape of an OpenAI-style streamed chunk — only what this reads. */
@@ -31,6 +37,7 @@ export interface StreamChunk {
     delta?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null } | null;
     finish_reason?: string | null;
   }>;
+  usage?: unknown;
 }
 
 /**
@@ -47,9 +54,11 @@ export async function consumeStream(
   let isCheckingThink = true;
   let reasoningChars = 0;
   let finishReason: string | null = null;
+  let usage: unknown;
 
   try {
     for await (const chunk of stream) {
+      if (chunk.usage) usage = chunk.usage;
       const choice = chunk.choices?.[0];
       const delta = choice?.delta;
 
@@ -118,6 +127,7 @@ export async function consumeStream(
     content: fullContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim(),
     reasoningChars,
     finishReason,
+    ...(usage ? { usage } : {}),
   };
 }
 

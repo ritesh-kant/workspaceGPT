@@ -46,16 +46,39 @@ const ChatLink: React.FC<AnchorProps> = ({ href, children, className, title, nod
 };
 
 /**
- * Estimated credit cost of a turn, mirroring the server's own
- * `creditsForTokens` (apps/workspacegpt-api/src/metering.ts) — at least one
- * credit for any call that produced tokens. This is an estimate: the server
- * additionally rebates cache-hit prompt tokens, a number only it knows.
+ * What a turn cost in credits: the charges the server reported for its calls,
+ * plus any calls it could not report (streamed ones) counted with its own
+ * formula — see src/utils/creditTally.ts. This used to be raw prompt +
+ * completion tokens over `tokensPerCredit`, which ignored the server's
+ * cache-hit rebate and showed a warm agent run at two to three times its
+ * real charge.
+ *
+ * Fractional below 10 because that is how the week is charged: small calls
+ * add up as fractions and the balance is rounded once, so "1 credit" for a
+ * 0.3-credit question would overstate it.
  */
-function formatCredits(promptTokens: number | undefined, completionTokens: number | undefined, tokensPerCredit: number): string | null {
-  const total = (promptTokens || 0) + (completionTokens || 0);
-  if (total <= 0) return null;
-  const credits = Math.max(1, Math.ceil(total / tokensPerCredit));
-  return `${credits} credit${credits === 1 ? '' : 's'}`;
+function formatCredits(summary: TurnSummary | undefined, tokensPerCredit: number): { label: string; title: string } | null {
+  if (!summary) return null;
+  const plural = (n: number) => `${n} credit${n === 1 ? '' : 's'}`;
+  if (summary.chargedCreditMicros == null && summary.unmeteredBillableTokens == null) {
+    // Saved before per-call charges were recorded: all that is known is the raw
+    // token total, which is what the server would charge with nothing cached.
+    const total = (summary.promptTokens || 0) + (summary.completionTokens || 0);
+    if (total <= 0) return null;
+    return {
+      label: `≤ ${plural(Math.ceil(total / tokensPerCredit))}`,
+      title: 'Upper bound: this response was recorded before its exact charge was, and cache discounts are not included',
+    };
+  }
+  const credits = (summary.chargedCreditMicros || 0) / 1_000_000 + (summary.unmeteredBillableTokens || 0) / tokensPerCredit;
+  if (credits <= 0) return null;
+  const shown = credits < 10 ? Math.round(credits * 10) / 10 : Math.round(credits);
+  return {
+    label: shown === 0 ? '< 0.1 credits' : plural(shown),
+    title: summary.unmeteredBillableTokens
+      ? "Credits this response used: the server's charge for each call that reported one, the rest (streamed calls) counted with the server's formula"
+      : 'Credits the server charged for this response',
+  };
 }
 
 /** Plain text of a hast subtree — react-markdown hands each renderer its `node`. */
@@ -624,10 +647,10 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                 <span className="message-duration">{formatDuration(turnSummary.durationMs)}</span>
               )}
               {remoteMode && tokensPerCredit != null && (() => {
-                const credits = formatCredits(turnSummary?.promptTokens, turnSummary?.completionTokens, tokensPerCredit);
+                const credits = formatCredits(turnSummary, tokensPerCredit);
                 return credits ? (
-                  <span className="message-credits" title="Estimated credit cost of this response">
-                    {credits}
+                  <span className="message-credits" title={credits.title}>
+                    {credits.label}
                   </span>
                 ) : null;
               })()}

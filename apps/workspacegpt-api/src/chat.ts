@@ -2,13 +2,13 @@ import type { Env } from './env';
 import { bearerToken, getSession } from './auth';
 import { loadAccount } from './db';
 import {
-  billableTokens,
-  creditUnitsForTokens,
+  chargeForResponse,
+  CREDITS_CHARGED_HEADER,
   decideAdmission,
   describeRefusal,
-  estimateTokensFromChars,
-  extractUsage,
+  formatCreditsCharged,
   weeklyCreditLimitFor,
+  type ResponseCharge,
 } from './metering';
 import { chargeCredits, readUsageSnapshot, secondsUntilReset } from './usage';
 
@@ -77,7 +77,9 @@ function errorResponse(
  *   · meter  — a `tee()` of that same body is read to completion off the
  *              response path (`ctx.waitUntil`), the usage extracted, credits
  *              computed and charged. The request that crosses a limit is
- *              therefore always served; the next one is refused.
+ *              therefore always served; the next one is refused. A
+ *              non-streamed body is read before replying instead, so its
+ *              response carries the charge (X-WorkspaceGPT-Credits-Charged).
  *
  * Privacy: prompts pass through Worker memory in flight and are never logged
  * or stored. Nothing in this handler may log the request or response body —
@@ -251,19 +253,50 @@ export async function handleChatCompletions(request: Request, env: Env, ctx: Exe
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 
+  const contentType = upstream.headers.get('Content-Type');
+
+  // A non-streamed completion reaches the client in one piece either way, so
+  // reading it here first delays nothing — and lets this response say what it
+  // was charged (CREDITS_CHARGED_HEADER), which is how the extension's
+  // per-message credit number comes to be the metered charge rather than an
+  // estimate. The read and the charge run under waitUntil, so a client that
+  // disconnects mid-body is still charged for what the vendor billed, exactly
+  // as the tee path below guarantees for streams.
+  if (!isStream) {
+    const metered = upstream.text().then((text) => ({
+      text,
+      charge: chargeForResponse(text, contentType, rawBody.length, config.tokensPerCredit),
+    }));
+    ctx.waitUntil(
+      metered.then(({ charge }) => recordCharge(env, session.userId, charge)).catch(logMeteringFailure)
+    );
+    let text: string;
+    let charge: ResponseCharge;
+    try {
+      ({ text, charge } = await metered);
+    } catch {
+      return errorResponse(502, 'The inference provider stopped responding mid-answer.', 'upstream_interrupted');
+    }
+    headers.set(CREDITS_CHARGED_HEADER, formatCreditsCharged(charge.creditUnits));
+    return new Response(text, { status: upstream.status, headers });
+  }
+
   // Stream the upstream body straight through — SSE deltas must not be
   // buffered, or the extension's token-by-token rendering dies. The tee gives
   // the metering branch its own copy to read at its own pace.
   const [toClient, toMeter] = upstream.body.tee();
-  const contentType = upstream.headers.get('Content-Type');
   ctx.waitUntil(
-    meterAndCharge(env, session.userId, toMeter, contentType, rawBody.length, config.tokensPerCredit).catch((error) => {
-      console.error('[workspacegpt-api] metering failed; request not charged', {
-        message: error instanceof Error ? error.message : 'unknown',
-      });
-    })
+    meterAndCharge(env, session.userId, toMeter, contentType, rawBody.length, config.tokensPerCredit).catch(
+      logMeteringFailure
+    )
   );
   return new Response(toClient, { status: upstream.status, headers });
+}
+
+function logMeteringFailure(error: unknown): void {
+  console.error('[workspacegpt-api] metering failed; request not charged', {
+    message: error instanceof Error ? error.message : 'unknown',
+  });
 }
 
 /**
@@ -281,26 +314,21 @@ async function meterAndCharge(
   tokensPerCredit: number
 ): Promise<void> {
   const text = await new Response(body).text();
-  const usage = extractUsage(text, contentType);
-  let tokens: number;
-  let rawTokens: number;
-  if (usage) {
-    // Charge the REBATED total: cache-hit prompt tokens cost about a fifth of
-    // fresh ones upstream, and an agent run is mostly cache hits after its
-    // first round (see CACHED_TOKEN_WEIGHT). `rawTokens` keeps the vendor's
-    // unrebated count for the usage row, so the stored tokens stay
-    // reconcilable against the provider's own dashboard.
-    tokens = billableTokens(usage);
-    rawTokens = usage.totalTokens;
-  } else {
+  await recordCharge(env, userId, chargeForResponse(text, contentType, requestBodyChars, tokensPerCredit));
+}
+
+/**
+ * Record one response's charge (see chargeForResponse — the rebated total in
+ * credit units, the vendor's raw total as `tokens` so the row stays
+ * reconcilable against the provider's own dashboard).
+ */
+async function recordCharge(env: Env, userId: string, charge: ResponseCharge): Promise<void> {
+  if (charge.estimated) {
     // The vendor reported nothing. Charge for the prompt we know we sent
     // rather than nothing at all, and make the gap visible.
-    tokens = estimateTokensFromChars(requestBodyChars);
-    rawTokens = tokens;
     console.warn('[workspacegpt-api] upstream response carried no usage; charging estimated prompt tokens', {
-      estimatedTokens: tokens,
+      estimatedTokens: charge.tokens,
     });
   }
-  const creditUnits = creditUnitsForTokens(tokens, tokensPerCredit);
-  await chargeCredits(env, userId, { creditUnits, tokens: rawTokens });
+  await chargeCredits(env, userId, { creditUnits: charge.creditUnits, tokens: charge.tokens });
 }

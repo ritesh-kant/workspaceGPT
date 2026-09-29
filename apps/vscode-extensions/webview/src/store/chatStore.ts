@@ -71,9 +71,13 @@ export interface RunRef {
 /** End-of-turn rollup: how long the agent worked and which files changed. */
 export interface TurnSummary {
   durationMs: number;
-  /** Tokens this turn spent, when known (remote mode only) — used to estimate the credits it cost. */
+  /** Tokens this turn spent, when known. The credit footer's fallback for a turn saved before the two fields below existed. */
   promptTokens?: number;
   completionTokens?: number;
+  /** Micro-credits the server reported charging for this turn's calls (src/utils/creditTally.ts). */
+  chargedCreditMicros?: number;
+  /** Cache-rebated tokens of calls the server could not report a charge for (streamed ones) — divide by tokens_per_credit. */
+  unmeteredBillableTokens?: number;
   filesChanged: { path: string; kind: 'edit' | 'create' | 'delete'; added: number; removed: number }[];
   /** Sha of the checkpoint taken before this turn's first change — undo target for the triggering user message. */
   checkpointSha?: string;

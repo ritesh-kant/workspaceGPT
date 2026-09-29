@@ -215,7 +215,15 @@ and vendor failures are not charged.
 `tokens_per_credit` (plus the request-era names, carrying the same credit
 numbers, for one release). Proxy responses carry `X-WorkspaceGPT-Credits-Used`,
 `-Credits-Limit` and `-Credits-Period: week` — reflecting usage *before* that
-request, since its own cost is only known once it has streamed.
+request, since its own cost is only known once it has streamed. A
+non-streamed response is read in full before replying (still charged under
+`waitUntil`) and also carries `X-WorkspaceGPT-Credits-Charged`, that call's own
+charge in credits to six decimals. The extension adds those up for each
+message's credit footer; a streamed call, which cannot carry it, is counted
+client-side with the same formula from its final usage chunk
+(`apps/vscode-extensions/src/utils/creditTally.ts`). The balance is re-read
+from `/v1/me` after every run and when Settings or the usage bar opens, at
+most once per 10 s.
 
 Existing `requests` values were **not** reinterpreted as credits
 (`0006_credits.sql`): a call is not a credit, and everyone's credit counters

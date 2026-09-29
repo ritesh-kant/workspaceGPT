@@ -5,6 +5,7 @@ import { MODEL_PROVIDERS, REMOTE_MODEL } from '../../../constants';
 import OpenAI from 'openai';
 import { EmbeddingSearchResult } from 'src/types/types';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
+import { addCreditTally, creditTallyForCall, emptyCreditTally } from '../../utils/creditTally';
 import { extractBalancedJsonObjects } from './jsonExtract';
 import { runExplorationPhase, defaultExplorationConfig } from './explorationPhase';
 import { runExploreSubagent, defaultExploreConfig, EXPLORE_TOOL_NAMES } from './exploreSubagent';
@@ -1521,6 +1522,10 @@ async function generateWithOpenAIStream(
   const outcome = await consumeStream(stream, (content) =>
     parentPort?.postMessage({ type: 'chunk', content })
   );
+  // A stream's headers leave before its tokens exist, so the server cannot
+  // report this call's charge; count its final usage chunk with the server's
+  // formula instead (see creditTally.ts).
+  noteCredits(outcome.usage);
 
   // A reasoning model can spend its whole budget thinking and emit no visible
   // content: the text arrives as `reasoning_content` deltas, and this path
@@ -1543,6 +1548,9 @@ async function generateWithOpenAIStream(
     return;
   }
 
+  // The whole turn's credits so far: when the retry above ran, it is the one
+  // that reaches this line, carrying both attempts.
+  parentPort?.postMessage({ type: 'usage', credits: { ...turnCredits } });
   parentPort?.postMessage({ type: 'done', content: outcome.content });
 }
 
@@ -1585,6 +1593,18 @@ function noteToolMs(name: string, ms: number): void {
   const prev = toolMsByName.get(name) ?? { ms: 0, calls: 0 };
   toolMsByName.set(name, { ms: prev.ms + ms, calls: prev.calls + 1 });
   toolMsTotal += ms;
+}
+
+/**
+ * Credits this turn's calls cost (see creditTally.ts), recorded where each
+ * response lands rather than where its result is used, so a call whose result
+ * is thrown away (an explorer finishing after the phase timed out) still
+ * counts: the server charged it all the same. One worker runs one turn, so
+ * module scope is turn scope, like the tool timings above.
+ */
+const turnCredits = emptyCreditTally();
+function noteCredits(usage: unknown, headers?: { get(name: string): string | null } | null): void {
+  addCreditTally(turnCredits, creditTallyForCall(usage, headers));
 }
 
 /** Token usage for one (or more, if retried) API call(s) backing a turn. */
@@ -1815,6 +1835,9 @@ async function runToolTurn(
    *  sub-agent passes a read-only subset. */
   tools: unknown[] = TOOL_DEFS
 ): Promise<ToolTurnOutcome> {
+  // The HTTP headers of the response that succeeded, for the credits the
+  // server says this call was charged (see creditTally.ts).
+  let responseHeaders: { get(name: string): string | null } | null = null;
   const call = (apiKey: string) => {
     // maxRetries above the SDK's default of 2 (0.5s then 1s of backoff, sized
     // for a network blip). A tool turn is the most expensive thing to lose:
@@ -1844,6 +1867,9 @@ async function runToolTurn(
       // produced.
       max_tokens: maxTokens,
       stream: false,
+    }).withResponse().then(({ data, response }) => {
+      responseHeaders = response.headers;
+      return data;
     }));
   };
 
@@ -1878,6 +1904,10 @@ async function runToolTurn(
       throw err;
     }
   }
+
+  // Before the checks below: a 200 that turns out to be unusable was still
+  // served, and the server charged it.
+  noteCredits((response as any)?.usage, responseHeaders);
 
   // Some providers (OpenRouter free-tier models especially, under load or
   // rate limiting) return HTTP 200 with an error payload instead of a real
@@ -2675,6 +2705,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       promptTokens: promptTokensTotal,
       completionTokens: completionTokensTotal,
       totalTokens: promptTokensTotal + completionTokensTotal,
+      /** What those calls were charged — the turn's credit footer (creditTally.ts). */
+      credits: { ...turnCredits },
       usageMissingTurns,
       toolCallsExecuted,
       writesApplied,
@@ -2756,6 +2788,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
             parentPort?.postMessage({ type: 'tool_status', id, name: 'explore_codebase', arguments: { label } });
           },
           notifyRotate: notifyKeyFailover,
+          noteCredits,
         },
         {
           ...defaultExplorationConfig(isLocalProvider),

@@ -357,6 +357,76 @@ await t('a cache-hit prompt is charged the rebated total, and the row keeps the 
   assert.deepEqual(weeklyRow(db), { requests: 1, credits: 9, credit_units: 9_000_000, tokens: 35_400 });
 });
 
+console.log('the per-call charge reported back to the client');
+/** A non-streamed completion with the given usage, as the vendor sends it. */
+function jsonCompletion(usage) {
+  return new Response(JSON.stringify({ id: 'c3', choices: [{ message: { role: 'assistant', content: 'ok' } }], usage }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+await t('a non-streamed response says what it was charged, and it is what the week recorded', async ({ db, env, ctx }) => {
+  const usage = { prompt_tokens: 35_000, completion_tokens: 400, total_tokens: 35_400, prompt_tokens_details: { cached_tokens: 33_000 } };
+  const vendorText = JSON.stringify({ id: 'c3', choices: [{ message: { role: 'assistant', content: 'ok' } }], usage });
+  scriptUpstream(() => new Response(vendorText, { headers: { 'Content-Type': 'application/json' } }));
+  const res = await worker.fetch(chatRequest({ ...PROMPT, stream: false }), env, ctx);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('X-WorkspaceGPT-Credits-Charged'), '9.000000', 'the rebated charge, not ceil(35,400/1000)');
+  assert.equal(await res.text(), vendorText, 'the vendor body itself is untouched');
+  await ctx.settle();
+  assert.equal(weeklyRow(db).credit_units, 9_000_000);
+});
+
+await t('headers summed across calls equal the week\'s credit units — no per-call rounding on either side', async ({ db, env, ctx }) => {
+  scriptUpstream(() => jsonCompletion({ prompt_tokens: 150, completion_tokens: 50, total_tokens: 200 }));
+  let micros = 0;
+  for (let n = 0; n < 5; n++) {
+    const res = await worker.fetch(chatRequest({ ...PROMPT, stream: false }), env, ctx);
+    micros += Math.round(Number(res.headers.get('X-WorkspaceGPT-Credits-Charged')) * 1_000_000);
+    await res.text();
+    await ctx.settle();
+  }
+  assert.equal(micros, weeklyRow(db).credit_units);
+  assert.equal(micros, 1_000_000, 'five 0.2-credit calls report 1 credit in total');
+});
+
+await t('a non-streamed call is charged even if the client never reads the body', async ({ db, env, ctx }) => {
+  scriptUpstream(() => jsonCompletion({ prompt_tokens: 500, completion_tokens: 100, total_tokens: 600 }));
+  const res = await worker.fetch(chatRequest({ ...PROMPT, stream: false }), env, ctx);
+  await res.body.cancel();
+  await ctx.settle();
+  assert.deepEqual(weeklyRow(db), { requests: 1, credits: 1, credit_units: 600_000, tokens: 600 });
+});
+
+await t('a non-streamed body that breaks mid-read is a 502 and is not charged', async ({ db, env, ctx, logs }) => {
+  scriptUpstream(
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"id":"c4","choi'));
+            controller.error(new Error('connection reset'));
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } }
+      )
+  );
+  const res = await worker.fetch(chatRequest({ ...PROMPT, stream: false }), env, ctx);
+  assert.equal(res.status, 502);
+  assert.equal((await res.json()).error.type, 'upstream_interrupted');
+  await ctx.settle();
+  assert.equal(weeklyRow(db), null);
+  assert.match(logs.error.at(-1)[0], /metering failed/);
+});
+
+await t('a streamed response carries no charge header — its tokens do not exist yet when headers go out', async ({ env, ctx }) => {
+  scriptUpstream(() => sseResponse(sseBody(['hi'], { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 })));
+  const res = await worker.fetch(chatRequest(PROMPT), env, ctx);
+  assert.equal(res.headers.get('X-WorkspaceGPT-Credits-Charged'), null);
+  await res.text();
+  await ctx.settle();
+});
+
 await t('a stream with no usage chunk charges the estimated prompt size and warns', async ({ db, env, ctx, logs }) => {
   scriptUpstream(() => sseResponse(sseBody(['no usage here'], null)));
   const req = chatRequest(PROMPT);

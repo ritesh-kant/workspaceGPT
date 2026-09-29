@@ -869,6 +869,8 @@ const App: React.FC = () => {
             durationMs: message.durationMs || 0,
             promptTokens: message.promptTokens,
             completionTokens: message.completionTokens,
+            chargedCreditMicros: message.chargedCreditMicros,
+            unmeteredBillableTokens: message.unmeteredBillableTokens,
             filesChanged: message.filesChanged || [],
             checkpointSha: message.checkpointSha,
             ticketId: message.ticketId,
@@ -1048,6 +1050,8 @@ const App: React.FC = () => {
             durationMs: message.durationMs || 0,
             promptTokens: message.promptTokens,
             completionTokens: message.completionTokens,
+            chargedCreditMicros: message.chargedCreditMicros,
+            unmeteredBillableTokens: message.unmeteredBillableTokens,
             filesChanged: message.filesChanged || [],
             checkpointSha: message.checkpointSha,
             ticketId: message.ticketId,
@@ -1361,6 +1365,21 @@ const App: React.FC = () => {
       erroredSessionIds: erroredIdsKey ? erroredIdsKey.split(',') : [],
     });
   }, [runningIdsKey, completedIdsKey, erroredIdsKey]);
+
+  // A run just ended (any session, on screen or not, however it ended), so
+  // its credits are spent: read the balance again. Until 2026-09-26 it was
+  // read once per webview load, so the usage bar froze across runs. The delay
+  // lets the Worker record the last call's charge, which it does just after
+  // replying; the host throttles the read itself (verifySessionThrottled).
+  // Deliberately not cancelled when the next run starts inside the delay.
+  const prevRunningIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    const now = runningIdsKey ? runningIdsKey.split(',') : [];
+    const ended = prevRunningIdsRef.current.some((id) => !now.includes(id));
+    prevRunningIdsRef.current = now;
+    if (!ended || mode !== 'remote') return;
+    setTimeout(() => vscode.postMessage({ type: MESSAGE_TYPES.CHECK_REMOTE_SESSION }), 1500);
+  }, [runningIdsKey, mode]);
 
   // Auto-save whenever messages change (debounced)
   useEffect(() => {

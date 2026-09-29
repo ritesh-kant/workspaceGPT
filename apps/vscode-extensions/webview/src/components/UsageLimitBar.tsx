@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { nextWeeklyReset, usageTone } from '../utils/usage';
+import { VSCodeAPI } from '../vscode';
+import { MESSAGE_TYPES } from '../constants';
 
 interface UsageLimitBarProps {
   /** Credits used / allowed this week. */
@@ -40,10 +42,14 @@ const UsageLimitBar: React.FC<UsageLimitBarProps> = ({ used, limit }) => {
   const resetAt = nextWeeklyReset();
   const [dismissedReset, setDismissedReset] = useState<number | null>(readDismissedReset);
 
-  if (limit <= 0) return null;
-  const remainingPct = Math.min(100, Math.max(0, Math.round(((limit - used) / limit) * 100)));
-  if (remainingPct > SHOW_AT_REMAINING_PCT) return null;
-  if (dismissedReset === resetAt.getTime()) return null;
+  const remainingPct = limit > 0 ? Math.min(100, Math.max(0, Math.round(((limit - used) / limit) * 100))) : 100;
+  const visible = limit > 0 && remainingPct <= SHOW_AT_REMAINING_PCT && dismissedReset !== resetAt.getTime();
+  // Opening the bar re-reads the balance it shows (the host throttles it).
+  useEffect(() => {
+    if (visible) VSCodeAPI().postMessage({ type: MESSAGE_TYPES.CHECK_REMOTE_SESSION });
+  }, [visible]);
+
+  if (!visible) return null;
 
   const usedPct = 100 - remainingPct;
   const tone = usageTone(remainingPct);

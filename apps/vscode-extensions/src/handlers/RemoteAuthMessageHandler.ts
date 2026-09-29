@@ -46,14 +46,19 @@ export class RemoteAuthMessageHandler {
   public async handleMessage(data: any): Promise<boolean> {
     switch (data.type) {
       case MESSAGE_TYPES.CHECK_REMOTE_SESSION: {
-        const result = await this.service.verifySession();
-        const signedIn = result.state !== 'signed_out';
-        const profile = result.state === 'signed_in' ? result.profile : null;
-        this.identifyFromProfile(profile);
-        this.webviewView.webview.postMessage({
-          type: MESSAGE_TYPES.REMOTE_SESSION_STATUS,
-          signedIn,
-          ...webviewFieldsFromProfile(profile),
+        // Throttled across webviews (verifySessionThrottled): a check inside
+        // the interval is answered with the last result at once, then again
+        // once the trailing read lands — so the balance after a run still
+        // arrives, just not more often than every 10 s.
+        await this.service.verifySessionThrottled(this.webviewView, (result, fresh) => {
+          const signedIn = result.state !== 'signed_out';
+          const profile = result.state === 'signed_in' ? result.profile : null;
+          if (fresh) this.identifyFromProfile(profile);
+          this.webviewView.webview.postMessage({
+            type: MESSAGE_TYPES.REMOTE_SESSION_STATUS,
+            signedIn,
+            ...webviewFieldsFromProfile(profile),
+          });
         });
         return true;
       }

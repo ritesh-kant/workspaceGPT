@@ -4552,6 +4552,182 @@ console.log('\nfinal report delivery (no completion claim on screen before its s
   });
 }
 
+console.log('\ncreditTally (the footer adds up what the server charged, not raw tokens)');
+{
+  const ct = await import(path.join(outDir, 'creditTally.mjs'));
+  const worker = await import(path.join(outDir, 'metering.mjs'));
+  const headers = (h) => ({ get: (name) => h[name.toLowerCase()] ?? null });
+  const HDR = ct.CREDITS_CHARGED_HEADER;
+
+  await t('a call that carries the charge header counts exactly that, whatever its usage says', () => {
+    const tally = ct.creditTallyForCall({ prompt_tokens: 50_000, total_tokens: 50_000 }, headers({ [HDR]: '1.966000' }));
+    assert.deepEqual(tally, { chargedMicros: 1_966_000, unmeteredTokens: 0 });
+  });
+
+  await t('a call without the header is counted with the server formula (cache rebate), and is the Worker\'s number', () => {
+    const usages = [
+      { prompt_tokens: 35_000, completion_tokens: 400, total_tokens: 35_400, prompt_tokens_details: { cached_tokens: 33_000 } },
+      { prompt_tokens: 7_495, completion_tokens: 202, total_tokens: 7_697, prompt_tokens_details: { cached_tokens: 7_164 } },
+      { prompt_tokens: 100, completion_tokens: 10, cached_tokens: 50 },
+      { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 9_999 } },
+      { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: {}, cached_tokens: 40 },
+      { prompt_tokens: 100, completion_tokens: 10, total_tokens: 125 },
+      { prompt_tokens: -5, completion_tokens: 'x' },
+    ];
+    for (const u of usages) {
+      const serverUsage = worker.usageFromObject(u);
+      const expected = serverUsage ? worker.billableTokens(serverUsage) : 0;
+      assert.equal(ct.billableTokensFromUsage(u), expected, JSON.stringify(u));
+    }
+    assert.equal(ct.billableTokensFromUsage(usages[0]), 9_000, '35,400 - 33,000*0.8');
+    assert.equal(ct.CACHED_TOKEN_WEIGHT, worker.CACHED_TOKEN_WEIGHT);
+    assert.equal(ct.CREDIT_MICROS, worker.CREDIT_UNIT_SCALE);
+  });
+
+  await t('an unreadable header falls back to the formula instead of counting nothing', () => {
+    for (const bad of ['', 'abc', '-1', null]) {
+      const tally = ct.creditTallyForCall({ prompt_tokens: 900, completion_tokens: 100, total_tokens: 1000 }, headers({ [HDR]: bad }));
+      assert.deepEqual(tally, { chargedMicros: 0, unmeteredTokens: 1000 }, String(bad));
+    }
+  });
+
+  // The run behind the 2026-09-26 report: nine agent rounds, 78,045 prompt +
+  // 1,728 completion tokens, shown as "80 credits". Each round resends the
+  // last one's transcript; with those prefixes served from cache, the Worker
+  // charges a fraction of that.
+  await t('the "80 credits" run: summed charges are what the week was charged, far below raw tokens / 1000', () => {
+    const rounds = [[7164, 27], [7495, 202], [7765, 34], [8432, 100], [8567, 31], [8708, 20], [9351, 425], [9980, 452], [10583, 437]];
+    const tally = ct.emptyCreditTally();
+    let weekUnits = 0;
+    let prev = 0;
+    for (const [p, c] of rounds) {
+      const usage = { prompt_tokens: p, completion_tokens: c, total_tokens: p + c, prompt_tokens_details: { cached_tokens: Math.min(prev, p) } };
+      prev = p + c;
+      const charge = worker.chargeForResponse(JSON.stringify({ usage }), 'application/json', 0, 1000);
+      weekUnits += charge.creditUnits;
+      ct.addCreditTally(tally, ct.creditTallyForCall(usage, headers({ [HDR]: worker.formatCreditsCharged(charge.creditUnits) })));
+    }
+    assert.equal(tally.chargedMicros, weekUnits, 'the footer is the sum of the charges, to the micro-credit');
+    assert.equal(tally.unmeteredTokens, 0);
+    const credits = tally.chargedMicros / 1_000_000;
+    assert.ok(credits < 30, `charged ${credits}, not the 80 the old footer showed`);
+  });
+
+  await t('addCreditTally ignores missing, negative and NaN parts from a message', () => {
+    const tally = ct.addCreditTally(ct.emptyCreditTally(), { chargedMicros: 5, unmeteredTokens: 7 });
+    ct.addCreditTally(tally, undefined);
+    ct.addCreditTally(tally, { chargedMicros: -3, unmeteredTokens: NaN });
+    ct.addCreditTally(tally, { chargedMicros: 1 });
+    assert.deepEqual(tally, { chargedMicros: 6, unmeteredTokens: 7 });
+  });
+
+  await t('a streamed turn keeps the last non-null usage chunk for its credits', async () => {
+    const { consumeStream } = await import(path.join(outDir, 'streamOutcome.mjs'));
+    const usage = { prompt_tokens: 1200, completion_tokens: 30, total_tokens: 1230, prompt_tokens_details: { cached_tokens: 1000 } };
+    const chunks = [
+      { choices: [{ delta: { content: 'Hello' } }], usage: null },
+      { choices: [{ delta: { content: '.' }, finish_reason: 'stop' }], usage: null },
+      { choices: [], usage },
+    ];
+    const out = await consumeStream((async function* () { for (const c of chunks) yield c; })(), () => {});
+    assert.equal(out.content, 'Hello.');
+    assert.deepEqual(out.usage, usage);
+    assert.deepEqual(ct.creditTallyForCall(out.usage, null), { chargedMicros: 0, unmeteredTokens: 430 });
+  });
+}
+
+console.log('\nthrottledCheck (the balance is re-read after runs, at most once per interval, never left stale)');
+{
+  const { createThrottledCheck } = await import(path.join(outDir, 'throttledCheck.mjs'));
+  const fakeClock = () => {
+    let now = 0;
+    const timers = [];
+    return {
+      now: () => now,
+      setTimeout: (fn, ms) => void timers.push({ at: now + ms, fn }),
+      advance: async (ms) => {
+        now += ms;
+        for (const timer of timers.splice(0).sort((a, b) => a.at - b.at)) {
+          if (timer.at <= now) timer.fn();
+          else timers.push(timer);
+        }
+        await new Promise((r) => setImmediate(r));
+      },
+    };
+  };
+  const counter = () => {
+    let n = 0;
+    return { read: async () => ++n, reads: () => n };
+  };
+  const tick = () => new Promise((r) => setImmediate(r));
+
+  await t('asks inside the interval get the last balance at once, then one trailing re-read for all of them', async () => {
+    const clock = fakeClock();
+    const check = createThrottledCheck(10_000, clock);
+    const src = counter();
+    const got = { settings: [], chat: [] };
+    check.request('chat', src.read, (v, fresh) => got.chat.push([v, fresh]));
+    await tick();
+    assert.deepEqual(got.chat, [[1, true]]);
+    await clock.advance(2_000); // a run ends two seconds after the first read
+    check.request('chat', src.read, (v, fresh) => got.chat.push([v, fresh]));
+    check.request('settings', src.read, (v, fresh) => got.settings.push([v, fresh]));
+    check.request('settings', src.read, (v, fresh) => got.settings.push([v, fresh]));
+    assert.equal(src.reads(), 1, 'throttled: no second read inside the interval');
+    assert.deepEqual(got.settings, [[1, false], [1, false]], 'answered immediately, not left on "Checking…"');
+    await clock.advance(7_999);
+    assert.equal(src.reads(), 1);
+    await clock.advance(1);
+    assert.equal(src.reads(), 2, 'exactly one trailing read');
+    assert.deepEqual(got.chat.at(-1), [2, true], 'the balance after the run arrives without anyone asking again');
+    assert.deepEqual(got.settings.at(-1), [2, true]);
+    assert.equal(got.settings.length, 3, 'repeat asks from one requester share one trailing delivery');
+  });
+
+  await t('an ask after the interval reads straight away', async () => {
+    const clock = fakeClock();
+    const check = createThrottledCheck(10_000, clock);
+    const src = counter();
+    const got = [];
+    check.request('a', src.read, (v) => got.push(v));
+    await tick();
+    await clock.advance(10_000);
+    check.request('a', src.read, (v) => got.push(v));
+    await tick();
+    assert.deepEqual(got, [1, 2]);
+  });
+
+  await t('invalidate (sign-in or sign-out) forgets the cached answer, even one still in flight', async () => {
+    const clock = fakeClock();
+    const check = createThrottledCheck(10_000, clock);
+    let release;
+    const slow = () => new Promise((r) => (release = r));
+    const got = [];
+    check.request('a', slow, (v) => got.push(v));
+    check.invalidate();
+    release('old-session');
+    await tick();
+    check.request('a', async () => 'new-session', (v) => got.push(v));
+    await tick();
+    assert.deepEqual(got, ['old-session', 'new-session'], 'the old read was never cached and replayed');
+  });
+
+  await t('a requester that throws (a disposed webview) does not stop delivery to the others', async () => {
+    const clock = fakeClock();
+    const check = createThrottledCheck(10_000, clock);
+    const src = counter();
+    check.request('x', src.read, () => {});
+    await tick();
+    const got = [];
+    check.request('gone', src.read, () => {
+      throw new Error('Webview is disposed');
+    });
+    check.request('alive', src.read, (v) => got.push(v));
+    await clock.advance(10_000);
+    assert.deepEqual(got, [1, 2]);
+  });
+}
+
 // ── summary ──
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {

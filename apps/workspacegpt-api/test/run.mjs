@@ -178,6 +178,28 @@ await t('the run that motivated this: a warm agent round costs a fraction of wha
   assert.equal(m.creditsForTokens(m.billableTokens(round), 1000), 9, 'what it charges now — a quarter of the old bill');
 });
 
+console.log('\nchargeForResponse + the credits-charged header');
+await t('a response with usage is charged its rebated total; the raw total is kept as tokens', () => {
+  const body = JSON.stringify({
+    usage: { prompt_tokens: 7_495, completion_tokens: 202, total_tokens: 7_697, prompt_tokens_details: { cached_tokens: 7_164 } },
+  });
+  const c = m.chargeForResponse(body, 'application/json', 999, 1000);
+  // 7,697 - 7,164*0.8 = 1,965.8 → 1,966 billable tokens → 1.966 credits.
+  assert.deepEqual(c, { creditUnits: 1_966_000, tokens: 7_697, estimated: false });
+  assert.equal(m.formatCreditsCharged(c.creditUnits), '1.966000');
+});
+await t('a response with no usage is charged the request-size estimate, flagged as such', () => {
+  const c = m.chargeForResponse('{"choices":[]}', 'application/json', 4_000, 1000);
+  assert.deepEqual(c, { creditUnits: 1_000_000, tokens: 1_000, estimated: true });
+});
+await t('formatCreditsCharged is six decimals and never negative or NaN', () => {
+  assert.equal(m.formatCreditsCharged(1), '0.000001');
+  assert.equal(m.formatCreditsCharged(123_456_789), '123.456789');
+  assert.equal(m.formatCreditsCharged(0), '0.000000');
+  assert.equal(m.formatCreditsCharged(-5), '0.000000');
+  assert.equal(m.formatCreditsCharged(NaN), '0.000000');
+});
+
 console.log('\ndecideAdmission');
 const base = { weeklyUsed: 0, weeklyLimit: 2000, secondsUntilWeeklyReset: 86_400 };
 await t('under the weekly limit → allowed', () => {

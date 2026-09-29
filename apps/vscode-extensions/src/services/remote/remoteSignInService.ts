@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { REMOTE_AUTH, STORAGE_KEYS } from '../../../constants';
 import { OAuthCallbackServer } from '../deployment/oauthCallbackServer';
 import { setCachedRemoteSessionToken } from './remoteSessionCache';
+import { createThrottledCheck } from './throttledCheck';
 
 export interface RemoteProfile {
   github_login: string;
@@ -65,6 +66,17 @@ export function describeRemoteAuthError(error: unknown): string {
 
 /** At most one loopback callback server — Settings and the Command Palette share this. */
 let inFlightSignIn: RemoteSignInService | null = null;
+
+/**
+ * The balance is read from `/v1/me`, which is asked for on load, whenever
+ * Settings or the usage bar opens, and after every run — so reads are
+ * throttled, shared across webviews, and trailed (throttledCheck.ts) so that
+ * throttling never leaves a balance frozen after a run.
+ */
+export const SESSION_CHECK_MIN_INTERVAL_MS = 10_000;
+const sessionCheck = createThrottledCheck<SessionVerifyResult>(SESSION_CHECK_MIN_INTERVAL_MS);
+/** The stored token the cached check describes. */
+let sessionCheckToken: string | undefined;
 
 /**
  * RECONSTRUCTED 2026-08-31 — this file was deleted by mistake earlier in the
@@ -173,6 +185,25 @@ export class RemoteSignInService {
       // revalidates server-side; the Settings card should not flash "signed out".
       return { state: 'unreachable' };
     }
+  }
+
+  /**
+   * {@link verifySession}, throttled: see {@link SESSION_CHECK_MIN_INTERVAL_MS}.
+   * `deliver` may run twice for one call (the cached result now, a fresh one
+   * after the trailing read). Keyed on the stored token, so a sign-in or
+   * sign-out from anywhere (Settings, the Command Palette, a 401 mid-run)
+   * drops the cached answer instead of replaying the previous session's.
+   */
+  async verifySessionThrottled(
+    key: unknown,
+    deliver: (result: SessionVerifyResult, fresh: boolean) => void
+  ): Promise<void> {
+    const token = await this.context.secrets.get(STORAGE_KEYS.REMOTE_SESSION_TOKEN);
+    if (token !== sessionCheckToken) {
+      sessionCheck.invalidate();
+      sessionCheckToken = token;
+    }
+    sessionCheck.request(key, () => this.verifySession(), deliver);
   }
 
   async signOut(): Promise<void> {

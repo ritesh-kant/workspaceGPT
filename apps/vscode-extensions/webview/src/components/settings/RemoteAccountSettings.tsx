@@ -197,8 +197,10 @@ const RemoteAccountSettings: React.FC = () => {
             )}
             {typeof status.tokensPerCredit === 'number' && (
               <small className='form-text'>
-                1 credit ≈ {status.tokensPerCredit.toLocaleString()} model tokens. A quick question is a
-                few credits; a run that edits code, a few dozen.
+                1 credit ≈ {status.tokensPerCredit.toLocaleString()} model tokens, and context the model has
+                already read costs a fifth of that. Cost varies with task size, and each answer shows what it
+                used: a plain chat question is under 1 credit, a question about your code about 5–15, a small
+                code edit about 20–50, and a long multi-file run can take a few hundred.
               </small>
             )}
           </div>

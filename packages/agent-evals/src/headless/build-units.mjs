@@ -24,6 +24,10 @@ const UNITS = [
   'src/services/codebase/codebaseTools.ts',
   'src/services/codebase/lineNumbers.ts',
   'src/utils/apiKeyFailover.ts',
+  'src/utils/creditTally.ts',
+  'src/services/remote/throttledCheck.ts',
+  // The Worker's metering, so the client's credit formula is checked against the real one.
+  '../workspacegpt-api/src/metering.ts',
   'src/utils/continuationIntent.ts',
   'src/utils/chatHistory.ts',
   'src/utils/reranker.ts',
