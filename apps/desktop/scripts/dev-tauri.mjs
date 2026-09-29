@@ -28,8 +28,25 @@ if (!fs.existsSync(path.join(cargoBin, 'cargo')) && spawnSync('cargo', ['--versi
   console.error('Rust is not installed — see https://rustup.rs (Phase 1 needs cargo).');
   process.exit(1);
 }
+// Workers and the webview come from the extension's own build (dist/sidecar/workers
+// is a symlink to it), so a source edit after that build would otherwise run stale.
+const newestMtime = (p) => {
+  const st = fs.statSync(p, { throwIfNoEntry: false });
+  if (!st) return 0;
+  if (!st.isDirectory()) return st.mtimeMs;
+  return Math.max(0, ...fs.readdirSync(p).map((f) => newestMtime(path.join(p, f))));
+};
+const builtAt = Math.min(
+  ...['dist/workers/model/modelWorker.js', 'webview/dist/index.html'].map(
+    (f) => fs.statSync(path.join(extDir, f), { throwIfNoEntry: false })?.mtimeMs ?? 0,
+  ),
+);
+const sourceAt = Math.max(...['src', 'webview/src', 'constants.ts'].map((f) => newestMtime(path.join(extDir, f))));
 if (!fs.existsSync(path.join(extDir, 'dist/workers')) || !fs.existsSync(path.join(extDir, 'webview/dist/index.html'))) {
   console.log('→ building the extension first (webview + host + workers)…');
+  run('pnpm', ['--filter', 'workspacegpt-extension', 'build']);
+} else if (sourceAt > builtAt) {
+  console.log('→ extension source changed since the last build — rebuilding (webview + host + workers)…');
   run('pnpm', ['--filter', 'workspacegpt-extension', 'build']);
 }
 run(process.execPath, [path.join(root, 'sidecar/esbuild.config.mjs')]);

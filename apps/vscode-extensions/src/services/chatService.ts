@@ -62,6 +62,7 @@ import {
   PreparedWrite,
 } from './agent/agentWriteTools';
 import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
+import { normalizeQuestions } from './agent/askUser';
 import { recordOriginalContent } from './agent/agentDiffProvider';
 import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs, derivableChecks } from './agent/verifyTools';
 import { shipChanges, ShipInput } from './agent/shipService';
@@ -73,6 +74,7 @@ import { getActiveTicketProvider } from './tickets/registry';
 import { collectRefs, mergeRefs, refsFromTicket, RunRef } from './agent/referenceIndex';
 import { getPrUrlTemplate } from './agent/gitStatusService';
 import {
+  confluenceWriteBlocker,
   fetchConfluencePage,
   ConfluencePageDetail,
   prepareConfluenceEdit,
@@ -407,7 +409,18 @@ interface SessionRun {
    * back to it in a new window.
    */
   lastTicketId: string | null;
+  /** The one-click action that started the current turn, if a button did (see sendMessage). */
+  turnAction?: 'publish-spike';
+  /**
+   * Tickets this session already fetched, so naming the same work item again
+   * (a follow-up, the spike's Publish button) reuses it instead of re-reading
+   * it. Bounded by TICKET_CACHE_TTL_MS; the model's get_ticket is always live.
+   */
+  ticketCache: Map<string, { ticket: TicketDetail; at: number }>;
 }
+
+/** How long a prefetched ticket is reused within a session before it is read again. */
+const TICKET_CACHE_TTL_MS = 30 * 60 * 1000;
 
 export class ChatService {
   private embeddingService: ConfluenceEmbeddingService;
@@ -742,6 +755,7 @@ export class ChatService {
         agentTranscript: null,
         lastAnswerStallShaped: false,
         lastTicketId: null,
+        ticketCache: new Map(),
       };
       this.runs.set(sessionId, run);
     }
@@ -893,7 +907,13 @@ export class ChatService {
      */
     assistantMode: 'chat' | 'work' = 'work',
     /** The "Run plan" button: this turn carries out the plan the previous answer proposed. */
-    executePlan = false
+    executePlan = false,
+    /**
+     * Which one-click action started this turn ('publish-spike' = a spike
+     * card's "Publish to Confluence"). A fact from the button, never inferred
+     * from the prompt: it narrows the tools and skips the code scouting.
+     */
+    turnAction?: 'publish-spike'
   ): Promise<void> {
     const run = this.runFor(sessionId);
     if (run.worker) {
@@ -906,6 +926,17 @@ export class ChatService {
       return;
     }
     run.cancelled = false;
+    run.turnAction = turnAction;
+    // Publishing needs write access, and the stored connection says whether it
+    // has it — refuse now, before a run spends minutes preparing a page it
+    // then cannot create.
+    if (turnAction === 'publish-spike') {
+      const blocker = confluenceWriteBlocker(this.context);
+      if (blocker) {
+        this.post(run, { type: MESSAGE_TYPES.ERROR_CHAT, message: blocker });
+        return;
+      }
+    }
     if (provider === COPILOT_PROVIDER) markUserTurn();
     // Safe to replace unconditionally here: the live-worker case already
     // returned above, so nothing is mid-turn against the old history.
@@ -1292,23 +1323,32 @@ export class ChatService {
       // Sticky across the session, so a resume record written by a later
       // continuation turn still names the ticket the run is about.
       if (ticketId) run.lastTicketId = ticketId;
+      const cachedTicket = ticketId ? run.ticketCache.get(ticketId) : undefined;
       if (ticketId && ticketProvider) {
         const stepId = randomUUID();
-        this.postStatus(run, `Reading ticket ${ticketId}...`);
-        this.post(run, {
-          type: MESSAGE_TYPES.AGENT_STEP,
-          id: stepId,
-          step: { kind: 'read', title: 'Read ticket', detail: `#${ticketId}`, status: 'running' },
-        });
-        try {
-          ticketContext = await ticketProvider.fetchTicket(ticketId, { includeComments: true });
-          mergeRefs(run.turnRefs, refsFromTicket(ticketContext));
+        const reuse = !!cachedTicket && Date.now() - cachedTicket.at < TICKET_CACHE_TTL_MS;
+        if (!reuse) {
+          this.postStatus(run, `Reading ticket ${ticketId}...`);
           this.post(run, {
-            type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+            type: MESSAGE_TYPES.AGENT_STEP,
             id: stepId,
-            status: 'done',
-            summary: ticketContext.state,
+            step: { kind: 'read', title: 'Read ticket', detail: `#${ticketId}`, status: 'running' },
           });
+        }
+        try {
+          // Already read this session: reuse it — no fetch, no "Read ticket"
+          // row (the chip below still links it). get_ticket stays a live read.
+          ticketContext = reuse ? cachedTicket!.ticket : await ticketProvider.fetchTicket(ticketId, { includeComments: true });
+          if (!reuse) run.ticketCache.set(ticketId, { ticket: ticketContext, at: Date.now() });
+          mergeRefs(run.turnRefs, refsFromTicket(ticketContext));
+          if (!reuse) {
+            this.post(run, {
+              type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
+              id: stepId,
+              status: 'done',
+              summary: ticketContext.state,
+            });
+          }
           // The run's ticket as a chip ABOVE the collapsed timeline: the user
           // should be able to open what the agent worked from without hunting
           // for it in Azure DevOps. Rides the agent-step channel so it
@@ -1700,6 +1740,8 @@ export class ChatService {
         return this.gatedConfluenceWrite(run, await prepareConfluenceCreate(this.context, args));
       case 'find_confluence_location':
         return this.findConfluenceLocation(args);
+      case 'ask_user':
+        return this.askUser(run, args);
       case 'search_web':
         return searchWeb(this.context, args, (message) => this.postStatus(run, message));
       case 'browser_list_tabs':
@@ -2051,6 +2093,44 @@ export class ChatService {
     }
   }
 
+  /**
+   * ask_user: a question card the tool loop waits on, exactly like a write
+   * review — the worker is already blocked on this tool's response, so the
+   * card rides the same gate, message and persistence as review cards (kind
+   * 'question'). The answer text travels back in the decision's `feedback`.
+   *
+   * Autonomous runs ask too: Agent is the composer's default and the user who
+   * pressed ▶ is at the keyboard — and a missing decision answered by a guess
+   * is the failure this tool exists to remove. Stop still ends the wait.
+   */
+  private async askUser(run: SessionRun, args: any): Promise<unknown> {
+    const questions = normalizeQuestions(args);
+    if (!questions.length) throw new Error('questions is required: 1–4 questions, each with a question and 2–4 options.');
+    const summary = questions.map((q) => q.question).join(' / ');
+    const { id, decision } = run.writeGate.await({ kind: 'question', summary });
+    this.post(run, {
+      type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
+      id,
+      kind: 'question',
+      path: questions.map((q) => q.header || 'Question').join(' · '),
+      summary,
+      questions,
+      diff: { added: 0, removed: 0, text: '' },
+    });
+    const result = await decision;
+    if (!result.approved) {
+      // Skip on the card, or Stop. Either way the model should not wait again
+      // for the same thing — it proceeds on its recommendation and says so.
+      if (run.cancelled) throw new Error('The run was stopped before the user answered.');
+      return {
+        skipped: true,
+        note: 'The user skipped this question. Go ahead with your recommended option and state that assumption in one line of your answer. Do not ask it again.',
+      };
+    }
+    this.postWriteOutcome(run, id, 'applied');
+    return { answers: result.feedback ?? '' };
+  }
+
   /** find_confluence_location: similar pages from the synced index → their parents, resolved live. */
   private async findConfluenceLocation(args: { title?: string; summary?: string }): Promise<unknown> {
     const query = [args?.title, args?.summary].filter(Boolean).join(' — ').trim();
@@ -2395,10 +2475,16 @@ export class ChatService {
         return { kind: 'edit', title: 'Created Confluence page', detail: String(args?.title ?? '') };
       case 'find_confluence_location':
         return { kind: 'search', title: 'Looked for a place in Confluence for', detail: String(args?.title ?? '') };
+      case 'ask_user':
+        return { kind: 'info', title: 'Asked you', detail: normalizeQuestions(args).map((q) => q.header || q.question).join(' · ') };
       case 'search_web':
         return { kind: 'search', title: 'Searched the web', detail: args?.query ?? '' };
       case 'explore':
         return { kind: 'search', title: 'Investigated', detail: String(args?.question ?? '').slice(0, 90) };
+      case 'explore_codebase':
+        // The pre-loop exploration phase (not a tool the model calls); its
+        // label is the explorer's own "Exploring <area>…".
+        return { kind: 'search', title: 'Scouted', detail: String(args?.label ?? '').replace(/^Exploring\s+/i, '').replace(/…$/, '') };
       case 'read_file': {
         const range = args?.startLine
           ? `#L${args.startLine}${args?.endLine ? `-${args.endLine}` : ''}`
@@ -2549,6 +2635,8 @@ export class ChatService {
         return result?.applied ? { summary: `+${result.added ?? 0} −${result.removed ?? 0}` } : {};
       case 'find_confluence_location':
         return { summary: plural(result?.suggestions?.length ?? 0, 'suggestion') };
+      case 'ask_user':
+        return result?.skipped ? { summary: 'skipped' } : { summary: 'answered' };
       default:
         return {};
     }
@@ -2561,6 +2649,8 @@ export class ChatService {
         return `Searching codebase for "${args?.query ?? ''}"...`;
       case 'explore':
         return `Investigating: ${String(args?.question ?? '').slice(0, 60)}...`;
+      case 'explore_codebase':
+        return String(args?.label ?? 'Scouting the codebase…');
       case 'read_file':
         return `Reading ${args?.path ?? 'file'}...`;
       case 'list_directory':
@@ -2591,6 +2681,8 @@ export class ChatService {
         return `Proposing new Confluence page "${args?.title ?? ''}" (awaiting your review)...`;
       case 'find_confluence_location':
         return 'Looking for where this page belongs in Confluence...';
+      case 'ask_user':
+        return 'Waiting for your answer…';
       case 'search_web':
         return `Searching the web for "${args?.query ?? ''}"...`;
       case 'browser_list_tabs':
@@ -2978,6 +3070,7 @@ Query: "${query}"`;
           ticketLookupOnly,
           autonomous,
           planMode,
+          turnAction: run.turnAction,
           // Read BEFORE this turn's own writes land, so it counts only earlier
           // turns — exactly what the honesty stamp needs to spare a recap.
           priorWrites: run.sessionWritesApplied,
@@ -2994,6 +3087,8 @@ Query: "${query}"`;
         let workerSaidStall = false;
         /** 'done' payload: how many file writes the worker actually applied (null on a worker that predates the field). */
         let workerWritesApplied: number | null = null;
+        /** 'done' payload: the worker's run-diagnostics line, when it stamped one. */
+        let workerDiagnostics: string | undefined;
         // Mirror the streamed chunks here so we can salvage a response if the
         // worker dies before it sends 'done' (see settle() below).
         let streamedContent = '';
@@ -3026,6 +3121,13 @@ Query: "${query}"`;
           if (settled) return;
           const ms = toolsInFlight > 0 ? TOOL_STALL_TIMEOUT_MS : STALL_TIMEOUT_MS;
           stallTimer = setTimeout(() => {
+            // A review or question card still waiting means the run is paused
+            // on the user, not wedged: the gate never times out, so the net
+            // must not either (it used to kill a run whose card sat ~11 min).
+            if (run.writeGate.hasPending()) {
+              armStallTimer();
+              return;
+            }
             settle(new Error(`Model worker stopped responding — no activity for ${Math.round(ms / 60_000)} minutes.`));
           }, ms);
         };
@@ -3084,6 +3186,7 @@ Query: "${query}"`;
                 ticketId: ticketContext?.id,
                 refs: run.turnRefs.length ? [...run.turnRefs] : undefined,
                 shippable,
+                ...(workerDiagnostics ? { diagnostics: workerDiagnostics } : {}),
                 ...(spikeDocPath && ticketContext ? { spikeDoc: { path: spikeDocPath, ticketId: ticketContext.id } } : {}),
                 // A plan-mode tool turn's answer IS a plan — the card offers "Run plan".
                 ...(planMode && codebaseRoots?.length ? { plan: true } : {}),
@@ -3215,6 +3318,8 @@ Query: "${query}"`;
             /** resumed: how much of an interrupted run this turn picked up. */
             steps?: number;
             writesApplied?: number;
+            /** 'done' only: the run-diagnostics line (webview: collapsed "Run details"). */
+            diagnostics?: string;
             /** 'done' only: zero-write stall-shaped answer per the worker's own gates. */
             stallShaped?: boolean;
             /** 'tool_step_update' only: new status + one-line summary for an existing step. */
@@ -3237,6 +3342,7 @@ Query: "${query}"`;
                 fullContent = result.content || '';
                 workerSaidStall = !!result.stallShaped;
                 workerWritesApplied = typeof result.writesApplied === 'number' ? result.writesApplied : null;
+                workerDiagnostics = typeof result.diagnostics === 'string' ? result.diagnostics : undefined;
                 settle(null);
                 break;
 
@@ -3294,6 +3400,10 @@ Query: "${query}"`;
                   status: result.stepStatus ?? 'running',
                   summary: result.summary,
                 });
+                // Same hand-back as a host tool finishing: the worker-owned
+                // step is over, so its label ("Exploring checkout…") must not
+                // sit beside the timer while the model thinks.
+                if (result.stepStatus === 'done' && toolsInFlight === 0) this.postStatus(run, '');
                 break;
 
               case 'tool_request':
@@ -3404,13 +3514,17 @@ Query: "${query}"`;
                 // The worker detected ~minute-long completions and trimmed the
                 // run (fewer iterations, no reflection extras). Tell the user
                 // why this turn is slow and that the model is the reason.
+                // Slow mode no longer cuts the step cap (modelWorker enterSlowMode),
+                // so the notice must not say it does — and it names no "faster"
+                // model: this fired on a Flash model whose prompt had grown large.
+                // A 'notice' renders once, above the timeline, instead of as one
+                // more row inside "Explored …".
                 const warn =
-                  `Slow model detected (~${result.avgSec}s per step) — trimming this run to ` +
-                  `${result.cap} steps. A faster model (e.g. Gemini Flash) will answer in a fraction of the time.`;
-                this.postStatus(run, warn);
+                  `This model is slow here (~${result.avgSec}s per step), so optional extra passes are skipped. ` +
+                  'Long runs on a large context are slower on every model.';
                 this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,
-                  step: { kind: 'info', title: warn },
+                  step: { kind: 'notice', title: warn },
                 });
                 break;
               }

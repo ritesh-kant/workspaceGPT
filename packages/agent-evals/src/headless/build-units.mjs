@@ -41,6 +41,7 @@ const UNITS = [
   'src/workers/model/exploreSubagent.ts',
   'src/workers/model/answerGates.ts',
   'src/workers/model/streamOutcome.ts',
+  'src/workers/model/choiceMerge.ts',
   'src/workers/model/toolScope.ts',
   'src/workers/model/resumeHygiene.ts',
   'src/workers/model/writePressure.ts',
@@ -51,6 +52,7 @@ const UNITS = [
   'src/services/agent/shipHelpers.ts',
   'src/services/agent/referenceIndex.ts',
   'src/services/agent/workspaceControls.ts',
+  'src/services/agent/askUser.ts',
   'src/services/confluence/confluenceAdf.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',

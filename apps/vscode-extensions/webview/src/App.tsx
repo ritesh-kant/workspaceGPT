@@ -9,6 +9,7 @@ import React, {
 import './App.css';
 import ChatMessage from './components/ChatMessage';
 import AgentWriteCard, { REVIEW_KIND_LABEL } from './components/AgentWriteCard';
+import AgentQuestionCard from './components/AgentQuestionCard';
 import AgentTimeline from './components/AgentTimeline';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import MentionPicker from './components/MentionPicker';
@@ -43,6 +44,7 @@ import {
   useSettingsStore,
   useUiStore,
 } from './store';
+import type { AgentStep } from './store/chatStore';
 import { modelDefaultConfig } from './store/modelStore';
 // The word the Resume button sends, defined next to the patterns the host
 // parses it with — see continuationIntent's header for why it must be bare.
@@ -319,6 +321,22 @@ function formatElapsed(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}m ${s}s`;
+}
+
+/**
+ * What the run did last, for the "Thinking…" row: while the model thinks
+ * between tool batches (minutes, on a big run) the row otherwise says nothing
+ * at all, and "working" cannot be told from "stuck".
+ */
+function lastStepLabel(steps: AgentStep[]): string {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s.kind === 'note' || s.kind === 'thought' || s.kind === 'notice' || s.kind === 'ticket') continue;
+    const target = s.path ? s.path.split('/').pop() : s.detail;
+    const text = [s.title, target].filter(Boolean).join(' ');
+    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+  }
+  return '';
 }
 
 const SuggestionArrow: React.FC = () => (
@@ -679,6 +697,8 @@ const App: React.FC = () => {
   // as soon as both go false, so a stopped/finished turn doesn't leave a
   // stale number on screen for the next one.
   const [turnElapsedSec, setTurnElapsedSec] = useState(0);
+  // When the newest timeline step arrived, for "last: … (12s ago)".
+  const lastStepAtRef = useRef(0);
   const turnStartRef = useRef<number | null>(null);
 
   const vscode = VSCodeAPI(); // This will now use the singleton instance
@@ -792,6 +812,10 @@ const App: React.FC = () => {
   // Clean up the pump on unmount.
   useEffect(() => () => resetStreamBuffer(), [resetStreamBuffer]);
 
+  useEffect(() => {
+    lastStepAtRef.current = Date.now();
+  }, [agentSteps.length]);
+
   // Drives turnElapsedSec: starts the moment a turn goes live and ticks every
   // second until it ends. A run whose only host-side activity is a single
   // model call with no tool calls can sit on a static "Thinking..." label for
@@ -903,6 +927,7 @@ const App: React.FC = () => {
             refs: message.refs,
             shippable: !!message.shippable,
             spikeDoc: message.spikeDoc,
+            diagnostics: message.diagnostics,
             plan: !!message.plan,
           });
           break;
@@ -918,9 +943,10 @@ const App: React.FC = () => {
               diff: message.diff,
               command: message.command,
               url: message.url,
+              questions: message.questions,
             },
           });
-          store.bgPatch(sessionId, { statusText: 'Waiting for your review…' });
+          store.bgPatch(sessionId, { statusText: message.kind === 'question' ? 'Waiting for your answer…' : 'Waiting for your review…' });
           break;
         case MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED:
           store.bgCloseAllPendingWriteReviews(sessionId);
@@ -1085,6 +1111,7 @@ const App: React.FC = () => {
             refs: message.refs,
             shippable: !!message.shippable,
             spikeDoc: message.spikeDoc,
+            diagnostics: message.diagnostics,
             plan: !!message.plan,
           });
           break;
@@ -1131,9 +1158,10 @@ const App: React.FC = () => {
               diff: message.diff,
               command: message.command,
               url: message.url,
+              questions: message.questions,
             },
           });
-          setStatusText('Waiting for your review…');
+          setStatusText(message.kind === 'question' ? 'Waiting for your answer…' : 'Waiting for your review…');
           break;
         case MESSAGE_TYPES.ERROR_CHAT: {
           resetStreamBuffer();
@@ -1446,6 +1474,13 @@ const App: React.FC = () => {
     }
     return null;
   }, [messages, isLoading, isStreaming]);
+  const inListIndicatorShown = isLoading || (isStreaming && !!statusText);
+  // Only while the model has the turn (no tool label up): "last: Searched
+  // Confluence Venmo (12s ago)". turnElapsedSec's tick keeps the age fresh.
+  const lastStep = !statusText && isLoading ? lastStepLabel(agentSteps) : '';
+  const thinkingHint = lastStep
+    ? `last: ${lastStep} (${formatElapsed(Math.max(1, Math.round((Date.now() - lastStepAtRef.current) / 1000)))} ago)`
+    : '';
   const pendingReviewIdRef = useRef<string | null>(null);
   pendingReviewIdRef.current = pendingReview?.id ?? null;
 
@@ -2301,6 +2336,9 @@ const App: React.FC = () => {
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
       assistantMode,
+      // Tells the host this is the Publish button, not a typed request: it
+      // narrows the tools to the doc + Confluence ones and skips code scouting.
+      turnAction: 'publish-spike',
     });
   };
 
@@ -2613,11 +2651,19 @@ const App: React.FC = () => {
                 return null;
               }
               return message.writeReview ? (
-                <AgentWriteCard
-                  key={message.writeReview.id}
-                  review={message.writeReview}
-                  onDecided={handleReviewDecided}
-                />
+                message.writeReview.kind === 'question' ? (
+                  <AgentQuestionCard
+                    key={message.writeReview.id}
+                    review={message.writeReview}
+                    onDecided={handleReviewDecided}
+                  />
+                ) : (
+                  <AgentWriteCard
+                    key={message.writeReview.id}
+                    review={message.writeReview}
+                    onDecided={handleReviewDecided}
+                  />
+                )
               ) : (
                 <ChatMessage
                   key={index}
@@ -2698,6 +2744,7 @@ const App: React.FC = () => {
                     {turnElapsedSec > 0 && (
                       <span className='loading-indicator-elapsed'> · {formatElapsed(turnElapsedSec)}</span>
                     )}
+                    {thinkingHint && <span className='loading-indicator-elapsed'> · {thinkingHint}</span>}
                   </span>
                 </div>
               </div>
@@ -2739,7 +2786,7 @@ const App: React.FC = () => {
               >
                 {pendingReview.kind === 'command'
                   ? pendingReview.command ?? pendingReview.summary
-                  : pendingReview.kind.startsWith('confluence-')
+                  : pendingReview.kind.startsWith('confluence-') || pendingReview.kind === 'question'
                     ? pendingReview.path
                     : pendingReview.path.split('/').pop() || pendingReview.path}
               </button>
@@ -2756,22 +2803,27 @@ const App: React.FC = () => {
                 className='review-pin-view'
                 onClick={() => scrollToReview(pendingReview.id)}
               >
-                {pendingReview.kind === 'command' ? 'View' : 'View diff'}
+                {pendingReview.kind === 'question' ? 'Answer' : pendingReview.kind === 'command' ? 'View' : 'View diff'}
               </button>
-              <button
-                type='button'
-                className='agent-write-approve'
-                onClick={() => decideReview(pendingReview.id, true)}
-              >
-                ✓ Approve
-              </button>
-              <button
-                type='button'
-                className='agent-write-reject-open'
-                onClick={() => decideReview(pendingReview.id, false)}
-              >
-                ✕ Reject
-              </button>
+              {/* A question is answered on its card — there is nothing to "approve". */}
+              {pendingReview.kind !== 'question' && (
+                <>
+                  <button
+                    type='button'
+                    className='agent-write-approve'
+                    onClick={() => decideReview(pendingReview.id, true)}
+                  >
+                    ✓ Approve
+                  </button>
+                  <button
+                    type='button'
+                    className='agent-write-reject-open'
+                    onClick={() => decideReview(pendingReview.id, false)}
+                  >
+                    ✕ Reject
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -2791,7 +2843,9 @@ const App: React.FC = () => {
             next turn runs), which is exactly when a silent multi-second gap
             reads as "it died" instead of "it's working".
           */}
-          {(isLoading || isStreaming) && (
+          {/* Only when the in-list row above is not on screen: with both up,
+              the same "Thinking… · 53s" showed twice, one under the other. */}
+          {(isLoading || isStreaming) && (showJumpToBottom || !inListIndicatorShown) && (
             <div className='composer-run-status'>
               <span className='loading-pulse' />
               <span>
@@ -2799,6 +2853,7 @@ const App: React.FC = () => {
                 {turnElapsedSec > 0 && (
                   <span className='loading-indicator-elapsed'> · {formatElapsed(turnElapsedSec)}</span>
                 )}
+                {thinkingHint && <span className='loading-indicator-elapsed'> · {thinkingHint}</span>}
               </span>
             </div>
           )}

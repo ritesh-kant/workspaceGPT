@@ -3173,6 +3173,67 @@ console.log('\nstreamOutcome (a reasoning model that only thinks must not read a
   });
 }
 
+console.log('\nchoiceMerge (a turn split across choices keeps its tool calls)');
+{
+  const { mergeChoices } = await import(path.join(outDir, 'choiceMerge.mjs'));
+  const call = (id, name) => ({ id, type: 'function', function: { name, arguments: '{}' } });
+
+  // Spike #1537001: Copilot put the lead-in sentence in choices[0] and the
+  // tool call after it; reading choices[0] alone ended the run on the sentence.
+  await t('text in choice 0 and the tool call in choice 1 is one turn with a tool call', () => {
+    const out = mergeChoices([
+      { message: { role: 'assistant', content: "Let's check the RetailCheckout mapper." }, finish_reason: 'stop' },
+      { message: { role: 'assistant', content: null, tool_calls: [call('a', 'read_file')] }, finish_reason: 'tool_calls' },
+    ]);
+    assert.equal(out.content, "Let's check the RetailCheckout mapper.");
+    assert.deepEqual(out.toolCalls.map((c) => c.function.name), ['read_file']);
+    assert.equal(out.finishReason, 'tool_calls', "the text part's 'stop' must not win");
+    assert.equal(out.choiceCount, 2);
+    assert.deepEqual(out.contentChoices, [0]);
+    assert.deepEqual(out.toolCallChoices, [1]);
+  });
+
+  await t('parallel calls split one per choice are all kept, in order', () => {
+    const out = mergeChoices([
+      { message: { content: null, tool_calls: [call('a', 'search_codebase')] }, finish_reason: 'tool_calls' },
+      { message: { content: null, tool_calls: [call('b', 'read_file')] }, finish_reason: 'tool_calls' },
+      { message: { content: null, tool_calls: [call('c', 'find_references')] }, finish_reason: 'tool_calls' },
+    ]);
+    assert.deepEqual(out.toolCalls.map((c) => c.id), ['a', 'b', 'c']);
+  });
+
+  await t('a tool call repeated in two choices runs once', () => {
+    const out = mergeChoices([
+      { message: { content: null, tool_calls: [call('a', 'read_file')] } },
+      { message: { content: null, tool_calls: [call('a', 'read_file'), call('b', 'read_file')] } },
+    ]);
+    assert.deepEqual(out.toolCalls.map((c) => c.id), ['a', 'b']);
+  });
+
+  await t('a single ordinary choice is unchanged', () => {
+    const out = mergeChoices([{ message: { content: 'Answer.', tool_calls: [call('a', 'read_file')] }, finish_reason: 'tool_calls' }]);
+    assert.equal(out.content, 'Answer.');
+    assert.equal(out.toolCalls.length, 1);
+    assert.equal(out.finishReason, 'tool_calls');
+    assert.equal(out.choiceCount, 1);
+  });
+
+  await t('a text-only reply keeps its own finish reason and reasoning', () => {
+    const out = mergeChoices([{ message: { content: '', reasoning_content: 'thinking' }, finish_reason: 'length' }]);
+    assert.equal(out.finishReason, 'length');
+    assert.equal(out.reasoningContent, 'thinking');
+    assert.equal(out.toolCalls.length, 0);
+  });
+
+  await t('missing or malformed choices yield an empty turn, not a throw', () => {
+    for (const bad of [undefined, null, [], [null], [{}]]) {
+      const out = mergeChoices(bad);
+      assert.equal(out.content, '');
+      assert.equal(out.toolCalls.length, 0);
+    }
+  });
+}
+
 console.log('\npromptTemplates with-context regime (retrieval rides into a tool turn)');
 {
   const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
@@ -4810,6 +4871,85 @@ console.log('\nthrottledCheck (the balance is re-read after runs, at most once p
     check.request('alive', src.read, (v) => got.push(v));
     await clock.advance(10_000);
     assert.deepEqual(got, [1, 2]);
+  });
+}
+
+console.log('\nask_user (a question the run waits on, as a card)');
+{
+  const { normalizeQuestions } = await import(path.join(outDir, 'askUser.mjs'));
+  const { endsOnQuestion } = await import(path.join(outDir, 'answerGates.mjs'));
+  const { scopeToolDefs, forTurnAction, TURN_ACTION_TOOL_NAMES } = await import(path.join(outDir, 'toolScope.mjs'));
+  const mk = (...names) => names.map((name) => ({ type: 'function', function: { name } }));
+  const names = (defs) => defs.map((d) => d.function.name);
+
+  await t('questions pass through trimmed, with header and multiSelect kept', () => {
+    const got = normalizeQuestions({
+      questions: [
+        {
+          question: '  Where should the draft go? ',
+          header: 'Location',
+          options: [{ label: 'Under SDR (Recommended)', description: 'D2C · 6115197329' }, { label: 'Space root' }],
+        },
+        { question: 'Which title?', options: ['A', 'B'], multiSelect: true },
+      ],
+    });
+    assert.deepEqual(got, [
+      {
+        question: 'Where should the draft go?',
+        header: 'Location',
+        options: [{ label: 'Under SDR (Recommended)', description: 'D2C · 6115197329' }, { label: 'Space root' }],
+      },
+      { question: 'Which title?', options: [{ label: 'A' }, { label: 'B' }], multiSelect: true },
+    ]);
+  });
+
+  await t('a single question sent at the top level still becomes a card', () => {
+    const got = normalizeQuestions({ question: 'Go?', options: ['Yes', 'No'] });
+    assert.equal(got.length, 1);
+    assert.equal(got[0].question, 'Go?');
+  });
+
+  await t('size is capped (4 questions × 4 options) and empty entries dropped', () => {
+    const q = (i) => ({ question: `Q${i}?`, options: ['a', 'b', 'c', 'd', 'e', ''] });
+    const got = normalizeQuestions({ questions: [q(1), { question: '' }, q(2), q(3), q(4), q(5)] });
+    assert.deepEqual(got.map((x) => x.question), ['Q1?', 'Q2?', 'Q3?', 'Q4?']);
+    assert.ok(got.every((x) => x.options.length === 4));
+    assert.deepEqual(normalizeQuestions(null), []);
+    assert.deepEqual(normalizeQuestions({ questions: 'nope' }), []);
+  });
+
+  await t('endsOnQuestion: a prose question at the end, markdown looked through', () => {
+    assert.equal(endsOnQuestion('Found the SDR format.\n\nWhere should the page go?'), true);
+    assert.equal(endsOnQuestion('Draft ready.\n**Shall I create it as a draft?**  \n'), true);
+    assert.equal(endsOnQuestion('1. Which PSP account? (suggested: US)'), false, 'a trailing parenthetical is not a question ending');
+    assert.equal(endsOnQuestion('Is it gated? Yes: `blockPayPalVenmoButton`.'), false);
+    assert.equal(endsOnQuestion('| Q | Why? |'), false, 'a table row is not the answer asking');
+    assert.equal(endsOnQuestion(''), false);
+  });
+
+  await t('ask_user needs nothing connected, so it is always offered', () => {
+    const defs = mk('read_file', 'ask_user', 'search_docs');
+    assert.deepEqual(names(scopeToolDefs(defs, { codebase: false, confluence: false, tickets: false })), ['ask_user']);
+  });
+
+  await t('the Publish button turn gets the doc + Confluence tools only', () => {
+    const defs = mk('search_codebase', 'explore', 'read_file', 'edit_file', 'run_command', 'search_docs', 'get_confluence_page', 'find_confluence_location', 'create_confluence_page', 'get_ticket', 'search_web', 'ask_user');
+    assert.deepEqual(names(forTurnAction(defs, 'publish-spike')), [
+      'read_file',
+      'search_docs',
+      'get_confluence_page',
+      'find_confluence_location',
+      'create_confluence_page',
+      'get_ticket',
+      'ask_user',
+    ]);
+    assert.ok(!TURN_ACTION_TOOL_NAMES['publish-spike'].has('explore'), 'no code scouting on a publish turn');
+  });
+
+  await t('a typed turn (no action) keeps every tool', () => {
+    const defs = mk('search_codebase', 'edit_file', 'ask_user');
+    assert.deepEqual(names(forTurnAction(defs, undefined)), names(defs));
+    assert.notStrictEqual(forTurnAction(defs, undefined), defs, 'must not hand back the shared array');
   });
 }
 

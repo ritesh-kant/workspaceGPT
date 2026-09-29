@@ -10,6 +10,7 @@ import { extractBalancedJsonObjects } from './jsonExtract';
 import { runExplorationPhase, defaultExplorationConfig } from './explorationPhase';
 import { runExploreSubagent, defaultExploreConfig, EXPLORE_TOOL_NAMES } from './exploreSubagent';
 import {
+  endsOnQuestion,
   INCOMPLETE_ANSWER_RE,
   PERMISSION_SEEKING_RE,
   CHANGE_PLAN_RE,
@@ -33,7 +34,8 @@ import {
 import { normalizeModelId } from '../../utils/normalizeModelId';
 import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
 import { consumeStream, shouldRetryEmptyStream } from './streamOutcome';
-import { scopeToolDefs, ToolAvailability, withoutWriteTools } from './toolScope';
+import { mergeChoices } from './choiceMerge';
+import { forTurnAction, scopeToolDefs, ToolAvailability, withoutWriteTools } from './toolScope';
 import {
   contextState,
   isStagnant,
@@ -170,6 +172,12 @@ interface WorkerData {
    * Copilot's is applied by its bridge instead, per request.
    */
   reasoningEffort?: string;
+  /**
+   * Which one-click action started this turn, when a button did (the host
+   * passes it straight from the webview). 'publish-spike' = the spike card's
+   * "Publish to Confluence": the document is finished, so no code scouting.
+   */
+  turnAction?: 'publish-spike';
 }
 
 const {
@@ -204,6 +212,7 @@ const {
   priorWrites,
   harnessProfile,
   reasoningEffort,
+  turnAction,
 } = workerData as WorkerData;
 
 // Prefer the full key list; fall back to the single legacy key.
@@ -561,7 +570,7 @@ const TOOL_DEFS = [
     function: {
       name: 'find_confluence_location',
       description:
-        'Suggest where a NEW Confluence page should go: parents of the most similar existing pages, the connected space, and the list of spaces. Call this before create_confluence_page unless the user already named the space or parent page — then ASK the user to choose (show the suggestions), and wait for their answer. Never pick a location silently.',
+        'Suggest where a NEW Confluence page should go: parents of the most similar existing pages, the connected space, and the list of spaces. Call this before create_confluence_page unless the user already named the space or parent page — then call ask_user with the suggestions as its options (recommended first) and use the answer. Never pick a location silently.',
       parameters: {
         type: 'object',
         properties: {
@@ -575,10 +584,55 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'ask_user',
+      description:
+        'Ask the user a decision or fact only they can give, as a card they answer with one click, and WAIT for the answer (it comes back as this tool\'s result). ' +
+        'Use it whenever you need their input mid-task: where a page goes, which option to take, a missing fact, a template URL. ' +
+        'Never ask in prose instead, and never end your answer with a question — the user cannot click prose. ' +
+        '2–4 short options, your recommended one first with " (Recommended)" appended to its label; the card always adds a free-text "Other" answer, so do not add one. ' +
+        'One call can carry up to 4 related questions. Do not ask what you can find out with a tool.',
+      parameters: {
+        type: 'object',
+        properties: {
+          questions: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 4,
+            items: {
+              type: 'object',
+              properties: {
+                question: { type: 'string', description: 'The full question, ending with "?".' },
+                header: { type: 'string', description: 'A 1–3 word chip label, e.g. "Location", "Title".' },
+                options: {
+                  type: 'array',
+                  minItems: 2,
+                  maxItems: 4,
+                  items: {
+                    type: 'object',
+                    properties: {
+                      label: { type: 'string', description: '1–6 words — what the user clicks.' },
+                      description: { type: 'string', description: 'One line on what this choice means or implies.' },
+                    },
+                    required: ['label'],
+                  },
+                },
+                multiSelect: { type: 'boolean', description: 'true when several options can be picked together.' },
+              },
+              required: ['question', 'options'],
+            },
+          },
+        },
+        required: ['questions'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'create_confluence_page',
       description:
         "Create a new Confluence page from markdown, in the space/parent the user chose (see find_confluence_location). Created as a DRAFT only the user can see unless they asked to publish. The user reviews the full page and its location before it is created. Same markdown rules as update_confluence_page; no ⟦keep⟧ tokens in a new page. " +
-        "FORMAT: when the page is a kind the org already writes (a spike, SDR, RFC, runbook, postmortem…), first open 2–3 recent pages of that kind in the target space with get_confluence_page (search_docs / find_confluence_location surface them) and follow their title pattern and section order, carrying your content into their sections. If there are none, or they disagree, ASK the user for a template or example page URL and wait — never invent a house style.",
+        "FORMAT: when the page is a kind the org already writes (a spike, SDR, RFC, runbook, postmortem…), first open 2–3 recent pages of that kind in the target space with get_confluence_page (search_docs / find_confluence_location surface them) and follow their title pattern and section order, carrying your content into their sections. If there are none, or they disagree, ask for a template or example page URL with ask_user — never invent a house style.",
       parameters: {
         type: 'object',
         properties: {
@@ -975,7 +1029,10 @@ const HARNESS_PROFILE = resolveHarnessProfile({ isLocalProvider, modelId, overri
 // The tool list this run actually sends. Scoped once from what the host says is
 // connected; every tool turn and the explore sub-agent draw from this, never
 // from TOOL_DEFS directly.
-const SCOPED_TOOL_DEFS_ALL = scopeToolDefs(TOOL_DEFS as Array<{ function: { name: string } }>, toolAvailability);
+const SCOPED_TOOL_DEFS_ALL = forTurnAction(
+  scopeToolDefs(TOOL_DEFS as Array<{ function: { name: string } }>, toolAvailability),
+  turnAction
+);
 // Plan mode is the dial the user set: the write tools are not offered at all,
 // so "propose, don't change" holds whatever the model does with the prompt.
 const SCOPED_TOOL_DEFS = planMode ? withoutWriteTools(SCOPED_TOOL_DEFS_ALL) : SCOPED_TOOL_DEFS_ALL;
@@ -1204,6 +1261,8 @@ function planCheckJobs(batch: PendingCheck[]): CheckJob[] {
  * workspace, ~20s each of pure waiting.
  */
 const BARRIER_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', 'run_command', 'update_confluence_page', 'create_confluence_page']);
+// A question waits on the user; what runs beside it should see their answer.
+BARRIER_TOOL_NAMES.add('ask_user');
 // Browser actions change what later reads see, and depend on order ("click, then type").
 for (const name of ['browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_act', 'browser_eval']) BARRIER_TOOL_NAMES.add(name);
 
@@ -1957,21 +2016,29 @@ async function runToolTurn(
     throw new Error(apiError?.message || 'Model provider returned no choices (malformed or error response)');
   }
 
-  const message = response.choices[0]?.message;
-  const toolCalls: BufferedToolCall[] = (message?.tool_calls ?? []).map((tc: any) => ({
+  // Every choice, not just the first: Copilot splits one Claude turn into a
+  // text choice and tool-call choices (see choiceMerge.ts).
+  const merged = mergeChoices(response.choices);
+  if (merged.choiceCount > 1) {
+    console.log(
+      `[agent] provider returned ${merged.choiceCount} choices (content in [${merged.contentChoices.join(',')}], ` +
+        `tool_calls in [${merged.toolCallChoices.join(',')}]) — merged into one turn`
+    );
+  }
+  const toolCalls: BufferedToolCall[] = merged.toolCalls.map((tc: any) => ({
     id: tc.id,
     name: tc.function?.name ?? '',
     args: tc.function?.arguments ?? '',
   }));
-  const content = (message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-  const finishReason = response.choices[0]?.finish_reason ?? null;
+  const content = merged.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const finishReason = merged.finishReason;
   // Some OpenAI-compatible providers (Nemotron via Requesty, Gemini 2.5+)
   // return reasoning in a separate field instead of/alongside `content`. A
   // response that is all reasoning and no visible content, cut off by the
   // token cap, looks identical to a genuinely empty answer unless we check
   // for it — retry once with a much larger budget so the model gets a turn
   // to actually answer instead of just think.
-  const reasoningContent: string = (message as any)?.reasoning_content ?? (message as any)?.reasoning ?? '';
+  const reasoningContent: string = merged.reasoningContent;
   const rawUsage = (response as any)?.usage;
   logPromptCall(
     !withTools ? 'final' : (tools as any[]).some((t) => t?.function?.name === 'edit_file') ? 'main' : 'explore-subagent',
@@ -1993,7 +2060,7 @@ async function runToolTurn(
   return {
     content,
     toolCalls,
-    finishReason: response.choices[0]?.finish_reason ?? null,
+    finishReason,
     usage,
     apiCalls: 1,
   };
@@ -2448,6 +2515,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // question produced exactly that fabricated report unstamped. A truthful
   // recap of an earlier turn's real edits is protected by priorWrites, and a
   // plan-mode proposal by planMode.
+  // The run-diagnostics line, sent beside the answer on 'done' rather than
+  // inside it: the webview shows it as a collapsed "Run details" row and saves
+  // it with the turn, so it still reaches a bug report without being part of
+  // the answer (or of the history the next turn's model reads).
+  let runDiagnostics: string | undefined;
   const finalizeDeliverable = (text: string): string => {
     // The FINAL REPORT FORMAT says "no preamble"; models still narrate one
     // sentence before the status heading. Removing it here keeps the banner
@@ -2469,7 +2541,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     // diagnosed from answer prose because the [agent-metrics] console line
     // never made it into the bug report. Stamp the numbers that matter onto
     // the answer itself (plan mode excluded — zero writes is its contract).
-    if (out && !!ticketContext && !planMode && writesApplied === 0) {
+    // Only for a run whose job WAS to change the tree: a spike, a lookup or a
+    // publish turn applies zero edits by contract, so the stamp there is noise.
+    if (out && TICKET_IMPLEMENT_RUN && !planMode && writesApplied === 0) {
       const pct = Math.min(100, Math.round((toolCharsUsed / MAX_TOTAL_TOOL_CHARS) * 100));
       const nudgesFired = [
         planInsteadOfExecuteNudgeUsed ? 'plan' : '',
@@ -2480,19 +2554,20 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           : '',
         ticketCompletionNudgeUsed ? 'ticket' : '',
         missingToolClaimNudgeUsed ? 'missingTool' : '',
+        proseQuestionNudgeUsed ? 'proseQuestion' : '',
         phantomChangesNudgesUsed > 0 ? `phantom×${phantomChangesNudgesUsed}` : '',
         forceReadUsed ? 'forceRead' : '',
         commitNarrowingApplied ? 'narrowed' : '',
       ].filter(Boolean);
-      out +=
-        `\n\n---\n*Run diagnostics: ${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · ${HARNESS_PROFILE} harness · 0 edits applied` +
+      runDiagnostics =
+        `${toolCallsExecuted} tool calls over ${perTurn.length} turns (cap ${iterationCap}${slowModelMode ? ', slow-model mode' : ''}) · ${HARNESS_PROFILE} harness · 0 edits applied` +
         `${anyWriteAttempted ? ' (writes attempted but none landed)' : ' (no write ever attempted)'}` +
         ` · tool budget ${pct}% used${budgetExhausted ? ' — EXHAUSTED, honesty gates skipped' : ''}` +
         ` · nudges fired: ${nudgesFired.length ? nudgesFired.join(', ') : 'none'}` +
         // The reason the loop ACTUALLY ended, next to the counters that
         // otherwise contradict it: #1384667's footer read "62 turns (cap 200)
         // · tool budget 49% used" under a heading that blamed the step limit.
-        ` · stopped: ${stopReason === 'none' ? 'model concluded (no harness limit hit)' : HARNESS_LIMIT_PHRASE[stopReason]}*`;
+        ` · stopped: ${stopReason === 'none' ? 'model concluded (no harness limit hit)' : HARNESS_LIMIT_PHRASE[stopReason]}`;
     }
     return out;
   };
@@ -2575,6 +2650,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // always false (TOOL_DEFS is sent whole on every request), so confront with
   // that fact instead of letting a well-formed-but-false "## Blocked" stand.
   let missingToolClaimNudgeUsed = false;
+  /** One-shot: the answer ended on a question asked in prose instead of through ask_user. */
+  let proseQuestionNudgeUsed = false;
 
   // Once the cumulative tool-output budget is gone, every further tool call
   // gets back nothing but the "[budget exhausted]" marker — the model can't
@@ -2818,7 +2895,13 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // Cost of a wrong skip: the model explores by hand with the same tools —
   // slower, never less capable.
   const docPrefetched = searchResults.length > 0;
-  const exploration = resume || (docPrefetched && !WRITE_INTENT_RUN)
+  // One timeline row per explorer. Each is closed when the phase returns —
+  // they used to stay "running" forever, because nothing ever answered their ids.
+  const explorerStepIds: string[] = [];
+  // A publish turn works from a finished document (turnAction is set by the
+  // button that started it, a fact, not a reading of the prompt): scouting the
+  // repo for it spent six explorer completions on code nobody asked about.
+  const exploration = resume || turnAction === 'publish-spike' || (docPrefetched && !WRITE_INTENT_RUN)
     ? null
     : await runExplorationPhase(
         prompt,
@@ -2829,6 +2912,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           requestTool,
           onProgress: (label) => {
             const id = randomUUID();
+            explorerStepIds.push(id);
             parentPort?.postMessage({ type: 'tool_status', id, name: 'explore_codebase', arguments: { label } });
           },
           notifyRotate: notifyKeyFailover,
@@ -2853,6 +2937,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
               .join('\n')
           : undefined
       );
+  for (const id of explorerStepIds) {
+    parentPort?.postMessage({ type: 'tool_step_update', id, stepStatus: 'done' });
+  }
   if (exploration) {
     const exploreMs = Date.now() - exploreStarted;
     explorationStats = exploration.stats;
@@ -2984,7 +3071,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
 
   for (let i = 0; i < iterationCap; i++) {
     // ── Wall clock: the only thing that ENDS a healthy run early ──
-    if (Date.now() - runStarted > RUN_WALL_CLOCK_MS) {
+    // Time spent waiting on the user's answer to ask_user is not the run
+    // wedging — a question left open over lunch must not end the run.
+    const userWaitMs = toolMsByName.get('ask_user')?.ms ?? 0;
+    if (Date.now() - runStarted - userWaitMs > RUN_WALL_CLOCK_MS) {
       console.log(`[agent] wall clock reached after ${i} turns — concluding`);
       stopReason = 'clock';
       break;
@@ -3186,6 +3276,29 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
             treeEvidence +
             'If the task requires changing files, make the changes NOW: read_file the target, then call edit_file with oldString copied exactly. ' +
             'Otherwise, rewrite your answer without claiming any change was made. Do not apologize and repeat the claim.',
+        });
+        continue;
+      }
+      // The answer ends on a question to the user, asked in prose: a question
+      // they cannot click, on a run that has already ended so nothing waits on
+      // it. Once, and only when ask_user is offered and was never used — a
+      // detection over the model's own output that only ADDS a turn.
+      if (
+        !proseQuestionNudgeUsed &&
+        // A plan ends by offering itself; its card already has "Run plan".
+        !planMode &&
+        !budgetExhausted &&
+        !toolMsByName.has('ask_user') &&
+        SCOPED_TOOL_DEFS.some((d) => d.function.name === 'ask_user') &&
+        endsOnQuestion(outcome.content)
+      ) {
+        proseQuestionNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            'Your answer ends on a question for the user. Ask it with the ask_user tool instead — they get a clickable card and its result is their answer — then finish using what they chose. ' +
+            'If the question needs no answer, rewrite the ending without it.',
         });
         continue;
       }
@@ -3495,7 +3608,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       const deliverable = finalizeDeliverable(cleanedContent);
       if (deliverable) parentPort?.postMessage({ type: 'chunk', content: deliverable });
       emitMetrics();
-      parentPort?.postMessage({ type: 'done', content: deliverable, writesApplied, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(deliverable) || CLAIMS_CHANGES_RE.test(deliverable)) });
+      parentPort?.postMessage({ type: 'done', content: deliverable, writesApplied, diagnostics: runDiagnostics, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(deliverable) || CLAIMS_CHANGES_RE.test(deliverable)) });
       return;
     }
 
@@ -3913,7 +4026,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       parentPort?.postMessage({ type: 'chunk', content: deliverable });
       syncTranscript();
       emitMetrics();
-      parentPort?.postMessage({ type: 'done', content: deliverable, writesApplied, stallShaped: false });
+      parentPort?.postMessage({ type: 'done', content: deliverable, writesApplied, diagnostics: runDiagnostics, stallShaped: false });
       return;
     }
   }
@@ -4034,7 +4147,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     (!planMode &&
       writesApplied === 0 &&
       (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(finalDeliverable)));
-  parentPort?.postMessage({ type: 'done', content: finalDeliverable, writesApplied, stallShaped: forcedExitStalled });
+  parentPort?.postMessage({ type: 'done', content: finalDeliverable, writesApplied, diagnostics: runDiagnostics, stallShaped: forcedExitStalled });
 }
 
 // Start processing

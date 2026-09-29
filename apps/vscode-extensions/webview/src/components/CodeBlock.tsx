@@ -40,8 +40,13 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ children, ...rest }) => {
     }
   };
 
+  // A one-line block wraps instead of scrolling sideways: nothing in it can
+  // lose alignment, and a sentence fenced as `text` used to run off the card
+  // with its tail hidden. Multi-line blocks (code, diagrams) keep exact layout.
+  const singleLine = !extractText(children).trim().includes('\n');
+
   return (
-    <div className='code-block'>
+    <div className={`code-block${singleLine ? ' code-block--wrap' : ''}`}>
       <div className='code-block-header'>
         <span className='code-block-lang'>{language || 'text'}</span>
         <button type='button' className='code-block-copy' onClick={handleCopy}>

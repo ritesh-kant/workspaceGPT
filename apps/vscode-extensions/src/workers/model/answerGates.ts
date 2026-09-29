@@ -515,3 +515,16 @@ export function isUnbackedCompletionClaim(
   if (!claimsFileChanges(a)) return false;
   return !!ctx.writeExpected || REPORT_CLAIMS_DONE_RE.test(a);
 }
+
+/**
+ * The answer's last line is a question — "Where should the page go?", "Shall I
+ * create it as a draft?" — i.e. the run ended by asking in prose. Markdown
+ * wrapping (`**…?**`, `_…?_`, a trailing `)` or quote) is looked through.
+ * Only ever used to ADD a nudge toward ask_user, never to gate anything.
+ */
+export function endsOnQuestion(answer: string): boolean {
+  const lines = (answer ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const last = lines[lines.length - 1] ?? '';
+  if (last.startsWith('|') || last.startsWith('```')) return false;
+  return /\?[\s*_`"'”’)\]]*$/.test(last);
+}
