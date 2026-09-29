@@ -82,6 +82,8 @@ interface SessionPreview {
   let activeSessionId: string | null = null;
   let hasSessionsView = true;
   let actions: TitleAction[] = [];
+  /** The folder the chat works in (the sidecar's one workspace folder); '' when none. */
+  let folder = '';
   const account = { signedIn: false, known: false, login: '', plan: '', mode: '' };
 
   const hooks: ShellHooks = {
@@ -112,6 +114,14 @@ interface SessionPreview {
           break;
         case MESSAGE_TYPES.REMOTE_SIGN_OUT_SUCCESS:
           setAccount(false);
+          break;
+        case MESSAGE_TYPES.WORKSPACE_PATH:
+          folder = typeof msg.path === 'string' ? msg.path : '';
+          renderTitle();
+          break;
+        case MESSAGE_TYPES.RECENT_FOLDERS:
+          folder = typeof msg.current === 'string' ? msg.current : folder;
+          renderTitle();
           break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (msg.key === STORAGE_KEYS.SETTINGS) setMode(msg.state?.config?.mode);
@@ -309,7 +319,24 @@ interface SessionPreview {
     const text = panel ?? (active?.title?.trim() || 'New session');
     $('title').textContent = text;
     document.title = active || panel ? `${text} — WorkspaceGPT` : 'WorkspaceGPT';
+    // Which folder this session works in, beside its title. A new session's
+    // composer already shows it (WorkspaceControls.tsx), and a panel is not a session.
+    const chip = $('folderChip');
+    chip.hidden = !active || !!panel || !folder;
+    $('folderChipName').textContent = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder;
+    // The full path, drawn under the chip on hover (shell.css) rather than a slow native tooltip.
+    $('folderChipTip').textContent = folder;
   }
+
+  // Keep the path tooltip inside the window: near the right edge it would run off.
+  const placeFolderTip = () => {
+    const chip = $('folderChip');
+    const tip = $('folderChipTip');
+    const overflow = chip.getBoundingClientRect().left + tip.offsetWidth - (window.innerWidth - 12);
+    chip.style.setProperty('--tip-shift', `${-Math.max(0, overflow)}px`);
+  };
+  $('folderChip').addEventListener('mouseenter', placeFolderTip);
+  $('folderChip').addEventListener('focus', placeFolderTip);
 
   const ICONS: Record<string, string> = {
     [NEW_CHAT]: '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',

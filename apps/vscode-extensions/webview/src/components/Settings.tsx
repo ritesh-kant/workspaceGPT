@@ -13,6 +13,7 @@ import JiraSettings from './settings/JiraSettings';
 import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
 import McpSettings from './settings/McpSettings';
+import DefaultFolderSettings from './settings/DefaultFolderSettings';
 import SectionShell, { SettingsLayoutContext } from './settings/SectionShell';
 import StatusDot from './settings/StatusDot';
 import { KNOWLEDGE_SOURCES, KnowledgeSourcesOverview } from './settings/knowledgeSources';
@@ -150,7 +151,13 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       label: 'Knowledge',
       description:
         'WorkspaceGPT answers from your organisation’s own systems. Connect the ones your team works in; every answer is grounded in them and cites them.',
-      render: () => <KnowledgeSourcesOverview config={config} onOpen={selectPage} />,
+      // Default folder heads the page: every source's tickets start work there.
+      render: () => (
+        <>
+          <DefaultFolderSettings />
+          <KnowledgeSourcesOverview config={config} onOpen={selectPage} />
+        </>
+      ),
     },
     ...KNOWLEDGE_SOURCES.map(
       (item): SettingsPage => ({
@@ -302,7 +309,10 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         {!isRemote && <ModelSettings />}
 
         {/* The two knowledge sources sit together: ADO feeds "Your work" on the
-            home view, so it is core surface area, not a beta experiment. */}
+            home view, so it is core surface area, not a beta experiment.
+            Default folder heads them: tickets from any of them start there. */}
+        <DefaultFolderSettings />
+
         <ConfluenceSettings />
 
         <AdoSettings />

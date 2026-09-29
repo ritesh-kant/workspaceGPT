@@ -27,6 +27,10 @@ interface MyWorkPanelProps {
    * unchanged for hosts that don't support autonomous runs.
    */
   onAutoRun?: (item: WorkItemSummary) => void;
+  /** Settings → Default folder, by name; undefined when unset. */
+  defaultFolderName?: string;
+  /** Opens Settings where the default folder is chosen. */
+  onOpenDefaultFolder?: () => void;
 }
 
 /**
@@ -69,6 +73,8 @@ const MyWorkPanel: React.FC<MyWorkPanelProps> = ({
   onRefresh,
   onSelect,
   onAutoRun,
+  defaultFolderName,
+  onOpenDefaultFolder,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? items : items.slice(0, VISIBLE_LIMIT);
@@ -83,16 +89,30 @@ const MyWorkPanel: React.FC<MyWorkPanelProps> = ({
             <span className='my-work-title-sprint'> · {currentSprintName}</span>
           )}
         </h2>
-        <button
-          type='button'
-          className='my-work-refresh'
-          onClick={onRefresh}
-          disabled={isRefreshing}
-          data-tooltip='Refresh'
-          aria-label='Refresh your work items'
-        >
-          <RefreshIcon spinning={isRefreshing} />
-        </button>
+        <div className='my-work-header-actions'>
+          {onOpenDefaultFolder && (
+            <button
+              type='button'
+              className='my-work-folder'
+              onClick={onOpenDefaultFolder}
+              title={defaultFolderName ? 'Tickets start in your default folder. Change it in Settings.' : 'Choose the folder tickets start in'}
+            >
+              <span className='my-work-folder-name'>
+                {defaultFolderName ? `Opens in ${defaultFolderName}` : 'Set default folder'}
+              </span>
+            </button>
+          )}
+          <button
+            type='button'
+            className='my-work-refresh'
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            data-tooltip='Refresh'
+            aria-label='Refresh your work items'
+          >
+            <RefreshIcon spinning={isRefreshing} />
+          </button>
+        </div>
       </div>
 
       {/* An error with a usable cache is a staleness note, not a failure — the

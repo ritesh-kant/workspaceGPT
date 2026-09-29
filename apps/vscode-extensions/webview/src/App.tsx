@@ -18,6 +18,8 @@ import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowl
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
 import WorkspaceControls from './components/WorkspaceControls';
+import FolderSwitchDialog from './components/FolderSwitchDialog';
+import { folderName, sameFolder, useWorkspaceFolders } from './hooks/useWorkspaceFolders';
 import UsageLimitBar from './components/UsageLimitBar';
 import ContextMeter from './components/ContextMeter';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
@@ -229,6 +231,23 @@ interface Suggestion {
   label: string;
   /** The full prompt actually sent — the label is a handle, not the ask. */
   prompt: string;
+  /** Works on a ticket in code, so it belongs in the default folder (FolderSwitchDialog.tsx). */
+  touchesCode?: boolean;
+}
+
+/**
+ * Work started on a ticket from the home screen. Held while the folder-switch
+ * popup is open, and carried across the reload when the user switches.
+ */
+type TicketStart =
+  | { kind: 'select' | 'autoRun'; item: WorkItemSummary }
+  | { kind: 'prompt'; prompt: string; subject: string };
+
+function isTicketStart(value: unknown): value is TicketStart {
+  const v = value as TicketStart | undefined;
+  if (!v || typeof v !== 'object') return false;
+  if (v.kind === 'prompt') return typeof v.prompt === 'string' && typeof v.subject === 'string';
+  return (v.kind === 'select' || v.kind === 'autoRun') && typeof v.item?.id === 'string';
 }
 
 /**
@@ -250,13 +269,14 @@ function buildSuggestions(
 
   if (first && isResearchWorkItem(first.type)) {
     // A spike is researched, not fixed (#1537001).
-    suggestions.push({ label: `Research spike #${first.id}`, prompt: researchWorkItemPrompt(first.id) });
+    suggestions.push({ label: `Research spike #${first.id}`, prompt: researchWorkItemPrompt(first.id), touchesCode: true });
   } else if (first) {
     suggestions.push({
       label: `Fix #${first.id}`,
       prompt:
         `Work on ticket ${first.id} (${first.title}) — read the ticket and any design doc behind it, ` +
         'find the code it affects, then implement the fix. Show me the diffs as you go.',
+      touchesCode: true,
     });
   }
   const explainTarget = second ?? first;
@@ -266,6 +286,7 @@ function buildSuggestions(
       prompt:
         `Read ticket ${explainTarget.id} (${explainTarget.title}), find the code it affects, ` +
         'and explain what would need to change and why. Do not edit anything yet.',
+      touchesCode: true,
     });
   }
   if (items.length > 1) {
@@ -447,6 +468,11 @@ const App: React.FC = () => {
   // Populated by the WORKSPACE_PATH reply; null until it arrives, so the picker
   // doesn't flash "no folder open" during the first render.
   const [hasWorkspaceFolder, setHasWorkspaceFolder] = useState<boolean | null>(null);
+  // Settings → Default folder, and the ticket start waiting on the
+  // folder-switch popup (or handed over by the page before a switch).
+  const workspaceFolders = useWorkspaceFolders();
+  const [folderSwitchStart, setFolderSwitchStart] = useState<TicketStart | null>(null);
+  const [resumedStart, setResumedStart] = useState<TicketStart | null>(null);
 
   /**
    * Context picker rows, with unavailable sources shown but not selectable and
@@ -2300,6 +2326,59 @@ const App: React.FC = () => {
     });
   };
 
+  const runTicketStart = (start: TicketStart) => {
+    if (start.kind === 'prompt') handleStarterPrompt(start.prompt);
+    else if (start.kind === 'autoRun') handleAutoRunWorkItem(start.item);
+    else handleSelectWorkItem(start.item);
+  };
+
+  /**
+   * Ticket work belongs in the default folder. With another folder open (or
+   * none), ask which to use; both choices name their folder. With no default
+   * folder yet, ask to set one or carry on in the open folder.
+   */
+  const startTicket = (start: TicketStart) => {
+    const { loaded, current, defaultFolder } = workspaceFolders;
+    if (loaded && !sameFolder(current, defaultFolder)) {
+      setFolderSwitchStart(start);
+      return;
+    }
+    runTicketStart(start);
+  };
+
+  // A start carried over from the page that switched folders, asked for once.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const m = event.data;
+      if (m?.type === MESSAGE_TYPES.PENDING_FOLDER_START && isTicketStart(m.start)) setResumedStart(m.start);
+    };
+    window.addEventListener('message', onMessage);
+    vscode.postMessage({ type: MESSAGE_TYPES.GET_PENDING_FOLDER_START });
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
+  // Run it once settings are loaded. A send also needs the model (local) or
+  // sign-in (remote), which arrive separately; if they never do, seed the
+  // composer instead of dropping the ticket.
+  const canSendResumed = mode === 'remote' ? remoteSignedIn : !!selectedModelProvider?.selectedModel;
+  useEffect(() => {
+    if (!resumedStart || !settingsHydrated) return;
+    if (resumedStart.kind === 'select' || canSendResumed) {
+      setResumedStart(null);
+      runTicketStart(resumedStart);
+      return;
+    }
+    const fallback = setTimeout(() => {
+      setResumedStart(null);
+      if (resumedStart.kind === 'prompt') setInputValue(resumedStart.prompt);
+      else handleSelectWorkItem(resumedStart.item);
+    }, 8000);
+    return () => clearTimeout(fallback);
+  }, [resumedStart, settingsHydrated, canSendResumed]);
+
+  const defaultFolderName = workspaceFolders.defaultFolder ? folderName(workspaceFolders.defaultFolder) : undefined;
+  const openDefaultFolderSettings = () => openSettings('knowledge');
+
   const suggestions = buildSuggestions(myWorkItems, myWorkSprint, isConfluenceConnected);
   // Real ticket titles for history group headers whose stored title was cut
   // short by an older build.
@@ -2383,8 +2462,10 @@ const App: React.FC = () => {
                     error={myWorkError}
                     isRefreshing={myWorkRefreshing}
                     onRefresh={handleRefreshMyWork}
-                    onSelect={handleSelectWorkItem}
-                    onAutoRun={handleAutoRunWorkItem}
+                    onSelect={(item) => startTicket({ kind: 'select', item })}
+                    onAutoRun={(item) => startTicket({ kind: 'autoRun', item })}
+                    defaultFolderName={defaultFolderName}
+                    onOpenDefaultFolder={openDefaultFolderSettings}
                   />
                 )}
               <div className='recent-chats-header'>
@@ -2433,7 +2514,11 @@ const App: React.FC = () => {
                       <button
                         key={suggestion.label}
                         className='prompt-item'
-                        onClick={() => handleStarterPrompt(suggestion.prompt)}
+                        onClick={() =>
+                          suggestion.touchesCode
+                            ? startTicket({ kind: 'prompt', prompt: suggestion.prompt, subject: suggestion.label })
+                            : handleStarterPrompt(suggestion.prompt)
+                        }
                       >
                         <span className='prompt-item-text'>{suggestion.label}</span>
                         <SuggestionArrow />
@@ -2454,8 +2539,10 @@ const App: React.FC = () => {
                   error={myWorkError}
                   isRefreshing={myWorkRefreshing}
                   onRefresh={handleRefreshMyWork}
-                  onSelect={handleSelectWorkItem}
-                  onAutoRun={handleAutoRunWorkItem}
+                  onSelect={(item) => startTicket({ kind: 'select', item })}
+                  onAutoRun={(item) => startTicket({ kind: 'autoRun', item })}
+                    defaultFolderName={defaultFolderName}
+                    onOpenDefaultFolder={openDefaultFolderSettings}
                 />
               )}
               {isWorkMode && (
@@ -2467,7 +2554,11 @@ const App: React.FC = () => {
                         <button
                           key={suggestion.label}
                           className='prompt-item'
-                          onClick={() => handleStarterPrompt(suggestion.prompt)}
+                          onClick={() =>
+                          suggestion.touchesCode
+                            ? startTicket({ kind: 'prompt', prompt: suggestion.prompt, subject: suggestion.label })
+                            : handleStarterPrompt(suggestion.prompt)
+                        }
                         >
                           <span className='prompt-item-text'>{suggestion.label}</span>
                           <SuggestionArrow />
@@ -2916,6 +3007,26 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
+        {folderSwitchStart && (
+          <FolderSwitchDialog
+            subject={
+              folderSwitchStart.kind === 'prompt'
+                ? folderSwitchStart.subject
+                : `#${folderSwitchStart.item.id} ${folderSwitchStart.item.title}`
+            }
+            current={workspaceFolders.current}
+            defaultFolder={workspaceFolders.defaultFolder}
+            recent={workspaceFolders.recent}
+            home={workspaceFolders.home}
+            resume={folderSwitchStart}
+            busy={allRunningSessionIds.size > 0}
+            onContinue={() => {
+              setFolderSwitchStart(null);
+              runTicketStart(folderSwitchStart);
+            }}
+            onCancel={() => setFolderSwitchStart(null)}
+          />
+        )}
         <SettingsButton isVisible={activeView === 'settings'} onBack={() => setActiveView('chat')} />
         <Releases
           isVisible={activeView === 'releases'}

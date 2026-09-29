@@ -131,6 +131,16 @@ export const MESSAGE_TYPES = {
   GIT_BRANCHES: 'git-branches',
   SWITCH_GIT_BRANCH: 'switch-git-branch',
   WORKSPACE_ACTION_RESULT: 'workspace-action-result',
+  // Default folder: where ticket work belongs, whichever Knowledge source the
+  // ticket came from. RECENT_FOLDERS also carries {defaultFolder}. Webview →
+  // host: SET_DEFAULT_FOLDER {path?} (no path: clear), answered by
+  // DEFAULT_FOLDER_RESULT {ok, error?}; OPEN_WORKSPACE_FOLDER may carry
+  // {resume}, the ticket start to pick up once the new folder has loaded, which
+  // the reloaded page asks for with GET_PENDING_FOLDER_START → PENDING_FOLDER_START {start?}.
+  SET_DEFAULT_FOLDER: 'set-default-folder',
+  DEFAULT_FOLDER_RESULT: 'default-folder-result',
+  GET_PENDING_FOLDER_START: 'get-pending-folder-start',
+  PENDING_FOLDER_START: 'pending-folder-start',
 
   // Chat History
   SAVE_CHAT_HISTORY: 'save-chat-history',

@@ -26,6 +26,45 @@ export async function recordRecentFolder(context: vscode.ExtensionContext, folde
   await context.globalState.update(RECENT_FOLDERS_KEY, next);
 }
 
+const DEFAULT_FOLDER_KEY = 'workspacegpt.defaultFolder';
+const PENDING_START_KEY = 'workspacegpt.pendingFolderStart';
+/** A start older than this was not followed by the reload it was saved for. */
+const PENDING_START_TTL_MS = 2 * 60 * 1000;
+
+/** The folder ticket work opens in (Settings → Default folder); undefined when unset or gone. */
+export function getDefaultFolder(context: vscode.ExtensionContext): string | undefined {
+  const stored = context.globalState.get<string>(DEFAULT_FOLDER_KEY);
+  return stored && isDirectory(stored) ? stored : undefined;
+}
+
+/** Stores `folder` (`~` expanded) as the default folder, or clears it when undefined. */
+export async function setDefaultFolder(context: vscode.ExtensionContext, folder: string | undefined): Promise<void> {
+  if (!folder?.trim()) {
+    await context.globalState.update(DEFAULT_FOLDER_KEY, undefined);
+    return;
+  }
+  const resolved = path.resolve(folder.trim().replace(/^~(?=$|[\\/])/, process.env.HOME ?? '~'));
+  if (!isDirectory(resolved)) throw new Error(`"${folder}" is not a folder.`);
+  await context.globalState.update(DEFAULT_FOLDER_KEY, resolved);
+}
+
+/**
+ * Opening a folder ends this extension host, so a ticket the user started is
+ * saved here first and handed to the page that loads in `folder`.
+ */
+export async function savePendingStart(context: vscode.ExtensionContext, folder: string, start: unknown): Promise<void> {
+  await context.globalState.update(PENDING_START_KEY, { folder: path.resolve(folder), start, savedAt: Date.now() });
+}
+
+/** The saved start, once, and only in the folder it was saved for. */
+export async function takePendingStart(context: vscode.ExtensionContext, currentFolder: string | undefined): Promise<unknown> {
+  const pending = context.globalState.get<{ folder: string; start: unknown; savedAt: number }>(PENDING_START_KEY);
+  if (!pending) return undefined;
+  await context.globalState.update(PENDING_START_KEY, undefined);
+  const fresh = Date.now() - pending.savedAt < PENDING_START_TTL_MS;
+  return fresh && currentFolder && path.resolve(currentFolder) === pending.folder ? pending.start : undefined;
+}
+
 function isDirectory(p: string): boolean {
   try {
     return fs.statSync(p).isDirectory();

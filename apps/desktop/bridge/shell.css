@@ -140,6 +140,9 @@ button { font: inherit; color: inherit; }
   background: var(--wgpt-d-bg);
 }
 .bar {
+  /* Above the chat frame, so the folder chip's tooltip can hang over it. */
+  position: relative;
+  z-index: 5;
   height: var(--bar-h);
   flex-shrink: 0;
   display: flex;
@@ -149,7 +152,7 @@ button { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--wgpt-d-border);
 }
 .title {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   margin: 0;
   font-size: 13px;
@@ -158,7 +161,66 @@ button { font: inherit; color: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The session's folder beside its title, like a terminal agent's cwd; the
+   full path shows under it on hover or focus. */
+.folder-chip {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  max-width: 200px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--wgpt-d-active);
+  color: var(--wgpt-d-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+  outline: none;
+}
+.folder-chip[hidden] { display: none; }
+.folder-chip:hover,
+.folder-chip:focus-visible { color: var(--wgpt-d-fg); }
+.folder-chip:focus-visible { box-shadow: 0 0 0 1px var(--wgpt-d-accent); }
+.folder-chip-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folder-chip-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* shell.ts pulls it left when it would run past the window's edge. */
+  left: var(--tip-shift, 0px);
+  width: max-content;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 6px 9px;
+  border: 1px solid var(--wgpt-d-border-strong);
+  border-radius: 8px;
+  background: var(--wgpt-d-card);
+  color: var(--wgpt-d-fg);
+  box-shadow: var(--wgpt-d-shadow);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0s linear 0.12s;
+}
+.folder-chip:hover .folder-chip-tip,
+.folder-chip:focus-visible .folder-chip-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0.15s, 0.15s, 0s;
+}
+.app.settings-open .folder-chip { visibility: hidden; }
 .bar-actions {
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 2px;

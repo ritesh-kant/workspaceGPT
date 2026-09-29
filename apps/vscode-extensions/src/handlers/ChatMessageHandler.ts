@@ -13,7 +13,7 @@ import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
 import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
-import { getRecentFolders, listBranches, openFolder, switchBranch } from '../services/agent/workspaceControls';
+import { getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
 
 /** Quiet period after the last file event before the bar's `git status` re-runs. */
 const GIT_STATUS_DEBOUNCE_MS = 500;
@@ -127,9 +127,41 @@ export class ChatMessageHandler {
           current: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
           recent: getRecentFolders(this.context),
           home: os.homedir(),
+          defaultFolder: getDefaultFolder(this.context) ?? '',
+        });
+        return true;
+      case MESSAGE_TYPES.SET_DEFAULT_FOLDER:
+        this.analyticsService.trackEvent('default_folder_set', { cleared: typeof data.path !== 'string' });
+        try {
+          await setDefaultFolder(this.context, typeof data.path === 'string' ? data.path : undefined);
+          this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.DEFAULT_FOLDER_RESULT, ok: true });
+          await this.handleMessage({ type: MESSAGE_TYPES.GET_RECENT_FOLDERS });
+        } catch (error) {
+          this.webviewView.webview.postMessage({
+            type: MESSAGE_TYPES.DEFAULT_FOLDER_RESULT,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return true;
+      case MESSAGE_TYPES.GET_PENDING_FOLDER_START:
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.PENDING_FOLDER_START,
+          start: await takePendingStart(this.context, vscode.workspace.workspaceFolders?.[0]?.uri.fsPath),
         });
         return true;
       case MESSAGE_TYPES.OPEN_WORKSPACE_FOLDER:
+        // A ticket started outside its default folder: save the start for the
+        // page that loads in the new folder, since this host ends on open.
+        if (data.resume && typeof data.path === 'string') {
+          this.analyticsService.trackEvent('workspace_folder_switch', { picker: false, fromTicket: true });
+          const folder = data.path;
+          await this.runWorkspaceAction('switch-default-folder', async () => {
+            await savePendingStart(this.context, folder, data.resume);
+            await openFolder(folder);
+          });
+          return true;
+        }
         this.analyticsService.trackEvent('workspace_folder_switch', { picker: typeof data.path !== 'string' });
         // 'pick-folder' answers once the picker closes, picked or cancelled;
         // a picked folder then restarts the host like 'open-folder' does.

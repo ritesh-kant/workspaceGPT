@@ -11,7 +11,7 @@ import { useGitStatusStore } from '../store/gitStatusStore';
  * while a chat is running (ChatMessageHandler.runWorkspaceAction).
  */
 
-interface MenuRow {
+export interface MenuRow {
   key: string;
   label: string;
   subtitle?: string;
@@ -34,7 +34,7 @@ interface ChipMenuProps {
   closeSignal: number;
 }
 
-const ChipMenu: React.FC<ChipMenuProps> = ({
+export const ChipMenu: React.FC<ChipMenuProps> = ({
   icon,
   label,
   title,
@@ -146,7 +146,7 @@ const ChipMenu: React.FC<ChipMenuProps> = ({
   );
 };
 
-const FolderIcon = () => (
+export const FolderIcon = () => (
   <svg width='14' height='14' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg' aria-hidden='true'>
     <path
       d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z'
@@ -170,7 +170,7 @@ const BranchIcon = () => (
 );
 
 const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
-const looksLikePath = (s: string) => /^(~|\/|[a-zA-Z]:[\\/]|\\\\)/.test(s.trim());
+export const looksLikePath = (s: string) => /^(~|\/|[a-zA-Z]:[\\/]|\\\\)/.test(s.trim());
 
 interface WorkspaceControlsProps {
   /** A chat is running somewhere: switching now would change the files under it. */
@@ -199,6 +199,8 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
         setBranches(Array.isArray(m.branches) ? m.branches : []);
         if (m.error) setError(m.error);
       } else if (m?.type === MESSAGE_TYPES.WORKSPACE_ACTION_RESULT) {
+        // The folder-switch popup's own switch (FolderSwitchDialog.tsx) answers there.
+        if (m.action === 'switch-default-folder') return;
         // A folder that opened ends this page (the window reloads), so keep
         // saying "Opening…" until it does. The picker answers when it closes,
         // picked or cancelled; a pick then reloads the same way.
