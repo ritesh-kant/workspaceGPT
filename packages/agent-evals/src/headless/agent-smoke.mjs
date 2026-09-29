@@ -380,6 +380,8 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
   // was written, so a narration can be located relative to the first edit.
   const noteLog = [];
   let chunks = 0;
+  // What the host was sent for the answer, in order: 'composing' status and chunk text.
+  const answerEvents = [];
   let failovers = 0;
   // The worker's mirrored model-facing conversation, assembled exactly the way
   // chatService assembles it (reset replaces, append extends). This is what a
@@ -406,7 +408,7 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
     const finish = (outcome) => {
       clearTimeout(timer);
       worker.terminate();
-      resolve({ ...outcome, toolCalls, toolTimings, thoughtMs, metrics, notes, noteLog, chunks, failovers, transcript, resumed, audit, checkpoints });
+      resolve({ ...outcome, toolCalls, toolTimings, thoughtMs, metrics, notes, noteLog, chunks, answerEvents, failovers, transcript, resumed, audit, checkpoints });
     };
     const timer = setTimeout(() => finish({ ok: false, error: 'scenario timeout' }), SCENARIO_TIMEOUT_MS);
 
@@ -441,6 +443,9 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
         noteLog.push({ at: toolCalls.length, content: String(msg.content ?? '') });
       } else if (msg.type === 'chunk') {
         chunks++;
+        answerEvents.push({ type: 'chunk', content: String(msg.content ?? '') });
+      } else if (msg.type === 'composing') {
+        answerEvents.push({ type: 'composing' });
       } else if (msg.type === 'key_failover') {
         failovers++;
       } else if (msg.type === 'agent_transcript') {

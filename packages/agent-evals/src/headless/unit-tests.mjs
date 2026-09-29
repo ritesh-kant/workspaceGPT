@@ -4451,6 +4451,107 @@ console.log('\nsync sources (a background or resumed run is visible, stoppable, 
   });
 }
 
+console.log('\nfinal report delivery (no completion claim on screen before its stamp is decided)');
+{
+  // A zero-write "Done" report: exactly what the honesty stamp exists for.
+  // The narrated preamble is what delivery strips.
+  const FABRICATED = [
+    'Diagnostics are clean. Now let me write the final report.',
+    '',
+    '## ✅ Done — badge now shows "rejected"',
+    '',
+    '### Acceptance criteria',
+    '| Criterion | Verdict | Evidence |',
+    '|---|---|---|',
+    '| Badge reads rejected | ✅ Met | `src/badge.ts:L1` |',
+    '',
+    '### Changes',
+    '- `src/badge.ts` — label changed to "rejected"',
+    '',
+    '### Verification',
+    '- ✅ `npm test` — 3 passed',
+  ].join('\n');
+  const FILE = 'src/badge.ts';
+  const FULL_WINDOW = { prompt_tokens: 5_000_000, completion_tokens: 20, total_tokens: 5_000_020 };
+  const scriptedRun = async (main) => {
+    const ws = tempWorkspace({ [FILE]: 'export const label = "pending";\n' });
+    const mock = await startMockModel({ main });
+    try {
+      return await runAgent(ws, 'Fix the badge label.', () => {}, {
+        provider: 'Custom',
+        baseUrl: mock.baseUrl,
+        modelId: 'mock-model',
+        apiKey: 'MOCK',
+        apiKeys: ['MOCK'],
+        autonomous: true,
+        harnessProfile: 'strong-model',
+      });
+    } finally {
+      await mock.close();
+    }
+  };
+  // Whatever reached the host for the answer bubble must already be the
+  // finished deliverable: one chunk, stamp included, preamble gone.
+  const assertDeliveredWhole = (record) => {
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    const chunks = record.answerEvents.filter((e) => e.type === 'chunk');
+    assert.equal(chunks.length, 1, `the report reached the screen in ${chunks.length} pieces — part of it ahead of its rewrite`);
+    assert.equal(chunks[0].content, record.answer, 'what was shown is not what was delivered');
+    assert.ok(!chunks[0].content.includes('Now let me write'), 'the stripped preamble was shown');
+    return chunks[0].content;
+  };
+
+  await t('a loop-ending report with zero writes reaches the screen only with its stamp attached', async () => {
+    const record = await scriptedRun([
+      { toolCalls: [{ name: 'read_file', args: { path: FILE } }] },
+      { finalContent: FABRICATED },
+    ]);
+    assert.equal(record.metrics.writesApplied, 0);
+    assert.match(assertDeliveredWhole(record), /Harness note:\*\* zero file edits were actually applied/);
+  });
+
+  await t('a forced (context-full) report with zero writes reaches the screen only with its stamp attached', async () => {
+    const record = await scriptedRun([
+      { toolCalls: [{ name: 'read_file', args: { path: FILE } }], usage: FULL_WINDOW },
+      { finalContent: FABRICATED },
+    ]);
+    assert.equal(record.metrics.writesApplied, 0);
+    const shown = assertDeliveredWhole(record);
+    assert.match(shown, /Harness note:\*\* zero file edits were actually applied/);
+    const composingAt = record.answerEvents.findIndex((e) => e.type === 'composing');
+    assert.ok(composingAt >= 0 && composingAt < record.answerEvents.findIndex((e) => e.type === 'chunk'),
+      'the wait for the forced report should be announced before it lands');
+  });
+
+  await t('a forced report with writes applied is delivered whole, preamble stripped, unstamped', async () => {
+    const record = await scriptedRun([
+      { toolCalls: [{ name: 'read_file', args: { path: FILE } }] },
+      { toolCalls: [{ name: 'edit_file', args: { path: FILE, oldString: 'pending', newString: 'rejected' } }], usage: FULL_WINDOW },
+      { finalContent: FABRICATED },
+    ]);
+    assert.equal(record.metrics.writesApplied, 1);
+    const shown = assertDeliveredWhole(record);
+    assert.ok(shown.startsWith('## ✅ Done'));
+    assert.ok(!shown.includes('Harness note'));
+  });
+
+  await t('the trimmed report format keeps every honesty rule', async () => {
+    const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
+    const prompt = createStructuredPrompt([], 'Add a SAVE20 code', '', undefined, null, { codebaseToolsEnabled: true, autonomous: true });
+    const fmt = prompt.slice(prompt.indexOf('## FINAL REPORT FORMAT'));
+    assert.ok(fmt.length > 100, 'the report format was not attached');
+    // The trim: no "Root cause: Not applicable" slot on features, checks listed once.
+    assert.match(fmt, /leave this heading out entirely; never write "Not applicable"/);
+    assert.match(fmt, /not criteria unless the task names them — each check is listed once, under Verification/);
+    // What must survive it.
+    assert.match(fmt, /Verdict honesty: a criterion about BEHAVIOR is ✅ Met only when a test or command you actually ran proves it/);
+    assert.match(fmt, /⚠️ Could not verify/);
+    assert.match(fmt, /⚠️ for a check that could not run and why/);
+    assert.match(fmt, /Never invent a criterion the ticket does not contain/);
+    assert.match(fmt, /If you did NOT establish the mechanism, write "Not established/);
+  });
+}
+
 // ── summary ──
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {

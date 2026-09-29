@@ -3844,6 +3844,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // honesty stamp, harness-limit notes), and streaming the raw draft would put
   // an unstamped completion claim on screen ahead of its correction. So say
   // what is happening instead of leaving the timeline silent for it.
+  // Streaming it only when the stamp is ruled out by facts (writes landed) was
+  // built and measured on 2026-09-26 and dropped: on glm-5.3-flash the
+  // streamed call spent 29s in hidden reasoning (2,070 completion tokens vs
+  // 274 unstreamed for the same task) and its text still arrived in one burst.
   parentPort?.postMessage({ type: 'composing' });
   let finalOutcome = await runToolTurn(messages, model, baseURL, apiKeys, false);
   noteTurn(Date.now() - finalStarted, finalOutcome, 0, false);

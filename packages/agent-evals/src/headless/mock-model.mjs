@@ -112,7 +112,9 @@ export function startMockModel({ main = [], explore = [], onRequest, fail } = {}
           object: 'chat.completion',
           model: parsed.model ?? 'mock',
           choices: [{ index: 0, message, finish_reason: wantsTools ? 'tool_calls' : 'stop' }],
-          usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+          // `turn.usage` lets a test report a full context window, which is
+          // how a scripted run reaches the forced final answer.
+          usage: turn?.usage ?? { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
         }),
       );
     });

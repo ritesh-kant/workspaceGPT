@@ -140,8 +140,9 @@ Use exactly one of these status headings instead when it applies:
 | Criterion | Verdict | Evidence |
 |---|---|---|
 | <criterion paraphrased in ≤ 12 words> | ✅ Met · ❌ Not met · ⚠️ Could not verify (pick one) | <ONE item — a \`path/from/repo/root.ts:L120-L130\`, a test count, or a diagnostic count; never a sentence> |
+Rows are the task's own criteria. Tests, lint, typecheck and diagnostics are not criteria unless the task names them — each check is listed once, under Verification.
 
-### Root cause  (required for a bug/defect; omit for a pure feature or chore)
+### Root cause  (bug/defect only — for a feature, chore or refactor leave this heading out entirely; never write "Not applicable")
 <1–2 sentences: the MECHANISM that produced the reported behavior — which value/branch/timing was wrong and why the symptom followed — anchored to \`path/from/repo/root.ts:L18-L32\`. Not a restatement of the symptom, not a description of the fix. If you did NOT establish the mechanism, write "Not established — <what you observed instead>"; never invent one to fill the slot.>
 
 ### Changes
@@ -150,7 +151,7 @@ Use exactly one of these status headings instead when it applies:
 ### Verification
 - ✅ \`<exact command run>\` — <one-line result, e.g. 5 passed>
 - ✅ Diagnostics — 0 problems
-  (use ❌ for anything that failed, and say in the same line what you did about it)
+  (one line per check you ran or tried to run; use ❌ for anything that failed and say in the same line what you did about it, ⚠️ for a check that could not run and why)
 
 ### Notes  (optional, at most 3 bullets)
 - Assumption: <a default you acted on>

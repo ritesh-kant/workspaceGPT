@@ -3228,6 +3228,11 @@ Query: "${query}"`;
                   .finally(() => {
                     toolsInFlight = Math.max(0, toolsInFlight - 1);
                     armStallTimer();
+                    // Nothing running host-side any more: the model has the
+                    // turn. Without this the last tool's label ("Running test:
+                    // npm test") sat next to the turn's elapsed time for the
+                    // whole of the model writing its report.
+                    if (toolsInFlight === 0) this.postStatus(run, '');
                   })
                   .then((toolResult) => {
                     const summary = JSON.stringify(toolResult);
