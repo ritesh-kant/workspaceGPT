@@ -2231,7 +2231,13 @@ export class ChatService {
     // Prefer the host's own in-memory record when this is the same live run;
     // fall back to what the webview sent (from its persisted transcript) when
     // it isn't — e.g. after an extension host restart wiped `run.lastShip`.
-    const shipInput = run?.lastShip ?? (clientShipInput?.files?.length ? clientShipInput : null);
+    const hostShip = run?.lastShip ?? null;
+    // The files, though, are the webview's: its bar showed the chat's still-
+    // uncommitted recorded files (every unshipped turn, not only the last),
+    // and Create PR ships exactly what the bar showed.
+    const shipInput = clientShipInput?.files?.length
+      ? { ...(hostShip ?? clientShipInput), files: clientShipInput.files, hasNewFiles: clientShipInput.hasNewFiles }
+      : hostShip;
     if (!shipInput) {
       reply({ ok: false, error: 'Nothing to ship — no agent changes are recorded for this chat.' });
       return;

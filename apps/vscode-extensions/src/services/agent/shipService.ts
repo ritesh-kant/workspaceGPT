@@ -63,7 +63,9 @@ function git(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) reject(new Error(`git ${args[0]} failed: ${(stderr || err.message).trim()}`));
-      else resolve(stdout.trim());
+      // trimEnd, not trim: porcelain's first line starts with its status
+      // column (" M path"), and parsePorcelain reads the path at offset 3.
+      else resolve(stdout.trimEnd());
     });
   });
 }
@@ -132,7 +134,8 @@ export async function shipChanges(
     await git(gitCwd, ['add', '--', ...filesFromTop]);
     const trailer = input.ticketId ? `\n\n${ticketProvider?.commitTrailer(input.ticketId) ?? input.ticketId}` : '';
     const message = `${shortTitle}\n\n${input.report.trim()}${trailer}\n\nCo-authored-by: WorkspaceGPT Agent <agent@workspacegpt.dev>`;
-    await git(gitCwd, ['commit', '--quiet', '-m', message]);
+    // Pathspec'd: commit these files only, never whatever else sits staged.
+    await git(gitCwd, ['commit', '--quiet', '-m', message, '--', ...filesFromTop]);
   } catch (e) {
     // Leave the user where they were rather than on a half-made branch.
     await git(gitCwd, ['checkout', '--quiet', baseBranch]).catch(() => undefined);
@@ -204,7 +207,7 @@ export interface ShipAllResult {
 export async function shipAllChanges(
   roots: NamedRoot[],
   onStatus: (text: string) => void,
-  askTitle: (suggestion: string) => Promise<string | undefined>
+  askTitle: (suggestion: string, paths: string[]) => Promise<string | undefined>
 ): Promise<ShipAllResult | null> {
   if (!roots.length) throw new Error('No workspace folder is open.');
   const cwd = roots[0].uri.fsPath;
@@ -224,7 +227,7 @@ export async function shipAllChanges(
 
   const { paths, hasNewFiles } = parsePorcelain(dirty);
   const inferredType = inferConventionalType(paths, hasNewFiles);
-  const answer = await askTitle(`${inferredType}: ${suggestShipSubject(paths, hasNewFiles)}`);
+  const answer = await askTitle(`${inferredType}: ${suggestShipSubject(paths, hasNewFiles)}`, paths);
   if (answer === undefined) return null; // cancelled
   const parsed = parseConventionalSubject(answer) ?? { type: inferredType, subject: answer.trim() };
   const commitSubject = `${parsed.type}: ${parsed.subject}`;

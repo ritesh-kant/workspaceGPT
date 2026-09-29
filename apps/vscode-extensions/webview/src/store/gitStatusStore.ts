@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
+import { useChatStore, type TurnSummary } from './chatStore';
 
 /** Working-tree snapshot from the host's gitStatusService. */
 export interface GitStatus {
@@ -12,6 +14,8 @@ export interface GitStatus {
   hasRemote: boolean;
   /** `origin`'s PR-by-number URL with `{id}` to substitute — undefined when the host is unknown. */
   prUrlTemplate?: string;
+  /** Of the paths the last request named (a chat's recorded files), those still uncommitted, with their diff vs. HEAD. */
+  pathStats?: { path: string; added: number; removed: number }[];
 }
 
 /**
@@ -87,3 +91,54 @@ export const statusSignature = (s: GitStatus): string =>
 /** True when there is something uncommitted to show or ship. */
 export const hasShippableChanges = (s: GitStatus | null): s is GitStatus =>
   !!s && s.isRepo && s.filesChanged > 0;
+
+type FileKind = TurnSummary['filesChanged'][number]['kind'];
+
+/**
+ * Files a chat has changed and not yet shipped, by path: every shippable
+ * turn's files back to the most recent shipped turn. A ship takes all of the
+ * chat's uncommitted recorded files, so nothing before it is still pending.
+ */
+export const recordedChatFiles = (
+  messages: readonly { isUser: boolean; turnSummary?: TurnSummary }[]
+): Map<string, FileKind> => {
+  const files = new Map<string, FileKind>();
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const summary = messages[i].turnSummary;
+    if (messages[i].isUser || !summary) continue;
+    if (summary.shipped) break;
+    if (!summary.shippable) continue;
+    for (const f of summary.filesChanged) if (!files.has(f.path)) files.set(f.path, f.kind);
+  }
+  return files;
+};
+
+/** The on-screen chat's share of the working tree — what the bar reports and Create PR ships. */
+export interface ChatChanges {
+  /** This chat's recorded files that are still uncommitted. */
+  files: string[];
+  added: number;
+  removed: number;
+  /** Uncommitted files this chat did not record: another chat's, or the user's own. */
+  others: number;
+}
+
+export const chatChanges = (s: GitStatus | null, recorded: ReadonlyMap<string, FileKind>): ChatChanges => {
+  // Filtered by `recorded` again: a reply to a request made for the previous
+  // chat can still land after a switch, and must not count as this one's.
+  const own = (s?.pathStats ?? []).filter((p) => recorded.has(p.path));
+  return {
+    files: own.map((p) => p.path),
+    added: own.reduce((n, p) => n + p.added, 0),
+    removed: own.reduce((n, p) => n + p.removed, 0),
+    others: Math.max(0, (s?.filesChanged ?? 0) - own.length),
+  };
+};
+
+/** The chat on screen's recorded files and its share of the current git status. */
+export const useChatChanges = (): { recorded: Map<string, FileKind>; changes: ChatChanges } => {
+  const messages = useChatStore((s) => s.messages);
+  const status = useGitStatusStore((s) => s.status);
+  const recorded = useMemo(() => recordedChatFiles(messages), [messages]);
+  return { recorded, changes: useMemo(() => chatChanges(status, recorded), [status, recorded]) };
+};

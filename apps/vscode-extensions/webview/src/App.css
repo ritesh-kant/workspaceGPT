@@ -2552,6 +2552,15 @@ button:disabled {
   font-weight: 500;
 }
 
+/* Uncommitted files outside the chat's scope: counted, not shipped. */
+.git-status-stats-others {
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-font-family);
+  font-size: 0.68rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
 .git-status-stats .stat-added { color: var(--vscode-charts-green, #3fb950); }
 .git-status-stats .stat-removed { color: var(--vscode-charts-red, #f85149); }
 

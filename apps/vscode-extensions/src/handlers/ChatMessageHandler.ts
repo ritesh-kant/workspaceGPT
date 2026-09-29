@@ -15,6 +15,9 @@ import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
 import { getRecentFolders, listBranches, openFolder, switchBranch } from '../services/agent/workspaceControls';
 
+/** Quiet period after the last file event before the bar's `git status` re-runs. */
+const GIT_STATUS_DEBOUNCE_MS = 500;
+
 const fileExists = async (absPath: string): Promise<boolean> => {
   try {
     await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
@@ -26,6 +29,10 @@ const fileExists = async (absPath: string): Promise<boolean> => {
 
 export class ChatMessageHandler {
   private chatService?: ChatService;
+  /** Files the chat on screen recorded — what the last GET_GIT_STATUS asked about; pushes reuse them. */
+  private gitStatusPaths: string[] = [];
+  private gitStatusWatch?: vscode.Disposable;
+  private gitStatusTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -47,6 +54,9 @@ export class ChatMessageHandler {
 
   public dispose(): void {
     this.chatService?.dispose();
+    clearTimeout(this.gitStatusTimer);
+    this.gitStatusWatch?.dispose();
+    this.gitStatusWatch = undefined;
   }
 
   /**
@@ -105,7 +115,7 @@ export class ChatMessageHandler {
         await this.chatService?.shipTurn(data.sessionId, data.requestId, data.shipInput);
         return true;
       case MESSAGE_TYPES.GET_GIT_STATUS:
-        await this.handleGetGitStatus();
+        await this.handleGetGitStatus(data.paths);
         return true;
       case MESSAGE_TYPES.AGENT_SHIP_ALL:
         this.analyticsService.trackEvent('agent_ship_all_triggered');
@@ -289,11 +299,17 @@ export class ChatMessageHandler {
     }
   }
 
-  /** Refresh for the composer's always-on git status bar (branch + working-tree diff stats). */
-  private async handleGetGitStatus(): Promise<void> {
+  /**
+   * Refresh for the composer's git status bar: branch, working-tree diff
+   * stats, and which of the on-screen chat's recorded `paths` are still
+   * uncommitted. Called with no paths by the watcher, which reuses the last.
+   */
+  private async handleGetGitStatus(paths?: unknown): Promise<void> {
+    if (Array.isArray(paths)) this.gitStatusPaths = paths.filter((p): p is string => typeof p === 'string');
+    this.watchGitStatus();
     try {
       const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
-      const status = await getGitStatus(roots);
+      const status = await getGitStatus(roots, this.gitStatusPaths);
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.GIT_STATUS, ...status });
     } catch (error) {
       this.handleError('Error getting git status:', error);
@@ -334,17 +350,53 @@ export class ChatMessageHandler {
     }
   }
 
+  /**
+   * Push a fresh git status whenever the tree can change under the bar
+   * without the webview knowing: a file written by anything (another chat, a
+   * terminal `git checkout`, the editor), a commit or branch switch, or the
+   * window regaining focus. Debounced: one checkout fires an event per file,
+   * and one `git status` after they settle is all the bar needs.
+   */
+  private watchGitStatus(): void {
+    if (this.gitStatusWatch) return;
+    const schedule = () => {
+      clearTimeout(this.gitStatusTimer);
+      this.gitStatusTimer = setTimeout(() => void this.handleGetGitStatus(), GIT_STATUS_DEBOUNCE_MS);
+    };
+    const onFile = (uri: vscode.Uri) => {
+      // Inside .git only a moved HEAD or ref changes the diff against HEAD.
+      // The index is rewritten by `git add` and by status runs themselves, so
+      // reacting to it would feed a refresh loop.
+      const inGit = uri.path.match(/\/\.git\/(.+)$/);
+      if (inGit && !/^(HEAD|packed-refs|refs\/)/.test(inGit[1])) return;
+      schedule();
+    };
+    const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+    this.gitStatusWatch = vscode.Disposable.from(
+      watcher,
+      watcher.onDidCreate(onFile),
+      watcher.onDidChange(onFile),
+      watcher.onDidDelete(onFile),
+      vscode.window.onDidChangeWindowState((state) => state.focused && schedule())
+    );
+  }
+
   /** "Create PR" from the git status bar — ships the whole working tree, not just this turn's files. */
   private async handleShipAll(requestId?: string): Promise<void> {
     const reply = (payload: Record<string, unknown>) =>
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_SHIP_ALL_DONE, requestId, ...payload });
     try {
       const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
-      const result = await shipAllChanges(roots, () => undefined, (suggestion) =>
+      const result = await shipAllChanges(roots, () => undefined, (suggestion, paths) =>
         Promise.resolve(
           vscode.window.showInputBox({
             title: 'Create pull request',
-            prompt: 'Commit subject, Conventional Commits style — it names the branch too.',
+            // Name what is about to be committed: this ships every uncommitted
+            // file, whichever chat (or editor) changed it.
+            prompt:
+              `Commits all ${paths.length} uncommitted file${paths.length === 1 ? '' : 's'} in the working tree, from any chat or editor: ` +
+              `${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ` and ${paths.length - 3} more` : ''}. ` +
+              'Commit subject, Conventional Commits style — it names the branch too.',
             value: suggestion,
             // Preselect just the subject, so Enter accepts and typing replaces
             // the wording without clobbering the inferred type prefix.

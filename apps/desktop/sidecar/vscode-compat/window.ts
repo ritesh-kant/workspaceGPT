@@ -170,6 +170,12 @@ export const window = {
   showTextDocument,
   createOutputChannel,
   createStatusBarItem,
+  /**
+   * The sidecar is not told when the desktop window gains focus, so this never
+   * fires; the webview sees its own window's focus and visibility instead.
+   */
+  state: { focused: true, active: true },
+  onDidChangeWindowState: neverEvent<{ focused: boolean; active: boolean }>(),
   /** "Open chat in editor" moves the chat into a VS Code editor tab; the desktop window already is the chat. */
   createWebviewPanel: notSupported('window.createWebviewPanel', 'the desktop window already shows the chat full-size'),
   /** No editor tab groups exist, so there is nothing to list or close. */
