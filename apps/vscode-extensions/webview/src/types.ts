@@ -200,12 +200,16 @@ export interface WebSearchConfig {
 
 export interface AvailableModel {
   id: string;
+  /** Reasoning-effort levels the model declares (GitHub Copilot, OpenRouter); absent for providers that don't list them. */
+  reasoningEfforts?: string[];
 }
 
 export interface ModelConfig {
   selectedModel?: string;
   /** Optional stronger model for agent runs (autonomous / ticket-grounded); same provider and keys. */
   agentModel?: string;
+  /** Settings → Model → Effort; sent only to models that declare the level. Unset = the provider decides. */
+  reasoningEffort?: string;
   provider: string;
   /** Primary key, kept in sync with apiKeys[0] for backward compat. */
   apiKey?: string;

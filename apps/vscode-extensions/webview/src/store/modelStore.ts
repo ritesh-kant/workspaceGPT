@@ -24,6 +24,8 @@ interface ModelState {
 
     handleModelChange: (modelId: string, providerId: string) => void; // Assuming we need to specify which provider to update
     handleProviderChange: (providerId: string) => void; // Assuming we need to specify which provider to update
+    /** Settings → Model → Effort and the composer's effort picker; undefined = the provider decides. */
+    setReasoningEffort: (effort?: string) => void;
     resetStore: () => void;
   };
 }
@@ -131,6 +133,14 @@ export const useModelStore = create<ModelState>()(
             ),
           }));
         },
+        setReasoningEffort: (effort) => {
+          set((state) => ({
+            modelProviders: state.modelProviders.map((config) =>
+              config.provider === state.selectedModelProvider.provider ? { ...config, reasoningEffort: effort } : config
+            ),
+            selectedModelProvider: { ...state.selectedModelProvider, reasoningEffort: effort },
+          }));
+        },
         resetStore: () => {
           const vscode = VSCodeAPI();
           vscode.setState({});
@@ -166,6 +176,29 @@ export const useModelStore = create<ModelState>()(
     }
   )
 );
+
+/**
+ * The effort levels to offer for this provider and model. 'per-model'
+ * providers (GitHub Copilot, OpenRouter) say which models take an effort, so
+ * it is the levels the chat or agent-run model declares, in declared order;
+ * OpenAI and Gemini don't, so it is their provider-wide levels. Empty — and
+ * no picker — for every provider the worker doesn't send an effort to.
+ */
+export const effortLevelsFor = (config: ModelConfig): string[] => {
+  const supported = MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === config.provider)?.REASONING_EFFORT;
+  if (Array.isArray(supported)) return supported;
+  if (supported !== 'per-model') return [];
+  return [
+    ...new Set(
+      [config.selectedModel, config.agentModel].flatMap(
+        (id) => config.availableModels?.find((m) => m.id === id)?.reasoningEfforts ?? []
+      )
+    ),
+  ];
+};
+
+/** 'high' → 'High' for display; the stored value stays what the provider declared. */
+export const effortLabel = (level: string): string => level.charAt(0).toUpperCase() + level.slice(1);
 
 // custom hooks for model store
 

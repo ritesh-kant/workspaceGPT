@@ -594,6 +594,12 @@ export const MODEL = {
 };
 /** On the desktop host (no `vscode.lm`) it runs the unofficial direct path — see copilotDirect.ts. */
 export const COPILOT_PROVIDER = 'GitHub Copilot';
+/**
+ * The effort levels offered (Settings → Model → Effort, the composer picker)
+ * where a provider doesn't list its own per model: every reasoning model on
+ * OpenAI, Gemini and OpenRouter takes these three.
+ */
+export const REASONING_EFFORT_LEVELS = ['low', 'medium', 'high'];
 export const MODEL_PROVIDERS = [
   {
     MODEL_PROVIDER: 'Ollama',
@@ -607,6 +613,9 @@ export const MODEL_PROVIDERS = [
     requireApiKey: true,
     BASE_URL: 'https://api.openai.com/v1',
     DEFAULT_CHAT_MODEL: 'gpt-3.5-turbo',
+    // Its model list doesn't say which models reason; one that doesn't rejects
+    // the effort and the worker drops it (withEffortFallback).
+    REASONING_EFFORT: REASONING_EFFORT_LEVELS,
   },
   {
     MODEL_PROVIDER: 'Claude',
@@ -619,6 +628,7 @@ export const MODEL_PROVIDERS = [
     requireApiKey: true,
     BASE_URL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     DEFAULT_CHAT_MODEL: 'models/gemini-2.0-flash-exp',
+    REASONING_EFFORT: REASONING_EFFORT_LEVELS,
   },
   {
     MODEL_PROVIDER: 'Groq',
@@ -637,6 +647,8 @@ export const MODEL_PROVIDERS = [
     requireApiKey: true,
     BASE_URL: 'https://openrouter.ai/api/v1',
     DEFAULT_CHAT_MODEL: 'deepseek/deepseek-r1-distill-llama-70b',
+    // Per model: each lists `reasoning` in supported_parameters when it takes it.
+    REASONING_EFFORT: 'per-model',
   },
   {
     MODEL_PROVIDER: 'NVIDIA',
@@ -672,6 +684,8 @@ export const MODEL_PROVIDERS = [
     API_KEY: 'COPILOT',
     BASE_URL: '',
     DEFAULT_CHAT_MODEL: undefined,
+    // Per model: capabilities.supports.reasoning_effort (desktop's direct path only).
+    REASONING_EFFORT: 'per-model',
   },
   {
     // OpenAI-compatible provider with a user-supplied base URL (self-hosted,

@@ -14,6 +14,7 @@ import {
   isResearchWorkItem,
 } from '../../constants';
 import { getCopilotContextWindow } from './copilotBridge';
+import { markUserTurn } from './copilotDirect';
 import { AdoEmbeddingService } from './ado/adoEmbeddingService';
 import { JiraEmbeddingService } from './jira/jiraEmbeddingService';
 import { AnalyticsService } from './analyticsService';
@@ -890,6 +891,7 @@ export class ChatService {
       return;
     }
     run.cancelled = false;
+    if (provider === COPILOT_PROVIDER) markUserTurn();
     // Safe to replace unconditionally here: the live-worker case already
     // returned above, so nothing is mid-turn against the old history.
     if (historyOverride) {
@@ -2636,6 +2638,16 @@ export class ChatService {
    * reach Jev at all. Everyone else, and any Jev failure, falls through to
    * the existing full-model classifier unchanged.
    */
+  /**
+   * Settings → Model → Effort, read from the persisted model store. Only when
+   * `provider` is the one it was picked under — a remote-mode or eval turn on
+   * another provider gets that provider's default.
+   */
+  private selectedReasoningEffort(provider: string | undefined): string | undefined {
+    const sel = (this.context.globalState.get(STORAGE_KEYS.MODEL) as any)?.state?.selectedModelProvider;
+    return sel?.provider === provider && typeof sel?.reasoningEffort === 'string' ? sel.reasoningEffort : undefined;
+  }
+
   private async classifyIntent(
     run: SessionRun,
     query: string,
@@ -2856,6 +2868,8 @@ Query: "${query}"`;
           // by how much — the one provider that reports it, so use it.
           contextWindowOverride:
             provider === COPILOT_PROVIDER ? await getCopilotContextWindow(modelId ?? this.currentModel) : undefined,
+          // The effort picked in Settings / the composer, for the provider it was picked under.
+          reasoningEffort: this.selectedReasoningEffort(provider),
           currentUserName: currentUserName || undefined,
           currentSprint: currentSprint || undefined,
           codebaseTools: codebaseRoots ? { enabled: true } : undefined,
@@ -3283,6 +3297,8 @@ Query: "${query}"`;
                 });
                 break;
 
+              // Same notice shape: the worker dropped an effort level the model rejected and retried.
+              case 'effort_unsupported':
               case 'image_unsupported':
                 // The model rejected an attached/ticket image with a 400 — the
                 // worker already stripped it and retried as text-only. Tell the

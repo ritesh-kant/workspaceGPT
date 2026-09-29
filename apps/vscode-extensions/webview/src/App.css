@@ -1967,6 +1967,11 @@ button:disabled {
   flex-shrink: 1;
 }
 
+/* A short label ("High effort"); the model name beside it is what ellipsizes. */
+.effort-selector-bottom {
+  flex-shrink: 0;
+}
+
 /* SearchableDropdown replaces the native <select> here — the popup portion
    of a native select is drawn entirely by the OS and looks inconsistent
    across platforms (plain, unthemed list on Windows vs. a rounded native

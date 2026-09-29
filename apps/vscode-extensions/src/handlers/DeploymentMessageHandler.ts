@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import {
   MESSAGE_TYPES,
   STORAGE_KEYS,
+  COPILOT_PROVIDER,
   EMPTY_MACH_REPO,
   GITHUB_API_BASE,
   resolveActivePipeline,
@@ -18,6 +19,7 @@ import { ConfluenceReleaseSource, buildTargetFor } from '../services/deployment/
 import { AiReleaseSource, type AiMode } from '../services/deployment/aiReleaseSource';
 import { FileReleaseSource } from '../services/deployment/fileReleaseSource';
 import { getLlmSettings } from '../utils/getLlmSettings';
+import { markUserTurn } from '../services/copilotDirect';
 import { withKeyFailover, isRateLimitError } from '../utils/apiKeyFailover';
 import { normalizeModelId } from '../utils/normalizeModelId';
 import { getProviderDefaultHeaders } from '../utils/anthropicHeaders';
@@ -463,6 +465,7 @@ export class DeploymentMessageHandler {
     if (!s.provider || !s.baseUrl || !s.model) {
       throw new Error('Select a chat model (Settings → Model) to use AI-assisted parsing.');
     }
+    if (s.provider === COPILOT_PROVIDER) markUserTurn();
     const OpenAI = (await import('openai')).default;
     // Try each configured key in turn, rotating on 429. maxRetries lets the SDK
     // back off and honor Retry-After before we give up on a given key — the

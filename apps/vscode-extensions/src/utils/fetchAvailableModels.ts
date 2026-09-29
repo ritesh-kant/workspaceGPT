@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { getProviderDefaultHeaders } from './anthropicHeaders';
+import { REASONING_EFFORT_LEVELS } from '../../constants';
 
 // Model catalogs (OpenAI, Gemini, and router/aggregator providers like
 // OpenRouter, Requesty, NVIDIA) mix chat-completion models in with
@@ -24,7 +25,16 @@ export async function fetchAvailableModels(baseURL: string, apiKey: string) {
     const response = await openai.models.list();
     return response.data
       .filter((model) => isChatModel(model.id))
-      .map((model) => ({id: model.id}));
+      .map((model) => {
+        // Effort levels the model says it takes (Settings → Model → Effort
+        // offers exactly these): GitHub Copilot lists them; OpenRouter lists
+        // `reasoning` among a model's supported parameters. Other providers
+        // say nothing, and get their provider-wide levels (MODEL_PROVIDERS).
+        const efforts =
+          (model as any).capabilities?.supports?.reasoning_effort ??
+          ((model as any).supported_parameters?.includes?.('reasoning') ? REASONING_EFFORT_LEVELS : undefined);
+        return Array.isArray(efforts) && efforts.length ? { id: model.id, reasoningEfforts: efforts as string[] } : { id: model.id };
+      });
   } catch (error: any) {
     console.error('Error fetching models:', error);
     // No HTTP status means the request never got an answer (server down,

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type * as http from 'http';
-import { STORAGE_KEYS } from '../../constants';
+import { randomUUID } from 'crypto';
+import { COPILOT_PROVIDER, STORAGE_KEYS } from '../../constants';
 
 /**
  * GitHub Copilot on hosts without `vscode.lm` — the desktop app. UNOFFICIAL.
@@ -23,13 +24,27 @@ const DEVICE_CODE_URL = 'https://github.com/login/device/code';
 const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
 const COPILOT_TOKEN_URL = 'https://api.github.com/copilot_internal/v2/token';
 const DEFAULT_API = 'https://api.githubcopilot.com';
-/** Copilot rejects requests without an editor identity; these are the values LiteLLM ships. */
+/**
+ * Copilot rejects requests without an editor identity; these are the values
+ * LiteLLM ships. It keeps the older identity for GitHub's token exchange and
+ * sends Copilot Chat's for the Copilot API itself, so the two differ here too.
+ */
 const EDITOR_HEADERS = {
   'editor-version': 'vscode/1.85.1',
   'editor-plugin-version': 'copilot/1.155.0',
   'user-agent': 'GithubCopilot/1.155.0',
   'copilot-integration-id': 'vscode-chat',
 };
+const copilotApiHeaders = () => ({
+  'copilot-integration-id': 'vscode-chat',
+  'editor-version': 'vscode/1.95.0',
+  'editor-plugin-version': 'copilot-chat/0.26.7',
+  'user-agent': 'GitHubCopilotChat/0.26.7',
+  'openai-intent': 'conversation-panel',
+  'x-github-api-version': '2025-04-01',
+  'x-request-id': randomUUID(),
+  'x-vscode-user-agent-library-version': 'electron-fetch',
+});
 /** Same floor as the vscode.lm path: small utility models can't hold an agent transcript. */
 const MIN_INPUT_TOKENS = 100_000;
 
@@ -39,12 +54,14 @@ export interface DirectCopilotModel {
 }
 
 let secrets: vscode.SecretStorage | undefined;
+let globalState: vscode.Memento | undefined;
 let session: { token: string; api: string; expiresAt: number } | undefined;
 let signingIn: Promise<void> | undefined;
 
 /** Called once on activation; the GitHub token lives in the host's secret storage. */
 export function initDirectCopilot(context: vscode.ExtensionContext): void {
   secrets = context.secrets;
+  globalState = context.globalState;
 }
 
 /** True when this host has no Language Model API and so uses this module. */
@@ -87,7 +104,7 @@ export async function ensureDirectCopilotReady(allowSignIn: boolean): Promise<st
 /** Copilot chat models that take tool calls on /chat/completions and hold an agent transcript. */
 export async function listDirectCopilotModels(): Promise<DirectCopilotModel[]> {
   const { token, api } = await copilotSession();
-  const res = await fetch(`${api}/models`, { headers: { ...EDITOR_HEADERS, authorization: `Bearer ${token}` } });
+  const res = await fetch(`${api}/models`, { headers: { ...copilotApiHeaders(), authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`GitHub Copilot model list failed (${res.status}).`);
   const body: any = await res.json();
   return (body.data ?? [])
@@ -102,27 +119,50 @@ export async function listDirectCopilotModels(): Promise<DirectCopilotModel[]> {
     .map((m: any) => ({ id: m.id, maxInputTokens: m.capabilities.limits.max_prompt_tokens }));
 }
 
+/**
+ * Premium requests. Copilot bills a request it is told the user initiated
+ * (`x-initiator: user`) and not the agent's own follow-ups; VS Code's agent
+ * marks only the first request of a turn. Which request that is can't be
+ * read off the transcript: the agent loop adds mid-run instructions as user
+ * messages, and the intent classifier and exploration calls each open with
+ * one, so guessing from the last message's role billed every one of them.
+ * The host knows when the user acted and says so here; exactly one request
+ * per user action then goes out as `user`. A turn that fails before any
+ * request leaves its mark for the next one, so the error is at most one
+ * extra billed request, never an unbilled user turn.
+ */
+let pendingUserTurns = 0;
+
+/** A user action (a sent message, a deployment parse) whose next Copilot request is the user's. */
+export function markUserTurn(): void {
+  if (usesDirectCopilot()) pendingUserTurns++;
+}
+
 /** Bridge route: forward an OpenAI request to Copilot and stream its answer back unchanged. */
 export async function forwardToCopilot(path: string, raw: string, res: http.ServerResponse): Promise<void> {
   const { token, api } = await copilotSession();
   const body = raw ? JSON.parse(raw) : undefined;
+  if (Array.isArray(body?.messages)) markCacheBreakpoints(body.messages);
+  if (body) applyReasoningEffort(body);
   const abort = new AbortController();
   res.on('close', () => {
     if (!res.writableFinished) abort.abort();
   });
-  const last = body?.messages?.[body.messages.length - 1];
+  // One request per user action is the user's; see markUserTurn.
+  const initiator = raw && pendingUserTurns > 0 ? (pendingUserTurns--, 'user') : 'agent';
   const upstream = await fetch(`${api}${path}`, {
     method: raw ? 'POST' : 'GET',
     headers: {
-      ...EDITOR_HEADERS,
+      ...copilotApiHeaders(),
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
-      'openai-intent': 'conversation-panel',
       // What VS Code sends: a turn the user typed is user-initiated; tool
       // follow-ups inside a run are the agent's.
-      'x-initiator': last?.role === 'user' ? 'user' : 'agent',
+      'x-initiator': initiator,
+      // Copilot routes a request carrying images to a vision-capable backend only when told.
+      ...(raw.includes('"image_url"') ? { 'copilot-vision-request': 'true' } : {}),
     },
-    body: raw || undefined,
+    body: body ? JSON.stringify(body) : undefined,
     signal: abort.signal,
   });
   if (upstream.status === 401) session = undefined;
@@ -130,6 +170,53 @@ export async function forwardToCopilot(path: string, raw: string, res: http.Serv
   if (!upstream.body) return void res.end();
   for await (const chunk of upstream.body as any) res.write(chunk);
   res.end();
+}
+
+/** Anthropic's floor for a thinking budget; a call capped below it (the intent classifier's 60) has no room to think. */
+const MIN_THINKING_MAX_TOKENS = 1024;
+
+/**
+ * Settings → Model → Effort. Sent the way VS Code sends it: only when the
+ * request's model declares that level in `capabilities.supports.reasoning_effort`
+ * (kept on the stored model list), so a model without it, or an agent-run
+ * model with other levels, gets Copilot's default rather than a 400. Unset
+ * means Copilot decides. Short utility calls keep the default too.
+ */
+function applyReasoningEffort(body: any): void {
+  const sel = (globalState?.get(STORAGE_KEYS.MODEL) as any)?.state?.selectedModelProvider;
+  const effort = sel?.provider === COPILOT_PROVIDER ? sel.reasoningEffort : undefined;
+  const levels = sel?.availableModels?.find((m: any) => m?.id === body.model)?.reasoningEfforts;
+  if (!effort || !Array.isArray(levels) || !levels.includes(effort) || body.reasoning_effort !== undefined) return;
+  if (typeof body.max_tokens === 'number' && body.max_tokens < MIN_THINKING_MAX_TOKENS) return;
+  body.reasoning_effort = effort;
+}
+
+/**
+ * Prompt caching. Copilot caches Claude models only at explicit breakpoints,
+ * which it reads from a per-message `copilot_cache_control` field — what VS
+ * Code's own Copilot agent sends on /chat/completions (OpenAI models cache the
+ * prefix on their own and ignore it). An agent round resends the whole
+ * transcript, so without these every round re-bills it in full. Anthropic
+ * allows 4 breakpoints; this places at most 3:
+ *  - the end of the leading system/user block (rules, tool schemas, ticket),
+ *    which is identical for every round of the run;
+ *  - the newest message, so the next round reads the whole transcript back;
+ *  - the message before the newest assistant turn, where the previous round
+ *    put its newest-message breakpoint, so that round's cache is still hit
+ *    when this one appended more blocks than Anthropic's 20-block lookback.
+ */
+function markCacheBreakpoints(messages: any[]): void {
+  const leading = (m: any) => m?.role === 'system' || m?.role === 'user';
+  let lead = leading(messages[0]) ? 0 : -1;
+  while (lead >= 0 && leading(messages[lead + 1])) lead++;
+  const lastAssistant = messages.map((m) => m?.role).lastIndexOf('assistant');
+  for (const i of new Set([lead, lastAssistant - 1, messages.length - 1])) {
+    const m = messages[i];
+    // Copilot only honours a breakpoint on a message with content; an
+    // assistant turn carrying just tool calls has none.
+    if (!m || m.role === 'assistant' || !(typeof m.content === 'string' ? m.content : m.content?.length)) continue;
+    m.copilot_cache_control = { type: 'ephemeral' };
+  }
 }
 
 /** Copilot's input limit for a model, which is often below the model's native window. */

@@ -223,6 +223,11 @@ async function chatCompletion(body: any, req: http.IncomingMessage, res: http.Se
  * OpenAI messages → vscode.lm messages. The stable API has only User and
  * Assistant roles, so system prompts ride as User messages; tool results are
  * User messages carrying a ToolResultPart keyed by the original call id.
+ *
+ * No prompt-cache breakpoints here, unlike the direct path: Copilot builds a
+ * third-party vscode.lm request from text, image and tool-result parts only,
+ * dropping any `cache_control` data part, and whitelists modelOptions. Claude
+ * through vscode.lm is therefore uncached; OpenAI models cache on their own.
  */
 function toLmMessages(messages: any[]): vscode.LanguageModelChatMessage[] {
   const out: vscode.LanguageModelChatMessage[] = [];

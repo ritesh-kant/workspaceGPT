@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useEffect, useCallback } from 'react';
-import { useModelActions, useSelectedModelProvider } from '../../store';
+import { effortLabel, effortLevelsFor, useModelActions, useSelectedModelProvider } from '../../store';
 import { COPILOT_PROVIDER, MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { VSCodeAPI } from '../../vscode';
 import { changeProviderHandler, fetchAvailableModels } from './utils';
@@ -38,6 +38,7 @@ const ModelSettings: React.FC = () => {
     updateSelectedModelProvider,
     handleModelChange,
     updateModelProvider,
+    setReasoningEffort,
   } = useModelActions();
 
 
@@ -198,6 +199,8 @@ const ModelSettings: React.FC = () => {
     return () => window.removeEventListener('message', handleMessage);
   }, [selectedModelProvider]);
 
+  const effortLevels = effortLevelsFor(selectedModelProvider);
+
   const summary = apiKeyError
     ? MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === selectedModelProvider.provider)?.requireApiKey
       ? '⚠️ Check API key'
@@ -354,6 +357,29 @@ const ModelSettings: React.FC = () => {
             <small className='form-text'>
               Autonomous ticket runs and Agent-mode turns use this model; ordinary chat keeps the one above.
               A stronger model here is what moves ticket-run quality most.
+            </small>
+          </div>
+        )}
+
+        {showSelectModelValidator() && effortLevels.length > 0 && (
+          <div className='form-group'>
+            <label htmlFor='effort-select'>Effort</label>
+            <select
+              id='effort-select'
+              className='select-larger'
+              value={selectedModelProvider.reasoningEffort ?? ''}
+              onChange={(e) => setReasoningEffort(e.target.value || undefined)}
+            >
+              <option value=''>Default</option>
+              {effortLevels.map((level) => (
+                <option key={level} value={level}>
+                  {effortLabel(level)}
+                </option>
+              ))}
+            </select>
+            <small className='form-text'>
+              How long the model thinks before it answers. Higher is slower and uses more tokens. A model that
+              doesn't take an effort answers at its default.
             </small>
           </div>
         )}

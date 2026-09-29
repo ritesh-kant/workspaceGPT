@@ -35,6 +35,8 @@ import {
   applyChatSnapshot,
   useModelActions,
   useModelProviders,
+  effortLabel,
+  effortLevelsFor,
   useSelectedModelProvider,
   useSettingsStore,
   useUiStore,
@@ -520,7 +522,8 @@ const App: React.FC = () => {
 
   const selectedModelProvider = useSelectedModelProvider();
 
-  const { handleModelChange } = useModelActions();
+  const { handleModelChange, setReasoningEffort } = useModelActions();
+  const effortLevels = effortLevelsFor(selectedModelProvider);
 
   const [activeModels, setActiveModels] = useState<
     {
@@ -2838,6 +2841,23 @@ const App: React.FC = () => {
                             }))
                           : [{ value: 'none', label: 'Select Model' }]),
                         { value: 'selectModel', label: 'Edit...' },
+                      ]}
+                    />
+                  </div>
+                )}
+                {/* Only providers the effort is sent to offer levels (see effortLevelsFor). */}
+                {mode === 'local' && effortLevels.length > 0 && (
+                  <div
+                    className='model-selector-bottom effort-selector-bottom'
+                    data-tooltip='How long the model thinks before it answers. Higher is slower and uses more tokens.'
+                  >
+                    <SearchableDropdown
+                      value={selectedModelProvider.reasoningEffort ?? ''}
+                      searchable={false}
+                      onChange={(value) => setReasoningEffort(value || undefined)}
+                      options={[
+                        { value: '', label: 'Default effort' },
+                        ...effortLevels.map((level) => ({ value: level, label: `${effortLabel(level)} effort` })),
                       ]}
                     />
                   </div>

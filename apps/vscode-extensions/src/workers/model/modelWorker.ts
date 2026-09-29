@@ -161,6 +161,12 @@ interface WorkerData {
    * self-corrected from prompts the provider accepts.
    */
   contextWindowOverride?: number;
+  /**
+   * Settings → Model → Effort (or the composer's picker) for OpenRouter,
+   * OpenAI and Gemini; see effortFields. Absent: each provider's default.
+   * Copilot's is applied by its bridge instead, per request.
+   */
+  reasoningEffort?: string;
 }
 
 const {
@@ -194,6 +200,7 @@ const {
   planMode,
   priorWrites,
   harnessProfile,
+  reasoningEffort,
 } = workerData as WorkerData;
 
 // Prefer the full key list; fall back to the single legacy key.
@@ -1073,6 +1080,58 @@ const PROMPT_CACHE_FIELDS: Record<string, unknown> = !CACHE_KEY
       ? { prompt_cache_key: CACHE_KEY }
       : {};
 
+// ── Reasoning effort ──
+//
+// How long a reasoning model thinks before answering, as the user picked it.
+// Each provider spells it differently:
+//   · OpenRouter — `reasoning: { effort }`, normalized across upstreams and
+//     dropped for models that don't reason. Tool rounds keep the `low` they
+//     have always had when the user leaves it on Default: a tool turn needs a
+//     quick decision, and unconstrained thinking was the main latency and
+//     token cost on models like Nemotron.
+//   · OpenAI, Gemini — `reasoning_effort`, which a non-reasoning model rejects
+//     with a 400. Their model lists don't say which models take it, so it is
+//     sent and, on a rejection, dropped for the rest of the run (see
+//     withEffortFallback) — the provider's answer, not a guess from the id.
+//   · Everyone else — nothing: strict OpenAI-compatible endpoints 400 on an
+//     unknown body key.
+const isGeminiDirect = (provider ?? '').toLowerCase() === 'gemini';
+const sendsReasoningEffort = isOpenAIDirect || isGeminiDirect;
+let effortRejected = false;
+
+function effortFields(kind: 'tool' | 'answer'): Record<string, unknown> {
+  const effort = effortRejected ? undefined : reasoningEffort;
+  if (isOpenRouter) {
+    const openRouterEffort = effort ?? (kind === 'tool' ? 'low' : undefined);
+    return openRouterEffort ? { reasoning: { effort: openRouterEffort } } : {};
+  }
+  return sendsReasoningEffort && effort ? { reasoning_effort: effort } : {};
+}
+
+/**
+ * Sends a request, and if the provider rejects its shape while an effort is
+ * attached, drops the effort for the rest of the run and sends it once more.
+ * `send` must read effortFields() itself so the retry goes out without it.
+ * Only 400/422 count: a 413 is the context overflow the callers already
+ * handle, not the effort. Any other failure — or a rejection that persists
+ * without the effort — propagates unchanged to the caller's own handling
+ * (images, envelope logs).
+ */
+async function withEffortFallback<T>(send: () => Promise<T>): Promise<T> {
+  try {
+    return await send();
+  } catch (err: any) {
+    const status = err?.status ?? err?.statusCode ?? err?.response?.status;
+    if (!sendsReasoningEffort || effortRejected || !reasoningEffort || (status !== 400 && status !== 422)) throw err;
+    effortRejected = true;
+    parentPort?.postMessage({
+      type: 'effort_unsupported',
+      message: `${modelId ?? 'This model'} doesn't take an effort level — continuing with the provider's default.`,
+    });
+    return send();
+  }
+}
+
 // ── Latency-adaptive degradation ──
 // Everything above (exploration decomposition, reflection/nudge extras, a
 // 25-turn cap) assumes turns that cost a few seconds. On a slow serving path
@@ -1420,7 +1479,7 @@ async function generateWithOpenAIStream(
       baseURL,
       defaultHeaders: getProviderDefaultHeaders(baseURL, apiKey),
     });
-    return openai.chat.completions.create({
+    return withEffortFallback(() => openai.chat.completions.create({
       model: model,
       messages: [
         {
@@ -1436,7 +1495,8 @@ async function generateWithOpenAIStream(
       // the extra keys otherwise stop the literal from selecting the SDK's
       // streaming overload, which is what types `stream` below as async.
       ...PROMPT_CACHE_FIELDS,
-    } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming);
+      ...effortFields('answer'),
+    } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming));
   };
 
   // Create the stream with key failover. A 429 surfaces at creation (before any
@@ -1768,7 +1828,7 @@ async function runToolTurn(
       maxRetries: MODEL_CLIENT_MAX_RETRIES,
       defaultHeaders: getProviderDefaultHeaders(baseURL, apiKey),
     });
-    return openai.chat.completions.create({
+    return withEffortFallback(() => openai.chat.completions.create({
       model,
       messages: withPromptCache(messages, model),
       ...(withTools ? { tools: tools as any, tool_choice: 'auto' as const } : {}),
@@ -1776,20 +1836,15 @@ async function runToolTurn(
       // plus the breakpoint field for families that need one.
       ...(PROMPT_CACHE_FIELDS as any),
       ...(cacheControlField(model) as any),
-      // Cap thinking on reasoning models: tool turns need a quick decision,
-      // not a minute of deliberation, and unconstrained reasoning is the main
-      // latency + token cost on models like Nemotron. OpenRouter normalizes
-      // this param across providers and drops it for models without reasoning;
-      // other OpenAI-compat providers may reject unknown params, so it is
-      // gated to OpenRouter only.
-      ...(isOpenRouter ? ({ reasoning: { effort: 'low' } } as any) : {}),
+      // The user's effort, or `low` on OpenRouter by default — see effortFields.
+      ...(effortFields('tool') as any),
       temperature: 0.3,
       // Reasoning models (Gemini 2.5+, Nemotron) spend "thinking" tokens out of
       // this same budget — 4096 can be exhausted before any visible output is
       // produced.
       max_tokens: maxTokens,
       stream: false,
-    });
+    }));
   };
 
   let response;
