@@ -12,21 +12,29 @@ import { ExtensionMode, Uri } from '../vscode-compat/types';
 import { NotSupportedInDesktop, recordNotSupported } from '../vscode-compat/notSupported';
 import { ownExtension } from '../vscode-compat/env';
 import { JsonStore, memento, workspaceStateFile, type AppPaths } from './stores';
-import { createSecretStorage } from './secrets';
+import { createSecretStorage, secretServiceFor } from './secrets';
 
 export interface DesktopContext {
   context: any;
   globalState: JsonStore;
   workspaceState: JsonStore;
   secretsBackend: 'keychain' | 'memory';
+  /** The keychain service this profile's secrets live under. */
+  secretsService: string;
   dispose(): Promise<void>;
 }
 
-export function createExtensionContext(opts: { paths: AppPaths; extensionDir: string; workspaceFolder?: string }): DesktopContext {
+export function createExtensionContext(opts: {
+  paths: AppPaths;
+  extensionDir: string;
+  workspaceFolder?: string;
+  /** --secrets-service: tests only; otherwise derived from the data root. */
+  secretsService?: string;
+}): DesktopContext {
   const { paths, extensionDir } = opts;
   const globalState = new JsonStore(paths.stateFile);
   const workspaceState = new JsonStore(workspaceStateFile(paths, opts.workspaceFolder));
-  const secrets = createSecretStorage();
+  const secrets = createSecretStorage(opts.secretsService ?? secretServiceFor(paths.root));
   const subscriptions: { dispose(): any }[] = [];
   const workspaceStorage = path.join(paths.root, 'workspace-storage', path.basename(workspaceStateFile(paths, opts.workspaceFolder), '.json'));
   fs.mkdirSync(workspaceStorage, { recursive: true });
@@ -68,6 +76,7 @@ export function createExtensionContext(opts: { paths: AppPaths; extensionDir: st
     globalState,
     workspaceState,
     secretsBackend: secrets.backendKind,
+    secretsService: secrets.service,
     async dispose() {
       for (const d of subscriptions.splice(0).reverse()) {
         try {

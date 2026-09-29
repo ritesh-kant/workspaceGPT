@@ -254,6 +254,15 @@ public repo). Checked against the public URLs:
   `runtime/node` with **no prompt**. Node keeps its own Developer ID
   signature (team HX7739G8FX), which doesn't change between our releases.
   Expect a prompt once when `NODE_VERSION` changes.
+- Keychain per profile (2026-09-26): the default profile keeps the service
+  `WorkspaceGPT Desktop`, so the items above and the no-prompt upgrade are
+  unchanged. Any other data root (`--data-dir`, `WGPT_DESKTOP_DATA_DIR`) uses
+  `WorkspaceGPT Desktop (<first 8 hex of sha256(real path of the root)>)`
+  (`secretServiceFor()` in host/secrets.ts). Before this, a scratch profile
+  showed the real Remote account, and its Sign out, Reset or API-key save
+  wrote the installed app's items. The startup line names the service;
+  `--secrets-service <name>` overrides it (tests only). A scratch profile that
+  signs in leaves its items behind under its own service name.
 - The CI-built `.app.tar.gz.sig` files verify against `plugins.updater.pubkey`
   (key id 00da8e104e544963).
 
@@ -366,7 +375,8 @@ accounts); Windows' notepad fallback.
    units are split into generation-tagged chunks under a header entry
    (`chunked()` in host/secrets.ts); values that fit, and entries written
    before, are stored/read whole. `node scripts/secrets-chunk-test.mjs` checks
-   it against a fake Credential Manager with the real cap (12 checks, any OS;
+   it against a fake Credential Manager with the real cap (12 checks, plus the
+   per-profile service name, any OS;
    `WGPT_DESKTOP_SECRETS_CHUNK=<units>` forces the path in a real run). Not run
    on Windows itself yet.
 9. **Lockfile:** adding `ws@8.21.0` deduped puppeteer-core's `ws` 8.18.1 → 8.21.0

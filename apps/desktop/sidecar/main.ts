@@ -12,7 +12,9 @@
  * Flags:
  *   --workspace <dir>     folder the agent works in (default: last used, else none)
  *   --port <n>            fixed port (default: random)
- *   --data-dir <dir>      app data dir (default: ~/Library/Application Support/WorkspaceGPT Desktop)
+ *   --data-dir <dir>      app data dir (default: ~/Library/Application Support/WorkspaceGPT Desktop);
+ *                         any other dir gets its own keychain service (host/secrets.ts)
+ *   --secrets-service <s> keychain service name to use instead (tests only)
  *   --extension-dir <dir> extension package root (default: ../vscode-extensions in the repo)
  *   --open                open the chat in the default browser once ready
  *   --parent-stdio        run as a child of the Tauri shell: print one READY line on
@@ -70,6 +72,7 @@ interface Args {
   workspace?: string;
   port: number;
   dataDir?: string;
+  secretsService?: string;
   extensionDir?: string;
   open: boolean;
   parentStdio: boolean;
@@ -95,6 +98,9 @@ function parseArgs(argv: string[]): Args {
         break;
       case '--data-dir':
         a.dataDir = path.resolve(next());
+        break;
+      case '--secrets-service':
+        a.secretsService = next();
         break;
       case '--extension-dir':
         a.extensionDir = path.resolve(next());
@@ -302,8 +308,9 @@ async function main(): Promise<void> {
     log: (l) => console.log(l),
   });
 
-  const ctx = createExtensionContext({ paths, extensionDir, workspaceFolder: folders[0] });
-  console.log(`[desktop] data dir ${paths.root}; secrets in ${ctx.secretsBackend}; workspace ${folders[0] ?? '(none)'}`);
+  const ctx = createExtensionContext({ paths, extensionDir, workspaceFolder: folders[0], secretsService: args.secretsService });
+  const secretsWhere = ctx.secretsBackend === 'keychain' ? `keychain (service "${ctx.secretsService}")` : ctx.secretsBackend;
+  console.log(`[desktop] data dir ${paths.root}; secrets in ${secretsWhere}; workspace ${folders[0] ?? '(none)'}`);
   // McpUiManager's first-run toast offers "Connect MCP", which writes the host
   // editor's mcp.json; the desktop has no editor (and no MCP Server page), so
   // it would greet a new user over the onboarding card with a dead end.

@@ -21,15 +21,17 @@ export interface AppPaths {
   machineIdFile: string;
 }
 
+/** The installed app's profile: the root used when neither --data-dir nor WGPT_DESKTOP_DATA_DIR is given. */
+export function defaultAppRoot(): string {
+  return process.platform === 'darwin'
+    ? path.join(os.homedir(), 'Library', 'Application Support', 'WorkspaceGPT Desktop')
+    : process.platform === 'win32'
+      ? path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkspaceGPT Desktop')
+      : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'workspacegpt-desktop');
+}
+
 export function resolveAppPaths(override?: string): AppPaths {
-  const root =
-    override ??
-    process.env.WGPT_DESKTOP_DATA_DIR ??
-    (process.platform === 'darwin'
-      ? path.join(os.homedir(), 'Library', 'Application Support', 'WorkspaceGPT Desktop')
-      : process.platform === 'win32'
-        ? path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'WorkspaceGPT Desktop')
-        : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'workspacegpt-desktop'));
+  const root = override ?? process.env.WGPT_DESKTOP_DATA_DIR ?? defaultAppRoot();
   const paths: AppPaths = {
     root,
     stateFile: path.join(root, 'state.json'),

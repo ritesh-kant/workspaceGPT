@@ -1,7 +1,8 @@
 /**
  * `context.secrets` backed by the OS credential store via @napi-rs/keyring
- * (challenge #10 — keytar is archived). One service name; the account is the
- * extension's own secret key, so names match the extension's.
+ * (challenge #10 — keytar is archived). One service name per profile (see
+ * secretServiceFor below); the account is the extension's own secret key, so
+ * names match the extension's.
  *
  * If the native module can't load, or WGPT_DESKTOP_SECRETS=memory is set
  * (CI, throwaway test profiles), secrets live in memory for this run only and
@@ -12,9 +13,36 @@
  * there values are split across entries (chunked() below). macOS Keychain and
  * the Linux Secret Service have no such limit and store every value whole.
  */
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { EventEmitter } from '../vscode-compat/types';
+import { defaultAppRoot } from './stores';
 
 export const SECRET_SERVICE = 'WorkspaceGPT Desktop';
+
+/**
+ * The keychain service for a profile's data root. The installed app's profile
+ * (defaultAppRoot) keeps SECRET_SERVICE unchanged, so existing installs read
+ * the items they already have, with no new keychain prompt (NOTES.md,
+ * "Keychain"). Any other root (--data-dir, WGPT_DESKTOP_DATA_DIR: dev and test
+ * profiles) gets `WorkspaceGPT Desktop (<8 hex of sha256(real path)>)`, so its
+ * Sign out, Reset or API-key save can't touch the installed app's items.
+ * Roots are compared by real path, so a symlink, `..` or a differently cased
+ * spelling of the default root still counts as the default.
+ */
+export function secretServiceFor(root: string, defaultRoot: string = defaultAppRoot()): string {
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const r = real(root);
+  if (r === real(defaultRoot)) return SECRET_SERVICE;
+  return `${SECRET_SERVICE} (${crypto.createHash('sha256').update(r).digest('hex').slice(0, 8)})`;
+}
 
 export interface Backend {
   kind: 'keychain' | 'memory';
@@ -33,10 +61,10 @@ export function memoryBackend(): Backend {
   };
 }
 
-function keyringBackend(): Backend {
+function keyringBackend(service: string): Backend {
   // Required lazily so a missing prebuilt binary degrades instead of crashing startup.
   const { AsyncEntry } = require('@napi-rs/keyring') as typeof import('@napi-rs/keyring');
-  const entry = (key: string) => new AsyncEntry(SECRET_SERVICE, key);
+  const entry = (key: string) => new AsyncEntry(service, key);
   return {
     kind: 'keychain',
     get: async (k) => (await entry(k).getPassword()) ?? undefined,
@@ -124,13 +152,14 @@ export function chunked(inner: Backend, size: number): Backend {
   };
 }
 
-export function createSecretStorage() {
+/** `service`: secretServiceFor(<data root>), or an explicit --secrets-service; never a bare constant. */
+export function createSecretStorage(service: string) {
   let backend: Backend;
   if (process.env.WGPT_DESKTOP_SECRETS === 'memory') {
     backend = memoryBackend();
   } else {
     try {
-      backend = keyringBackend();
+      backend = keyringBackend(service);
     } catch (err) {
       console.warn('[desktop] OS keychain unavailable, secrets are in memory for this run only:', err);
       backend = memoryBackend();
@@ -142,6 +171,7 @@ export function createSecretStorage() {
   const changed = new EventEmitter<{ key: string }>();
   return {
     backendKind: backend.kind,
+    service,
     storage: {
       get: (key: string) => backend.get(key),
       store: async (key: string, value: string) => {
