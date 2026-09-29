@@ -322,7 +322,9 @@ interface SessionPreview {
     row.textContent = '';
     const sidebarShown = hasSessionsView && app.dataset.sidebar === 'open';
     const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-    const header = actions.filter((a) => a.command !== SETTINGS && !(a.command === HISTORY && sidebarShown));
+    const header = actions.filter(
+      (a) => a.command !== SETTINGS && !((a.command === HISTORY || a.command === NEW_CHAT) && sidebarShown),
+    );
     // New chat sits last, at the far right, like the "+" of a tab strip.
     header.sort((a, b) => Number(a.command === NEW_CHAT) - Number(b.command === NEW_CHAT));
     for (const action of header) {

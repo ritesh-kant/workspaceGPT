@@ -52,17 +52,6 @@ button { font: inherit; color: inherit; }
   gap: 8px;
   min-width: 0;
 }
-.brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: var(--wgpt-d-accent-fg);
-  background: var(--wgpt-d-accent);
-}
 .brand-name {
   font-weight: 600;
   font-size: 13px;

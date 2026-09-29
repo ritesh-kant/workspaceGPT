@@ -263,6 +263,14 @@ public repo). Checked against the public URLs:
 - Windows (NSIS) and Linux (AppImage): the scripts know the targets, the
   workflow doesn't build them.
 
+**App icon (2026-09-29):** macOS 26+ puts a bundle icon that doesn't fill
+the rounded-square shape on a white plate, shrunk. Our circle did exactly
+that in released builds (`tauri dev` sets the Dock icon at runtime from the
+PNG, so dev never showed it). `icons/icon.icns` is now generated from
+`icons/icon-macos-source.png` (1024 canvas, 824 rounded square, r≈185, flat
+#1E69B8) with `pnpm tauri icon <source> -o <tmp>`, copying only `icon.icns`
+back. The circle PNGs and `icon.ico` stay: the tray and Windows use them.
+
 ## QA pass (2026-09-25)
 
 Fresh profile, headless sidecar driven in the browser pane, chat against a
