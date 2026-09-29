@@ -22,7 +22,7 @@ import { getLlmSettings } from 'src/utils/getLlmSettings';
 import { getMode } from 'src/utils/getModeSettings';
 import { withKeyFailover, isTransientServerError } from 'src/utils/apiKeyFailover';
 // Shared with the webview's Resume button — see continuationIntent's header.
-import { CONTINUATION_RE, APPROVAL_RE } from 'src/utils/continuationIntent';
+import { CONTINUATION_RE, APPROVAL_RE, resolvePlanHandoff } from 'src/utils/continuationIntent';
 import {
   saveResumeRecord,
   loadResumeRecord,
@@ -366,6 +366,12 @@ interface SessionRun {
    * manual follow-up message in the same session gets the gates back.
    */
   autonomous: boolean;
+  /**
+   * Plan mode for the CURRENT turn (the composer dial). The worker is not
+   * offered write tools; gatedWrite refuses any that arrive anyway. Set per
+   * sendMessage call, like `autonomous`.
+   */
+  planMode: boolean;
   /**
    * Chat or Work, as of this session's last turn. The host is the authority on
    * this — the webview's live switch reflects whichever chat is on screen, so
@@ -731,6 +737,7 @@ export class ChatService {
         checkRuns: new Map(),
         missingExecutables: new Map(),
         autonomous: false,
+        planMode: false,
         assistantMode: 'work',
         agentTranscript: null,
         lastAnswerStallShaped: false,
@@ -872,8 +879,9 @@ export class ChatService {
     autonomous = false,
     /**
      * Plan mode: this turn's deliverable is a reviewable plan — the worker
-     * prompt forbids writes and the anti-plan gates are disarmed. The user's
-     * approving reply then runs as the executeMandate turn.
+     * is offered no write tools and the anti-plan gates are disarmed. The
+     * plan's "Run plan" button then sends the executeMandate turn (in Agent
+     * mode, with `executePlan`).
      */
     planMode = false,
     /**
@@ -883,7 +891,9 @@ export class ChatService {
      * are forced false below so no retrieval runs and no codebase/Confluence/
      * ticket tools are offered, regardless of what's connected or open.
      */
-    assistantMode: 'chat' | 'work' = 'work'
+    assistantMode: 'chat' | 'work' = 'work',
+    /** The "Run plan" button: this turn carries out the plan the previous answer proposed. */
+    executePlan = false
   ): Promise<void> {
     const run = this.runFor(sessionId);
     if (run.worker) {
@@ -952,6 +962,7 @@ export class ChatService {
         autonomous = false;
       }
       run.autonomous = autonomous;
+      run.planMode = planMode;
       run.assistantMode = assistantMode;
 
       // All configured keys for the selected provider, tried in failover order
@@ -1081,12 +1092,24 @@ export class ChatService {
       // anything" and nothing ever revokes that.
       const priorAssistant =
         [...run.chatHistory].reverse().find((m) => m.role === 'assistant')?.content ?? '';
-      const executeMandate =
+      const replyApprovesPlan =
         trimmedMessage.length <= 80 &&
         (APPROVAL_RE.test(trimmedMessage) || CONTINUATION_RE.test(trimmedMessage)) &&
         PROPOSED_PLAN_RE.test(priorAssistant);
+      // The Plan dial wins over the reply's wording — see resolvePlanHandoff.
+      const { executeMandate, notifyPlanModeStillOn } = resolvePlanHandoff({ planMode, executePlan, replyApprovesPlan });
       if (executeMandate) {
         console.log('User approved a proposed plan — this turn executes it.');
+      }
+      if (notifyPlanModeStillOn) {
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          step: {
+            kind: 'notice',
+            title: 'Plan mode is on, so this turn only plans and changes nothing. To carry out the plan, use Run plan on it, or switch the mode to Agent or Ask.',
+            status: 'error',
+          },
+        });
       }
 
 
@@ -1988,6 +2011,7 @@ export class ChatService {
    * for a human whatever the mode.
    */
   private async gatedConfluenceWrite(run: SessionRun, write: PreparedConfluenceWrite): Promise<unknown> {
+    if (run.planMode) throw new Error(`Plan mode: no ${write.kind} this turn — describe the change in your plan instead.`);
     const { id, decision } = run.writeGate.await({ kind: write.kind, summary: write.summary });
     this.post(run, {
       type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
@@ -2119,6 +2143,9 @@ export class ChatService {
    * the model as a tool error carrying the user's feedback.
    */
   private async gatedWrite(run: SessionRun, write: PreparedWrite, roots: NamedRoot[]): Promise<unknown> {
+    // The worker offers no write tools in plan mode; this is the host's own
+    // guarantee, for a write that arrives anyway.
+    if (run.planMode) throw new Error(`Plan mode: no ${write.kind} this turn — describe the change in your plan instead.`);
     const diff = buildReviewDiff(write.before, write.after);
     // Autonomous runs skip the review card — nobody is present to click it, and
     // a parked gate would hang the run. The change is still checkpointed below
@@ -3058,6 +3085,8 @@ Query: "${query}"`;
                 refs: run.turnRefs.length ? [...run.turnRefs] : undefined,
                 shippable,
                 ...(spikeDocPath && ticketContext ? { spikeDoc: { path: spikeDocPath, ticketId: ticketContext.id } } : {}),
+                // A plan-mode tool turn's answer IS a plan — the card offers "Run plan".
+                ...(planMode && codebaseRoots?.length ? { plan: true } : {}),
                 // Carried so "Create PR" can re-arm itself from the persisted
                 // transcript alone — the host's own run.lastShip is in-memory
                 // only and does not survive an extension host restart.

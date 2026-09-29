@@ -3039,6 +3039,23 @@ console.log('\ncontinuationIntent (the Resume button and the host must agree)');
     assert.ok(APPROVAL_RE.test('apply it'));
     assert.ok(!APPROVAL_RE.test('do it differently this time'));
   });
+
+  const { resolvePlanHandoff } = continuation;
+  await t('Run plan (executePlan) makes the turn an execution turn on its own', () => {
+    assert.deepEqual(resolvePlanHandoff({ planMode: false, executePlan: true, replyApprovesPlan: false }), { executeMandate: true, notifyPlanModeStillOn: false });
+  });
+  await t('a typed approval still adds the execute push outside Plan mode', () => {
+    assert.deepEqual(resolvePlanHandoff({ planMode: false, executePlan: false, replyApprovesPlan: true }), { executeMandate: true, notifyPlanModeStillOn: false });
+  });
+  await t('the Plan dial wins: a typed approval never executes, it gets a notice', () => {
+    // The old shape sent PLAN MODE "do not edit" and "carry out the approved
+    // plan" in one prompt — the regex over the reply overrode the dial.
+    assert.deepEqual(resolvePlanHandoff({ planMode: true, executePlan: false, replyApprovesPlan: true }), { executeMandate: false, notifyPlanModeStillOn: true });
+    assert.equal(resolvePlanHandoff({ planMode: true, executePlan: true, replyApprovesPlan: false }).executeMandate, false);
+  });
+  await t('an ordinary Plan-mode turn is left alone', () => {
+    assert.deepEqual(resolvePlanHandoff({ planMode: true, executePlan: false, replyApprovesPlan: false }), { executeMandate: false, notifyPlanModeStillOn: false });
+  });
 }
 
 console.log('\nturnOutcome (a turn may only claim work that happened)');
@@ -3219,7 +3236,8 @@ console.log('\npromptTemplates with-context regime (retrieval rides into a tool 
 
 console.log('\ntoolScope (a turn is offered only the tools it can actually use)');
 {
-  const { scopeToolDefs, TOOL_REQUIREMENTS } = await import(path.join(outDir, 'toolScope.mjs'));
+  const toolScopeMod = await import(path.join(outDir, 'toolScope.mjs'));
+  const { scopeToolDefs, TOOL_REQUIREMENTS } = toolScopeMod;
   const mk = (...names) => names.map((name) => ({ type: 'function', function: { name } }));
   const names = (defs) => defs.map((d) => d.function.name);
   const ALL = mk('read_file', 'edit_file', 'explore', 'search_docs', 'get_confluence_page', 'search_tickets', 'get_ticket', 'search_web');
@@ -3250,6 +3268,12 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
     assert.deepEqual(names(scopeToolDefs(defs, { codebase: true, confluence: false, tickets: false })), ['read_file'], 'a host that predates the field offers none');
     assert.deepEqual(names(scopeToolDefs(defs, { codebase: true, confluence: false, tickets: false, browser: false })), ['read_file']);
     assert.deepEqual(names(scopeToolDefs(defs, { codebase: true, confluence: false, tickets: false, browser: true })), names(defs));
+  });
+
+  await t('plan mode drops every write tool and keeps the rest, in order', () => {
+    const { withoutWriteTools } = toolScopeMod;
+    const defs = mk('read_file', 'edit_file', 'create_file', 'delete_file', 'run_command', 'get_confluence_page', 'update_confluence_page', 'create_confluence_page', 'search_web');
+    assert.deepEqual(names(withoutWriteTools(defs)), ['read_file', 'run_command', 'get_confluence_page', 'search_web']);
   });
 
   await t('the requirements map covers every tool the worker defines', () => {
@@ -3700,6 +3724,26 @@ console.log('\nwritePressure (a run that owes an edit may not spend its whole bu
 {
   const wp = await import(path.join(outDir, 'writePressure.mjs'));
   const base = { contextExhausted: false, stagnant: false, investigationCallsWithoutWrite: 0, writesApplied: 0 };
+
+  await t('the plan-mode checkpoint asks for the plan and names no edit tool', () => {
+    // A plan-mode run has no edit tools; the commit notice says they "are all
+    // still available" and asks for an edit next — false there.
+    assert.ok(!/edit_file|create_file|delete_file|edit tool/.test(wp.PLAN_NARROWED_NOTICE));
+    assert.ok(/plan/i.test(wp.PLAN_NARROWED_NOTICE));
+  });
+
+  await t('plan mode is enforced by capability in the worker and the host (pinned by source)', () => {
+    const ext = path.join(here, '../../../../apps/vscode-extensions/src');
+    const worker = fs.readFileSync(path.join(ext, 'workers/model/modelWorker.ts'), 'utf8');
+    assert.ok(/const SCOPED_TOOL_DEFS = planMode \? withoutWriteTools\(/.test(worker), 'worker must drop write tools in plan mode');
+    assert.ok(/planMode \? PLAN_NARROWED_NOTICE : COMMIT_NARROWED_NOTICE/.test(worker), 'narrowing must use the plan wording in plan mode');
+    const host = fs.readFileSync(path.join(ext, 'services/chatService.ts'), 'utf8');
+    for (const fn of ['gatedWrite', 'gatedConfluenceWrite']) {
+      const body = host.slice(host.indexOf(`private async ${fn}(`), host.indexOf(`private async ${fn}(`) + 600);
+      assert.ok(/if \(run\.planMode\) throw/.test(body), `${fn} must refuse writes in plan mode`);
+    }
+    assert.ok(/resolvePlanHandoff\(\{ planMode, executePlan, replyApprovesPlan \}\)/.test(host), 'the host must decide the handoff through resolvePlanHandoff');
+  });
 
   await t('narrows on measured facts only: no room left, or nothing new being learned', () => {
     const at = (over = {}) => wp.shouldNarrowToConclude({ ...base, ...over });

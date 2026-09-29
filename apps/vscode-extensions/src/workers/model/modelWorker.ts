@@ -33,7 +33,7 @@ import {
 import { normalizeModelId } from '../../utils/normalizeModelId';
 import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
 import { consumeStream, shouldRetryEmptyStream } from './streamOutcome';
-import { scopeToolDefs, ToolAvailability } from './toolScope';
+import { scopeToolDefs, ToolAvailability, withoutWriteTools } from './toolScope';
 import {
   contextState,
   isStagnant,
@@ -44,6 +44,7 @@ import { contextBreakdown } from './contextBreakdown';
 import {
   COMMIT_NARROWED_NOTICE,
   DISCOVERY_TOOL_NAMES,
+  PLAN_NARROWED_NOTICE,
   VERIFICATION_RESERVE_TURNS,
   capWithVerificationReserve,
   narrowToCommitTools,
@@ -974,7 +975,10 @@ const HARNESS_PROFILE = resolveHarnessProfile({ isLocalProvider, modelId, overri
 // The tool list this run actually sends. Scoped once from what the host says is
 // connected; every tool turn and the explore sub-agent draw from this, never
 // from TOOL_DEFS directly.
-const SCOPED_TOOL_DEFS = scopeToolDefs(TOOL_DEFS as Array<{ function: { name: string } }>, toolAvailability);
+const SCOPED_TOOL_DEFS_ALL = scopeToolDefs(TOOL_DEFS as Array<{ function: { name: string } }>, toolAvailability);
+// Plan mode is the dial the user set: the write tools are not offered at all,
+// so "propose, don't change" holds whatever the model does with the prompt.
+const SCOPED_TOOL_DEFS = planMode ? withoutWriteTools(SCOPED_TOOL_DEFS_ALL) : SCOPED_TOOL_DEFS_ALL;
 const PHRASE_GATES = phraseGatesEnabled(HARNESS_PROFILE);
 // 20 for local (was 10): edit-heavy tasks need recovery headroom — a weak
 // model spends turns redundantly (5 get_diagnostics + 3 test runs observed in
@@ -3015,7 +3019,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         });
     if (narrow && !commitNarrowingApplied) {
       commitNarrowingApplied = true;
-      messages.push({ role: 'user', content: COMMIT_NARROWED_NOTICE });
+      messages.push({ role: 'user', content: planMode ? PLAN_NARROWED_NOTICE : COMMIT_NARROWED_NOTICE });
       console.log(
         `[agent] convergence pressure at turn ${i + 1}: discovery tools withdrawn ` +
           `(context ${contextNow.usedPct}%, ${turnsWithoutProgress} turns without progress, ` +
@@ -3161,7 +3165,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // of doing it — observed live with qwen writing a full markdown story of
       // edits it never attempted. Confront once.
       const claimsChanges = CLAIMS_CHANGES_RE.test(outcome.content);
-      if (writesApplied === 0 && claimsChanges && phantomChangesNudgesUsed < 2) {
+      // Not in plan mode: a plan's "the change to X" is its deliverable, and
+      // this nudge's "make the changes NOW" names tools the run doesn't have.
+      if (!planMode && writesApplied === 0 && claimsChanges && phantomChangesNudgesUsed < 2) {
         phantomChangesNudgesUsed++;
         // Confront with EVIDENCE, not just exhortation: a live git_status
         // showing a clean tree is harder to role-play past than a scolding.
@@ -3191,6 +3197,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // confrontation runs first and states the fact the model got wrong.
       if (
         PHRASE_GATES &&
+        // In plan mode the write tools really are absent — the claim is true.
+        !planMode &&
         !budgetExhausted &&
         !missingToolClaimNudgeUsed &&
         writesApplied === 0 &&

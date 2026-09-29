@@ -103,6 +103,8 @@ export interface TurnSummary {
   shipped?: ShippedTurn;
   /** A research ticket's run wrote its spike document here — the card offers "Publish to Confluence". */
   spikeDoc?: { path: string; ticketId: string };
+  /** The turn ran in Plan mode — its answer is a plan, and the card offers "Run plan". */
+  plan?: boolean;
 }
 
 export interface ShippedTurn {

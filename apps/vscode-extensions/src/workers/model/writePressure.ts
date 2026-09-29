@@ -166,3 +166,8 @@ export const COMMIT_NARROWED_NOTICE =
   'Checkpoint from the harness: the search and exploration tools are now withdrawn for the rest of this run — deliberately, by the harness, because this run has spent a great deal of investigation without reaching a conclusion yet. This is not a fault and nothing is broken: read_file, your edit tools (edit_file/create_file/delete_file) and the checks are all still available and still work. ' +
   'Conclude now from what you already have. If this task needs a code change, state the cause in ONE line with its file:line and make your NEXT tool call an edit — re-read only the exact lines you need to copy for oldString. ' +
   'If it does not need a change, give your final answer now. Either way, do not spend another turn looking for somewhere new to look.';
+
+/** The same checkpoint for a plan-mode run, which has no edit tools to point at. */
+export const PLAN_NARROWED_NOTICE =
+  'Checkpoint from the harness: the search and exploration tools are now withdrawn for the rest of this run — deliberately, by the harness, because this run has spent a great deal of investigation without reaching a conclusion yet. This is not a fault and nothing is broken: read_file and the checks still work. ' +
+  'Conclude now from what you already have: write the plan — root cause with file:line, the exact edits (file, location, before → after), and how you would verify them. Do not spend another turn looking for somewhere new to look.';

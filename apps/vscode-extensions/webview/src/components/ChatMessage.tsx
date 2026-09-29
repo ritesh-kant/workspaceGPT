@@ -319,6 +319,8 @@ interface ChatMessageProps {
   onResume?: () => void;
   /** Present on a spike report whose document was written — starts the Confluence publish turn. */
   onPublishSpike?: (doc: { path: string; ticketId: string }) => void;
+  /** Present on the latest plan-mode answer — carries the plan out in Agent mode. */
+  onRunPlan?: () => void;
   /**
    * Rewrite this user message and re-ask from here. Absent while a run is in
    * flight (forking a live conversation would race the answer being streamed).
@@ -351,6 +353,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   resumable,
   onResume,
   onPublishSpike,
+  onRunPlan,
   onEdit,
   onEditingChange,
   onFeedback,
@@ -580,6 +583,19 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
               </button>
             </div>
           )}
+          {turnSummary?.plan && onRunPlan && (
+            <div className="spike-publish">
+              <span className="spike-publish-text">Happy with this plan? Run it in Agent mode.</span>
+              <button
+                type="button"
+                className="error-resume-button"
+                onClick={onRunPlan}
+                title="Switch to Agent mode and carry out this plan — edits apply on their own, checkpointed so you can revert"
+              >
+                Run plan
+              </button>
+            </div>
+          )}
           {isError && resumable && onResume && (
             <div className="error-resume">
               <span className="error-resume-text">
@@ -679,5 +695,6 @@ export default React.memo(ChatMessage, (prev, next) => (
   prev.resumable?.writesApplied === next.resumable?.writesApplied &&
   !!prev.onResume === !!next.onResume &&
   !!prev.onPublishSpike === !!next.onPublishSpike &&
+  !!prev.onRunPlan === !!next.onRunPlan &&
   !!prev.onEdit === !!next.onEdit
 ));

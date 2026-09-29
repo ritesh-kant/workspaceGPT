@@ -60,6 +60,30 @@ export const RESUME_RE =
  */
 export const RESUME_MESSAGE = 'continue';
 
+/** The message the "Run plan" button on a plan-mode answer sends (with `executePlan`). */
+export const RUN_PLAN_MESSAGE = 'Go ahead — carry out the plan.';
+
+/**
+ * Whether this turn carries out the plan the previous turn proposed.
+ *
+ * - `executePlan` is the Run plan button: a fact, so it decides on its own.
+ * - `replyApprovesPlan` is the typed-reply guess (APPROVAL_RE over the reply,
+ *   PROPOSED_PLAN_RE over the previous answer). It may only ADD the execute
+ *   push to a turn that can already write — never turn a Plan-mode turn into
+ *   a writing one.
+ * - `planMode` is the dial, and it wins: with the dial on Plan nothing
+ *   executes. A typed approval there gets a notice pointing at the button
+ *   instead of a second, contradictory prompt block.
+ */
+export function resolvePlanHandoff(ctx: {
+  planMode: boolean;
+  executePlan: boolean;
+  replyApprovesPlan: boolean;
+}): { executeMandate: boolean; notifyPlanModeStillOn: boolean } {
+  if (ctx.planMode) return { executeMandate: false, notifyPlanModeStillOn: ctx.replyApprovesPlan || ctx.executePlan };
+  return { executeMandate: ctx.executePlan || ctx.replyApprovesPlan, notifyPlanModeStillOn: false };
+}
+
 /** True when this reply asks to pick up an interrupted run. */
 export function isContinuationIntent(message: string): boolean {
   const trimmed = String(message ?? '').trim();

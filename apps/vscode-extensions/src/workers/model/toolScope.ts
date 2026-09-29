@@ -87,3 +87,22 @@ export function scopeToolDefs<T extends NamedToolDef>(defs: readonly T[], availa
     return !needs || availability[needs];
   });
 }
+
+/** Tools that change the workspace or Confluence. */
+export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'edit_file',
+  'create_file',
+  'delete_file',
+  'update_confluence_page',
+  'create_confluence_page',
+]);
+
+/**
+ * Plan mode's tool list: everything except the writes. The user set the dial
+ * to Plan — a fact, like a connected source — so "change nothing this turn" is
+ * a capability the run lacks, not a sentence the model is asked to obey.
+ * `run_command` stays: outside Agent mode every command is a review card.
+ */
+export function withoutWriteTools<T extends NamedToolDef>(defs: readonly T[]): T[] {
+  return defs.filter((d) => !WRITE_TOOL_NAMES.has(d.function.name));
+}

@@ -46,7 +46,7 @@ import {
 import { modelDefaultConfig } from './store/modelStore';
 // The word the Resume button sends, defined next to the patterns the host
 // parses it with — see continuationIntent's header for why it must be bare.
-import { RESUME_MESSAGE } from '../../src/utils/continuationIntent';
+import { RESUME_MESSAGE, RUN_PLAN_MESSAGE } from '../../src/utils/continuationIntent';
 import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS, isResearchWorkItem, researchWorkItemPrompt, publishSpikePrompt } from './constants';
 import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
@@ -389,8 +389,8 @@ const App: React.FC = () => {
   // - agent (default): autonomous=true — edits apply without review cards
   //   (checkpointed + audited), permission-seeking is a failure, stalls
   //   auto-resume. Same dial the My Work ▶ button uses.
-  // - plan: planMode=true — the turn's deliverable IS a plan (no writes);
-  //   replying "go ahead" executes it via the existing approval handoff.
+  // - plan: planMode=true — the turn's deliverable IS a plan (no write tools);
+  //   the plan's Run plan button switches to agent and executes it.
   // - ask: neither flag — every edit shows a review card (the old default).
   type ChatMode = 'agent' | 'plan' | 'ask';
   const CHAT_MODE_ORDER: ChatMode[] = ['agent', 'plan', 'ask'];
@@ -434,7 +434,7 @@ const App: React.FC = () => {
     },
     plan: {
       label: 'Plan',
-      title: 'Plan: investigates and proposes exact edits without changing anything. Reply "go ahead" to run it.',
+      title: 'Plan: investigates and proposes exact edits without changing anything. Use Run plan on the answer to carry it out.',
     },
     ask: {
       label: 'Ask',
@@ -903,6 +903,7 @@ const App: React.FC = () => {
             refs: message.refs,
             shippable: !!message.shippable,
             spikeDoc: message.spikeDoc,
+            plan: !!message.plan,
           });
           break;
         case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
@@ -1084,6 +1085,7 @@ const App: React.FC = () => {
             refs: message.refs,
             shippable: !!message.shippable,
             spikeDoc: message.spikeDoc,
+            plan: !!message.plan,
           });
           break;
         case MESSAGE_TYPES.AGENT_REVERT_DONE: {
@@ -2216,6 +2218,34 @@ const App: React.FC = () => {
   };
 
   /**
+   * "Run plan" on a plan-mode answer: switch the dial to Agent and carry the
+   * plan out. The flags are explicit rather than modeFlags() — the dial's new
+   * value hasn't rendered yet — and `executePlan` is what makes this an
+   * execution turn, not the message's wording (see resolvePlanHandoff).
+   */
+  const handleRunPlan = () => {
+    if (isLoading || isStreaming) return;
+    setChatModePersisted('agent');
+    if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
+    resetStreamBuffer();
+    addMessage({ content: RUN_PLAN_MESSAGE, isUser: true, timestamp: Date.now() });
+    setIsLoading(true);
+    setIsStreaming(false);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId: currentSessionId,
+      message: RUN_PLAN_MESSAGE,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+      assistantMode,
+      autonomous: true,
+      executePlan: true,
+    });
+  };
+
+  /**
    * Picks the interrupted run back up. Sent through the ordinary send path, so
    * every host code path this touches is the already-tested one that a typed
    * "continue" takes — the button is a shortcut, not a second mechanism.
@@ -2618,6 +2648,14 @@ const App: React.FC = () => {
                   onPublishSpike={
                     !message.isUser && message.turnSummary?.spikeDoc && !isLoading && !isStreaming
                       ? handlePublishSpike
+                      : undefined
+                  }
+                  onRunPlan={
+                    // Only the LAST answer: the execute turn carries out "the
+                    // plan in your previous message", so an older plan would
+                    // run whatever came after it instead.
+                    !message.isUser && message.turnSummary?.plan && assistantMode === 'work' && index === messages.length - 1 && !isLoading && !isStreaming
+                      ? handleRunPlan
                       : undefined
                   }
                   onEdit={
