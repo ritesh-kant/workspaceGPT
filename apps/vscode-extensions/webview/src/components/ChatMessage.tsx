@@ -570,6 +570,12 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
           {turnSummary && turnSummary.filesChanged.length > 0 && (
             <FilesChangedBar summary={turnSummary} />
           )}
+          {turnSummary?.diagnostics && (
+            <details className="turn-diagnostics">
+              <summary>Run details</summary>
+              <div className="turn-diagnostics-body">{turnSummary.diagnostics}</div>
+            </details>
+          )}
           {turnSummary?.spikeDoc && onPublishSpike && (
             <div className="spike-publish">
               <span className="spike-publish-text">Share this spike with your team as a Confluence page.</span>

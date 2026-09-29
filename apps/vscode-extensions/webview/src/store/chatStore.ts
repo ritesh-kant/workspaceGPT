@@ -5,10 +5,22 @@ import { STORAGE_KEYS } from '../constants';
 import { MESSAGE_TYPES } from '../constants';
 import type { ChatAttachment } from '../constants';
 
-/** A proposed agent action awaiting (or past) user review — file write or command. */
+/** One ask_user question (host: services/agent/askUser.ts). */
+export interface AskQuestion {
+  question: string;
+  header?: string;
+  options: { label: string; description?: string }[];
+  multiSelect?: boolean;
+}
+
+/**
+ * A proposed agent action awaiting (or past) user review — file write or
+ * command — or, kind 'question', an ask_user card: the run waits on it the
+ * same way, so it rides the same message, gate and persistence.
+ */
 export interface WriteReview {
   id: string;
-  kind: 'edit' | 'create' | 'delete' | 'command' | 'confluence-edit' | 'confluence-create';
+  kind: 'edit' | 'create' | 'delete' | 'command' | 'confluence-edit' | 'confluence-create' | 'question';
   /** A workspace path — or, for a Confluence write, where it lands ("D2C › Parent › Title"). */
   path: string;
   summary: string;
@@ -25,6 +37,10 @@ export interface WriteReview {
   decision?: 'approved' | 'rejected' | 'failed' | 'stopped';
   /** Approve was clicked and the host has not confirmed the write yet. */
   applying?: boolean;
+  /** kind 'question': what the card asks. */
+  questions?: AskQuestion[];
+  /** kind 'question': the answer the user gave, as sent to the agent. */
+  answer?: string;
 }
 
 /**
@@ -103,6 +119,12 @@ export interface TurnSummary {
   shipped?: ShippedTurn;
   /** A research ticket's run wrote its spike document here — the card offers "Publish to Confluence". */
   spikeDoc?: { path: string; ticketId: string };
+  /**
+   * The worker's run-diagnostics line (tool calls, turns, budget, nudges, why
+   * it stopped), shown as a collapsed "Run details" row — kept out of the
+   * answer text, but still saved with the turn for bug reports.
+   */
+  diagnostics?: string;
   /** The turn ran in Plan mode — its answer is a plan, and the card offers "Run plan". */
   plan?: boolean;
 }
@@ -459,6 +481,7 @@ interface ChatState {
   setStatusText: (text: string) => void;
   setWriteReviewDecision: (reviewId: string, decision: NonNullable<WriteReview['decision']>) => void;
   markWriteReviewApplying: (reviewId: string) => void;
+  setWriteReviewAnswer: (reviewId: string, answer: string) => void;
   closeAllPendingWriteReviews: () => void;
   /** Close the visible turn on Stop: see stopTurnIn. */
   stopAgentTurn: (marker: string) => void;
@@ -690,6 +713,9 @@ export const useChatStore = create<ChatState>()(
       })),
       markWriteReviewApplying: (reviewId) => set((state) => ({
         messages: patchReviewIn(state.messages, reviewId, { applying: true }),
+      })),
+      setWriteReviewAnswer: (reviewId, answer) => set((state) => ({
+        messages: patchReviewIn(state.messages, reviewId, { answer }),
       })),
       // Stop/worker-death auto-rejects every parked gate host-side; mirror
       // that on any card still showing live buttons.

@@ -23,6 +23,7 @@ const KIND_LABEL: Record<WriteReview['kind'], string> = {
   command: 'Command',
   'confluence-edit': 'Confluence edit',
   'confluence-create': 'New Confluence page',
+  question: 'Question',
 };
 
 const DECISION_LABEL: Record<NonNullable<WriteReview['decision']>, string> = {

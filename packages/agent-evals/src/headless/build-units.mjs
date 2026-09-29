@@ -52,6 +52,7 @@ const UNITS = [
   'src/services/agent/shipHelpers.ts',
   'src/services/agent/referenceIndex.ts',
   'src/services/agent/workspaceControls.ts',
+  'src/services/agent/askUser.ts',
   'src/services/confluence/confluenceAdf.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',

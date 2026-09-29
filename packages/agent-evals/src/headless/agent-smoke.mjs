@@ -336,6 +336,11 @@ export function makeToolHost(ws, log) {
     get_diagnostics: diagnostics,
     search_docs: async () => ({ results: [], note: 'No documentation is indexed in this environment.' }),
     search_tickets: async () => ({ results: [], note: 'No tickets are indexed in this environment.' }),
+    // Headless: nobody answers the card — the same result the host gives a Skip.
+    ask_user: async () => ({
+      skipped: true,
+      note: 'The user skipped this question. Go ahead with your recommended option and state that assumption in one line of your answer. Do not ask it again.',
+    }),
     git_status: async () => ({ status: (await git(['status', '--porcelain'])) || '(clean)' }),
     git_diff: async ({ path: rel } = {}) => ({ diff: (await git(['diff', ...(rel ? ['--', rel] : [])])) || '(no changes)' }),
     git_log: async ({ maxCount } = {}) => ({ log: await git(['log', `--max-count=${maxCount ?? 10}`, '--oneline']) }),

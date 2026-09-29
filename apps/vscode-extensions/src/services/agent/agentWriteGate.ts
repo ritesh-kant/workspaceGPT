@@ -63,6 +63,11 @@ export class AgentWriteGate {
     return true;
   }
 
+  /** A card is waiting on the user — the run is paused on a human, not wedged. */
+  hasPending(): boolean {
+    return this.pending.size > 0;
+  }
+
   /** Reject everything outstanding — used when the run is stopped or the chat is reset. */
   rejectAll(reason: string): void {
     for (const [id, entry] of this.pending) {

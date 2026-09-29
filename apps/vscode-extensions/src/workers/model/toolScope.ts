@@ -106,3 +106,32 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
 export function withoutWriteTools<T extends NamedToolDef>(defs: readonly T[]): T[] {
   return defs.filter((d) => !WRITE_TOOL_NAMES.has(d.function.name));
 }
+
+/**
+ * The tools a one-click action needs, and nothing else. Keyed by the action the
+ * webview says started the turn — the button the user pressed is a fact, like
+ * the Plan dial, not a guess from the prompt. A turn the user TYPES never has
+ * an action, so anything beyond the button's job is one message away.
+ *
+ * 'publish-spike' works from the finished spike document: read it, look at the
+ * space's existing pages for their format, ask where it goes, create the page.
+ * Offering the whole code toolbelt is what let that turn re-scout the repo.
+ */
+export const TURN_ACTION_TOOL_NAMES: Readonly<Record<'publish-spike', ReadonlySet<string>>> = {
+  'publish-spike': new Set([
+    'read_file',
+    'search_docs',
+    'get_confluence_page',
+    'find_confluence_location',
+    'create_confluence_page',
+    'update_confluence_page',
+    'get_ticket',
+    'ask_user',
+  ]),
+};
+
+/** `defs` narrowed to what `action` needs; no action leaves the list untouched. */
+export function forTurnAction<T extends NamedToolDef>(defs: readonly T[], action?: keyof typeof TURN_ACTION_TOOL_NAMES): T[] {
+  const allowed = action ? TURN_ACTION_TOOL_NAMES[action] : undefined;
+  return allowed ? defs.filter((d) => allowed.has(d.function.name)) : [...defs];
+}

@@ -4874,6 +4874,85 @@ console.log('\nthrottledCheck (the balance is re-read after runs, at most once p
   });
 }
 
+console.log('\nask_user (a question the run waits on, as a card)');
+{
+  const { normalizeQuestions } = await import(path.join(outDir, 'askUser.mjs'));
+  const { endsOnQuestion } = await import(path.join(outDir, 'answerGates.mjs'));
+  const { scopeToolDefs, forTurnAction, TURN_ACTION_TOOL_NAMES } = await import(path.join(outDir, 'toolScope.mjs'));
+  const mk = (...names) => names.map((name) => ({ type: 'function', function: { name } }));
+  const names = (defs) => defs.map((d) => d.function.name);
+
+  await t('questions pass through trimmed, with header and multiSelect kept', () => {
+    const got = normalizeQuestions({
+      questions: [
+        {
+          question: '  Where should the draft go? ',
+          header: 'Location',
+          options: [{ label: 'Under SDR (Recommended)', description: 'D2C · 6115197329' }, { label: 'Space root' }],
+        },
+        { question: 'Which title?', options: ['A', 'B'], multiSelect: true },
+      ],
+    });
+    assert.deepEqual(got, [
+      {
+        question: 'Where should the draft go?',
+        header: 'Location',
+        options: [{ label: 'Under SDR (Recommended)', description: 'D2C · 6115197329' }, { label: 'Space root' }],
+      },
+      { question: 'Which title?', options: [{ label: 'A' }, { label: 'B' }], multiSelect: true },
+    ]);
+  });
+
+  await t('a single question sent at the top level still becomes a card', () => {
+    const got = normalizeQuestions({ question: 'Go?', options: ['Yes', 'No'] });
+    assert.equal(got.length, 1);
+    assert.equal(got[0].question, 'Go?');
+  });
+
+  await t('size is capped (4 questions × 4 options) and empty entries dropped', () => {
+    const q = (i) => ({ question: `Q${i}?`, options: ['a', 'b', 'c', 'd', 'e', ''] });
+    const got = normalizeQuestions({ questions: [q(1), { question: '' }, q(2), q(3), q(4), q(5)] });
+    assert.deepEqual(got.map((x) => x.question), ['Q1?', 'Q2?', 'Q3?', 'Q4?']);
+    assert.ok(got.every((x) => x.options.length === 4));
+    assert.deepEqual(normalizeQuestions(null), []);
+    assert.deepEqual(normalizeQuestions({ questions: 'nope' }), []);
+  });
+
+  await t('endsOnQuestion: a prose question at the end, markdown looked through', () => {
+    assert.equal(endsOnQuestion('Found the SDR format.\n\nWhere should the page go?'), true);
+    assert.equal(endsOnQuestion('Draft ready.\n**Shall I create it as a draft?**  \n'), true);
+    assert.equal(endsOnQuestion('1. Which PSP account? (suggested: US)'), false, 'a trailing parenthetical is not a question ending');
+    assert.equal(endsOnQuestion('Is it gated? Yes: `blockPayPalVenmoButton`.'), false);
+    assert.equal(endsOnQuestion('| Q | Why? |'), false, 'a table row is not the answer asking');
+    assert.equal(endsOnQuestion(''), false);
+  });
+
+  await t('ask_user needs nothing connected, so it is always offered', () => {
+    const defs = mk('read_file', 'ask_user', 'search_docs');
+    assert.deepEqual(names(scopeToolDefs(defs, { codebase: false, confluence: false, tickets: false })), ['ask_user']);
+  });
+
+  await t('the Publish button turn gets the doc + Confluence tools only', () => {
+    const defs = mk('search_codebase', 'explore', 'read_file', 'edit_file', 'run_command', 'search_docs', 'get_confluence_page', 'find_confluence_location', 'create_confluence_page', 'get_ticket', 'search_web', 'ask_user');
+    assert.deepEqual(names(forTurnAction(defs, 'publish-spike')), [
+      'read_file',
+      'search_docs',
+      'get_confluence_page',
+      'find_confluence_location',
+      'create_confluence_page',
+      'get_ticket',
+      'ask_user',
+    ]);
+    assert.ok(!TURN_ACTION_TOOL_NAMES['publish-spike'].has('explore'), 'no code scouting on a publish turn');
+  });
+
+  await t('a typed turn (no action) keeps every tool', () => {
+    const defs = mk('search_codebase', 'edit_file', 'ask_user');
+    assert.deepEqual(names(forTurnAction(defs, undefined)), names(defs));
+    assert.notStrictEqual(forTurnAction(defs, undefined), defs, 'must not hand back the shared array');
+  });
+}
+
 // ── summary ──
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {

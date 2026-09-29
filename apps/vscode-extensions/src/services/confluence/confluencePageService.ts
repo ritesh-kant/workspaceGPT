@@ -184,6 +184,23 @@ export interface PreparedConfluenceWrite {
   apply: () => Promise<{ applied: true; id: string; title: string; url: string; version?: number; status?: string }>;
 }
 
+/**
+ * Why a Confluence page cannot be written right now, or null when it can —
+ * read from the stored connection alone (no network), so a publish turn can
+ * be refused before it spends a single model call finding that out.
+ */
+export function confluenceWriteBlocker(context: vscode.ExtensionContext): string | null {
+  const site = new ConfluenceAuthService(context).getStoredSite();
+  if (!site) return 'Confluence is not connected. Connect it in Settings → Knowledge, then press Publish again.';
+  if (!(site.scopes ?? []).includes(CONFLUENCE_WRITE_SCOPE)) {
+    return (
+      'Confluence is connected read-only: this connection was made before WorkspaceGPT could create pages. ' +
+      'Reconnect Confluence in Settings → Knowledge to allow it, then press Publish again.'
+    );
+  }
+  return null;
+}
+
 function requireWriteScope(site: ConfluenceSite): void {
   if (!(site.scopes ?? []).includes(CONFLUENCE_WRITE_SCOPE)) {
     throw new Error(
