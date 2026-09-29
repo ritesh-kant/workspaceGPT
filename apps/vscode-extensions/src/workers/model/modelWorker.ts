@@ -33,6 +33,7 @@ import {
 import { normalizeModelId } from '../../utils/normalizeModelId';
 import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
 import { consumeStream, shouldRetryEmptyStream } from './streamOutcome';
+import { mergeChoices } from './choiceMerge';
 import { scopeToolDefs, ToolAvailability, withoutWriteTools } from './toolScope';
 import {
   contextState,
@@ -1957,21 +1958,29 @@ async function runToolTurn(
     throw new Error(apiError?.message || 'Model provider returned no choices (malformed or error response)');
   }
 
-  const message = response.choices[0]?.message;
-  const toolCalls: BufferedToolCall[] = (message?.tool_calls ?? []).map((tc: any) => ({
+  // Every choice, not just the first: Copilot splits one Claude turn into a
+  // text choice and tool-call choices (see choiceMerge.ts).
+  const merged = mergeChoices(response.choices);
+  if (merged.choiceCount > 1) {
+    console.log(
+      `[agent] provider returned ${merged.choiceCount} choices (content in [${merged.contentChoices.join(',')}], ` +
+        `tool_calls in [${merged.toolCallChoices.join(',')}]) — merged into one turn`
+    );
+  }
+  const toolCalls: BufferedToolCall[] = merged.toolCalls.map((tc: any) => ({
     id: tc.id,
     name: tc.function?.name ?? '',
     args: tc.function?.arguments ?? '',
   }));
-  const content = (message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-  const finishReason = response.choices[0]?.finish_reason ?? null;
+  const content = merged.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const finishReason = merged.finishReason;
   // Some OpenAI-compatible providers (Nemotron via Requesty, Gemini 2.5+)
   // return reasoning in a separate field instead of/alongside `content`. A
   // response that is all reasoning and no visible content, cut off by the
   // token cap, looks identical to a genuinely empty answer unless we check
   // for it — retry once with a much larger budget so the model gets a turn
   // to actually answer instead of just think.
-  const reasoningContent: string = (message as any)?.reasoning_content ?? (message as any)?.reasoning ?? '';
+  const reasoningContent: string = merged.reasoningContent;
   const rawUsage = (response as any)?.usage;
   logPromptCall(
     !withTools ? 'final' : (tools as any[]).some((t) => t?.function?.name === 'edit_file') ? 'main' : 'explore-subagent',
@@ -1993,7 +2002,7 @@ async function runToolTurn(
   return {
     content,
     toolCalls,
-    finishReason: response.choices[0]?.finish_reason ?? null,
+    finishReason,
     usage,
     apiCalls: 1,
   };

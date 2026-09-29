@@ -3173,6 +3173,67 @@ console.log('\nstreamOutcome (a reasoning model that only thinks must not read a
   });
 }
 
+console.log('\nchoiceMerge (a turn split across choices keeps its tool calls)');
+{
+  const { mergeChoices } = await import(path.join(outDir, 'choiceMerge.mjs'));
+  const call = (id, name) => ({ id, type: 'function', function: { name, arguments: '{}' } });
+
+  // Spike #1537001: Copilot put the lead-in sentence in choices[0] and the
+  // tool call after it; reading choices[0] alone ended the run on the sentence.
+  await t('text in choice 0 and the tool call in choice 1 is one turn with a tool call', () => {
+    const out = mergeChoices([
+      { message: { role: 'assistant', content: "Let's check the RetailCheckout mapper." }, finish_reason: 'stop' },
+      { message: { role: 'assistant', content: null, tool_calls: [call('a', 'read_file')] }, finish_reason: 'tool_calls' },
+    ]);
+    assert.equal(out.content, "Let's check the RetailCheckout mapper.");
+    assert.deepEqual(out.toolCalls.map((c) => c.function.name), ['read_file']);
+    assert.equal(out.finishReason, 'tool_calls', "the text part's 'stop' must not win");
+    assert.equal(out.choiceCount, 2);
+    assert.deepEqual(out.contentChoices, [0]);
+    assert.deepEqual(out.toolCallChoices, [1]);
+  });
+
+  await t('parallel calls split one per choice are all kept, in order', () => {
+    const out = mergeChoices([
+      { message: { content: null, tool_calls: [call('a', 'search_codebase')] }, finish_reason: 'tool_calls' },
+      { message: { content: null, tool_calls: [call('b', 'read_file')] }, finish_reason: 'tool_calls' },
+      { message: { content: null, tool_calls: [call('c', 'find_references')] }, finish_reason: 'tool_calls' },
+    ]);
+    assert.deepEqual(out.toolCalls.map((c) => c.id), ['a', 'b', 'c']);
+  });
+
+  await t('a tool call repeated in two choices runs once', () => {
+    const out = mergeChoices([
+      { message: { content: null, tool_calls: [call('a', 'read_file')] } },
+      { message: { content: null, tool_calls: [call('a', 'read_file'), call('b', 'read_file')] } },
+    ]);
+    assert.deepEqual(out.toolCalls.map((c) => c.id), ['a', 'b']);
+  });
+
+  await t('a single ordinary choice is unchanged', () => {
+    const out = mergeChoices([{ message: { content: 'Answer.', tool_calls: [call('a', 'read_file')] }, finish_reason: 'tool_calls' }]);
+    assert.equal(out.content, 'Answer.');
+    assert.equal(out.toolCalls.length, 1);
+    assert.equal(out.finishReason, 'tool_calls');
+    assert.equal(out.choiceCount, 1);
+  });
+
+  await t('a text-only reply keeps its own finish reason and reasoning', () => {
+    const out = mergeChoices([{ message: { content: '', reasoning_content: 'thinking' }, finish_reason: 'length' }]);
+    assert.equal(out.finishReason, 'length');
+    assert.equal(out.reasoningContent, 'thinking');
+    assert.equal(out.toolCalls.length, 0);
+  });
+
+  await t('missing or malformed choices yield an empty turn, not a throw', () => {
+    for (const bad of [undefined, null, [], [null], [{}]]) {
+      const out = mergeChoices(bad);
+      assert.equal(out.content, '');
+      assert.equal(out.toolCalls.length, 0);
+    }
+  });
+}
+
 console.log('\npromptTemplates with-context regime (retrieval rides into a tool turn)');
 {
   const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));

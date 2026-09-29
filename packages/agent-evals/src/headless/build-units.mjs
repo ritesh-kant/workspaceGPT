@@ -41,6 +41,7 @@ const UNITS = [
   'src/workers/model/exploreSubagent.ts',
   'src/workers/model/answerGates.ts',
   'src/workers/model/streamOutcome.ts',
+  'src/workers/model/choiceMerge.ts',
   'src/workers/model/toolScope.ts',
   'src/workers/model/resumeHygiene.ts',
   'src/workers/model/writePressure.ts',
