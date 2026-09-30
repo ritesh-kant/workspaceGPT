@@ -3547,6 +3547,19 @@ console.log('\nconfluenceAdf (page read/edit — edits touch one section, everyt
     assert.equal(pageIdFromUrl('https://example.com/nothing'), null);
   });
 
+  await t('an edit-v2 draft link resolves to its page id', () => {
+    assert.equal(pageIdFromUrl('https://marsaoh.atlassian.net/wiki/spaces/D2C/pages/edit-v2/6709444781?draftShareId=10e0dff2-5c82'), '6709444781');
+  });
+
+  const { detectConfluenceUrls } = await import(path.join(outDir, 'confluenceUrlDetection.mjs'));
+  await t('every Confluence page a message links is detected, in order — including an edit-v2 draft link', () => {
+    const msg = 'convert this https://marsaoh.atlassian.net/wiki/spaces/D2C/pages/7764410381/SPIKE+Venmo+payment+method+for+US\n' +
+      'this template format https://marsaoh.atlassian.net/wiki/spaces/D2C/pages/edit-v2/6709444781?draftShareId=10e0dff2-5c82-46e4-b868-512675854dc7';
+    assert.deepEqual(detectConfluenceUrls(msg), ['7764410381', '6709444781']);
+    assert.deepEqual(detectConfluenceUrls('see https://x.atlassian.net/wiki/pages/viewpage.action?pageId=42 and again pageId=42'), ['42']);
+    assert.deepEqual(detectConfluenceUrls('no links here'), []);
+  });
+
   const { TOOL_REQUIREMENTS } = await import(path.join(outDir, 'toolScope.mjs'));
   await t('every browser tool needs a connected browser', () => {
     const browserTools = Object.keys(TOOL_REQUIREMENTS).filter((n) => n.startsWith('browser_'));

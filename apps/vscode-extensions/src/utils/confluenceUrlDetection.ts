@@ -1,6 +1,6 @@
 /**
- * Deterministic detection of a Confluence page URL in a user message, so the
- * host can fetch the page BEFORE the model runs — same rationale and shape as
+ * Deterministic detection of Confluence page URLs in a user message, so the
+ * host can fetch the pages BEFORE the model runs — same rationale and shape as
  * `detectTicketId` in `ticketDetection.ts` (see that file's doc comment).
  *
  * Kept as a pure module (no vscode import) so the headless eval harness can
@@ -9,30 +9,26 @@
 
 const CONFLUENCE_URL_PATTERNS: RegExp[] = [
   // https://foo.atlassian.net/wiki/spaces/KEY/pages/123456/Title
-  /https?:\/\/\S*\/wiki\/spaces\/\S+\/pages\/(\d+)\S*/i,
+  // https://foo.atlassian.net/wiki/spaces/KEY/pages/edit-v2/123456?draftShareId=…
+  /https?:\/\/\S*\/wiki\/spaces\/\S+?\/pages\/(?:[a-z][a-z0-9-]*\/)?(\d+)\S*/gi,
   // https://foo.atlassian.net/wiki/pages/viewpage.action?pageId=123456
-  /https?:\/\/\S*pageId=(\d+)\S*/i,
+  /https?:\/\/\S*pageId=(\d+)\S*/gi,
 ];
 
+/** At most this many linked pages are pre-fetched; the rest the model reads itself. */
+const MAX_LINKED_PAGES = 3;
+
 /**
- * The Confluence page id referenced by the message, or null when it doesn't
- * name one. Only the FIRST reference counts — same ambiguity contract as
- * `detectTicketId`: a message naming several pages is a comparison/summary
- * question, not a single page to ground the run on.
+ * The distinct Confluence page ids the message links, in the order they
+ * appear. Every linked page is reference material ("convert page A into page
+ * B's format" needs both), so none is dropped for being one of several.
  */
-export function detectConfluenceUrl(message: string): string | null {
+export function detectConfluenceUrls(message: string): string[] {
   const text = String(message ?? '');
-  let found: string | null = null;
+  const hits: { index: number; id: string }[] = [];
   for (const re of CONFLUENCE_URL_PATTERNS) {
-    const m = re.exec(text);
-    if (!m) continue;
-    const id = m[1];
-    if (found && found !== id) return null; // two different pages named — ambiguous
-    found = found ?? id;
+    for (const m of text.matchAll(re)) hits.push({ index: m.index ?? 0, id: m[1] });
   }
-  for (const re of CONFLUENCE_URL_PATTERNS) {
-    const all = [...text.matchAll(new RegExp(re.source, re.flags + 'g'))].map((m) => m[1]);
-    if (new Set(all).size > 1) return null;
-  }
-  return found;
+  hits.sort((a, b) => a.index - b.index);
+  return [...new Set(hits.map((h) => h.id))].slice(0, MAX_LINKED_PAGES);
 }
