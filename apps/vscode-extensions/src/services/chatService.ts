@@ -83,7 +83,7 @@ import {
   PreparedConfluenceWrite,
 } from './confluence/confluencePageService';
 import { detectTicketId } from 'src/utils/ticketDetection';
-import { detectConfluenceUrl } from 'src/utils/confluenceUrlDetection';
+import { detectConfluenceUrls } from 'src/utils/confluenceUrlDetection';
 import { decideTurnRouting } from 'src/utils/turnRouting';
 import { TicketPromptContext } from 'src/utils/promptTemplates';
 import { formatModelHistory } from 'src/utils/chatHistory';
@@ -1383,11 +1383,10 @@ export class ChatService {
       // material, so it's threaded in as an eagerly-resolved mention (below)
       // rather than a bespoke prompt-context field. Failure degrades silently:
       // the model can still call get_confluence_page itself mid-loop.
-      let confluencePageContext: ConfluencePageDetail | null = null;
+      const confluencePages: ConfluencePageDetail[] = [];
       const confluenceAuthenticated = !!settings?.state?.config?.confluence?.isAuthenticated;
-      const confluencePageId =
-        confluenceAuthenticated ? detectConfluenceUrl(message) : null;
-      if (confluencePageId) {
+      const confluencePageIds = confluenceAuthenticated ? detectConfluenceUrls(message) : [];
+      for (const confluencePageId of confluencePageIds) {
         const stepId = randomUUID();
         this.postStatus(run, `Reading Confluence page ${confluencePageId}...`);
         this.post(run, {
@@ -1396,13 +1395,14 @@ export class ChatService {
           step: { kind: 'read', title: 'Read Confluence page', detail: `#${confluencePageId}`, status: 'running' },
         });
         try {
-          confluencePageContext = await fetchConfluencePage(this.context, confluencePageId);
-          run.linkedConfluencePageId = confluencePageContext.id;
+          const page = await fetchConfluencePage(this.context, confluencePageId);
+          confluencePages.push(page);
+          run.linkedConfluencePageId = run.linkedConfluencePageId ?? page.id;
           this.post(run, {
             type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
             id: stepId,
             status: 'done',
-            summary: confluencePageContext.title,
+            summary: page.title,
           });
         } catch (e) {
           console.warn(`Confluence page ${confluencePageId} pre-fetch failed (continuing without):`, e);
@@ -1473,25 +1473,23 @@ export class ChatService {
 
       const resolvedMentions = [
         ...(await mentionsPromise),
-        // The eagerly pre-fetched Confluence page (if any) rides the same
+        // The eagerly pre-fetched Confluence pages (if any) ride the same
         // channel as @-mentioned files — it's inline reference material, not
         // prompt-scaffolding the model has to ask for.
-        ...(confluencePageContext
-          ? [
-              {
-                name: confluencePageContext.title || confluencePageContext.url,
-                // The id, version and sections are what update_confluence_page
-                // needs — without them an edit request starts with a re-read.
-                content:
-                  `Confluence page ${confluencePageContext.id} (${confluencePageContext.url}), version ${confluencePageContext.version ?? '?'}` +
-                  // Read live just now: an edit asked for in this message is an edit of THIS page.
-                  `\nThe user linked this page. If they asked to change it, edit it with update_confluence_page from this text — no re-read needed.` +
-                  (confluencePageContext.sections?.length ? `\nSections: ${confluencePageContext.sections.join(' | ')}` : '') +
-                  (confluencePageContext.note ? `\n${confluencePageContext.note}` : '') +
-                  `\n\n${confluencePageContext.text}`,
-              },
-            ]
-          : []),
+        // The id, version and sections are what update_confluence_page needs —
+        // without them an edit request starts with a re-read.
+        ...confluencePages.map((page) => ({
+          name: page.title || page.url,
+          content:
+            `Confluence page ${page.id} (${page.url}), version ${page.version ?? '?'}` +
+            // Read live just now: an edit asked for in this message is an edit of a page it links.
+            (confluencePages.length > 1
+              ? `\nThe user linked ${confluencePages.length} pages in this message (${confluencePages.map((p) => `"${p.title}"`).join(', ')}). Work out from their request which one is changed and which are only reference.`
+              : `\nThe user linked this page. If they asked to change it, edit it with update_confluence_page from this text — no re-read needed.`) +
+            (page.sections?.length ? `\nSections: ${page.sections.join(' | ')}` : '') +
+            (page.note ? `\n${page.note}` : '') +
+            `\n\n${page.text}`,
+        })),
       ];
 
       this.postStatus(run, 'Thinking...');
@@ -2476,7 +2474,13 @@ export class ChatService {
       case 'get_confluence_page':
         return { kind: 'read', title: 'Read Confluence page', detail: String(args?.pageId ?? '') };
       case 'update_confluence_page':
-        return { kind: 'edit', title: 'Edited Confluence page', detail: String(args?.section ?? args?.mode ?? args?.pageId ?? '') };
+        return {
+          kind: 'edit',
+          title: 'Edited Confluence page',
+          detail: Array.isArray(args?.edits) && args.edits.length
+            ? args.edits.map((e: any) => String(e?.section ?? e?.mode ?? '')).join(', ')
+            : String(args?.section ?? args?.mode ?? args?.pageId ?? ''),
+        };
       case 'create_confluence_page':
         return { kind: 'edit', title: 'Created Confluence page', detail: String(args?.title ?? '') };
       case 'find_confluence_location':

@@ -547,7 +547,7 @@ const TOOL_DEFS = [
     function: {
       name: 'update_confluence_page',
       description:
-        "Edit an existing Confluence page. Read it with get_confluence_page first — its markdown and `sections` are what this edits. Changes ONE section by default and leaves the rest of the page exactly as it was. The user reviews a diff and approves before anything is saved; a rejection comes back with their feedback. Write normal markdown (headings, lists, tables, code blocks, **bold**, *italic*, [links](https://…), `- [ ]` tasks, ':::panel info' … ':::' for a panel). Copy any ⟦keep N: …⟧ token from the page verbatim to keep that element (a macro, mention, image…); leaving one out deletes it. A kept table's :::view block is a read-only copy of it — read it, never edit inside it. When the user names something on the page (an option, a row, a decision) that you cannot find in its markdown, call ask_user — never fill it in from a ticket, the code or your own reading.",
+        "Edit an existing Confluence page. Its markdown and `sections` are what this edits: read it with get_confluence_page unless its text is already in this conversation (a page the user linked is). Every edit applies to the live page, so never re-read between edits. Changing several sections? Send them together in `edits` — one review, one saved version. Changes ONE section by default and leaves the rest of the page exactly as it was. The user reviews a diff and approves before anything is saved; a rejection comes back with their feedback. Write normal markdown (headings, lists, tables, code blocks, **bold**, *italic*, [links](https://…), `- [ ]` tasks, ':::panel info' … ':::' for a panel). Copy any ⟦keep N: …⟧ token from the page verbatim to keep that element (a macro, mention, image…); leaving one out deletes it. A kept table's :::view block is a read-only copy of it — read it, never edit inside it. When the user names something on the page (an option, a row, a decision) that you cannot find in its markdown, call ask_user — never fill it in from a ticket, the code or your own reading.",
       parameters: {
         type: 'object',
         properties: {
@@ -566,9 +566,22 @@ const TOOL_DEFS = [
             type: 'string',
             description: 'The new content. For replace_section, the WHOLE section including its heading line (so it can be renamed).',
           },
+          edits: {
+            type: 'array',
+            description: 'Several edits of this page at once, applied in order (use instead of mode/section/markdown). Each entry takes the same mode, section and markdown fields.',
+            items: {
+              type: 'object',
+              properties: {
+                mode: { type: 'string', enum: ['replace_section', 'insert_after_section', 'append', 'replace_page'] },
+                section: { type: 'string' },
+                markdown: { type: 'string' },
+              },
+              required: ['markdown'],
+            },
+          },
           versionMessage: { type: 'string', description: 'Short note for the page history, e.g. "Updated rollout dates".' },
         },
-        required: ['pageId', 'markdown'],
+        required: ['pageId'],
       },
     },
   },
