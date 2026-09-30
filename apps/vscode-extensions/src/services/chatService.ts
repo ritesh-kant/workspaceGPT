@@ -411,6 +411,8 @@ interface SessionRun {
   lastTicketId: string | null;
   /** The one-click action that started the current turn, if a button did (see sendMessage). */
   turnAction?: 'publish-spike';
+  /** The Confluence page linked in the current turn's message, once pre-fetched (see sendMessage). */
+  linkedConfluencePageId?: string | null;
   /**
    * Tickets this session already fetched, so naming the same work item again
    * (a follow-up, the spike's Publish button) reuses it instead of re-reading
@@ -927,6 +929,7 @@ export class ChatService {
     }
     run.cancelled = false;
     run.turnAction = turnAction;
+    run.linkedConfluencePageId = null;
     // Publishing needs write access, and the stored connection says whether it
     // has it — refuse now, before a run spends minutes preparing a page it
     // then cannot create.
@@ -1394,6 +1397,7 @@ export class ChatService {
         });
         try {
           confluencePageContext = await fetchConfluencePage(this.context, confluencePageId);
+          run.linkedConfluencePageId = confluencePageContext.id;
           this.post(run, {
             type: MESSAGE_TYPES.AGENT_STEP_UPDATE,
             id: stepId,
@@ -1480,6 +1484,8 @@ export class ChatService {
                 // needs — without them an edit request starts with a re-read.
                 content:
                   `Confluence page ${confluencePageContext.id} (${confluencePageContext.url}), version ${confluencePageContext.version ?? '?'}` +
+                  // Read live just now: an edit asked for in this message is an edit of THIS page.
+                  `\nThe user linked this page. If they asked to change it, edit it with update_confluence_page from this text — no re-read needed.` +
                   (confluencePageContext.sections?.length ? `\nSections: ${confluencePageContext.sections.join(' | ')}` : '') +
                   (confluencePageContext.note ? `\n${confluencePageContext.note}` : '') +
                   `\n\n${confluencePageContext.text}`,
@@ -3071,6 +3077,7 @@ Query: "${query}"`;
           autonomous,
           planMode,
           turnAction: run.turnAction,
+          linkedConfluencePageId: run.linkedConfluencePageId ?? undefined,
           // Read BEFORE this turn's own writes land, so it counts only earlier
           // turns — exactly what the honesty stamp needs to spare a recap.
           priorWrites: run.sessionWritesApplied,

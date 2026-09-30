@@ -26,15 +26,24 @@ export function pageIdFromUrl(urlOrId: string): string | null {
   if (fromPath) return fromPath[1];
   const fromQuery = trimmed.match(/[?&]pageId=(\d+)/);
   if (fromQuery) return fromQuery[1];
+  // Share/short link .../wiki/x/<code>: the code is the page id as
+  // little-endian bytes in base64 ('-' for '/', '_' for '+', trailing 'A's and
+  // padding dropped).
+  const tiny = trimmed.match(/\/x\/([A-Za-z0-9_-]{1,11})(?:[/?#]|$)/);
+  if (tiny) {
+    const b64 = (tiny[1].replace(/-/g, '/').replace(/_/g, '+') + 'A'.repeat(11)).slice(0, 11) + '=';
+    const bytes = Buffer.from(b64, 'base64');
+    let id = 0n;
+    for (let i = bytes.length - 1; i >= 0; i--) id = (id << 8n) | BigInt(bytes[i]);
+    if (id > 0n) return id.toString();
+  }
   return null;
 }
 
 /**
  * Strip storage-format tags to plain text, preserving digits (dates, versions,
- * ticket numbers) — unlike the RAG index's text extractor (`extractTextFromXML`
- * in `@workspace-gpt/confluence-utils`), which deliberately discards isolated
- * numbers because they're noise for embeddings. A page read directly for the
- * model/user to reason over needs those numbers intact.
+ * ticket numbers). A page read directly for the model/user to reason over
+ * needs those numbers intact.
  */
 function stripStorageHtml(html: string): string {
   return html
@@ -114,7 +123,8 @@ async function readPage(api: ConfluenceApi, pageId: string): Promise<{ data: any
 
 const KEEP_NOTE =
   '⟦keep N: …⟧ tokens stand for Confluence elements markdown cannot show (macros, mentions, images, status labels, complex tables). ' +
-  'To edit around one, copy the token exactly — that element is preserved as-is. Leaving a token out removes that element.';
+  'To edit around one, copy the token exactly — that element is preserved as-is. Leaving a token out removes that element. ' +
+  'A kept table is followed by a :::view block — a read-only copy of its content, with its row numbers when the table is numbered: read it to see what the table says; copy it back unchanged or leave it out.';
 
 /**
  * Read ONE Confluence page by id or URL, live from Confluence — same OAuth

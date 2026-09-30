@@ -3461,6 +3461,92 @@ console.log('\nconfluenceAdf (page read/edit — edits touch one section, everyt
     assert.throws(() => adf.markdownToAdf('⟦keep 1: jira macro⟧'), /does not refer to any element/);
   });
 
+  // The shape that hid a page's options from the model (SDR 7459307707): a
+  // numbered table whose cells hold two paragraphs. It is kept whole for
+  // edits, and a read-only :::view copy shows what it says, row numbers included.
+  const cell = (type, ...paras) => ({ type, attrs: {}, content: paras.map((x) => p(text(x))) });
+  const optionsPage = () => ({
+    type: 'doc',
+    version: 1,
+    content: [
+      h(3, 'Options'),
+      {
+        type: 'table',
+        attrs: { isNumberColumnEnabled: true, layout: 'default' },
+        content: [
+          { type: 'tableRow', content: [cell('tableHeader', 'Description'), cell('tableHeader', 'Pros and cons')] },
+          { type: 'tableRow', content: [cell('tableCell', 'Module-level cache'), cell('tableCell', 'Pros: no infra', 'Cons: per container')] },
+          { type: 'tableRow', content: [cell('tableCell', 'Re-fetch before write'), cell('tableCell', 'Pros: simple | explicit', 'Cons: still a race')] },
+        ],
+      },
+      h(3, 'Chosen option'),
+      p(text('Option 1.')),
+    ],
+  });
+
+  await t('a kept table is readable: token plus a :::view copy with the numbered column Confluence draws', () => {
+    const r = adf.adfToMarkdown(optionsPage());
+    const lines = r.markdown.split('\n');
+    const at = lines.findIndex((l) => /^⟦keep 1: table: /.test(l));
+    assert.ok(at >= 0, r.markdown);
+    assert.match(lines[at + 1], /^:::view 1 \(read-only copy/);
+    assert.deepEqual(lines.slice(at + 2, at + 7), [
+      '| # | Description | Pros and cons |',
+      '| --- | --- | --- |',
+      '| 1 | Module-level cache | Pros: no infra <br> Cons: per container |',
+      '| 2 | Re-fetch before write | Pros: simple \\| explicit <br> Cons: still a race |',
+      ':::',
+    ]);
+  });
+
+  await t('a page with a :::view parses back to itself: the view is dropped, the token restores the table', () => {
+    const doc = optionsPage();
+    const r = adf.adfToMarkdown(doc);
+    assert.deepEqual(noIds(adf.markdownToAdfBlocks(r.markdown, r.keep)), noIds(doc.content));
+    // Re-spaced by the model: still the same view, not an edit.
+    const loose = r.markdown.replace('| 1 | Module-level cache |', '|1|Module-level cache|').replace('| --- | --- | --- |', '|-----|---|---|');
+    assert.deepEqual(noIds(adf.markdownToAdfBlocks(loose, r.keep)), noIds(doc.content));
+  });
+
+  await t('an edit made inside a :::view is refused, not silently dropped; replacing token + view with a table works', () => {
+    const doc = optionsPage();
+    const { markdown } = adf.adfToMarkdown(doc);
+    const section = markdown.slice(markdown.indexOf('### Options'), markdown.indexOf('### Chosen option')).trim();
+    assert.throws(
+      () => adf.editPage(doc, { mode: 'replace_section', section: '### Options', markdown: section.replace('Re-fetch before write', 'Re-fetch twice') }),
+      /read-only copy of table ⟦keep 1⟧/
+    );
+    const e = adf.editPage(doc, { mode: 'replace_section', section: '### Options', markdown: '### Options\n\n| Description |\n| --- |\n| Only option |' });
+    assert.equal(e.doc.content[1].type, 'table');
+    assert.equal(e.doc.content[1].content[1].content[0].content[0].content[0].text, 'Only option');
+    const kept = adf.editPage(doc, { mode: 'replace_section', section: '### Chosen option', markdown: '### Chosen option\n\nOption 2.' });
+    assert.deepEqual(kept.doc.content[1], doc.content[1], 'the table outside the edited section is untouched');
+  });
+
+  await t('a numbered table that would otherwise be simple is kept too — markdown cannot carry its numbers', () => {
+    const doc = {
+      type: 'doc',
+      version: 1,
+      content: [{ type: 'table', attrs: { isNumberColumnEnabled: true }, content: [
+        { type: 'tableRow', content: [cell('tableHeader', 'Env')] },
+        { type: 'tableRow', content: [cell('tableCell', 'Prod')] },
+      ] }],
+    };
+    const r = adf.adfToMarkdown(doc);
+    assert.match(r.markdown, /⟦keep 1: table/);
+    assert.match(r.markdown, /^\| 1 \| Prod \|$/m);
+    assert.deepEqual(noIds(adf.markdownToAdfBlocks(r.markdown, r.keep)), noIds(doc.content));
+  });
+
+  const { pageIdFromUrl } = await import(path.join(outDir, 'confluencePageService.mjs'));
+  await t('a Confluence page id resolves from a page URL, a viewpage URL and a /wiki/x/ short link', () => {
+    assert.equal(pageIdFromUrl('https://marsaoh.atlassian.net/wiki/spaces/D2C/pages/7459307707/2026-07-23+-+SDR'), '7459307707');
+    assert.equal(pageIdFromUrl('https://x.atlassian.net/wiki/pages/viewpage.action?pageId=42'), '42');
+    // The short link on that page, which the agent failed to open twice.
+    assert.equal(pageIdFromUrl('https://marsaoh.atlassian.net/wiki/x/uwCcvAE'), '7459307707');
+    assert.equal(pageIdFromUrl('https://example.com/nothing'), null);
+  });
+
   const { TOOL_REQUIREMENTS } = await import(path.join(outDir, 'toolScope.mjs'));
   await t('every browser tool needs a connected browser', () => {
     const browserTools = Object.keys(TOOL_REQUIREMENTS).filter((n) => n.startsWith('browser_'));
