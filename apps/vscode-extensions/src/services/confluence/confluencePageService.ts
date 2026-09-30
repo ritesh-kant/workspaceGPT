@@ -22,19 +22,29 @@ export function pageIdFromUrl(urlOrId: string): string | null {
   const trimmed = (urlOrId || '').trim();
   if (/^\d+$/.test(trimmed)) return trimmed;
   // .../wiki/spaces/KEY/pages/<id>/Title  or  .../pages/viewpage.action?pageId=<id>
-  const fromPath = trimmed.match(/\/pages\/(\d+)/);
+  // or an editor link .../pages/edit-v2/<id>?draftShareId=…
+  const fromPath = trimmed.match(/\/pages\/(?:[a-z][a-z0-9-]*\/)?(\d+)/i);
   if (fromPath) return fromPath[1];
   const fromQuery = trimmed.match(/[?&]pageId=(\d+)/);
   if (fromQuery) return fromQuery[1];
+  // Share/short link .../wiki/x/<code>: the code is the page id as
+  // little-endian bytes in base64 ('-' for '/', '_' for '+', trailing 'A's and
+  // padding dropped).
+  const tiny = trimmed.match(/\/x\/([A-Za-z0-9_-]{1,11})(?:[/?#]|$)/);
+  if (tiny) {
+    const b64 = (tiny[1].replace(/-/g, '/').replace(/_/g, '+') + 'A'.repeat(11)).slice(0, 11) + '=';
+    const bytes = Buffer.from(b64, 'base64');
+    let id = 0n;
+    for (let i = bytes.length - 1; i >= 0; i--) id = (id << 8n) | BigInt(bytes[i]);
+    if (id > 0n) return id.toString();
+  }
   return null;
 }
 
 /**
  * Strip storage-format tags to plain text, preserving digits (dates, versions,
- * ticket numbers) — unlike the RAG index's text extractor (`extractTextFromXML`
- * in `@workspace-gpt/confluence-utils`), which deliberately discards isolated
- * numbers because they're noise for embeddings. A page read directly for the
- * model/user to reason over needs those numbers intact.
+ * ticket numbers). A page read directly for the model/user to reason over
+ * needs those numbers intact.
  */
 function stripStorageHtml(html: string): string {
   return html
@@ -94,10 +104,10 @@ function webUrl(site: ConfluenceSite, links: any): string {
   return webui ? `${site.url.replace(/\/$/, '')}/wiki${webui}` : '';
 }
 
-async function readPage(api: ConfluenceApi, pageId: string): Promise<{ data: any; doc: AdfDoc | null }> {
+async function readPage(api: ConfluenceApi, pageId: string, extraQuery = ''): Promise<{ data: any; doc: AdfDoc | null }> {
   let data: any;
   try {
-    data = await api.call(`/pages/${pageId}?body-format=atlas_doc_format`);
+    data = await api.call(`/pages/${pageId}?body-format=atlas_doc_format${extraQuery}`);
   } catch (e: any) {
     if (e?.status === 404) throw new Error(`Confluence page ${pageId} not found (or you don't have access to it).`);
     throw e;
@@ -114,7 +124,8 @@ async function readPage(api: ConfluenceApi, pageId: string): Promise<{ data: any
 
 const KEEP_NOTE =
   '⟦keep N: …⟧ tokens stand for Confluence elements markdown cannot show (macros, mentions, images, status labels, complex tables). ' +
-  'To edit around one, copy the token exactly — that element is preserved as-is. Leaving a token out removes that element.';
+  'To edit around one, copy the token exactly — that element is preserved as-is. Leaving a token out removes that element. ' +
+  'A kept table is followed by a :::view block — a read-only copy of its content, with its row numbers when the table is numbered: read it to see what the table says; copy it back unchanged or leave it out.';
 
 /**
  * Read ONE Confluence page by id or URL, live from Confluence — same OAuth
@@ -136,7 +147,15 @@ export async function fetchConfluencePage(
     );
   }
   const api = await confluenceApi(context);
-  const { data, doc } = await readPage(api, pageId);
+  const { data, doc } = await readPage(api, pageId).catch(async (e) => {
+    // A never-published draft (an edit-v2/<id>?draftShareId= link) is not a
+    // current page, so it 404s above — read it as a draft before giving up.
+    try {
+      return await readPage(api, pageId, '&get-draft=true');
+    } catch {
+      throw e;
+    }
+  });
 
   let text: string;
   let sections: string[] | undefined;
@@ -220,12 +239,22 @@ const conflictError = (pageId: string, version: number) =>
 /** Edit one section of a page (or append / replace it whole), leaving every other node untouched. */
 export async function prepareConfluenceEdit(
   context: vscode.ExtensionContext,
-  args: { pageId?: string; mode?: EditMode; section?: string; markdown?: string; versionMessage?: string }
+  args: {
+    pageId?: string;
+    mode?: EditMode;
+    section?: string;
+    markdown?: string;
+    versionMessage?: string;
+    /** Several edits of one page, applied in order: one review card, one saved version. */
+    edits?: { mode?: EditMode; section?: string; markdown?: string }[];
+  }
 ): Promise<PreparedConfluenceWrite> {
   const pageId = pageIdFromUrl(String(args?.pageId ?? ''));
   if (!pageId) throw new Error('pageId must be a Confluence page id or URL.');
-  if (typeof args?.markdown !== 'string') throw new Error('markdown is required — the new content to write.');
-  const mode: EditMode = args.mode ?? (args.section ? 'replace_section' : 'append');
+  const steps = Array.isArray(args?.edits) && args.edits.length ? args.edits : [args ?? {}];
+  for (const s of steps) {
+    if (typeof s?.markdown !== 'string') throw new Error('markdown is required — the new content to write (in every entry of `edits`).');
+  }
 
   const api = await confluenceApi(context);
   requireWriteScope(api.site);
@@ -234,11 +263,21 @@ export async function prepareConfluenceEdit(
   const version = Number(data?.version?.number ?? 0);
   const title: string = data?.title ?? '';
 
-  const edit = editPage(doc, { mode, section: args.section, markdown: args.markdown });
-  if (edit.before === edit.after && mode === 'replace_section') {
-    throw new Error('That edit changes nothing on the page — the new section is identical to the current one.');
+  // Each edit runs on the result of the one before, so section lookups see
+  // the page as the earlier edits left it.
+  let current: AdfDoc = doc;
+  const parts: { where: string; before: string; after: string }[] = [];
+  for (const s of steps) {
+    const mode: EditMode = s.mode ?? (s.section ? 'replace_section' : 'append');
+    const e = editPage(current, { mode, section: s.section, markdown: s.markdown! });
+    if (e.before === e.after && mode === 'replace_section') {
+      throw new Error(`That edit changes nothing on the page — the new "${s.section}" section is identical to the current one.`);
+    }
+    current = e.doc;
+    parts.push({ where: mode === 'replace_page' ? 'whole page' : mode === 'append' ? 'end of page' : String(s.section), before: e.before, after: e.after });
   }
-  const where = mode === 'replace_page' ? 'whole page' : mode === 'append' ? 'end of page' : String(args.section);
+  const edit = { doc: current, before: parts.map((x) => x.before).filter(Boolean).join('\n\n'), after: parts.map((x) => x.after).filter(Boolean).join('\n\n') };
+  const where = parts.map((x) => x.where).join(', ');
   const url = webUrl(api.site, data?._links);
 
   return {

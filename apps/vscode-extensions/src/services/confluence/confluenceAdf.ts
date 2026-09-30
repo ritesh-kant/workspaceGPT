@@ -11,6 +11,12 @@
  * swapped back for the original node, byte for byte. Deleting a token deletes
  * that element — the review diff shows it either way.
  *
+ * A table markdown cannot carry is such a token too, but a table is content
+ * the model has to READ ("select option 4" means row 4), so the token is
+ * followed by a `:::view N` block: a read-only markdown copy, including the
+ * row numbers of a numbered table. The view is dropped on the way back in;
+ * an edit made inside it is refused, never silently discarded.
+ *
  * Panels and expands are containers people write prose in, so they render as
  * `:::panel info` … `:::` fences (readable, editable) rather than tokens.
  * Layout columns are transparent: their content renders in order, and their
@@ -251,7 +257,7 @@ class Renderer {
             : [this.token(item)]
         );
       case 'table':
-        return isSimpleTable(n) ? this.table(n) : [this.token(n)];
+        return isSimpleTable(n) ? this.table(n) : [this.token(n), ...tableViewBlock(this.ids.get(n)!, n)];
       case 'panel':
         return [`:::panel ${n.attrs?.panelType ?? 'info'}`, ...this.blocks(n.content), ':::'];
       case 'expand':
@@ -286,11 +292,13 @@ const INLINE_RENDERED = new Set(['text', 'hardBreak']);
 /**
  * A table markdown can carry without loss: header row then body rows, no
  * merged cells, each cell one paragraph of plain inline content. Anything
- * else is kept whole as a token rather than flattened.
+ * else is kept whole as a token rather than flattened. A numbered table is
+ * not simple: markdown has no numbered column, so a rebuilt table would lose
+ * the numbers people refer to its rows by.
  */
 function isSimpleTable(t: AdfNode): boolean {
   const rows = t.content ?? [];
-  if (!rows.length) return false;
+  if (!rows.length || t.attrs?.isNumberColumnEnabled) return false;
   return rows.every((row, r) =>
     (row.content ?? []).length > 0 &&
     (row.content ?? []).every((cell) => {
@@ -302,6 +310,53 @@ function isSimpleTable(t: AdfNode): boolean {
     })
   );
 }
+
+/** One cell (or any block) as a single line of text: blocks joined by `<br>`, inline elements by their labels. */
+function viewText(n: AdfNode): string {
+  if (n.type === 'text') return n.text ?? '';
+  if (n.type === 'hardBreak') return ' ';
+  if (INLINE_KEEP.has(n.type)) return keepLabel(n);
+  const kids = n.content ?? [];
+  const inline = kids.every((k) => k.type === 'text' || k.type === 'hardBreak' || INLINE_KEEP.has(k.type));
+  const body = kids.map(viewText).filter((x) => x.trim()).join(inline ? '' : ' <br> ');
+  return n.type === 'listItem' ? `• ${body}` : body;
+}
+
+/**
+ * The read-only copy of a kept table, as markdown table lines. A numbered
+ * table gets the `#` column Confluence draws: blank on a header row, then
+ * 1, 2, 3… down the body rows.
+ */
+function tableView(t: AdfNode): string[] {
+  const rows = (t.content ?? []).filter((r) => r.type === 'tableRow');
+  if (!rows.length) return [];
+  const numbered = !!t.attrs?.isNumberColumnEnabled;
+  const isHeader = (r: AdfNode) => (r.content ?? []).length > 0 && (r.content ?? []).every((c) => c.type === 'tableHeader');
+  let n = 0;
+  const cells = rows.map((r) => {
+    const out = (r.content ?? []).flatMap((c) => {
+      const txt = viewText(c).replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim();
+      const span = Math.max(1, Number(c.attrs?.colspan ?? 1));
+      return [txt, ...Array(span - 1).fill('')];
+    });
+    return numbered ? [isHeader(r) ? '#' : String(++n), ...out] : out;
+  });
+  const hasHeader = isHeader(rows[0]);
+  const width = Math.max(...cells.map((c) => c.length));
+  const line = (c: string[]) => `| ${Array.from({ length: width }, (_, i) => c[i] ?? '').join(' | ')} |`;
+  const head = hasHeader ? cells[0] : numbered ? ['#'] : [];
+  return [line(head), line(Array(width).fill('---')), ...(hasHeader ? cells.slice(1) : cells).map(line)];
+}
+
+const VIEW_OPEN_RE = /^\s*:::view (\d+)\b/;
+
+function tableViewBlock(id: number, t: AdfNode): string[] {
+  return [`:::view ${id} (read-only copy of ⟦keep ${id}⟧; to change the table, replace the token and this block with a markdown table)`, ...tableView(t), ':::'];
+}
+
+/** View lines compared as content: spacing and delimiter-row width do not count as an edit. */
+const viewKey = (lines: string[]) =>
+  lines.map((l) => l.replace(/\s+/g, ' ').replace(/\s*\|\s*/g, '|').replace(/-{3,}/g, '---').trim()).filter(Boolean).join('\n');
 
 export interface RenderedPage {
   markdown: string;
@@ -590,7 +645,24 @@ export function markdownToAdfBlocks(markdown: string, keep: KeepMap = new Map())
   };
 
   let inCode: string | null = null;
+  // Inside a `:::view N` block: its lines are a copy of table N, not content.
+  let view: { id: number; lines: string[] } | null = null;
   for (const line of markdown.split('\n')) {
+    if (view) {
+      if (!FENCE_CLOSE_RE.test(line)) {
+        view.lines.push(line);
+        continue;
+      }
+      const node = keep.get(view.id);
+      if (node?.type === 'table' && viewKey(view.lines) !== viewKey(tableView(node))) {
+        throw new Error(
+          `The :::view ${view.id} block is a read-only copy of table ⟦keep ${view.id}⟧ — edits inside it are not applied. ` +
+            `To change that table, replace the token AND its :::view block with a complete markdown table; otherwise copy both back unchanged.`
+        );
+      }
+      view = null;
+      continue;
+    }
     const top = stack[stack.length - 1];
     const fence = /^\s*(`{3,}|~{3,})/.exec(line);
     if (inCode) {
@@ -601,6 +673,11 @@ export function markdownToAdfBlocks(markdown: string, keep: KeepMap = new Map())
     if (fence) {
       inCode = fence[1];
       top.lines.push(line);
+      continue;
+    }
+    const viewOpen = VIEW_OPEN_RE.exec(line);
+    if (viewOpen) {
+      view = { id: Number(viewOpen[1]), lines: [] };
       continue;
     }
     const open = FENCE_OPEN_RE.exec(line);

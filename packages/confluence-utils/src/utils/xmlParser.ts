@@ -103,7 +103,8 @@ function extractTextFromXML(xmlContent: any) {
             .replace(/\b1f[0-9a-fA-F]{3}\b/g, "") // Remove Unicode emoji codes (e.g., 1f426)
             .replace(/[🐦🐤🐥🕑👀🦉🦜🦢🦩🦚]/g, "") // Remove common emoji symbols
             .replace(/#[0-9A-Fa-f]{6}/g, "") // Remove hex color codes (e.g., #4C9AFF)
-            .replace(/\b\d+\b/g, "") // Remove isolated numbers
+            // Isolated numbers are kept: "Option 4", "a 409", "steps 1–3" and
+            // ticket ids are what people search for and what answers quote.
             .replace(/\s+/g, " ") // Remove excessive spaces
             .trim();
     }
