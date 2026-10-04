@@ -687,7 +687,7 @@ const TOOL_DEFS = [
     function: {
       name: 'run_command',
       description:
-        'Run a shell command in the workspace (build, test, lint, package scripts). Returns exit code and combined stdout+stderr (already truncated) — pass ONE plain command, never pipes, "2>&1", "| tail", "&&" or "cd x &&" (use the cwd parameter instead). The user approves each command before it runs (previously session-approved commands run immediately); destructive commands are blocked outright. Use this to VERIFY your edits — run the relevant test/build after changing code.',
+        'Run a shell command in the workspace (build, test, lint, package scripts). Returns exit code and combined stdout+stderr (already truncated) — pass ONE plain command, never pipes, "2>&1", "| tail", "&&" or "cd x &&" (use the cwd parameter instead). The user approves each command before it runs (previously session-approved commands run immediately); destructive commands are blocked outright. Use this to VERIFY your edits — run the relevant test/build after changing code. Also use it to carry out a command or script the user asked you to run.',
       parameters: {
         type: 'object',
         properties: {
@@ -695,8 +695,26 @@ const TOOL_DEFS = [
           description: { type: 'string', description: 'REQUIRED. What this command is for, 3-6 words, sentence case, no trailing period — e.g. "Run the checkout step tests". The label the user sees in the run timeline instead of the raw command; write it for someone who does not read shell.' },
           cwd: { type: 'string', description: 'Workspace-relative working directory. Defaults to the first workspace root; in a multi-root workspace prefix it with the root folder name ("my-repo" or "my-repo/apps/web") to run inside that root. Package-manager commands (pnpm --filter, npm run) must run from the repo that owns the package.' },
           timeoutSec: { type: 'number', description: 'Kill the command after this many seconds (default 60, max 300).' },
+          background: { type: 'boolean', description: 'Set true for a job that can outlast the timeout — a data download, backfill or full build. It starts after the user approves, returns a jobId immediately, and you follow it with check_command. Never use a short timeout and give up on a long job.' },
         },
         required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'check_command',
+      description:
+        'Check a background job started with run_command {background: true}: whether it is still running, its exit code and the tail of its output. Pass waitSec (up to 90) to wait for it to finish instead of polling in a loop; pass stop: true to kill it. Needs no approval. When it finishes, report the exit code, what it produced and the log file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The jobId returned by run_command.' },
+          waitSec: { type: 'number', description: 'Wait up to this many seconds (max 90) for the job to finish.' },
+          stop: { type: 'boolean', description: 'Kill the job.' },
+        },
+        required: ['id'],
       },
     },
   },

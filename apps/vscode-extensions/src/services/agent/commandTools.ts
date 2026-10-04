@@ -28,6 +28,8 @@ export interface RunCommandArgs {
   cwd?: string;
   /** Seconds before the command is killed. Default 60, max 300. */
   timeoutSec?: number;
+  /** Start detached and return a job id to follow with check_command. */
+  background?: boolean;
 }
 
 export interface CommandResult {
@@ -146,7 +148,7 @@ function probeLoginShellPath(): Promise<string | undefined> {
  * (its bundled `code` CLI, a remote server's helpers) and dropping them would
  * trade one class of "command not found" for another.
  */
-async function resolveCommandPath(): Promise<string | undefined> {
+export async function resolveCommandPath(): Promise<string | undefined> {
   if (!userPathProbe) userPathProbe = probeLoginShellPath();
   const probed = await userPathProbe;
   if (!probed) return undefined;
@@ -387,6 +389,11 @@ export function isAutonomousSafeCommand(command: string): boolean {
   if (isNodeTestRun(tokens)) return true;
   if (!AUTONOMOUS_BINARIES.has(binary)) return false;
   return tokens.slice(1).some((t) => AUTONOMOUS_VERBS.has(t));
+}
+
+/** True when the command carries chaining, pipes, redirects or substitutions an autonomous run never executes. */
+export function hasAutonomousShellPlumbing(command: string): boolean {
+  return /[;&|><`$\n\r]/.test(command.trim().replace(HARMLESS_SUFFIX_RE, ''));
 }
 
 /**

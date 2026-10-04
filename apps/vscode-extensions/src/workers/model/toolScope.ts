@@ -42,6 +42,7 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   find_files: 'codebase',
   run_command: 'codebase',
   run_checks: 'codebase',
+  check_command: 'codebase',
   get_diagnostics: 'codebase',
   git_status: 'codebase',
   git_diff: 'codebase',

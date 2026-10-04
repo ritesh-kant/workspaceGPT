@@ -172,6 +172,39 @@ console.log('\nagentWriteTools (prepare guards + edit semantics)');
     ));
 }
 
+// ═══ backgroundJobs ═══
+console.log('\nbackgroundJobs (long commands outlive the call; check_command follows them)');
+{
+  const bg = await import(path.join(outDir, 'backgroundJobs.mjs'));
+  const { hasAutonomousShellPlumbing, isAutonomousSafeCommand } = commandTools;
+  const cwd = process.cwd();
+
+  await t('a job returns at once, and check_command waits for its exit code and output', async () => {
+    const started = await bg.startBackgroundCommand('echo hello && sleep 1 && echo done', cwd);
+    assert.ok(started.jobId && started.logFile);
+    const early = await bg.checkBackgroundCommand({ id: started.jobId });
+    assert.equal(early.running, true);
+    const end = await bg.checkBackgroundCommand({ id: started.jobId, waitSec: 10 });
+    assert.equal(end.running, false);
+    assert.equal(end.exitCode, 0);
+    assert.match(end.output, /hello[\s\S]*done/);
+  });
+  await t('a failing job reports its exit code; stop kills a running one; an unknown id is refused', async () => {
+    const bad = await bg.startBackgroundCommand('exit 3', cwd);
+    assert.equal((await bg.checkBackgroundCommand({ id: bad.jobId, waitSec: 5 })).exitCode, 3);
+    const long = await bg.startBackgroundCommand('sleep 30', cwd);
+    const stopped = await bg.checkBackgroundCommand({ id: long.jobId, stop: true });
+    assert.equal(stopped.running, false);
+    await assert.rejects(() => bg.checkBackgroundCommand({ id: 'nope' }), /No background job/);
+  });
+  await t('a script outside the verification allowlist is not auto-run, and shell plumbing is told apart', () => {
+    assert.equal(isAutonomousSafeCommand('python research/backtests/ibkr_us_history.py --port 4001'), false);
+    assert.equal(hasAutonomousShellPlumbing('python research/backtests/ibkr_us_history.py --port 4001'), false);
+    assert.equal(hasAutonomousShellPlumbing('nc -z 127.0.0.1 4001 || nc -z 127.0.0.1 4002'), true);
+    assert.equal(hasAutonomousShellPlumbing('pnpm test 2>&1 | tail -80'), false);
+  });
+}
+
 // ═══ commandTools ═══
 console.log('\ncommandTools (denylist, cwd boundary, execution)');
 {
@@ -3343,7 +3376,7 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
     // TOOL_DEFS without classifying it here is what this test exists to catch.
     const expected = [
       'search_codebase', 'explore', 'find_symbol', 'find_references', 'go_to_definition', 'read_file',
-      'list_directory', 'find_files', 'run_command', 'run_checks', 'get_diagnostics', 'git_status', 'git_diff',
+      'list_directory', 'find_files', 'run_command', 'check_command', 'run_checks', 'get_diagnostics', 'git_status', 'git_diff',
       'git_log', 'git_blame', 'edit_file', 'create_file', 'delete_file', 'search_docs', 'get_confluence_page',
       'find_confluence_location', 'update_confluence_page', 'create_confluence_page',
       'search_tickets', 'get_ticket', 'browser_list_tabs', 'browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_read_page',

@@ -104,8 +104,10 @@ import {
   RunCommandArgs,
   CommandResult,
   isAutonomousSafeCommand,
+  hasAutonomousShellPlumbing,
   describeAutonomousRefusal,
 } from './agent/commandTools';
+import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgroundJobs';
 import { browserRequest, isBrowserConnected } from './browser/browserBridge';
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { searchWeb } from './webSearchTool';
@@ -1722,6 +1724,8 @@ export class ChatService {
         return gitBlame(args, roots);
       case 'run_command':
         return this.gatedCommand(run, args, roots, stepId);
+      case 'check_command':
+        return checkBackgroundCommand(args);
       case 'run_checks':
         return this.runChecks(run, args, roots, stepId);
       case 'search_docs':
@@ -1994,15 +1998,16 @@ export class ChatService {
     const summary = `Run: ${command}`;
 
     let decisionKind: 'auto' | 'approved' | 'approved-session' = 'auto';
-    if (run.autonomous) {
-      // No one is present to review a command card — so only verification
-      // commands run at all, and they run without a card. Anything else is
-      // refused with guidance the model can act on (report it, don't retry).
-      if (!isAutonomousSafeCommand(command)) {
-        await this.audit('command', command, 'rejected', 'skipped');
-        throw new Error(describeAutonomousRefusal(command));
-      }
-    } else if (!this.sessionCommandAllowlist.has(command)) {
+    // Verification commands run without a card in an autonomous run. Anything
+    // else — a script or CLI the user asked for — gets the same review card as
+    // a normal run, because the user is at the keyboard (see gatedConfluenceWrite);
+    // refusing it made "run this script" impossible. Shell plumbing stays refused.
+    const autoRun = run.autonomous && isAutonomousSafeCommand(command);
+    if (run.autonomous && !autoRun && hasAutonomousShellPlumbing(command)) {
+      await this.audit('command', command, 'rejected', 'skipped');
+      throw new Error(describeAutonomousRefusal(command));
+    }
+    if (!autoRun && !this.sessionCommandAllowlist.has(command)) {
       const { id, decision } = run.writeGate.await({ kind: 'command', summary });
       this.post(run, {
         type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
@@ -2030,10 +2035,20 @@ export class ChatService {
       this.postWriteOutcome(run, id, 'applied');
     }
 
+    if (args.background) {
+      const started = await startBackgroundCommand(command, cwd);
+      await this.audit('command', `${command} → started in background (${started.jobId})`, decisionKind, 'applied');
+      return {
+        background: true,
+        jobId: started.jobId,
+        logFile: started.logFile,
+        hint: 'Started, not finished. Call check_command with this jobId and waitSec to follow it; report the log file to the user.',
+      };
+    }
     this.postStatus(run, `Running: ${command}`);
     // Autonomous runs auto-approve verification commands, so nobody is there
     // to notice one that runs long — those get the unattended ceiling.
-    const res = await executeCommand(command, cwd, args.timeoutSec, this.streamOutputTo(run, stepId), run.autonomous);
+    const res = await executeCommand(command, cwd, args.timeoutSec, this.streamOutputTo(run, stepId), autoRun);
     this.noteExecutableMissing(run, command, res);
     const channel = agentOutputChannel();
     channel.appendLine(`\n$ ${command}   (cwd: ${displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms)`);
@@ -2529,6 +2544,8 @@ export class ChatService {
           title: (args?.description ?? '').trim() || 'Ran',
           detail: args?.command ?? '',
         };
+      case 'check_command':
+        return { kind: 'command', title: 'Checked background job', detail: args?.id ?? '' };
       case 'run_checks': {
         // The file goes in the title: command rows hide `detail` behind the
         // output toggle, which left the row reading "Ran tests for".
@@ -2595,8 +2612,14 @@ export class ChatService {
         const errors = (result?.diagnostics ?? []).filter((d: any) => d?.severity === 'error').length;
         return { summary: errors > 0 ? `${plural(errors, 'error')} · ${total} total` : plural(total, 'problem') };
       }
+      case 'check_command':
+        return {
+          summary: result?.running ? 'still running' : `exit ${result?.exitCode ?? '?'}`,
+          meta: { exitCode: result?.exitCode ?? null, durationMs: result?.durationMs, output: typeof result?.output === 'string' ? result.output.slice(-4000) : '' },
+        };
       case 'run_command':
       case 'run_checks':
+        if (result?.background) return { summary: 'started in background' };
         return {
           summary: result?.timedOut
             ? 'timed out'
@@ -2675,6 +2698,8 @@ export class ChatService {
         return `Finding definition of "${args?.symbol ?? ''}"...`;
       case 'run_command':
         return `Proposing command: ${args?.command ?? ''} (awaiting your review)...`;
+      case 'check_command':
+        return `Checking background job ${args?.id ?? ''}...`;
       case 'run_checks':
         return `Running ${args?.kind ?? 'test'} checks for ${String(args?.path ?? '').split('/').pop()}...`;
       case 'search_docs':
