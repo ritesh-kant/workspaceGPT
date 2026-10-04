@@ -403,60 +403,82 @@ const App: React.FC = () => {
   const { activeView, setActiveView, openSettings, settingsHydrated, setSettingsHydrated } = useUiStore();
 
   const mode = config.mode;
-  // Chat mode dial, cycled by the composer chip. Persisted per webview.
-  // - agent (default): autonomous=true — edits apply without review cards
-  //   (checkpointed + audited), permission-seeking is a failure, stalls
-  //   auto-resume. Same dial the My Work ▶ button uses.
+  // Composer dial, persisted per webview (docs/design/permission-modes.md).
   // - plan: planMode=true — the turn's deliverable IS a plan (no write tools);
-  //   the plan's Run plan button switches to agent and executes it.
-  // - ask: neither flag — every edit shows a review card (the old default).
-  type ChatMode = 'agent' | 'plan' | 'ask';
-  const CHAT_MODE_ORDER: ChatMode[] = ['agent', 'plan', 'ask'];
-  const [chatMode, setChatMode] = useState<ChatMode>(() => {
+  //   the plan's Run plan button switches to the last permission and executes it.
+  // - manual: every edit, command and Confluence write shows a review card.
+  // - auto: edits apply without review cards (checkpointed + audited) and test /
+  //   lint / build commands run on their own; anything riskier gets a card.
+  //   Same dial the My Work ▶ button uses.
+  // - full: nothing waits for a card. Never restored from storage — it is chosen
+  //   again after a reload — and turned on only through an inline confirmation.
+  type Permission = 'manual' | 'auto' | 'full';
+  type ChatMode = 'plan' | Permission;
+  const CHAT_MODE_ORDER: ChatMode[] = ['plan', 'manual', 'auto', 'full'];
+  // 'ask' and 'agent' are the pre-permission names of manual and auto.
+  const savedDial = (key: string): string | null => {
     try {
-      const saved = localStorage.getItem('wgpt.chatMode');
-      return saved === 'plan' || saved === 'ask' ? saved : 'agent';
+      const saved = localStorage.getItem(key);
+      return saved === 'ask' ? 'manual' : saved === 'agent' ? 'auto' : saved;
     } catch {
-      return 'agent';
+      return null;
     }
+  };
+  const [chatMode, setChatMode] = useState<ChatMode>(() => {
+    const saved = savedDial('wgpt.chatMode');
+    return saved === 'plan' || saved === 'manual' ? saved : 'auto';
   });
+  // The permission Plan hands back to: Run plan and the ▶ button use it.
+  const [lastPermission, setLastPermission] = useState<Permission>(() => {
+    const saved = savedDial('wgpt.lastPermission');
+    return saved === 'manual' ? 'manual' : 'auto';
+  });
+  const [confirmingFull, setConfirmingFull] = useState(false);
   const setChatModePersisted = (next: ChatMode) => {
     setChatMode(next);
+    if (next !== 'plan') setLastPermission(next);
     try {
-      localStorage.setItem('wgpt.chatMode', next);
+      // Full is session-only: a reload comes back as Auto.
+      localStorage.setItem('wgpt.chatMode', next === 'full' ? 'auto' : next);
+      if (next !== 'plan') localStorage.setItem('wgpt.lastPermission', next === 'full' ? 'auto' : next);
     } catch {
       /* private-mode storage failures are fine — the choice still holds for this session */
     }
   };
+  /** What ▶ and Run plan send: the permission in force, at least Auto (they edit on their own). */
+  const agentPermission = (): Permission => ((chatMode === 'plan' ? lastPermission : chatMode) === 'full' ? 'full' : 'auto');
   // Every send path must carry the dial — a path that forgets it silently
-  // downgrades the run to Ask mode (observed live: an Agent-mode ticket run
+  // downgrades the run to Manual (observed live: an Agent-mode ticket run
   // came back with slow-mode degradation and a command approval card, both of
   // which autonomous runs skip, because the send site omitted the flag).
   //
   // Chat mode is the one case that sends no dial at all: it has no tools and
   // no writes for the dial to govern, and its picker is hidden, so carrying a
-  // stale 'agent' would apply a setting the user cannot see — on a local
+  // stale 'auto' would apply a setting the user cannot see — on a local
   // model that surfaces as an "autonomous runs need a cloud model" notice on
   // a turn that was never going to write anything.
   const modeFlags = () =>
-    assistantMode === 'chat'
-      ? {}
-      : {
-          ...(chatMode === 'agent' ? { autonomous: true } : {}),
-          ...(chatMode === 'plan' ? { planMode: true } : {}),
-        };
-  const CHAT_MODE_META: Record<ChatMode, { label: string; title: string }> = {
-    agent: {
-      label: 'Agent',
-      title: 'Agent: edits apply on their own, checkpointed so you can revert.',
-    },
+    assistantMode === 'chat' ? {} : chatMode === 'plan' ? { planMode: true } : { permission: chatMode };
+  const CHAT_MODE_META: Record<ChatMode, { label: string; title: string; subtitle: string }> = {
     plan: {
       label: 'Plan',
       title: 'Plan: investigates and proposes exact edits without changing anything. Use Run plan on the answer to carry it out.',
+      subtitle: 'Investigate and propose edits, change nothing',
     },
-    ask: {
-      label: 'Ask',
-      title: 'Ask: every edit is shown as a diff for you to approve first.',
+    manual: {
+      label: 'Manual',
+      title: 'Manual: every edit, command and Confluence change is shown for you to approve first.',
+      subtitle: 'Always ask before editing files or running commands',
+    },
+    auto: {
+      label: 'Auto',
+      title: 'Auto: edits apply on their own, checkpointed so you can revert; tests and checks run on their own. Anything riskier asks first.',
+      subtitle: 'Edits run on their own; asks when risky',
+    },
+    full: {
+      label: 'Full access',
+      title: 'Full access: commands and Confluence changes run without asking. Edits are still checkpointed so you can revert.',
+      subtitle: 'Run commands and make changes without asking',
     },
   };
   // Chat/Work switch — the one place a turn's facts (Confluence connected,
@@ -2065,7 +2087,8 @@ const App: React.FC = () => {
         'and report the result against each acceptance criterion. ' +
         'If, after reading the ticket, the docs, and the code, a decision the ticket should have made ' +
         "is genuinely missing, stop and report exactly what's unclear instead of guessing.";
-    setChatModePersisted('agent');
+    const permission = agentPermission();
+    setChatModePersisted(permission);
     resetStreamBuffer();
     let sessionId = currentSessionId;
     if (!sessionId) {
@@ -2088,7 +2111,7 @@ const App: React.FC = () => {
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
       assistantMode,
-      autonomous: true,
+      permission,
     });
   };
 
@@ -2260,7 +2283,8 @@ const App: React.FC = () => {
    */
   const handleRunPlan = () => {
     if (isLoading || isStreaming) return;
-    setChatModePersisted('agent');
+    const permission = agentPermission();
+    setChatModePersisted(permission);
     if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
     resetStreamBuffer();
     addMessage({ content: RUN_PLAN_MESSAGE, isUser: true, timestamp: Date.now() });
@@ -2275,7 +2299,7 @@ const App: React.FC = () => {
       apiKey: selectedModelProvider?.apiKey,
       contextSelection: contextSelection,
       assistantMode,
-      autonomous: true,
+      permission,
       executePlan: true,
     });
   };
@@ -2940,6 +2964,27 @@ const App: React.FC = () => {
                     : 'Please configure a model in Settings to start chatting...'
               }
             />
+            {confirmingFull && (
+              <div className='permission-confirm' role='alertdialog' aria-label='Turn on Full access'>
+                <span className='permission-confirm-text'>
+                  Full access runs commands and changes Confluence pages without asking. File edits are still checkpointed so you can
+                  revert them.
+                </span>
+                <button
+                  type='button'
+                  className='permission-confirm-on'
+                  onClick={() => {
+                    setConfirmingFull(false);
+                    setChatModePersisted('full');
+                  }}
+                >
+                  Turn on
+                </button>
+                <button type='button' className='permission-confirm-cancel' onClick={() => setConfirmingFull(false)}>
+                  Cancel
+                </button>
+              </div>
+            )}
             <div className='input-controls'>
               <div className='input-selectors'>
                 <input
@@ -2993,10 +3038,17 @@ const App: React.FC = () => {
                       <SearchableDropdown
                         value={chatMode}
                         searchable={false}
-                        onChange={(value) => setChatModePersisted(value as ChatMode)}
+                        onChange={(value) =>
+                          // Full access is switched on through the strip above the
+                          // composer, never by the pick alone.
+                          value === 'full' && chatMode !== 'full'
+                            ? setConfirmingFull(true)
+                            : (setConfirmingFull(false), setChatModePersisted(value as ChatMode))
+                        }
                         options={CHAT_MODE_ORDER.map((m) => ({
                           value: m,
                           label: CHAT_MODE_META[m].label,
+                          subtitle: CHAT_MODE_META[m].subtitle,
                         }))}
                       />
                     </div>

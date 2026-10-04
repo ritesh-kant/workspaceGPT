@@ -591,12 +591,12 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
           )}
           {turnSummary?.plan && onRunPlan && (
             <div className="spike-publish">
-              <span className="spike-publish-text">Happy with this plan? Run it in Agent mode.</span>
+              <span className="spike-publish-text">Happy with this plan? Carry it out.</span>
               <button
                 type="button"
                 className="error-resume-button"
                 onClick={onRunPlan}
-                title="Switch to Agent mode and carry out this plan — edits apply on their own, checkpointed so you can revert"
+                title="Carry out this plan. The mode switches from Plan to Auto (or Full access, if you were on it), so edits apply on their own, checkpointed so you can revert"
               >
                 Run plan
               </button>

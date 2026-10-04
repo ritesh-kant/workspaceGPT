@@ -62,6 +62,7 @@ import {
   PreparedWrite,
 } from './agent/agentWriteTools';
 import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
+import { decide, resolvePermission, type Permission } from './agent/permissionPolicy';
 import { normalizeQuestions } from './agent/askUser';
 import { recordOriginalContent } from './agent/agentDiffProvider';
 import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs, derivableChecks } from './agent/verifyTools';
@@ -103,8 +104,6 @@ import {
   resolveCommandCwd,
   RunCommandArgs,
   CommandResult,
-  isAutonomousSafeCommand,
-  hasAutonomousShellPlumbing,
   describeAutonomousRefusal,
 } from './agent/commandTools';
 import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgroundJobs';
@@ -370,6 +369,12 @@ interface SessionRun {
    * manual follow-up message in the same session gets the gates back.
    */
   autonomous: boolean;
+  /**
+   * The composer's permission level for the CURRENT turn (see permissionPolicy.ts).
+   * `autonomous` above is derived from it (anything but manual); the gates read
+   * this one. Set per sendMessage call, never sticky.
+   */
+  permission: Permission;
   /**
    * Plan mode for the CURRENT turn (the composer dial). The worker is not
    * offered write tools; gatedWrite refuses any that arrive anyway. Set per
@@ -754,6 +759,7 @@ export class ChatService {
         checkRuns: new Map(),
         missingExecutables: new Map(),
         autonomous: false,
+        permission: 'manual',
         planMode: false,
         assistantMode: 'work',
         agentTranscript: null,
@@ -917,7 +923,9 @@ export class ChatService {
      * card's "Publish to Confluence"). A fact from the button, never inferred
      * from the prompt: it narrows the tools and skips the code scouting.
      */
-    turnAction?: 'publish-spike'
+    turnAction?: 'publish-spike',
+    /** The composer's permission dial. Absent from older senders: `autonomous` then means 'auto'. */
+    permission?: Permission
   ): Promise<void> {
     const run = this.runFor(sessionId);
     if (run.worker) {
@@ -986,6 +994,8 @@ export class ChatService {
       // Autonomous runs auto-apply writes, which a 14B-class local model can't
       // be trusted with: require a cloud provider, and degrade to the normal
       // review-gated flow (with a visible notice) rather than refusing the run.
+      let effPermission = resolvePermission(permission, autonomous);
+      autonomous = effPermission !== 'manual';
       if (autonomous && mode !== 'remote' && (provider ?? '').toLowerCase() === 'ollama') {
         this.post(run, {
           type: MESSAGE_TYPES.AGENT_STEP,
@@ -996,8 +1006,10 @@ export class ChatService {
           },
         });
         autonomous = false;
+        effPermission = 'manual';
       }
       run.autonomous = autonomous;
+      run.permission = effPermission;
       run.planMode = planMode;
       run.assistantMode = assistantMode;
 
@@ -1142,7 +1154,7 @@ export class ChatService {
           type: MESSAGE_TYPES.AGENT_STEP,
           step: {
             kind: 'notice',
-            title: 'Plan mode is on, so this turn only plans and changes nothing. To carry out the plan, use Run plan on it, or switch the mode to Agent or Ask.',
+            title: 'Plan mode is on, so this turn only plans and changes nothing. To carry out the plan, use Run plan on it, or switch the mode to Auto or Manual.',
             status: 'error',
           },
         });
@@ -1997,16 +2009,18 @@ export class ChatService {
     }
     const summary = `Run: ${command}`;
 
-    let decisionKind: 'auto' | 'approved' | 'approved-session' = 'auto';
+    let decisionKind: 'auto' | 'auto-full' | 'approved' | 'approved-session' = 'auto';
     // Verification commands run without a card in an autonomous run. Anything
     // else — a script or CLI the user asked for — gets the same review card as
     // a normal run, because the user is at the keyboard (see gatedConfluenceWrite);
     // refusing it made "run this script" impossible. Shell plumbing stays refused.
-    const autoRun = run.autonomous && isAutonomousSafeCommand(command);
-    if (run.autonomous && !autoRun && hasAutonomousShellPlumbing(command)) {
+    const commandDecision = decide(run.permission, { kind: 'command', command });
+    const autoRun = commandDecision === 'auto';
+    if (commandDecision === 'refuse') {
       await this.audit('command', command, 'rejected', 'skipped');
       throw new Error(describeAutonomousRefusal(command));
     }
+    if (autoRun && run.permission === 'full') decisionKind = 'auto-full';
     if (!autoRun && !this.sessionCommandAllowlist.has(command)) {
       const { id, decision } = run.writeGate.await({ kind: 'command', summary });
       this.post(run, {
@@ -2073,28 +2087,35 @@ export class ChatService {
    */
   private async gatedConfluenceWrite(run: SessionRun, write: PreparedConfluenceWrite): Promise<unknown> {
     if (run.planMode) throw new Error(`Plan mode: no ${write.kind} this turn — describe the change in your plan instead.`);
-    const { id, decision } = run.writeGate.await({ kind: write.kind, summary: write.summary });
-    this.post(run, {
-      type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
-      id,
-      kind: write.kind,
-      path: write.location,
-      summary: write.summary,
-      url: write.url,
-      diff: buildReviewDiff(write.before, write.after),
-    });
-    const result = await decision;
-    if (!result.approved) {
-      await this.audit(write.kind, write.summary, 'rejected', 'skipped');
-      throw new Error(
-        `The user rejected this Confluence change.${result.feedback ? ` Feedback: ${result.feedback}` : ''} ` +
-          'Do not retry the same change — adjust per the feedback or ask the user how to proceed.'
-      );
+    // Only Full access skips this card (decide); Confluence's page history is the undo.
+    const reviewed = decide(run.permission, { kind: 'confluence-write' }) === 'card';
+    const decisionKind = reviewed ? 'approved' : 'auto-full';
+    let id: string | null = null;
+    if (reviewed) {
+      const gate = run.writeGate.await({ kind: write.kind, summary: write.summary });
+      id = gate.id;
+      this.post(run, {
+        type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
+        id,
+        kind: write.kind,
+        path: write.location,
+        summary: write.summary,
+        url: write.url,
+        diff: buildReviewDiff(write.before, write.after),
+      });
+      const result = await gate.decision;
+      if (!result.approved) {
+        await this.audit(write.kind, write.summary, 'rejected', 'skipped');
+        throw new Error(
+          `The user rejected this Confluence change.${result.feedback ? ` Feedback: ${result.feedback}` : ''} ` +
+            'Do not retry the same change — adjust per the feedback or ask the user how to proceed.'
+        );
+      }
     }
     try {
       const applied = await write.apply();
-      this.postWriteOutcome(run, id, 'applied');
-      await this.audit(write.kind, `${write.summary} → ${applied.url}`, 'approved', 'applied');
+      if (id) this.postWriteOutcome(run, id, 'applied');
+      await this.audit(write.kind, `${write.summary} → ${applied.url}`, decisionKind, 'applied');
       const diff = buildReviewDiff(write.before, write.after);
       return {
         ...applied,
@@ -2106,8 +2127,8 @@ export class ChatService {
             : 'Saved as a new page version — the previous one stays in the page history. Give the user the link.',
       };
     } catch (e) {
-      this.postWriteOutcome(run, id, 'failed');
-      await this.audit(write.kind, write.summary, 'approved', 'failed', e instanceof Error ? e.message : String(e));
+      if (id) this.postWriteOutcome(run, id, 'failed');
+      await this.audit(write.kind, write.summary, decisionKind, 'failed', e instanceof Error ? e.message : String(e));
       throw e;
     }
   }
@@ -2167,7 +2188,7 @@ export class ChatService {
   private async audit(
     action: 'edit' | 'create' | 'delete' | 'command' | 'confluence-edit' | 'confluence-create',
     detail: string,
-    decision: 'approved' | 'approved-session' | 'rejected' | 'auto',
+    decision: 'approved' | 'approved-session' | 'rejected' | 'auto' | 'auto-full',
     outcome: 'applied' | 'failed' | 'skipped',
     error?: string
   ): Promise<void> {
@@ -2250,9 +2271,11 @@ export class ChatService {
     // a parked gate would hang the run. The change is still checkpointed below
     // (revertible per turn), recorded in the files-changed bar with a Review
     // diff, and audited with decision 'auto'.
-    const decisionKind: 'auto' | 'approved' = run.autonomous ? 'auto' : 'approved';
+    const writeDecision = decide(run.permission, { kind: 'file-write' });
+    const decisionKind: 'auto' | 'auto-full' | 'approved' =
+      writeDecision === 'card' ? 'approved' : run.permission === 'full' ? 'auto-full' : 'auto';
     let reviewId: string | null = null;
-    if (!run.autonomous) {
+    if (writeDecision === 'card') {
       const { id, decision } = run.writeGate.await(write);
       reviewId = id;
       this.post(run, {
@@ -3104,6 +3127,8 @@ Query: "${query}"`;
           ticketContext: ticketContext ? toTicketPromptContext(ticketContext) : undefined,
           ticketLookupOnly,
           autonomous,
+          // Full access: no command or Confluence card will appear, so the prompt must not promise one.
+          fullAccess: run.permission === 'full',
           planMode,
           turnAction: run.turnAction,
           linkedConfluencePageId: run.linkedConfluencePageId ?? undefined,
@@ -3398,7 +3423,8 @@ Query: "${query}"`;
                 // "awaiting" claim. Confluence writes are reviewed in every
                 // mode (gatedConfluenceWrite), so theirs stays true.
                 const toolStatus = this.describeToolCall(result.name!, result.arguments);
-                const reviewedAnyway = result.name === 'update_confluence_page' || result.name === 'create_confluence_page';
+                const reviewedAnyway =
+                  (result.name === 'update_confluence_page' || result.name === 'create_confluence_page') && run.permission !== 'full';
                 this.postStatus(run, run.autonomous && !reviewedAnyway ? toolStatus.replace(' (awaiting your review)', '') : toolStatus);
                 this.post(run, {
                   type: MESSAGE_TYPES.AGENT_STEP,

@@ -18,6 +18,7 @@ const esbuild = require('esbuild');
 const UNITS = [
   'src/services/agent/agentWriteTools.ts',
   'src/services/agent/commandTools.ts',
+  'src/services/agent/permissionPolicy.ts',
   'src/services/agent/backgroundJobs.ts',
   'src/services/agent/checkpointService.ts',
   'src/services/agent/rulesFiles.ts',

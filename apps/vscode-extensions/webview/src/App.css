@@ -869,13 +869,60 @@ input:focus {
   color: var(--vscode-foreground);
 }
 
-/* Chat-mode dropdown (Agent / Plan / Ask) — sits beside the context selector.
+/* Chat-mode dropdown (Plan / Manual / Auto / Full access) — sits beside the context selector.
    Same quiet chrome as every other composer control: the amber "armed" border
    it used to carry was the only warning colour in the app and read as an
    error. The selected dial is spelled out in the label and its tooltip. */
 .chat-mode-selector .searchable-dropdown-trigger {
   color: var(--vscode-foreground);
   font-weight: 500;
+}
+
+/* Full access: the one permission level that runs without asking, so it is the
+   one that is coloured. Same orange as the warning in the permission menu. */
+.chat-mode-selector.chat-mode-selector--full .searchable-dropdown-trigger {
+  color: var(--vscode-editorWarning-foreground, #d97706);
+}
+
+/* The inline confirmation shown above the composer's controls before Full access turns on. */
+.permission-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin: 0 8px 6px;
+  padding: 6px 8px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  border: 1px solid var(--vscode-editorWarning-foreground, #d97706);
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-foreground);
+}
+
+.permission-confirm-text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.permission-confirm button {
+  height: 22px;
+  padding: 0 10px;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.permission-confirm-on {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.permission-confirm-cancel {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border-color: var(--vscode-widget-border, var(--vscode-editorWidget-border, transparent)) !important;
 }
 
 /* Button styles.
