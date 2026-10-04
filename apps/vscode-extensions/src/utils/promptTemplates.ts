@@ -384,7 +384,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean; browser?: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; planMode?: boolean; chatOnly?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean; browser?: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; fullAccess?: boolean; planMode?: boolean; chatOnly?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -653,6 +653,15 @@ This run was started with a single click and nobody will answer questions mid-ta
 `
       : '';
 
+  // Full access (permission dial): the statements above and in HOW TO WORK that
+  // commands need the user's approval and that chains are refused no longer hold.
+  const fullAccessBlock =
+    codebaseToolsEnabled && options?.fullAccess && !options?.planMode
+      ? `## FULL ACCESS
+This run has Full access. Where anything above says a command shows the user an approval card, or that chains, pipes and redirects are refused: neither holds here. Commands run immediately and chaining is allowed, so one command can replace several; Confluence edits save at once. Because nothing waits for a human, say before running anything destructive or hard to undo (installs, deploys, git history changes, deletes) what it does and why it is needed. A small set of catastrophic commands (sudo, force push, rm -rf on home or root, piping a download into a shell) is still blocked.
+`
+      : '';
+
   const orientationBlock =
     codebaseToolsEnabled && options?.repoOrientation
       ? `**Workspace orientation (pre-fetched — use it to decide where to look first):**\n\`\`\`\n${options.repoOrientation}\n\`\`\`\n`
@@ -713,7 +722,7 @@ This run was started with a single click and nobody will answer questions mid-ta
   // reworded; only the order changed, and the question stays last.
   return `
 ${personalityPrompt}
-${howToWorkBlock}${planModeBlock}${autonomousBlock}${options?.autonomous && !options?.ticketContext ? FINAL_REPORT_FORMAT : ''}${contextInstruction}
+${howToWorkBlock}${planModeBlock}${autonomousBlock}${fullAccessBlock}${options?.autonomous && !options?.ticketContext ? FINAL_REPORT_FORMAT : ''}${contextInstruction}
 
 ${workspaceBlock}${todayBlock}${adoContextBlock}
 ${ticketBlock}${contextBlock}${sourcesMarkdown}

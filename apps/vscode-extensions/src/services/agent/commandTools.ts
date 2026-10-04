@@ -574,7 +574,7 @@ export interface AgentAuditEntry {
   ts: string;
   action: 'edit' | 'create' | 'delete' | 'command' | 'confluence-edit' | 'confluence-create';
   detail: string;
-  decision: 'approved' | 'approved-session' | 'rejected' | 'auto';
+  decision: 'approved' | 'approved-session' | 'rejected' | 'auto' | 'auto-full';
   outcome: 'applied' | 'failed' | 'skipped';
   error?: string;
 }

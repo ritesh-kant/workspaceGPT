@@ -141,6 +141,12 @@ interface WorkerData {
    */
   autonomous?: boolean;
   /**
+   * Full access (the composer's permission dial): commands and Confluence writes
+   * run without a review card, so the prompt and tool descriptions stop saying
+   * the user approves them.
+   */
+  fullAccess?: boolean;
+  /**
    * Overrides the harness profile this run would otherwise get from its
    * provider (see resolveHarnessProfile). Exists so the eval harness can run
    * the same task under both.
@@ -214,6 +220,7 @@ const {
   ticketContext,
   ticketLookupOnly,
   autonomous,
+  fullAccess,
   planMode,
   priorWrites,
   harnessProfile,
@@ -1367,6 +1374,25 @@ if (autonomous) {
   }
 }
 
+// Full access runs commands and Confluence edits with no card: the two
+// descriptions that promise the user approves them would be false.
+if (fullAccess) {
+  for (const d of TOOL_DEFS as any[]) {
+    const f = d?.function;
+    if (!f || typeof f.description !== 'string') continue;
+    if (f.name === 'run_command') {
+      f.description = f.description
+        .replace('The user approves each command before it runs (previously session-approved commands run immediately); destructive', 'This run has FULL ACCESS: commands run immediately with no approval card, and chaining (&&, pipes) is allowed; destructive')
+        .replace('It starts after the user approves, returns', 'It starts at once, returns');
+    } else if (f.name === 'update_confluence_page') {
+      f.description = f.description.replace(
+        'The user reviews a diff and approves before anything is saved; a rejection comes back with their feedback.',
+        'This run has FULL ACCESS: the edit is saved immediately with no review, as a new page version (Confluence page history is the undo), so get it right the first time.'
+      );
+    }
+  }
+}
+
 /**
  * GMI Cloud's MiniMax-M3 endpoint doesn't convert the model's tool-call
  * markup into a structured `tool_calls` response — it leaks the raw
@@ -1524,6 +1550,7 @@ async function generateResponse(): Promise<void> {
         implementMandate: TICKET_IMPLEMENT_MANDATE,
         writeExpected: WRITE_GUIDANCE_NEEDED,
         autonomous,
+        fullAccess,
         planMode,
       }
     );

@@ -13,6 +13,7 @@ import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
 import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
+import { isPermission } from '../services/agent/permissionPolicy';
 import { getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
 
 /** Quiet period after the last file event before the bar's `git status` re-runs. */
@@ -227,8 +228,8 @@ export class ChatMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
-      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, autonomous, planMode, assistantMode, executePlan, turnAction } = data;
-      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, !!autonomous, !!planMode, assistantMode === 'chat' ? 'chat' : 'work', !!executePlan, turnAction === 'publish-spike' ? 'publish-spike' : undefined);
+      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, autonomous, planMode, assistantMode, executePlan, turnAction, permission } = data;
+      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, !!autonomous, !!planMode, assistantMode === 'chat' ? 'chat' : 'work', !!executePlan, turnAction === 'publish-spike' ? 'publish-spike' : undefined, isPermission(permission) ? permission : undefined);
     } catch (error) {
       this.analyticsService.trackEvent('message_send_error', {
         modelId: data.modelId,
