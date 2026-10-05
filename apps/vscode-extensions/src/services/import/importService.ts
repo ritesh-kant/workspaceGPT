@@ -60,6 +60,9 @@ export class ImportService {
       result.skipped++;
       return;
     }
+    // A folder that no longer exists would file the chat under a project that
+    // cannot be opened; without one it lands under Chat instead.
+    if (chat.workspaceFolder && !(await exists(chat.workspaceFolder))) chat = { ...chat, workspaceFolder: undefined };
     if (await this.history.importSession(importedSessionId(source, chat.sourceId), chat)) result.imported++;
     else result.skipped++;
   }
@@ -90,6 +93,15 @@ export class ImportService {
       }
       onProgress?.(i + 1, ids.length);
     }
+  }
+}
+
+async function exists(dir: string): Promise<boolean> {
+  try {
+    await fs.access(dir);
+    return true;
+  } catch {
+    return false;
   }
 }
 
