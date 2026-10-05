@@ -16,6 +16,7 @@
  */
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../../vscode-extensions/constants';
 import type { ShellHooks } from './desktop-bridge';
+import { initTerminalPanel } from './terminal';
 
 interface TitleAction {
   command: string;
@@ -415,4 +416,5 @@ interface SessionPreview {
   applySidebar();
   renderTitle();
   renderAccount();
+  initTerminalPanel({ getToken: () => token, app, panel: $('termPanel'), toggle: $('termBtn') });
 })();

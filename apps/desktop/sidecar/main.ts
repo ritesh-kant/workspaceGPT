@@ -47,6 +47,7 @@ import { registerBrowserHost } from './host/browserHost';
 import { startBrowserBridge } from 'workspacegpt-extension-browser';
 import { recordOriginalContent } from 'workspacegpt-extension-diff';
 import { startServer, type DesktopServer } from './host/server';
+import { createTerminalHost } from './host/terminalHost';
 import { mergeLoginShellPath, type ShellPathResult } from './host/shellEnv';
 import { clipboardRead, clipboardWrite, openExternal, openInEditor } from './host/opener';
 import { installProcessReaper, killChildrenSync, liveChildren, reapChildren } from './host/processReaper';
@@ -299,7 +300,12 @@ async function main(): Promise<void> {
   // outlives a sidecar restart: the window's initialization script keeps
   // working and only the port changes. Headless mints its own.
   const token = args.parentStdio ? await readShellHello() : crypto.randomBytes(32).toString('base64url');
+  const terminalHost = createTerminalHost(
+    () => runtime.workspaceFolders[0],
+    (l) => console.log(l),
+  );
   server = await startServer({
+    onTerminalSocket: (ws) => terminalHost.attach(ws),
     port: args.port,
     token,
     surfaces,
@@ -417,6 +423,7 @@ async function main(): Promise<void> {
       console.error('[desktop] could not write diagnostics:', err);
     }
     for (const s of surfaces.values()) s.dispose();
+    terminalHost.dispose();
     languageService.dispose();
     await Promise.race([Promise.resolve(extension.deactivate?.()).catch(() => undefined), new Promise((r) => setTimeout(r, 3000))]);
     await Promise.race([ctx.dispose(), new Promise((r) => setTimeout(r, 2000))]);

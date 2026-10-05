@@ -20,6 +20,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import type { ViewSurface } from './webviewHost';
+import type { WebSocket } from 'ws';
 
 const MIME: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
@@ -46,6 +47,8 @@ export interface ServerOptions {
   desktopAssetsDir: string;
   /** Extra Origins allowed to open the socket (Tauri's custom-protocol origins). */
   extraOrigins: string[];
+  /** The integrated terminal's socket (host/terminalHost.ts); absent in builds without it. */
+  onTerminalSocket?: (ws: WebSocket) => void;
   log?: (line: string) => void;
 }
 
@@ -170,10 +173,15 @@ export function startServer(opts: ServerOptions): Promise<DesktopServer> {
       socket.write(`HTTP/1.1 ${code} ${why}\r\nConnection: close\r\n\r\n`);
       socket.destroy();
     };
-    if (url.pathname !== '/__desktop/ws') return reject(404, 'Not Found');
+    if (url.pathname !== '/__desktop/ws' && url.pathname !== '/__desktop/term') return reject(404, 'Not Found');
     if (!hosts().has(req.headers.host ?? '')) return reject(421, 'Misdirected Request');
     if (!origins().has(origin)) return reject(403, 'Forbidden Origin');
     if (!tokenMatches(url.searchParams.get('t'), opts.token)) return reject(401, 'Unauthorized');
+    if (url.pathname === '/__desktop/term') {
+      if (!opts.onTerminalSocket) return reject(404, 'Not Found');
+      wss.handleUpgrade(req, socket, head, (ws) => opts.onTerminalSocket!(ws));
+      return;
+    }
     const viewType = url.searchParams.get('view') ?? '';
     const surface = opts.surfaces.get(viewType);
     if (!surface) return reject(404, 'Not Found');

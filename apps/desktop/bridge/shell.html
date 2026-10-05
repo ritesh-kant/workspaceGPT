@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-src 'self'; connect-src 'self';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; frame-src 'self'; connect-src 'self';" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WorkspaceGPT</title>
   <link rel="stylesheet" href="/__desktop/theme.css" />
   <link rel="stylesheet" href="/__desktop/shell.css" />
+  <link rel="stylesheet" href="/__desktop/xterm.css" />
 </head>
 <body>
   <!--
@@ -60,9 +61,32 @@
           <span class="folder-chip-tip" id="folderChipTip" role="tooltip"></span>
         </span>
         <div class="bar-actions" id="actions"></div>
+        <button class="icon-btn" id="termBtn" type="button" title="Terminal (Ctrl+`)" aria-label="Terminal">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M5 8l4 4-4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M12 17h7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+          </svg>
+        </button>
       </header>
       <div class="main-body" id="mainBody"></div>
     </main>
+    <aside class="term" id="termPanel" aria-label="Terminal" hidden>
+      <div class="term-head">
+        <div class="term-tabs" role="tablist"></div>
+        <button class="icon-btn term-add" type="button" title="New terminal" aria-label="New terminal">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
+        </button>
+        <span class="term-spacer"></span>
+        <button class="icon-btn term-max" type="button" title="Maximize" aria-label="Maximize terminal">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </button>
+        <button class="icon-btn term-close" type="button" title="Hide terminal" aria-label="Hide terminal">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+        </button>
+      </div>
+      <div class="term-body"></div>
+      <div class="term-empty" hidden>No terminals open.</div>
+    </aside>
   </div>
   <script src="/__desktop/shell.js"></script>
 </body>
