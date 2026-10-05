@@ -6,6 +6,7 @@ import { ChatService } from '../services/chatService';
 import { ensureCopilotBridge, getCopilotStatus, listCopilotModels } from '../services/copilotBridge';
 import { ensureDirectCopilotReady, signOutDirectCopilot, usesDirectCopilot } from '../services/copilotDirect';
 import { HistoryService } from '../services/historyService';
+import { openFolderIn } from '../services/openFolderIn';
 import { AnalyticsService } from '../services/analyticsService';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
 import { getNamedRoots, resolveAgainstRoots } from '../services/codebase/codebaseTools';
@@ -207,6 +208,12 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.DELETE_CHAT_HISTORY:
         await this.handleDeleteChatHistory(data);
+        return true;
+      case MESSAGE_TYPES.UPDATE_CHAT_SESSION_META:
+        await this.handleUpdateChatSessionMeta(data);
+        return true;
+      case MESSAGE_TYPES.OPEN_SESSION_IN:
+        await this.handleOpenSessionIn(data);
         return true;
     }
     return false;
@@ -621,6 +628,28 @@ export class ChatMessageHandler {
     } catch (error) {
       console.error('Error getting chat session:', error);
     }
+  }
+
+  private async handleUpdateChatSessionMeta(data: any): Promise<void> {
+    if (typeof data?.sessionId !== 'string') return;
+    const patch: { title?: string; pinned?: boolean; group?: string } = {};
+    if (typeof data.title === 'string') patch.title = data.title;
+    if (typeof data.pinned === 'boolean') patch.pinned = data.pinned;
+    if (typeof data.group === 'string') patch.group = data.group;
+    try {
+      await this.historyService.updateSessionMeta(data.sessionId, patch);
+      await this.handleGetChatHistoryList();
+    } catch (error) {
+      console.error('Error updating chat session:', error);
+    }
+  }
+
+  /** Open the folder a chat was held in. The path comes from the stored chat, not from the webview. */
+  private async handleOpenSessionIn(data: any): Promise<void> {
+    const list = await this.historyService.getHistoryList();
+    const folder = list.find((session) => session.id === data?.sessionId)?.workspaceFolder;
+    if (!folder) return;
+    await openFolderIn(data.target, folder);
   }
 
   private async handleDeleteChatHistory(data: any): Promise<void> {

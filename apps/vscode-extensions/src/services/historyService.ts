@@ -19,6 +19,10 @@ export interface ChatSessionPreview {
    * was recorded (nothing in those files says which folder it was).
    */
   workspaceFolder?: string;
+  /** Pinned chats are listed first. Stored beside the chats, not in them. */
+  pinned?: boolean;
+  /** Name of the user-made group the chat was filed under. */
+  group?: string;
   /** Sum of agent turn diffs in this session; omitted when there were no edits. */
   added?: number;
   removed?: number;
@@ -90,6 +94,18 @@ function sessionDiffStats(messages: unknown): { added: number; removed: number }
  */
 const deletedSessionIds = new Set<string>();
 
+/**
+ * What the user has done to a chat from the history menu. Kept in one file
+ * next to the chats folder rather than inside each chat: saveHistory rewrites
+ * a chat file from scratch on every turn and would drop anything it did not
+ * know about, and getHistoryList reads every *.json in the chats folder.
+ */
+export interface SessionMeta {
+  title?: string;
+  pinned?: boolean;
+  group?: string;
+}
+
 export class HistoryService {
   private historyDir: vscode.Uri;
 
@@ -97,6 +113,39 @@ export class HistoryService {
     this.historyDir = vscode.Uri.file(
       path.join(this.context.globalStorageUri.fsPath, 'chats')
     );
+  }
+
+  private get metaFile(): vscode.Uri {
+    return vscode.Uri.file(path.join(this.context.globalStorageUri.fsPath, 'chat-meta.json'));
+  }
+
+  private async readMeta(): Promise<Record<string, SessionMeta>> {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(this.metaFile);
+      const parsed = JSON.parse(new TextDecoder().decode(bytes));
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private async writeMeta(meta: Record<string, SessionMeta>): Promise<void> {
+    await ensureDirectoryExists(this.context.globalStorageUri.fsPath);
+    await vscode.workspace.fs.writeFile(this.metaFile, new TextEncoder().encode(JSON.stringify(meta)));
+  }
+
+  /** Merge a change into a chat's meta; an empty string or false clears that field. */
+  public async updateSessionMeta(sessionId: string, patch: SessionMeta): Promise<void> {
+    const all = await this.readMeta();
+    const next: SessionMeta = { ...all[sessionId], ...patch };
+    if (!next.title?.trim()) delete next.title;
+    else next.title = next.title.trim().slice(0, 120);
+    if (!next.pinned) delete next.pinned;
+    if (!next.group?.trim()) delete next.group;
+    else next.group = next.group.trim().slice(0, 60);
+    if (Object.keys(next).length) all[sessionId] = next;
+    else delete all[sessionId];
+    await this.writeMeta(all);
   }
 
   public get storageDir(): vscode.Uri {
@@ -174,6 +223,7 @@ export class HistoryService {
     try {
       const files = await vscode.workspace.fs.readDirectory(this.historyDir);
       const previews: ChatSessionPreview[] = [];
+      const meta = await this.readMeta();
 
       for (const [filename, type] of files) {
         if (type === vscode.FileType.File && filename.endsWith('.json')) {
@@ -196,8 +246,10 @@ export class HistoryService {
             const diffs = sessionDiffStats(data.messages);
             previews.push({
               id: data.id,
-              title,
+              title: meta[data.id]?.title || title,
               updatedAt: data.updatedAt,
+              ...(meta[data.id]?.pinned && { pinned: true }),
+              ...(meta[data.id]?.group && { group: meta[data.id].group }),
               assistantMode: data.assistantMode === 'chat' ? 'chat' : 'work',
               ...(typeof data.workspaceFolder === 'string' && data.workspaceFolder && { workspaceFolder: data.workspaceFolder }),
               ...(diffs ?? {}),
@@ -245,6 +297,11 @@ export class HistoryService {
       await vscode.workspace.fs.delete(filePath, { useTrash: false });
     } catch (e) {
       console.error(`Error deleting chat session ${sessionId}:`, e);
+    }
+    try {
+      await this.updateSessionMeta(sessionId, { title: '', pinned: false, group: '' });
+    } catch {
+      // A stale meta entry is harmless: it only applies to an id that no longer lists.
     }
   }
 }

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { HistoryService } from './services/historyService';
+import { openFolderIn } from './services/openFolderIn';
 import { SessionsHtmlTemplate } from './templates/SessionsHtmlTemplate';
 import { tryExecuteCommand } from './utils/chatMaximizeLayout';
 
@@ -60,6 +61,20 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       }
       if (data?.type === MESSAGE_TYPES.DELETE_CHAT_HISTORY && data.sessionId) {
         void this.deleteSession(data.sessionId);
+      }
+      if (data?.type === MESSAGE_TYPES.UPDATE_CHAT_SESSION_META && typeof data.sessionId === 'string') {
+        const patch: { title?: string; pinned?: boolean; group?: string } = {};
+        if (typeof data.title === 'string') patch.title = data.title;
+        if (typeof data.pinned === 'boolean') patch.pinned = data.pinned;
+        if (typeof data.group === 'string') patch.group = data.group;
+        void this.historyService.updateSessionMeta(data.sessionId, patch).then(() => this.postList());
+      }
+      if (data?.type === MESSAGE_TYPES.OPEN_SESSION_IN && typeof data.sessionId === 'string') {
+        // The folder comes from the stored chat, never from the webview.
+        void this.historyService.getHistoryList().then((list) => {
+          const folder = list.find((session) => session.id === data.sessionId)?.workspaceFolder;
+          if (folder) void openFolderIn(data.target, folder);
+        });
       }
     });
 

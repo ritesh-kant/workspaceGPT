@@ -147,6 +147,8 @@ export const MESSAGE_TYPES = {
   GET_CHAT_HISTORY_LIST: 'get-chat-history-list',
   GET_CHAT_HISTORY_LIST_RESPONSE: 'get-chat-history-list-response',
   DELETE_CHAT_HISTORY: 'delete-chat-history',
+  UPDATE_CHAT_SESSION_META: 'update-chat-session-meta',
+  OPEN_SESSION_IN: 'open-session-in',
   GET_CHAT_SESSION: 'get-chat-session',
   GET_CHAT_SESSION_RESPONSE: 'get-chat-session-response',
   SHOW_HISTORY: 'show-history',

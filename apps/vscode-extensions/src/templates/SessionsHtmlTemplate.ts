@@ -262,6 +262,51 @@ export class SessionsHtmlTemplate {
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
     }
+    .row-input {
+      flex: 1;
+      min-width: 0;
+      padding: 1px 5px;
+      font: inherit;
+      font-size: 13px;
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-focusBorder);
+      border-radius: 3px;
+      outline: none;
+    }
+    .menu {
+      position: fixed;
+      z-index: 1000;
+      min-width: 180px;
+      padding: 4px;
+      background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+      color: var(--vscode-menu-foreground, var(--vscode-foreground));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
+      border-radius: 6px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    }
+    .menu-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 1.5rem;
+      width: 100%;
+      padding: 5px 10px;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .menu-item:hover {
+      background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+      color: var(--vscode-menu-selectionForeground, inherit);
+    }
+    .menu-item.danger { color: var(--vscode-errorForeground); }
+    .menu-title { padding: 4px 10px; opacity: 0.6; font-size: 11px; }
+    .menu-sep { height: 1px; margin: 4px 0; background: var(--vscode-widget-border, rgba(128,128,128,0.3)); }
+    .menu .row-input { width: calc(100% - 8px); margin: 2px 4px 4px; flex: none; }
     .added { color: var(--vscode-charts-green, #3fb950); }
     .removed { color: var(--vscode-charts-red, #f85149); }
   </style>
@@ -301,6 +346,8 @@ export class SessionsHtmlTemplate {
       SESSIONS_LIST: MESSAGE_TYPES.SESSIONS_LIST,
       SESSIONS_TOGGLE_SEARCH: MESSAGE_TYPES.SESSIONS_TOGGLE_SEARCH,
       DELETE_CHAT_HISTORY: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
+      UPDATE_CHAT_SESSION_META: MESSAGE_TYPES.UPDATE_CHAT_SESSION_META,
+      OPEN_SESSION_IN: MESSAGE_TYPES.OPEN_SESSION_IN,
     })};
     let sessions = [];
     let activeId = null;
@@ -411,12 +458,29 @@ export class SessionsHtmlTemplate {
         ? sessions.filter((s) => String(s.title || '').toLowerCase().includes(needle))
         : sessions;
 
-      const byFolder = mode === 'work' ? workspaceGroupsHtml(matching, now, !!needle) : '';
+      // Pinned chats and user-made groups sit above everything else.
+      const pinned = matching.filter((s) => s.pinned);
+      const filed = new Map();
+      for (const s of matching) {
+        if (s.pinned || !s.group) continue;
+        if (!filed.has(s.group)) filed.set(s.group, []);
+        filed.get(s.group).push(s);
+      }
+      const rest = matching.filter((s) => !s.pinned && !s.group);
+      let top = '';
+      if (pinned.length) top += customGroupHtml('pin:', 'Pinned', pinned, now);
+      for (const name of [...filed.keys()].sort()) top += customGroupHtml('grp:' + name, name, filed.get(name), now);
+
+      const byFolder = mode === 'work' ? workspaceGroupsHtml(rest, now, !!needle) : '';
       if (byFolder) {
-        listEl.innerHTML = byFolder;
+        listEl.innerHTML = top + byFolder;
         return;
       }
 
+      if (top && !rest.length) {
+        listEl.innerHTML = top;
+        return;
+      }
       if (!matching.length) {
         listEl.innerHTML = '<div class="empty">' +
           (sessions.length === 0
@@ -427,7 +491,7 @@ export class SessionsHtmlTemplate {
       }
 
       const groups = new Map();
-      for (const session of matching) {
+      for (const session of rest) {
         const label = bucketLabel(session.updatedAt || 0, now);
         if (!groups.has(label)) groups.set(label, []);
         groups.get(label).push(session);
@@ -440,7 +504,15 @@ export class SessionsHtmlTemplate {
         html += '<div class="group-header">' + label + '</div>';
         for (const session of items) html += rowHtml(session, now);
       }
-      listEl.innerHTML = html;
+      listEl.innerHTML = top + html;
+    }
+
+    function customGroupHtml(key, label, items, now) {
+      const open = !!query.trim() || !(key in wsOpen) || !!wsOpen[key];
+      return '<div class="ws-group' + (open ? ' open' : '') + '"><div class="ws-header">' +
+        '<button class="ws-toggle" type="button" data-ws="' + escapeHtml(key) + '" aria-expanded="' + open + '">' +
+        '<span class="ws-name">' + escapeHtml(label) + '</span>' + CHEVRON + '</button></div>' +
+        '<div class="ws-rows">' + items.map((s) => rowHtml(s, now)).join('') + '</div></div>';
     }
 
     function rowHtml(session, now) {
@@ -464,7 +536,7 @@ export class SessionsHtmlTemplate {
         title + escapeHtml(statusLabel) + '" data-id="' +
         escapeHtml(session.id) + '">' +
         '<span class="dot"></span>' +
-        '<span class="title">' + title + '</span>' +
+        '<span class="title">' + (session.pinned ? '📌 ' : '') + title + '</span>' +
         '<span class="meta">' + diffs + '<span class="age">' + age + '</span></span>' +
         '<span class="row-delete" data-delete-id="' + escapeHtml(session.id) + '" title="Delete chat" role="button" aria-label="Delete chat">' +
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
@@ -526,7 +598,142 @@ export class SessionsHtmlTemplate {
       return html;
     }
 
+    // Right-click menu. Built by hand: this view has no framework.
+    let menuEl = null;
+    function closeMenu() {
+      if (menuEl) menuEl.remove();
+      menuEl = null;
+    }
+    document.addEventListener('mousedown', (e) => {
+      if (menuEl && !menuEl.contains(e.target)) closeMenu();
+    });
+    window.addEventListener('blur', closeMenu);
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeMenu();
+    });
+    window.addEventListener('resize', closeMenu);
+    listEl.addEventListener('scroll', closeMenu);
+
+    function updateMeta(id, patch) {
+      vscode.postMessage({ type: MESSAGE_TYPES.UPDATE_CHAT_SESSION_META, sessionId: id, ...patch });
+    }
+
+    function startRename(id) {
+      const row = listEl.querySelector('.row[data-id="' + CSS.escape(id) + '"]');
+      const session = sessions.find((s) => s.id === id);
+      const titleEl = row && row.querySelector('.title');
+      if (!titleEl || !session) return;
+      const input = document.createElement('input');
+      input.className = 'row-input';
+      input.value = session.title || '';
+      let done = false;
+      const finish = (save) => {
+        if (done) return;
+        done = true;
+        if (save) updateMeta(id, { title: input.value });
+        render();
+      };
+      input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') finish(true);
+        if (e.key === 'Escape') finish(false);
+      });
+      input.addEventListener('blur', () => finish(true));
+      input.addEventListener('click', (e) => e.stopPropagation());
+      titleEl.replaceWith(input);
+      input.focus();
+      input.select();
+    }
+
+    function showMenu(id, x, y, view) {
+      closeMenu();
+      const session = sessions.find((s) => s.id === id);
+      if (!session) return;
+      const menu = document.createElement('div');
+      menu.className = 'menu';
+      menu.setAttribute('role', 'menu');
+      const add = (label, onClick, cls) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'menu-item' + (cls ? ' ' + cls : '');
+        b.textContent = label;
+        b.addEventListener('click', onClick);
+        menu.appendChild(b);
+      };
+      const title = (text) => {
+        const t = document.createElement('div');
+        t.className = 'menu-title';
+        t.textContent = text;
+        menu.appendChild(t);
+      };
+      const sep = () => {
+        const d = document.createElement('div');
+        d.className = 'menu-sep';
+        menu.appendChild(d);
+      };
+      const go = (next) => () => showMenu(id, x, y, next);
+      const run = (fn) => () => { closeMenu(); fn(); };
+      const openIn = (target) => run(() => vscode.postMessage({ type: MESSAGE_TYPES.OPEN_SESSION_IN, sessionId: id, target }));
+      const groupNames = [...new Set(sessions.map((s) => s.group).filter(Boolean))].sort();
+
+      if (view === 'openIn') {
+        title('Open in');
+        add('VS Code', openIn('vscode'));
+        add('Cursor', openIn('cursor'));
+        add('Finder', openIn('finder'));
+        sep();
+        add('Back', go('main'));
+      } else if (view === 'group') {
+        title('Move to group');
+        for (const name of groupNames) {
+          add((name === session.group ? '✓ ' : '') + name, run(() => updateMeta(id, { group: name })));
+        }
+        add('New group…', go('newGroup'));
+        if (session.group) add('Remove from group', run(() => updateMeta(id, { group: '' })));
+        sep();
+        add('Back', go('main'));
+      } else if (view === 'newGroup') {
+        title('New group');
+        const input = document.createElement('input');
+        input.className = 'row-input';
+        input.placeholder = 'Group name';
+        input.addEventListener('keydown', (e) => {
+          e.stopPropagation();
+          const name = input.value.trim();
+          if (e.key === 'Enter' && name) run(() => updateMeta(id, { group: name }))();
+          if (e.key === 'Escape') closeMenu();
+        });
+        menu.appendChild(input);
+      } else {
+        if (session.workspaceFolder) {
+          add('Open in  ›', go('openIn'));
+          sep();
+        }
+        add(session.pinned ? 'Unpin' : 'Pin', run(() => updateMeta(id, { pinned: !session.pinned })));
+        add('Rename', run(() => startRename(id)));
+        add('Move to group  ›', go('group'));
+        sep();
+        add('Delete', run(() => vscode.postMessage({ type: MESSAGE_TYPES.DELETE_CHAT_HISTORY, sessionId: id })), 'danger');
+      }
+      document.body.appendChild(menu);
+      menuEl = menu;
+      const r = menu.getBoundingClientRect();
+      menu.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 4)) + 'px';
+      menu.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) + 'px';
+      const input = menu.querySelector('input');
+      if (input) input.focus();
+    }
+
+    listEl.addEventListener('contextmenu', (event) => {
+      const row = event.target.closest('.row');
+      if (!row) return;
+      event.preventDefault();
+      const id = row.getAttribute('data-id');
+      if (id) showMenu(id, event.clientX, event.clientY, 'main');
+    });
+
     listEl.addEventListener('click', (event) => {
+      if (event.target.closest('.row-input')) return;
       const toggle = event.target.closest('.ws-toggle');
       if (toggle) {
         const group = toggle.closest('.ws-group');

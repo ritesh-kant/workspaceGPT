@@ -2224,6 +2224,14 @@ const App: React.FC = () => {
     forgetDeletedSession(sessionId);
   };
 
+  const handleUpdateSessionMeta = (sessionId: string, patch: { title?: string; pinned?: boolean; group?: string }) => {
+    vscode.postMessage({ type: MESSAGE_TYPES.UPDATE_CHAT_SESSION_META, sessionId, ...patch });
+  };
+
+  const handleOpenSessionIn = (sessionId: string, target: 'vscode' | 'cursor' | 'finder') => {
+    vscode.postMessage({ type: MESSAGE_TYPES.OPEN_SESSION_IN, sessionId, target });
+  };
+
   /**
    * The checkpoint a user turn's Undo reverts to. It rides the turn's rollup,
    * which review cards push past index + 1 — so look across the whole turn
@@ -3187,6 +3195,8 @@ const App: React.FC = () => {
           runningSessionIds={runningSessionIds}
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}
+          onUpdateSession={handleUpdateSessionMeta}
+          onOpenSessionIn={handleOpenSessionIn}
           onClose={() => setActiveView('chat')}
         />
       </div>

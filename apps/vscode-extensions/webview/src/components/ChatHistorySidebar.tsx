@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './ChatHistorySidebar.css';
 import { displaySessionTitle, formatRelativeTime, parseTicketTitle } from '../utils/sessionTitle';
 
@@ -8,6 +8,21 @@ interface ChatSessionPreview {
     updatedAt: number;
     /** Which mode the chat was held in. The caller passes only the current mode's sessions. */
     assistantMode?: 'chat' | 'work';
+    pinned?: boolean;
+    group?: string;
+    workspaceFolder?: string;
+}
+
+type OpenTarget = 'vscode' | 'cursor' | 'finder';
+
+/** Which screen of the right-click menu is showing. */
+type MenuView = 'main' | 'openIn' | 'group' | 'newGroup';
+
+interface MenuState {
+    sessionId: string;
+    x: number;
+    y: number;
+    view: MenuView;
 }
 
 /** Ticket id → title, from the "Your work" cache, to repair truncated legacy group headers. */
@@ -23,6 +38,8 @@ interface ChatHistorySidebarProps {
     runningSessionIds?: Set<string>;
     onSelectSession: (sessionId: string) => void;
     onDeleteSession: (sessionId: string) => void;
+    onUpdateSession: (sessionId: string, patch: { title?: string; pinned?: boolean; group?: string }) => void;
+    onOpenSessionIn: (sessionId: string, target: OpenTarget) => void;
     onClose: () => void;
 }
 
@@ -103,9 +120,44 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     ticketTitles,
     onSelectSession,
     onDeleteSession,
+    onUpdateSession,
+    onOpenSessionIn,
     onClose,
 }) => {
     const [query, setQuery] = useState('');
+    const [menu, setMenu] = useState<MenuState | null>(null);
+    const [renamingId, setRenamingId] = useState<string | null>(null);
+    const [draft, setDraft] = useState('');
+    const menuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!menu) return;
+        const close = () => setMenu(null);
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') close();
+        };
+        window.addEventListener('mousedown', onOutside);
+        window.addEventListener('blur', close);
+        window.addEventListener('keydown', onKey);
+        function onOutside(e: MouseEvent) {
+            if (!menuRef.current?.contains(e.target as Node)) close();
+        }
+        return () => {
+            window.removeEventListener('mousedown', onOutside);
+            window.removeEventListener('blur', close);
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [menu]);
+
+    const groupNames = useMemo(
+        () => Array.from(new Set(historyList.map((s) => s.group).filter((g): g is string => !!g))).sort(),
+        [historyList]
+    );
+
+    const commitRename = () => {
+        if (renamingId) onUpdateSession(renamingId, { title: draft });
+        setRenamingId(null);
+    };
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
     const toggleGroup = (id: string) =>
         setExpandedGroups((prev) => {
@@ -122,7 +174,19 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                   displaySessionTitle(session.title, ticketTitles).toLowerCase().includes(needle)
               )
             : historyList;
-        return buildRows(matching, ticketTitles);
+        const pinned = matching.filter((s) => s.pinned);
+        const filed = new Map<string, ChatSessionPreview[]>();
+        for (const s of matching) {
+            if (s.pinned || !s.group) continue;
+            filed.set(s.group, [...(filed.get(s.group) ?? []), s]);
+        }
+        const rest = matching.filter((s) => !s.pinned && !s.group);
+        return {
+            pinned,
+            groups: Array.from(filed.entries()).sort(([a], [b]) => a.localeCompare(b)),
+            rest: buildRows(rest, ticketTitles),
+            empty: matching.length === 0,
+        };
     }, [historyList, query, ticketTitles]);
 
     if (!isVisible) return null;
@@ -139,6 +203,10 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                     nested ? ' history-item--nested' : ''
                 }`}
                 onClick={() => onSelectSession(session.id)}
+                onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMenu({ sessionId: session.id, x: e.clientX, y: e.clientY, view: 'main' });
+                }}
                 role='button'
                 tabIndex={0}
                 onKeyDown={(e) => {
@@ -150,7 +218,26 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                         {runningSessionIds?.has(session.id) && (
                             <span className='session-running-dot' title='Still working…' />
                         )}
-                        {label}
+                        {session.pinned && <span className='history-item-pin' title='Pinned'>📌</span>}
+                        {renamingId === session.id ? (
+                            <input
+                                className='history-rename-input'
+                                value={draft}
+                                autoFocus
+                                onFocus={(e) => e.currentTarget.select()}
+                                onChange={(e) => setDraft(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => {
+                                    e.stopPropagation();
+                                    if (e.key === 'Enter') commitRename();
+                                    if (e.key === 'Escape') setRenamingId(null);
+                                }}
+                                onBlur={commitRename}
+                                aria-label='Chat name'
+                            />
+                        ) : (
+                            label
+                        )}
                     </span>
                     {/* A nested row's label is already a date; the relative age
                         would say the same thing twice. */}
@@ -167,6 +254,97 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                 >
                     <TrashIcon />
                 </button>
+            </div>
+        );
+    };
+
+    const renderMenu = () => {
+        const session = historyList.find((s) => s.id === menu!.sessionId);
+        if (!session) return null;
+        const close = () => setMenu(null);
+        const go = (view: MenuView) => setMenu({ ...menu!, view });
+        const item = (label: string, onClick: () => void, opts: { key?: string; danger?: boolean; submenu?: boolean; checked?: boolean } = {}) => (
+            <button
+                key={label}
+                type='button'
+                className={`history-menu-item${opts.danger ? ' history-menu-item--danger' : ''}`}
+                onClick={onClick}
+            >
+                <span>{opts.checked ? '✓ ' : ''}{label}</span>
+                {opts.submenu ? <span className='history-menu-hint'>›</span> : opts.key && <span className='history-menu-hint'>{opts.key}</span>}
+            </button>
+        );
+        const startRename = () => {
+            setDraft(displaySessionTitle(session.title, ticketTitles));
+            setRenamingId(session.id);
+            close();
+        };
+        const moveTo = (group: string) => {
+            onUpdateSession(session.id, { group });
+            close();
+        };
+
+        // Keep the menu inside the panel; it opens at the cursor otherwise.
+        const left = Math.max(4, Math.min(menu!.x, window.innerWidth - 200));
+        const top = Math.max(4, Math.min(menu!.y, window.innerHeight - 220));
+
+        let content: React.ReactNode;
+        if (menu!.view === 'openIn') {
+            content = (
+                <>
+                    <div className='history-menu-title'>Open in</div>
+                    {item('VS Code', () => { onOpenSessionIn(session.id, 'vscode'); close(); })}
+                    {item('Cursor', () => { onOpenSessionIn(session.id, 'cursor'); close(); })}
+                    {item('Finder', () => { onOpenSessionIn(session.id, 'finder'); close(); })}
+                    <div className='history-menu-sep' />
+                    {item('Back', () => go('main'))}
+                </>
+            );
+        } else if (menu!.view === 'group') {
+            content = (
+                <>
+                    <div className='history-menu-title'>Move to group</div>
+                    {groupNames.map((name) => item(name, () => moveTo(name), { checked: name === session.group }))}
+                    {item('New group…', () => go('newGroup'))}
+                    {session.group && item('Remove from group', () => moveTo(''))}
+                    <div className='history-menu-sep' />
+                    {item('Back', () => go('main'))}
+                </>
+            );
+        } else if (menu!.view === 'newGroup') {
+            content = (
+                <>
+                    <div className='history-menu-title'>New group</div>
+                    <input
+                        className='history-rename-input history-menu-input'
+                        autoFocus
+                        placeholder='Group name'
+                        onKeyDown={(e) => {
+                            e.stopPropagation();
+                            const name = e.currentTarget.value.trim();
+                            if (e.key === 'Enter' && name) moveTo(name);
+                            if (e.key === 'Escape') close();
+                        }}
+                        aria-label='Group name'
+                    />
+                </>
+            );
+        } else {
+            content = (
+                <>
+                    {session.workspaceFolder && item('Open in', () => go('openIn'), { submenu: true })}
+                    {session.workspaceFolder && <div className='history-menu-sep' />}
+                    {item(session.pinned ? 'Unpin' : 'Pin', () => { onUpdateSession(session.id, { pinned: !session.pinned }); close(); })}
+                    {item('Rename', startRename)}
+                    {item('Move to group', () => go('group'), { submenu: true })}
+                    <div className='history-menu-sep' />
+                    {item('Delete', () => { onDeleteSession(session.id); close(); }, { danger: true })}
+                </>
+            );
+        }
+        return (
+            <div ref={menuRef} className='history-menu' style={{ left, top }} role='menu' onContextMenu={(e) => e.preventDefault()}>
+                {content}
             </div>
         );
     };
@@ -210,12 +388,30 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                             <p>No chats yet</p>
                             <p className='history-empty-subtitle'>Start a conversation to see it here</p>
                         </div>
-                    ) : rows.length === 0 ? (
+                    ) : rows.empty ? (
                         <div className='history-empty'>
                             <p>No chats match “{query.trim()}”</p>
                         </div>
                     ) : (
-                        rows.map((row) =>
+                        <>
+                            {rows.pinned.length > 0 && (
+                                <div className='history-group'>
+                                    <div className='history-group-header'>
+                                        <span className='history-group-title'>Pinned</span>
+                                    </div>
+                                    {rows.pinned.map((session) => renderSession(session, false))}
+                                </div>
+                            )}
+                            {rows.groups.map(([name, sessions]) => (
+                                <div key={`group-${name}`} className='history-group'>
+                                    <div className='history-group-header'>
+                                        <span className='history-group-title'>{name}</span>
+                                        <span className='history-group-count'>{sessions.length}</span>
+                                    </div>
+                                    {sessions.map((session) => renderSession(session, false))}
+                                </div>
+                            ))}
+                            {rows.rest.map((row) =>
                             row.kind === 'session' ? (
                                 renderSession(row.session, false)
                             ) : (
@@ -250,10 +446,12 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                     })()}
                                 </div>
                             )
-                        )
+                        )}
+                        </>
                     )}
                 </div>
             </div>
+            {menu && renderMenu()}
         </div>
     );
 };

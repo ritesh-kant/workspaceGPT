@@ -175,6 +175,10 @@ interface ChatSessionPreview {
   updatedAt: number;
   /** Which mode the chat was held in. Absent on sessions saved before the Chat/Work switch — those read as 'work'. */
   assistantMode?: 'chat' | 'work';
+  pinned?: boolean;
+  group?: string;
+  /** Folder the chat was held in; what the history menu's "Open in" opens. */
+  workspaceFolder?: string;
 }
 
 /**
