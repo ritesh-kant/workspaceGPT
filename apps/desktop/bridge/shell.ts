@@ -416,5 +416,11 @@ interface SessionPreview {
   applySidebar();
   renderTitle();
   renderAccount();
-  initTerminalPanel({ getToken: () => token, app, panel: $('termPanel'), toggle: $('termBtn') });
+  const terminal = initTerminalPanel({ getToken: () => token, app, panel: $('termPanel'), toggle: $('termBtn') });
+  // The chat's ▶ Run button on shell code blocks (CodeBlock.tsx). Only the chat frame may ask.
+  window.addEventListener('message', (e) => {
+    if (e.source !== chatFrame.contentWindow) return;
+    const d = e.data;
+    if (d && d.type === 'wgpt:run-in-terminal' && typeof d.command === 'string' && d.command.length < 10_000) terminal.run(d.command);
+  });
 })();

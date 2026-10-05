@@ -38,7 +38,7 @@ const css = (name: string, fallback: string) => getComputedStyle(document.docume
 
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : `t${Date.now()}${Math.random().toString(36).slice(2)}`);
 
-export function initTerminalPanel(o: TerminalPanelOptions): void {
+export function initTerminalPanel(o: TerminalPanelOptions): { run(command: string): void } {
   const { app, panel, toggle } = o;
   const tabsEl = panel.querySelector<HTMLElement>('.term-tabs')!;
   const bodyEl = panel.querySelector<HTMLElement>('.term-body')!;
@@ -262,4 +262,21 @@ export function initTerminalPanel(o: TerminalPanelOptions): void {
   }
   counter = saved.length;
   if (read(OPEN_KEY) === '1') setOpen(true);
+
+  /** Types a command into the active shell (opening the panel/tab if needed) and presses Enter. */
+  return {
+    run(command) {
+      if (!panelOpen()) setOpen(true);
+      else if (tabs.size === 0) addTab();
+      const t = active ? tabs.get(active) : undefined;
+      if (!t || t.ended) {
+        addTab();
+      }
+      const id = active;
+      if (!id) return;
+      // A fresh shell may still be starting; the PTY buffers input until it reads.
+      send({ t: 'in', id, d: command.replace(/\r?\n/g, '\r') + '\r' });
+      tabs.get(id)?.term.focus();
+    },
+  };
 }
