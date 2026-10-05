@@ -968,7 +968,10 @@ const App: React.FC = () => {
               questions: message.questions,
             },
           });
-          store.bgPatch(sessionId, { statusText: message.kind === 'question' ? 'Waiting for your answer…' : 'Waiting for your review…' });
+          store.bgPatch(sessionId, {
+            isLoading: true,
+            statusText: message.kind === 'question' ? 'Waiting for your answer…' : 'Waiting for your review…',
+          });
           break;
         case MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED:
           store.bgCloseAllPendingWriteReviews(sessionId);
@@ -1167,8 +1170,8 @@ const App: React.FC = () => {
           break;
         }
         case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
-          // A proposed agent write — render the diff card. The agent run is
-          // still alive host-side, parked on this decision, so keep isLoading.
+          // The worker is parked on this decision, even if an earlier stream
+          // finished and cleared isLoading before the review arrived.
           addMessage({
             content: '',
             isUser: false,
@@ -1183,6 +1186,7 @@ const App: React.FC = () => {
               questions: message.questions,
             },
           });
+          setIsLoading(true);
           setStatusText(message.kind === 'question' ? 'Waiting for your answer…' : 'Waiting for your review…');
           break;
         case MESSAGE_TYPES.ERROR_CHAT: {
@@ -1496,6 +1500,17 @@ const App: React.FC = () => {
     }
     return null;
   }, [messages, isLoading, isStreaming]);
+  // A parked question can outlive the loading indicator (for example after a
+  // webview reload or session restore). Its undecided card is the authoritative
+  // prompt, so keep it in the composer until the user answers or skips it.
+  const pendingQuestion = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const review = messages[i].writeReview;
+      if (review?.kind === 'question' && !review.decision && !review.applying) return review;
+      if (messages[i].isUser) break;
+    }
+    return null;
+  }, [messages]);
   const inListIndicatorShown = isLoading || (isStreaming && !!statusText);
   // Only while the model has the turn (no tool label up): "last: Searched
   // Confluence Venmo (12s ago)". turnElapsedSec's tick keeps the age fresh.
@@ -1504,7 +1519,7 @@ const App: React.FC = () => {
     ? `last: ${lastStep} (${formatElapsed(Math.max(1, Math.round((Date.now() - lastStepAtRef.current) / 1000)))} ago)`
     : '';
   const pendingReviewIdRef = useRef<string | null>(null);
-  pendingReviewIdRef.current = pendingReview?.id ?? null;
+  pendingReviewIdRef.current = pendingQuestion ? null : pendingReview?.id ?? null;
 
   /** Distance from the bottom (px) still counted as "reading the tail". */
   const NEAR_BOTTOM_PX = 48;
@@ -1624,7 +1639,7 @@ const App: React.FC = () => {
   // stranded above whatever the live timeline is printing.
   const jumpedReviewIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!pendingReview) {
+    if (!pendingReview || pendingReview.kind === 'question') {
       jumpedReviewIdRef.current = null;
       return;
     }
@@ -2682,6 +2697,9 @@ const App: React.FC = () => {
               if (editingIndex !== null && index > editingIndex) {
                 return null;
               }
+              // The active question lives beside the input; its answered
+              // summary returns to this position in the transcript.
+              if (pendingQuestion && message.writeReview?.id === pendingQuestion.id) return null;
               return message.writeReview ? (
                 message.writeReview.kind === 'question' ? (
                   <AgentQuestionCard
@@ -2798,7 +2816,7 @@ const App: React.FC = () => {
             )}
           </div>
         )}
-        {pendingReview && reviewActionsOffscreen && (
+        {pendingReview && !pendingQuestion && reviewActionsOffscreen && (
           <div className='composer-affordances'>
             {/* The tool loop is blocked on this decision, so the buttons have
                 to be reachable without hunting for the card upstream. */}
@@ -2895,7 +2913,7 @@ const App: React.FC = () => {
           {hasWorkspaceFolder && <GitStatusBar />}
         </div>
         <div
-          className={`input-container${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}
+          className={`input-container${pendingQuestion ? ' input-container--question' : ''}${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}
           onDragOver={(e) => {
             if (e.dataTransfer?.types?.includes('Files')) {
               e.preventDefault();
@@ -2908,6 +2926,15 @@ const App: React.FC = () => {
           }}
           onDrop={handleComposerDrop}
         >
+          {pendingQuestion && (
+            <div className='composer-question' role='region' aria-label='Question from the agent'>
+              <AgentQuestionCard
+                key={pendingQuestion.id}
+                review={pendingQuestion}
+                onDecided={handleReviewDecided}
+              />
+            </div>
+          )}
           <div className='input-wrapper'>
             {mentionQuery !== null && (
               <MentionPicker

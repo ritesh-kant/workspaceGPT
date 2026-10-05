@@ -186,6 +186,7 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [closeSignal, setCloseSignal] = useState(0);
+  const [useWorktree, setUseWorktree] = useState(false);
 
   useEffect(() => {
     const vscode = VSCodeAPI();
@@ -226,8 +227,13 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
     send(path === undefined ? 'pick-folder' : 'open-folder', { type: MESSAGE_TYPES.OPEN_WORKSPACE_FOLDER, path });
   };
   const switchBranch = (branch: string, create: boolean) => {
-    if (!create && branch === status?.branch) return setCloseSignal((n) => n + 1);
-    send('switch-branch', { type: MESSAGE_TYPES.SWITCH_GIT_BRANCH, branch, create });
+    if (!create && !useWorktree && branch === status?.branch) return setCloseSignal((n) => n + 1);
+    send(useWorktree ? 'open-folder' : 'switch-branch', {
+      type: MESSAGE_TYPES.SWITCH_GIT_BRANCH,
+      branch,
+      create,
+      worktree: useWorktree,
+    });
   };
 
   const folderRows = (search: string): MenuRow[] => {
@@ -257,8 +263,10 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
     if (q && !all.includes(q)) {
       rows.push({
         key: '\0create',
-        label: `Create branch “${q}”`,
-        subtitle: 'From the current commit; your uncommitted changes come along',
+        label: useWorktree ? `Create branch “${q}” in a new worktree` : `Create branch “${q}”`,
+        subtitle: useWorktree
+          ? 'From the current commit, in its own folder; uncommitted changes stay here'
+          : 'From the current commit; your uncommitted changes come along',
         onPick: () => switchBranch(q, true),
       });
     }
@@ -289,7 +297,7 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
         {status?.isRepo && (
           <ChipMenu
             icon={<BranchIcon />}
-            label={pending === 'switch-branch' ? 'Switching…' : status.branch || 'detached'}
+            label={pending === 'switch-branch' ? 'Switching…' : pending === 'open-folder' ? 'Opening…' : status.branch || 'detached'}
             title={busy ? busyTitle : `Branch: ${status.branch || 'detached HEAD'}`}
             disabled={disabled}
             searchPlaceholder='Search or create a branch'
@@ -302,6 +310,20 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
             }}
             closeSignal={closeSignal}
           />
+        )}
+        {status?.isRepo && (
+          <label
+            className='workspace-worktree-toggle'
+            title='Pick or create a branch in its own git worktree, so this folder is left as it is'
+          >
+            <input
+              type='checkbox'
+              checked={useWorktree}
+              disabled={disabled}
+              onChange={(e) => setUseWorktree(e.target.checked)}
+            />
+            worktree
+          </label>
         )}
       </div>
       {error && (
