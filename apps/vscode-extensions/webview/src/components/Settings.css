@@ -2344,3 +2344,28 @@ input.dep-preset-dropdown {
   line-height: 1.5;
   color: var(--vscode-descriptionForeground);
 }
+
+/* Settings → Import (desktop) */
+.import-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+}
+
+.import-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.import-name {
+  font-weight: 600;
+}
+
+.import-detail {
+  font-size: 0.8rem;
+  color: var(--vscode-descriptionForeground);
+}

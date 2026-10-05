@@ -106,6 +106,15 @@ export interface SessionMeta {
   group?: string;
 }
 
+/** One finished import run, kept so Settings can show what was brought in and when. */
+export interface ImportLogEntry {
+  source: 'claude-code' | 'cursor';
+  at: number;
+  imported: number;
+  failed: number;
+  error?: string;
+}
+
 export class HistoryService {
   private historyDir: vscode.Uri;
 
@@ -216,6 +225,61 @@ export class HistoryService {
 
     const writeData = new TextEncoder().encode(JSON.stringify(data));
     await vscode.workspace.fs.writeFile(filePath, writeData);
+  }
+
+  private get importLogFile(): vscode.Uri {
+    return vscode.Uri.file(path.join(this.context.globalStorageUri.fsPath, 'import-log.json'));
+  }
+
+  /** Past imports, newest first. */
+  public async readImportLog(): Promise<ImportLogEntry[]> {
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(this.importLogFile)));
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  public async appendImportLog(entry: ImportLogEntry): Promise<void> {
+    const log = [entry, ...(await this.readImportLog())].slice(0, 50);
+    await ensureDirectoryExists(this.context.globalStorageUri.fsPath);
+    await vscode.workspace.fs.writeFile(this.importLogFile, new TextEncoder().encode(JSON.stringify(log)));
+  }
+
+  /** Whether a saved chat with this id exists. */
+  public async hasSession(sessionId: string): Promise<boolean> {
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.file(path.join(this.historyDir.fsPath, `${sessionId}.json`)));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Write a chat that was made elsewhere, keeping its own time and title.
+   * saveHistory cannot: it stamps "now" and derives the title. An id already
+   * in history is left alone so importing twice never duplicates or overwrites.
+   * Returns whether it was written.
+   */
+  public async importSession(
+    sessionId: string,
+    chat: { title?: string; updatedAt: number; workspaceFolder?: string; messages: ChatMessage[] }
+  ): Promise<boolean> {
+    if (await this.hasSession(sessionId)) return false;
+    await this.initializeDirectory();
+    const data = {
+      id: sessionId,
+      title: chat.title || deriveSessionTitle(chat.messages.find((m) => m.isUser)?.content ?? ''),
+      updatedAt: chat.updatedAt,
+      assistantMode: chat.workspaceFolder ? 'work' : 'chat',
+      ...(chat.workspaceFolder && { workspaceFolder: chat.workspaceFolder }),
+      messages: chat.messages,
+    };
+    const filePath = vscode.Uri.file(path.join(this.historyDir.fsPath, `${sessionId}.json`));
+    await vscode.workspace.fs.writeFile(filePath, new TextEncoder().encode(JSON.stringify(data)));
+    return true;
   }
 
   public async getHistoryList(): Promise<ChatSessionPreview[]> {

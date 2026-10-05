@@ -12,6 +12,7 @@ import AdoSettings from './settings/AdoSettings';
 import JiraSettings from './settings/JiraSettings';
 import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
+import ImportSettings from './settings/ImportSettings';
 import McpSettings from './settings/McpSettings';
 import DefaultFolderSettings from './settings/DefaultFolderSettings';
 import SectionShell, { SettingsLayoutContext } from './settings/SectionShell';
@@ -168,6 +169,16 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         render: item.render,
       })
     ),
+    ...(isDesktopHost()
+      ? [
+          {
+            id: 'import',
+            label: 'Import',
+            description: 'Bring in chats from other coding tools on this machine. They are read and kept here only.',
+            render: () => <ImportSettings />,
+          } as SettingsPage,
+        ]
+      : []),
     {
       id: 'deployment',
       label: 'Deployment pipeline',
