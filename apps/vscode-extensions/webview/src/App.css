@@ -1864,6 +1864,11 @@ button:disabled {
   border-radius: 3px !important;
 }
 
+.code-block-run {
+  margin-left: auto;
+  margin-right: 0.4em;
+}
+
 .code-block-copy:hover {
   color: var(--vscode-foreground) !important;
   border-color: var(--vscode-focusBorder) !important;

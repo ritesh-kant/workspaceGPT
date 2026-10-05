@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
 import { copyToClipboard } from '../utils/clipboard';
+import { isDesktopHost } from '../vscode';
+
+const SHELL_LANGS = new Set(['bash', 'sh', 'shell', 'zsh', 'console', 'terminal']);
+
+// The desktop shell page owns the terminal; it listens for this on window.parent.
+export const RUN_IN_TERMINAL = 'wgpt:run-in-terminal';
 
 type CodeBlockProps = React.ComponentPropsWithoutRef<'pre'>;
 
@@ -40,6 +46,12 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ children, ...rest }) => {
     }
   };
 
+  const handleRun = () => {
+    const command = extractText(children).trim().replace(/^\$ /, '');
+    if (command) window.parent.postMessage({ type: RUN_IN_TERMINAL, command }, '*');
+  };
+  const canRun = isDesktopHost() && !!language && SHELL_LANGS.has(language.toLowerCase());
+
   // A one-line block wraps instead of scrolling sideways: nothing in it can
   // lose alignment, and a sentence fenced as `text` used to run off the card
   // with its tail hidden. Multi-line blocks (code, diagrams) keep exact layout.
@@ -49,6 +61,11 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ children, ...rest }) => {
     <div className={`code-block${singleLine ? ' code-block--wrap' : ''}`}>
       <div className='code-block-header'>
         <span className='code-block-lang'>{language || 'text'}</span>
+        {canRun && (
+          <button type='button' className='code-block-copy code-block-run' title='Run in terminal' onClick={handleRun}>
+            ▶ Run
+          </button>
+        )}
         <button type='button' className='code-block-copy' onClick={handleCopy}>
           {copied ? '✓ Copied' : 'Copy'}
         </button>
