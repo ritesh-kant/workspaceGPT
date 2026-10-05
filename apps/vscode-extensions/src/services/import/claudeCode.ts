@@ -13,6 +13,15 @@ import type { ImportedChat } from './types';
  */
 const NOT_TYPED = /^<([a-z]+(?:-[a-z]+)+)[\s>][\s\S]*<\/\1>\s*$|^<(command-|local-command|bash-|system-reminder)/;
 
+/**
+ * A session run in one of Claude Code's worktrees records the worktree as its
+ * cwd (<repo>/.claude/worktrees/<name>). The chat belongs to the repo, and the
+ * worktree is usually gone by now.
+ */
+export function repoOfCwd(cwd: string): string {
+  return cwd.replace(/[\\/]\.claude[\\/]worktrees[\\/].*$/, '');
+}
+
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -73,7 +82,7 @@ export function parseClaudeCodeSession(jsonl: string, sourceId: string): Importe
   flush();
 
   if (!messages.some((m) => m.isUser)) return null;
-  return { sourceId, title, updatedAt: updatedAt || Date.now(), workspaceFolder: cwd, messages };
+  return { sourceId, title, updatedAt: updatedAt || Date.now(), workspaceFolder: cwd && repoOfCwd(cwd), messages };
 }
 
 export function claudeCodeProjectsDir(): string {
