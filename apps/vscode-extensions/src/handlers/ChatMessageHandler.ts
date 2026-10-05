@@ -15,7 +15,7 @@ import { searchMentionTargets } from '../services/codebase/mentionSearch';
 import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
 import { isPermission } from '../services/agent/permissionPolicy';
-import { getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
+import { ensureWorktree, getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
 
 /** Quiet period after the last file event before the bar's `git status` re-runs. */
 const GIT_STATUS_DEBOUNCE_MS = 500;
@@ -175,10 +175,15 @@ export class ChatMessageHandler {
         await this.handleListGitBranches();
         return true;
       case MESSAGE_TYPES.SWITCH_GIT_BRANCH:
-        this.analyticsService.trackEvent('git_branch_switch', { create: !!data.create });
-        await this.runWorkspaceAction('switch-branch', async () => {
+        this.analyticsService.trackEvent('git_branch_switch', { create: !!data.create, worktree: !!data.worktree });
+        await this.runWorkspaceAction(data.worktree ? 'open-folder' : 'switch-branch', async () => {
           const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
           if (!cwd) throw new Error('No folder is open.');
+          if (data.worktree) {
+            // Opening the worktree ends this host, like any folder open.
+            await openFolder(await ensureWorktree(cwd, String(data.branch ?? ''), !!data.create));
+            return;
+          }
           await switchBranch(cwd, String(data.branch ?? ''), !!data.create);
           await this.handleGetGitStatus();
         });

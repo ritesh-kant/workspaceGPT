@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { git } from './gitStatusService';
@@ -121,4 +122,34 @@ export async function switchBranch(cwd: string, branch: string, create: boolean)
     );
   }
   await git(cwd, ['switch', name]);
+}
+
+/**
+ * The folder of a linked worktree for `branch`, created if there is none yet
+ * (new branch from HEAD when `create`). Lives under ~/.workspacegpt/worktrees
+ * so the repo itself stays clean. Uncommitted changes stay where they are:
+ * a worktree starts from the branch's commit.
+ */
+export async function ensureWorktree(cwd: string, branch: string, create: boolean): Promise<string> {
+  const name = branch.trim();
+  if (!name) throw new Error('Branch name is empty.');
+  await git(cwd, ['check-ref-format', '--branch', name]).catch(() => {
+    throw new Error(`"${name}" is not a valid branch name.`);
+  });
+  if (!create) {
+    // Already checked out in a worktree (not the one we are in): open that one.
+    const listing = await git(cwd, ['worktree', 'list', '--porcelain']);
+    for (const block of listing.split('\n\n')) {
+      const dir = /^worktree (.+)$/m.exec(block)?.[1];
+      const ref = /^branch refs\/heads\/(.+)$/m.exec(block)?.[1];
+      if (dir && ref === name && path.resolve(dir) !== path.resolve(cwd) && isDirectory(dir)) return dir;
+    }
+  }
+  const commonDir = path.resolve(cwd, await git(cwd, ['rev-parse', '--git-common-dir']));
+  const repo = path.basename(path.dirname(commonDir));
+  const dir = path.join(os.homedir(), '.workspacegpt', 'worktrees', repo, name.replace(/[\\/:]+/g, '-'));
+  if (isDirectory(dir)) throw new Error(`${dir} already exists. Remove it or pick another branch name.`);
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  await git(cwd, create ? ['worktree', 'add', '-b', name, dir] : ['worktree', 'add', dir, name]);
+  return dir;
 }
