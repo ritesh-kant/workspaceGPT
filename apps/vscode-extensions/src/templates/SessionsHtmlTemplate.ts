@@ -262,6 +262,19 @@ export class SessionsHtmlTemplate {
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
     }
+    .show-more {
+      display: block;
+      width: 100%;
+      padding: 4px 8px 6px 32px;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      font: inherit;
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+    }
+    .show-more:hover { color: var(--vscode-foreground); }
     .row-input {
       flex: 1;
       min-width: 0;
@@ -360,6 +373,10 @@ export class SessionsHtmlTemplate {
     // Folder groups the user opened or closed by hand; the rest default to
     // open for the folder that is open now (and the active session's).
     let wsOpen = (vscode.getState() || {}).wsOpen || {};
+    // Each group lists PAGE_SIZE chats and grows by that much per click on
+    // "Show more"; a search lists every match.
+    const PAGE_SIZE = 20;
+    let shown = {};
 
     const listEl = document.getElementById('list');
     const searchWrap = document.getElementById('searchWrap');
@@ -502,9 +519,24 @@ export class SessionsHtmlTemplate {
         const items = groups.get(label);
         if (!items || !items.length) continue;
         html += '<div class="group-header">' + label + '</div>';
-        for (const session of items) html += rowHtml(session, now);
+        html += rowsHtml('bucket:' + label, items, now);
       }
       listEl.innerHTML = top + html;
+    }
+
+    /** The first rows of a group, newest first as given, plus a button for the rest. */
+    function rowsHtml(key, items, now) {
+      if (query.trim()) return items.map((s) => rowHtml(s, now)).join('');
+      // The open chat stays visible even when it is past the page.
+      const activeAt = items.findIndex((s) => s.id === activeId);
+      const limit = Math.max(shown[key] || PAGE_SIZE, activeAt + 1);
+      let html = items.slice(0, limit).map((s) => rowHtml(s, now)).join('');
+      const left = items.length - limit;
+      if (left > 0) {
+        html += '<button class="show-more" type="button" data-more="' + escapeHtml(key) + '" data-shown="' + limit + '">Show ' +
+          Math.min(PAGE_SIZE, left) + ' more</button>';
+      }
+      return html;
     }
 
     function customGroupHtml(key, label, items, now) {
@@ -512,7 +544,7 @@ export class SessionsHtmlTemplate {
       return '<div class="ws-group' + (open ? ' open' : '') + '"><div class="ws-header">' +
         '<button class="ws-toggle" type="button" data-ws="' + escapeHtml(key) + '" aria-expanded="' + open + '">' +
         '<span class="ws-name">' + escapeHtml(label) + '</span>' + CHEVRON + '</button></div>' +
-        '<div class="ws-rows">' + items.map((s) => rowHtml(s, now)).join('') + '</div></div>';
+        '<div class="ws-rows">' + rowsHtml(key, items, now) + '</div></div>';
     }
 
     function rowHtml(session, now) {
@@ -592,7 +624,7 @@ export class SessionsHtmlTemplate {
             ? '<button class="ws-new" type="button" title="' + escapeHtml(newTip) + '" aria-label="' + escapeHtml(newTip) + '">' + PLUS + '</button>'
             : '') +
           '</div><div class="ws-rows">' +
-          (inGroup.length ? inGroup.map((s) => rowHtml(s, now)).join('') : '<div class="ws-empty">No sessions yet</div>') +
+          (inGroup.length ? rowsHtml('ws:' + key, inGroup, now) : '<div class="ws-empty">No sessions yet</div>') +
           '</div></div>';
       }
       return html;
@@ -745,6 +777,14 @@ export class SessionsHtmlTemplate {
           wsOpen = { ...wsOpen, [toggle.getAttribute('data-ws') || '']: open };
           vscode.setState({ ...(vscode.getState() || {}), wsOpen });
         }
+        return;
+      }
+      const more = event.target.closest('.show-more');
+      if (more) {
+        const key = more.getAttribute('data-more') || '';
+        // Grow from what is on screen, which is more than shown[key] when the open chat was past the page.
+        shown = { ...shown, [key]: (Number(more.getAttribute('data-shown')) || PAGE_SIZE) + PAGE_SIZE };
+        render();
         return;
       }
       if (event.target.closest('.ws-new')) {
