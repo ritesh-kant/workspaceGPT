@@ -299,3 +299,55 @@ button { font: inherit; color: inherit; }
 .overlay-titlebar .app[data-sidebar="closed"] .bar,
 .overlay-titlebar .app.settings-open .bar,
 .overlay-titlebar .no-sessions .bar { padding-left: 84px; }
+
+/* ── Terminal panel (bridge/terminal.ts) ─────────────────────────────── */
+
+.term {
+  width: min(520px, 45vw);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 8px 8px 8px 0;
+  border: 1px solid var(--wgpt-d-border, rgba(128, 128, 128, 0.3));
+  border-radius: 10px;
+  background: var(--wgpt-d-bg);
+  overflow: hidden;
+}
+.term[hidden] { display: none; }
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 6px 0 8px;
+  flex-shrink: 0;
+}
+.term-tabs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.term-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--wgpt-d-muted);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.term-tab.active { color: var(--wgpt-d-fg); background: var(--wgpt-d-hover); }
+.term-tab.ended { opacity: 0.6; }
+.term-tab-x { opacity: 0; }
+.term-tab:hover .term-tab-x, .term-tab.active .term-tab-x { opacity: 0.7; }
+.term-tab-x:hover { opacity: 1; }
+.term-spacer { flex: 1; }
+.term-body { flex: 1; min-height: 0; position: relative; padding: 0 0 6px 10px; }
+.term-view { position: absolute; inset: 0 0 6px 10px; }
+.term-view[hidden] { display: none; }
+.term-empty { padding: 16px; color: var(--wgpt-d-muted); }
+#termBtn.active { background: var(--wgpt-d-hover); color: var(--wgpt-d-fg); }
+.app.term-max .main, .app.term-max .side { display: none; }
+.app.term-max .term { width: auto; flex: 1; margin: 8px; }

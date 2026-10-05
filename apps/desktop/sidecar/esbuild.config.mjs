@@ -61,7 +61,7 @@ const sidecar = {
   },
   // Same externals as the extension's own build, plus the sidecar's native keyring and
   // the language server it spawns (resolved from node_modules at run time).
-  external: ['@xenova/transformers', 'onnxruntime-node', 'sharp', '@vscode/ripgrep', '@napi-rs/keyring', 'bufferutil', 'utf-8-validate', 'typescript-language-server', 'typescript'],
+  external: ['@xenova/transformers', 'onnxruntime-node', 'sharp', '@vscode/ripgrep', '@napi-rs/keyring', 'node-pty', 'bufferutil', 'utf-8-validate', 'typescript-language-server', 'typescript'],
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
     'process.env.WGPT_DESKTOP_VERSION': JSON.stringify(version),
@@ -96,6 +96,8 @@ const shell = { ...bridge, entryPoints: [path.join(root, 'bridge/shell.ts')], ou
 
 /** Served as-is from dist/bridge. */
 const STATIC_BRIDGE_FILES = ['theme.css', 'skin.css', 'shell.css', 'shell.html'];
+/** xterm's stylesheet, from its package (the shell page's CSP allows only same-origin styles). */
+const XTERM_CSS = path.join(root, 'node_modules/@xterm/xterm/css/xterm.css');
 
 /** dist/sidecar/{workers,models,node_modules,mcp-server.js} → the extension's build output. */
 function linkExtensionDist() {
@@ -123,6 +125,7 @@ async function run() {
   fs.mkdirSync(outSidecar, { recursive: true });
   fs.mkdirSync(outBridge, { recursive: true });
   for (const name of STATIC_BRIDGE_FILES) fs.copyFileSync(path.join(root, 'bridge', name), path.join(outBridge, name));
+  fs.copyFileSync(XTERM_CSS, path.join(outBridge, 'xterm.css'));
   linkExtensionDist();
   if (watch) {
     const contexts = await Promise.all([esbuild.context(sidecar), esbuild.context(bridge), esbuild.context(shell), esbuild.context(relay)]);

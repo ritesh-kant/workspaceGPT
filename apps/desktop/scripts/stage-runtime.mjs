@@ -116,6 +116,18 @@ const desktopPackages = [
 ];
 for (const [name, dir] of desktopPackages) copy(dir, path.join(modules, name));
 
+// node-pty (the integrated terminal) ships prebuilds for every platform; keep this target's.
+// Prebuilds exist for darwin and win32 only — a linux target has none and would need a source build.
+copy(pkgDir(root, 'node-pty'), path.join(modules, 'node-pty'));
+const ptyPrebuilds = path.join(modules, 'node-pty/prebuilds');
+for (const p of fs.existsSync(ptyPrebuilds) ? fs.readdirSync(ptyPrebuilds) : []) {
+  if (p !== target) fs.rmSync(path.join(ptyPrebuilds, p), { recursive: true, force: true });
+}
+if (platform !== 'win32') for (const p of fs.existsSync(ptyPrebuilds) ? fs.readdirSync(ptyPrebuilds) : []) {
+  const helper = path.join(ptyPrebuilds, p, 'spawn-helper');
+  if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755);
+}
+
 copy(path.join(root, 'dist/bridge'), path.join(out, 'bridge'));
 
 const extOut = path.join(out, 'extension');
