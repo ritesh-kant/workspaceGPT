@@ -148,6 +148,14 @@ export const MESSAGE_TYPES = {
   GET_CHAT_HISTORY_LIST_RESPONSE: 'get-chat-history-list-response',
   DELETE_CHAT_HISTORY: 'delete-chat-history',
   UPDATE_CHAT_SESSION_META: 'update-chat-session-meta',
+  // Desktop Settings → Import. host: IMPORT_DETECT, answered by IMPORT_DETECT_RESULT
+  // {sources: ImportDetection[]}; IMPORT_RUN {source}, answered by IMPORT_PROGRESS
+  // {source, done, total} while it works and IMPORT_RESULT {result} at the end.
+  IMPORT_DETECT: 'import-detect',
+  IMPORT_DETECT_RESULT: 'import-detect-result',
+  IMPORT_RUN: 'import-run',
+  IMPORT_PROGRESS: 'import-progress',
+  IMPORT_RESULT: 'import-result',
   OPEN_SESSION_IN: 'open-session-in',
   GET_CHAT_SESSION: 'get-chat-session',
   GET_CHAT_SESSION_RESPONSE: 'get-chat-session-response',

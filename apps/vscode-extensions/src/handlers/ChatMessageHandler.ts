@@ -16,6 +16,8 @@ import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
 import { isPermission } from '../services/agent/permissionPolicy';
 import { ensureWorktree, getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
+import { ImportService } from '../services/import/importService';
+import type { ImportSource } from '../services/import/types';
 
 /** Quiet period after the last file event before the bar's `git status` re-runs. */
 const GIT_STATUS_DEBOUNCE_MS = 500;
@@ -219,6 +221,12 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.OPEN_SESSION_IN:
         await this.handleOpenSessionIn(data);
+        return true;
+      case MESSAGE_TYPES.IMPORT_DETECT:
+        await this.handleImportDetect();
+        return true;
+      case MESSAGE_TYPES.IMPORT_RUN:
+        await this.handleImportRun(data);
         return true;
     }
     return false;
@@ -633,6 +641,34 @@ export class ChatMessageHandler {
     } catch (error) {
       console.error('Error getting chat session:', error);
     }
+  }
+
+  private async handleImportDetect(): Promise<void> {
+    const sources = await new ImportService(this.historyService).detect();
+    const log = await this.historyService.readImportLog();
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.IMPORT_DETECT_RESULT, sources, log });
+  }
+
+  private async handleImportRun(data: any): Promise<void> {
+    if (data?.source !== 'claude-code' && data?.source !== 'cursor') return;
+    const source = data.source as ImportSource;
+    const result = await new ImportService(this.historyService).run(source, (done, total) =>
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.IMPORT_PROGRESS, source, done, total })
+    );
+    // Counts only: what was in the chats never reaches analytics.
+    this.analyticsService.trackEvent('chats_imported', { source, imported: result.imported, failed: result.failed });
+    // A run that found nothing new is not worth a history line.
+    if (result.imported || result.failed || result.error) {
+      await this.historyService.appendImportLog({
+        source,
+        at: Date.now(),
+        imported: result.imported,
+        failed: result.failed,
+        ...(result.error && { error: result.error }),
+      });
+    }
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.IMPORT_RESULT, result });
+    await this.handleGetChatHistoryList();
   }
 
   private async handleUpdateChatSessionMeta(data: any): Promise<void> {
