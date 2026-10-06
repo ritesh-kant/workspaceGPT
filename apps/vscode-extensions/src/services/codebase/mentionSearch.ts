@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { MENTION_LIMITS, MentionTarget } from '../../../constants';
-import { NamedRoot } from './codebaseTools';
+import { findFilesInRoots, NamedRoot } from './codebaseTools';
 
 /**
  * Candidate pool pulled from the workspace per keystroke. Generous enough that
@@ -75,7 +75,7 @@ export async function searchMentionTargets(
 
   let uris: vscode.Uri[];
   try {
-    uris = await vscode.workspace.findFiles(pattern, undefined, MAX_CANDIDATES);
+    uris = await findFilesInRoots(roots, pattern, undefined, MAX_CANDIDATES);
   } catch {
     return [];
   }
@@ -84,7 +84,7 @@ export async function searchMentionTargets(
   // directory whose children don't repeat it. Retry against everything under it.
   if (!uris.length && cleaned.includes('/')) {
     try {
-      uris = await vscode.workspace.findFiles(`**/${cleaned}*/**/*`, undefined, MAX_CANDIDATES);
+      uris = await findFilesInRoots(roots, `**/${cleaned}*/**/*`, undefined, MAX_CANDIDATES);
     } catch {
       return [];
     }

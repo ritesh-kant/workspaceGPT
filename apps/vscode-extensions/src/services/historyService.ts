@@ -315,6 +315,7 @@ export class HistoryService {
               ...(meta[data.id]?.pinned && { pinned: true }),
               ...(meta[data.id]?.group && { group: meta[data.id].group }),
               assistantMode: data.assistantMode === 'chat' ? 'chat' : 'work',
+        ...(typeof data.workspaceFolder === 'string' && data.workspaceFolder && { workspaceFolder: data.workspaceFolder }),
               ...(typeof data.workspaceFolder === 'string' && data.workspaceFolder && { workspaceFolder: data.workspaceFolder }),
               ...(diffs ?? {}),
             });
@@ -334,7 +335,7 @@ export class HistoryService {
 
   public async getChatSession(
     sessionId: string
-  ): Promise<{ messages: ChatMessage[]; assistantMode: 'chat' | 'work' } | null> {
+  ): Promise<{ messages: ChatMessage[]; assistantMode: 'chat' | 'work'; workspaceFolder?: string } | null> {
     await this.initializeDirectory();
     const filePath = vscode.Uri.file(path.join(this.historyDir.fsPath, `${sessionId}.json`));
     
@@ -345,6 +346,7 @@ export class HistoryService {
       return {
         messages: data.messages || [],
         assistantMode: data.assistantMode === 'chat' ? 'chat' : 'work',
+        ...(typeof data.workspaceFolder === 'string' && data.workspaceFolder && { workspaceFolder: data.workspaceFolder }),
       };
     } catch (e) {
       // It's possible the file doesn't exist yet, which is fine

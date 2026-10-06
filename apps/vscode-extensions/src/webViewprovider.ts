@@ -344,6 +344,8 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
         this._editorSessionId = data.sessionId ?? null;
       }
       this.sessionsView?.setActiveSession(data.sessionId ?? null);
+      // The git bar, @-picker and file links follow the chat on screen's folder.
+      await this.messageHandler?.handleMessage(data);
       return;
     }
     if (data?.type === MESSAGE_TYPES.ASSISTANT_MODE_CHANGED) {
