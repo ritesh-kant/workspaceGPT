@@ -879,9 +879,13 @@ input:focus {
 }
 
 /* Full access: the one permission level that runs without asking, so it is the
-   one that is coloured. Same orange as the warning in the permission menu. */
+   one that is coloured, red like the row in the permission menu. */
 .chat-mode-selector.chat-mode-selector--full .searchable-dropdown-trigger {
-  color: var(--vscode-editorWarning-foreground, #d97706);
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.chat-mode-selector .searchable-dropdown-item.danger .item-title {
+  color: var(--vscode-errorForeground, #f14c4c);
 }
 
 /* The inline confirmation shown above the composer's controls before Full access turns on. */
@@ -894,7 +898,7 @@ input:focus {
   padding: 6px 8px;
   font-size: 0.75rem;
   line-height: 1.35;
-  border: 1px solid var(--vscode-editorWarning-foreground, #d97706);
+  border: 1px solid var(--vscode-errorForeground, #f14c4c);
   border-radius: 6px;
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   color: var(--vscode-foreground);

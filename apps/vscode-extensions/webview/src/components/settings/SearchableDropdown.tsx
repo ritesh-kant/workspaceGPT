@@ -11,6 +11,8 @@ export interface DropdownOption {
    * row reads as broken.
    */
   disabled?: boolean;
+  /** 'danger' draws the row in the error colour — a choice the user should not make by accident. */
+  tone?: 'danger';
   /** 0–100. When set, a thin bar is drawn under the subtitle. */
   progress?: number;
   /**
@@ -98,7 +100,11 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   // A disabled row with nothing to do on click is skipped by the keyboard.
   const inert = (o: DropdownOption) => !!o.disabled && !o.disabledAction;
   // Opening onto an inert row would make the first Enter do nothing.
-  const firstEnabledIndex = Math.max(0, navOptions.findIndex((o) => !inert(o)));
+  // With no search text, open on the current value so the keyboard highlight
+  // and the selected row are the same row, not two competing ones.
+  const selectedNavIndex = searchQuery ? -1 : navOptions.findIndex((o) => o.value === value && !inert(o));
+  const firstEnabledIndex =
+    selectedNavIndex >= 0 ? selectedNavIndex : Math.max(0, navOptions.findIndex((o) => !inert(o)));
 
   useEffect(() => {
     setHighlightedIndex(firstEnabledIndex);
@@ -234,7 +240,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
                   onClick={() => chooseOption(o)}
                   className={`searchable-dropdown-item${o.value === value ? ' selected' : ''}${
                     highlightedIndex === navIndex ? ' highlighted' : ''
-                  }${o.disabled ? ' disabled' : ''}${o.disabled && o.disabledAction ? ' actionable' : ''}${
+                  }${o.tone === 'danger' ? ' danger' : ''}${o.disabled ? ' disabled' : ''}${o.disabled && o.disabledAction ? ' actionable' : ''}${
                     typeof o.progress === 'number' ? ' has-progress' : ''
                   }`}
                   role="option"

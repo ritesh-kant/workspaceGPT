@@ -3084,6 +3084,7 @@ const App: React.FC = () => {
                           value: m,
                           label: CHAT_MODE_META[m].label,
                           subtitle: CHAT_MODE_META[m].subtitle,
+                          ...(m === 'full' ? { tone: 'danger' as const } : {}),
                         }))}
                       />
                     </div>
