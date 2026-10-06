@@ -28,6 +28,8 @@ interface TitleAction {
 interface SessionPreview {
   id: string;
   title?: string;
+  /** The folder the session works in, recorded on its transcript. */
+  workspaceFolder?: string;
 }
 
 (() => {
@@ -322,11 +324,13 @@ interface SessionPreview {
     document.title = active || panel ? `${text} — WorkspaceGPT` : 'WorkspaceGPT';
     // Which folder this session works in, beside its title. A new session's
     // composer already shows it (WorkspaceControls.tsx), and a panel is not a session.
+    // A session keeps its own folder whichever one the window has open.
+    const shown = active?.workspaceFolder || folder;
     const chip = $('folderChip');
-    chip.hidden = !active || !!panel || !folder;
-    $('folderChipName').textContent = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || folder;
+    chip.hidden = !active || !!panel || !shown;
+    $('folderChipName').textContent = shown.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || shown;
     // The full path, drawn under the chip on hover (shell.css) rather than a slow native tooltip.
-    $('folderChipTip').textContent = folder;
+    $('folderChipTip').textContent = shown;
   }
 
   // Keep the path tooltip inside the window: near the right edge it would run off.

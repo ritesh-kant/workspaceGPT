@@ -9,7 +9,7 @@ import { HistoryService } from '../services/historyService';
 import { openFolderIn } from '../services/openFolderIn';
 import { AnalyticsService } from '../services/analyticsService';
 import { fetchAvailableModels } from 'src/utils/fetchAvailableModels';
-import { getNamedRoots, resolveAgainstRoots } from '../services/codebase/codebaseTools';
+import { getNamedRoots, NamedRoot, resolveAgainstRoots } from '../services/codebase/codebaseTools';
 import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
 import { getGitStatus } from '../services/agent/gitStatusService';
@@ -37,6 +37,10 @@ export class ChatMessageHandler {
   private gitStatusPaths: string[] = [];
   private gitStatusWatch?: vscode.Disposable;
   private gitStatusTimer?: ReturnType<typeof setTimeout>;
+  /** The chat on screen (SESSION_CHANGED); null for a new chat that has not sent yet. */
+  private viewedSessionId: string | null = null;
+  private gitStatusWatchRoot?: string;
+  private sessionChangeSeq = 0;
 
   constructor(
     private readonly webviewView: vscode.WebviewView,
@@ -179,7 +183,7 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.SWITCH_GIT_BRANCH:
         this.analyticsService.trackEvent('git_branch_switch', { create: !!data.create, worktree: !!data.worktree });
         await this.runWorkspaceAction(data.worktree ? 'open-folder' : 'switch-branch', async () => {
-          const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          const cwd = this.viewedRoots()[0]?.uri.fsPath;
           if (!cwd) throw new Error('No folder is open.');
           if (data.worktree) {
             // Opening the worktree ends this host, like any folder open.
@@ -212,6 +216,9 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.GET_CHAT_SESSION:
         await this.handleGetChatSession(data);
+        return true;
+      case MESSAGE_TYPES.SESSION_CHANGED:
+        await this.handleSessionChanged(data.sessionId ?? null);
         return true;
       case MESSAGE_TYPES.DELETE_CHAT_HISTORY:
         await this.handleDeleteChatHistory(data);
@@ -269,7 +276,7 @@ export class ChatMessageHandler {
   private async handleSearchMentionTargets(data: any): Promise<void> {
     let targets: Awaited<ReturnType<typeof searchMentionTargets>> = [];
     try {
-      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const roots = this.viewedRoots();
       targets = await searchMentionTargets(String(data.query ?? ''), roots);
     } catch (error) {
       console.warn('Mention search failed:', error);
@@ -285,7 +292,7 @@ export class ChatMessageHandler {
   private async handleOpenFileInEditor(relOrPrefixed: string, line?: number, endLine?: number): Promise<void> {
     if (!relOrPrefixed) return;
     try {
-      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const roots = this.viewedRoots();
       const resolved = resolveAgainstRoots(roots, relOrPrefixed);
       let absPath = resolved ? path.resolve(resolved.root.uri.fsPath, resolved.relPath) : undefined;
       if (absPath && !(await fileExists(absPath))) absPath = undefined;
@@ -339,7 +346,7 @@ export class ChatMessageHandler {
   private async handleOpenDiffInEditor(relOrPrefixed: string): Promise<void> {
     if (!relOrPrefixed) return;
     try {
-      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const roots = this.viewedRoots();
       const resolved = resolveAgainstRoots(roots, relOrPrefixed);
       if (!resolved) {
         vscode.window.showWarningMessage(`Could not resolve "${relOrPrefixed}" in the current workspace.`);
@@ -352,6 +359,34 @@ export class ChatMessageHandler {
     }
   }
 
+  private service(): ChatService {
+    if (!this.chatService) {
+      this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
+    }
+    return this.chatService;
+  }
+
+  /**
+   * The roots of the chat on screen: its own folder, which need not be the
+   * one open in the window. A new chat that has not sent yet works in the open one.
+   */
+  private viewedRoots(): NamedRoot[] {
+    if (!this.viewedSessionId) return getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+    return this.service().sessionRoots(this.viewedSessionId);
+  }
+
+  /** The chat on screen changed: learn its recorded folder once, then refresh the git bar for it. */
+  private async handleSessionChanged(sessionId: string | null): Promise<void> {
+    // Read the recorded folder before the session becomes the viewed one, so
+    // nothing in between resolves it to the open folder instead.
+    const change = ++this.sessionChangeSeq;
+    const stored = sessionId ? (await this.historyService.getChatSession(sessionId))?.workspaceFolder : undefined;
+    if (change !== this.sessionChangeSeq) return;
+    if (sessionId) this.service().sessionRoots(sessionId, stored);
+    this.viewedSessionId = sessionId;
+    await this.handleGetGitStatus();
+  }
+
   /**
    * Refresh for the composer's git status bar: branch, working-tree diff
    * stats, and which of the on-screen chat's recorded `paths` are still
@@ -361,7 +396,7 @@ export class ChatMessageHandler {
     if (Array.isArray(paths)) this.gitStatusPaths = paths.filter((p): p is string => typeof p === 'string');
     this.watchGitStatus();
     try {
-      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const roots = this.viewedRoots();
       const status = await getGitStatus(roots, this.gitStatusPaths);
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.GIT_STATUS, ...status });
     } catch (error) {
@@ -372,7 +407,7 @@ export class ChatMessageHandler {
   private async handleListGitBranches(): Promise<void> {
     const reply = (payload: Record<string, unknown>) =>
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.GIT_BRANCHES, ...payload });
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const cwd = this.viewedRoots()[0]?.uri.fsPath;
     if (!cwd) {
       reply({ branches: [], error: 'No folder is open.' });
       return;
@@ -411,7 +446,11 @@ export class ChatMessageHandler {
    * and one `git status` after they settle is all the bar needs.
    */
   private watchGitStatus(): void {
-    if (this.gitStatusWatch) return;
+    // Watch the chat on screen's folder; re-arm when it moves to another one.
+    const root = this.viewedRoots()[0]?.uri;
+    if (this.gitStatusWatch && this.gitStatusWatchRoot === root?.fsPath) return;
+    this.gitStatusWatch?.dispose();
+    this.gitStatusWatchRoot = root?.fsPath;
     const schedule = () => {
       clearTimeout(this.gitStatusTimer);
       this.gitStatusTimer = setTimeout(() => void this.handleGetGitStatus(), GIT_STATUS_DEBOUNCE_MS);
@@ -424,7 +463,7 @@ export class ChatMessageHandler {
       if (inGit && !/^(HEAD|packed-refs|refs\/)/.test(inGit[1])) return;
       schedule();
     };
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+    const watcher = vscode.workspace.createFileSystemWatcher(root ? new vscode.RelativePattern(root, '**/*') : '**/*');
     this.gitStatusWatch = vscode.Disposable.from(
       watcher,
       watcher.onDidCreate(onFile),
@@ -439,7 +478,7 @@ export class ChatMessageHandler {
     const reply = (payload: Record<string, unknown>) =>
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_SHIP_ALL_DONE, requestId, ...payload });
     try {
-      const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+      const roots = this.viewedRoots();
       const result = await shipAllChanges(roots, () => undefined, (suggestion, paths) =>
         Promise.resolve(
           vscode.window.showInputBox({
@@ -616,7 +655,7 @@ export class ChatMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
-      this.chatService.loadHistory(data.sessionId, messages as any[]);
+      this.chatService.loadHistory(data.sessionId, messages as any[], session?.workspaceFolder);
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.GET_CHAT_SESSION_RESPONSE,
         sessionId: data.sessionId,

@@ -5,6 +5,8 @@ import {
   NamedRoot,
   WorkspaceRootRequiredError,
   resolveAgainstRoots,
+  languageServerMisses,
+  LANGUAGE_SERVER_ELSEWHERE,
 } from '../codebase/codebaseTools';
 
 /**
@@ -76,6 +78,7 @@ export async function getDiagnostics(args: GetDiagnosticsArgs, roots: NamedRoot[
       }
     }
   }
+  if (!total && languageServerMisses(roots)) throw new Error(LANGUAGE_SERVER_ELSEWHERE);
   return { diagnostics: entries, totalProblems: total, truncated: total > entries.length };
 }
 

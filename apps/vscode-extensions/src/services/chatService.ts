@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ConfluenceEmbeddingService } from './confluence/confluenceEmbeddingService';
 import path from 'path';
+import fs from 'fs';
 import { Worker } from 'worker_threads';
 import {
   WORKER_STATUS,
@@ -268,6 +269,12 @@ function describeUnavailableSource(source: DataSource, settings: any): string {
  */
 interface SessionRun {
   sessionId: string;
+  /**
+   * The folder this chat works in: the one recorded on its stored transcript,
+   * else the folder open when its first turn ran. The host's open folder is a
+   * window-wide setting; a chat started in another repo keeps its own.
+   */
+  workspaceFolder?: string;
   chatHistory: ChatMessage[];
   worker: Worker | null;
   reject: ((reason?: any) => void) | null;
@@ -843,8 +850,9 @@ export class ChatService {
    * the user opens it from history. Skipped while the session has a live
    * run — its in-memory history is already ahead of what's on disk.
    */
-  public loadHistory(sessionId: string, messages: TranscriptEntry[]): void {
+  public loadHistory(sessionId: string, messages: TranscriptEntry[], workspaceFolder?: string): void {
     const run = this.runFor(sessionId);
+    if (workspaceFolder) run.workspaceFolder ??= workspaceFolder;
     if (run.worker) return;
     run.chatHistory = toModelHistory(messages);
     // The stored transcript is the rendered conversation, not the model-facing
@@ -854,6 +862,28 @@ export class ChatService {
     // exactly when it should still be resumable, and sendMessage reloads it
     // when the user asks to continue.
     this.dropResumeFromMemory(run);
+  }
+
+  /**
+   * The roots this session's tools work in. The open folder's roots when the
+   * chat belongs to it (or has no folder yet), so multi-root workspaces keep
+   * all their roots; otherwise the chat's own folder. A recorded folder that
+   * no longer exists falls back to the open roots, and `missing` says so.
+   */
+  private rootsFor(run: SessionRun): { roots: NamedRoot[]; missing?: string } {
+    const open = vscode.workspace.workspaceFolders ?? [];
+    if (!run.workspaceFolder && open[0]) run.workspaceFolder = open[0].uri.fsPath;
+    const folder = run.workspaceFolder;
+    if (!folder || open.some((f) => f.uri.fsPath === folder)) return { roots: getNamedRoots(open) };
+    if (!fs.existsSync(folder)) return { roots: getNamedRoots(open), missing: folder };
+    return { roots: [{ name: path.basename(folder), uri: vscode.Uri.file(folder) }] };
+  }
+
+  /** A session's roots, for the window-level actions on the chat on screen (git bar, @-picker, file links). */
+  public sessionRoots(sessionId: string, storedFolder?: string): NamedRoot[] {
+    const run = this.runFor(sessionId);
+    if (storedFolder) run.workspaceFolder ??= storedFolder;
+    return this.rootsFor(run).roots;
   }
 
   /** The last context reading this session produced, for replay on reopen. */
@@ -1047,9 +1077,20 @@ export class ChatService {
       const userDisplayName: string = settings?.state?.config?.ado?.userDisplayName || '';
       const currentSprint = settings?.state?.config?.ado?.currentSprint || null;
 
-      // Codebase tools need no auth/indexing — only an open workspace folder.
-      const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
-      const isCodebaseAvailable = isWorkMode && workspaceFolders.length > 0;
+      // Codebase tools need no auth/indexing — only a folder: this chat's own,
+      // which is not necessarily the one open in the window.
+      const { roots: codebaseRoots, missing: missingFolder } = this.rootsFor(run);
+      const isCodebaseAvailable = isWorkMode && codebaseRoots.length > 0;
+      if (isWorkMode && missingFolder) {
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          step: {
+            kind: 'notice',
+            title: `This chat's folder ${missingFolder} no longer exists — working in ${codebaseRoots[0]?.uri.fsPath ?? 'no folder'} instead.`,
+            status: 'error',
+          },
+        });
+      }
 
       // What the worker may be OFFERED this turn, from facts only. Gated on
       // authentication rather than index completion: `get_ticket` and
@@ -1068,7 +1109,7 @@ export class ChatService {
       // local reads, so overlapping them with the search costs nothing and
       // keeps them off the critical path. Awaited just before the model runs.
       const mentionsPromise: Promise<ResolvedMention[]> = mentions.length
-        ? resolveMentions(mentions, getNamedRoots(workspaceFolders)).catch((error) => {
+        ? resolveMentions(mentions, codebaseRoots).catch((error) => {
             console.warn('Failed to resolve @-mentions (continuing without):', error);
             return [];
           })
@@ -1520,7 +1561,7 @@ export class ChatService {
           effApiKeys,
           userDisplayName,
           currentSprint,
-          useCodebaseTools ? getNamedRoots(workspaceFolders) : undefined,
+          useCodebaseTools ? codebaseRoots : undefined,
           effBaseUrl,
           attachments,
           resolvedMentions,
@@ -2420,7 +2461,8 @@ export class ChatService {
       reply({ ok: false, error: 'Nothing to ship — no agent changes are recorded for this chat.' });
       return;
     }
-    const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+    // The chat's own folder: its turns wrote there, whatever is open now.
+    const { roots } = this.rootsFor(this.runFor(sessionId));
     try {
       const result = await shipChanges(this.context, roots, shipInput, (text) => (run ? this.postStatus(run, text) : undefined));
       if (run) this.postStatus(run, '');
@@ -2464,9 +2506,12 @@ export class ChatService {
   /** Per-message "Undo changes up to this point" — undoes everything checkpointed since a turn's first checkpoint. */
   public async revertToCheckpoint(sha: string): Promise<RevertResult> {
     const roots = getNamedRoots(vscode.workspace.workspaceFolders ?? []);
-    if (!roots.length) throw new Error('No workspace folder is open.');
     const rootPath = this.checkpointRootsBySha.get(sha);
-    const root = roots.find((candidate) => candidate.uri.fsPath === rootPath) ?? roots[0];
+    if (!roots.length && !rootPath) throw new Error('No workspace folder is open.');
+    // A chat working outside the open folder checkpointed its own root.
+    const root =
+      roots.find((candidate) => candidate.uri.fsPath === rootPath) ??
+      (rootPath ? { name: path.basename(rootPath), uri: vscode.Uri.file(rootPath) } : roots[0]);
     return this.checkpointsFor(root).revertTo(sha);
   }
 

@@ -68,6 +68,17 @@ const findFilesExcludeGlob = (pattern?: string): string | undefined => {
   return dirs.length ? `**/{${dirs.join(',')}}/**` : undefined;
 };
 
+/**
+ * findFiles under the given roots, not the window's open folder: a chat keeps
+ * working in its own folder after another one is opened.
+ */
+export async function findFilesInRoots(roots: NamedRoot[], include: string, exclude: string | undefined, max: number): Promise<vscode.Uri[]> {
+  const perRoot = await Promise.all(
+    roots.map((root) => vscode.workspace.findFiles(new vscode.RelativePattern(root.uri, include), exclude, max))
+  );
+  return perRoot.flat().slice(0, max);
+}
+
 const excludeBuiltPaths = <T>(items: T[], toPath: (item: T) => string, pattern?: string): T[] => {
   const segments = new Set(activeExcludedDirs(pattern));
   if (!segments.size) return items;
@@ -684,7 +695,7 @@ async function searchCodebaseViaJsScan(
   let tokenTruncated = false;
 
   const files = excludeBuiltPaths(
-    await vscode.workspace.findFiles(args.glob ?? '**/*', findFilesExcludeGlob(args.glob), MAX_CANDIDATE_FILES),
+    await findFilesInRoots(roots, args.glob ?? '**/*', findFilesExcludeGlob(args.glob), MAX_CANDIDATE_FILES),
     (uri) => uri.path,
     args.glob
   );
@@ -936,7 +947,7 @@ export async function findFiles(args: FindFilesArgs, roots: NamedRoot[]): Promis
   if (!roots.length) throw new WorkspaceRootRequiredError();
 
   const uris = excludeBuiltPaths(
-    await vscode.workspace.findFiles(args.pattern, findFilesExcludeGlob(args.pattern), MAX_CANDIDATE_FILES),
+    await findFilesInRoots(roots, args.pattern, findFilesExcludeGlob(args.pattern), MAX_CANDIDATE_FILES),
     (uri) => uri.path,
     args.pattern
   );
@@ -982,6 +993,18 @@ function symbolKindName(kind: vscode.SymbolKind): string {
   return SYMBOL_KIND_NAMES[kind] ?? 'Symbol';
 }
 
+/**
+ * The language server indexes the folder open in the window. A chat working
+ * in another folder gets no answers from it, which must not read as "no such
+ * symbol".
+ */
+export function languageServerMisses(roots: NamedRoot[]): boolean {
+  const open = vscode.workspace.workspaceFolders ?? [];
+  return roots.some((r) => !open.some((f) => f.uri.fsPath === r.uri.fsPath));
+}
+export const LANGUAGE_SERVER_ELSEWHERE =
+  "The language server only indexes the folder open in the window, not this chat's folder, so an empty answer here proves nothing. Find symbols with search_codebase or find_files, and errors with run_checks.";
+
 export async function findSymbol(args: FindSymbolArgs, roots: NamedRoot[]): Promise<FindSymbolResult> {
   if (!roots.length) throw new WorkspaceRootRequiredError();
 
@@ -991,6 +1014,7 @@ export async function findSymbol(args: FindSymbolArgs, roots: NamedRoot[]): Prom
   )) as vscode.SymbolInformation[] | undefined;
 
   if (!symbols || symbols.length === 0) {
+    if (languageServerMisses(roots)) throw new Error(LANGUAGE_SERVER_ELSEWHERE);
     return { symbols: [], truncated: false };
   }
 
@@ -998,6 +1022,7 @@ export async function findSymbol(args: FindSymbolArgs, roots: NamedRoot[]): Prom
   const inWorkspace = symbols.filter((s) =>
     roots.some((r) => s.location.uri.fsPath.startsWith(r.uri.fsPath + path.sep))
   );
+  if (!inWorkspace.length && languageServerMisses(roots)) throw new Error(LANGUAGE_SERVER_ELSEWHERE);
 
   return {
     symbols: inWorkspace.slice(0, MAX_SYMBOL_RESULTS).map((s) => ({
@@ -1049,6 +1074,7 @@ async function locationsFromProvider(
     | undefined;
 
   if (!raw || raw.length === 0) {
+    if (languageServerMisses(roots)) throw new Error(LANGUAGE_SERVER_ELSEWHERE);
     return { locations: [], truncated: false };
   }
 
