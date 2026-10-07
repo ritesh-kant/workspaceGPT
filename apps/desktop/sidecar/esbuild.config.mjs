@@ -95,7 +95,7 @@ const relay = {
 const shell = { ...bridge, entryPoints: [path.join(root, 'bridge/shell.ts')], outfile: path.join(outBridge, 'shell.js') };
 
 /** Served as-is from dist/bridge. */
-const STATIC_BRIDGE_FILES = ['theme.css', 'skin.css', 'shell.css', 'shell.html'];
+const STATIC_BRIDGE_FILES = ['appearance.js', 'theme.css', 'skin.css', 'shell.css', 'shell.html'];
 /** xterm's stylesheet, from its package (the shell page's CSP allows only same-origin styles). */
 const XTERM_CSS = path.join(root, 'node_modules/@xterm/xterm/css/xterm.css');
 

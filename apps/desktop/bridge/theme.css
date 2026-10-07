@@ -5,7 +5,7 @@
  * The palette is the desktop's own, not a VS Code theme: neutral greys with
  * one accent, a slightly darker sidebar than the main pane, cards with a hair
  * border — the look of a native chat app rather than an editor panel. The OS
- * setting picks light or dark (challenge #5).
+ * setting supplies the default, with a saved Settings choice as an override.
  *
  * --wgpt-d-* tokens are shared by the shell (shell.css) and the skin
  * (skin.css); change a colour here and both follow.
@@ -34,7 +34,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-wgpt-theme='light']) {
     color-scheme: dark;
     --wgpt-d-bg: #1b1b1d;
     --wgpt-d-sidebar: #141416;
@@ -54,6 +54,27 @@
     --wgpt-d-accent-fg: #0d1330;
     --wgpt-d-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
   }
+}
+
+:root[data-wgpt-theme='dark'] {
+  color-scheme: dark;
+  --wgpt-d-bg: #1b1b1d;
+  --wgpt-d-sidebar: #141416;
+  --wgpt-d-card: #222225;
+  --wgpt-d-card-muted: #1f1f22;
+  --wgpt-d-border: #2d2d31;
+  --wgpt-d-border-strong: #3b3b40;
+  --wgpt-d-fg: #ececef;
+  --wgpt-d-muted: #9d9da5;
+  --wgpt-d-faint: #6f6f77;
+  --wgpt-d-hover: rgba(255, 255, 255, 0.05);
+  --wgpt-d-active: rgba(255, 255, 255, 0.085);
+  --wgpt-d-bubble: #2a2a2e;
+  --wgpt-d-accent: #7091ff;
+  --wgpt-d-accent-hover: #86a2ff;
+  --wgpt-d-accent-soft: rgba(112, 145, 255, 0.14);
+  --wgpt-d-accent-fg: #0d1330;
+  --wgpt-d-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 
 :root {
@@ -148,7 +169,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-wgpt-theme='light']) {
     --vscode-errorForeground: #f47067;
     --vscode-errorBackground: #3a1d1b;
     --vscode-editorWarning-foreground: #d9a82e;
@@ -171,6 +192,30 @@
     --vscode-symbolIcon-functionForeground: #b48bf0;
     --vscode-symbolIcon-classForeground: #e0923a;
   }
+}
+
+:root[data-wgpt-theme='dark'] {
+  --vscode-errorForeground: #f47067;
+  --vscode-errorBackground: #3a1d1b;
+  --vscode-editorWarning-foreground: #d9a82e;
+  --vscode-editorError-foreground: #f47067;
+  --vscode-inputValidation-errorBackground: #3a1d1b;
+  --vscode-inputValidation-errorBorder: #be1100;
+  --vscode-inputValidation-warningBackground: #352a05;
+  --vscode-notificationsWarningIcon-foreground: #d9a82e;
+  --vscode-testing-iconPassed: #57c27a;
+  --vscode-testing-iconFailed: #f47067;
+
+  --vscode-charts-red: #f47067;
+  --vscode-charts-blue: #7091ff;
+  --vscode-charts-orange: #e0923a;
+  --vscode-charts-purple: #b48bf0;
+  --vscode-charts-green: #57c27a;
+  --vscode-charts-yellow: #d9a82e;
+
+  --vscode-symbolIcon-variableForeground: #7091ff;
+  --vscode-symbolIcon-functionForeground: #b48bf0;
+  --vscode-symbolIcon-classForeground: #e0923a;
 }
 
 html,

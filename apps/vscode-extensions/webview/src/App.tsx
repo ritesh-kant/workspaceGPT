@@ -2877,7 +2877,7 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
-        {isDesktopHost() && messages.length === 0 && hasWorkspaceFolder !== null && (
+        {isWorkMode && isDesktopHost() && messages.length === 0 && hasWorkspaceFolder !== null && (
           <WorkspaceControls busy={allRunningSessionIds.size > 0} />
         )}
         <div className='composer-status-bars'>
@@ -2910,7 +2910,7 @@ const App: React.FC = () => {
           {mode === 'remote' && remoteSignedIn && remoteUsage && (
             <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
           )}
-          {hasWorkspaceFolder && <GitStatusBar />}
+          {isWorkMode && hasWorkspaceFolder && <GitStatusBar />}
         </div>
         <div
           className={`input-container${pendingQuestion ? ' input-container--question' : ''}${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}

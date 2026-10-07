@@ -73,6 +73,7 @@ function tokenMatches(given: string | null, expected: string): boolean {
  */
 function injectDesktop(html: string): string {
   const tags =
+    `<script src="/__desktop/appearance.js"></script>` +
     `<link rel="stylesheet" href="/__desktop/theme.css">` +
     `<link rel="stylesheet" href="/__desktop/skin.css">` +
     `<script src="/__desktop/bridge.js"></script>`;

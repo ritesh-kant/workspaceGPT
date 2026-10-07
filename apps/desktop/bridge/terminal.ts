@@ -252,6 +252,9 @@ export function initTerminalPanel(o: TerminalPanelOptions): { run(command: strin
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
     for (const t of tabs.values()) t.term.options.theme = theme();
   });
+  window.addEventListener('wgpt-theme-change', () => {
+    for (const t of tabs.values()) t.term.options.theme = theme();
+  });
 
   // The tabs the last page had; the sidecar re-attaches them when the panel first opens.
   try {

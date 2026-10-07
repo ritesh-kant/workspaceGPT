@@ -353,7 +353,8 @@ interface SessionPreview {
     const row = $('actions');
     row.textContent = '';
     const sidebarShown = hasSessionsView && app.dataset.sidebar === 'open';
-    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const choice = document.documentElement.dataset.wgptTheme;
+    const dark = choice === 'dark' || (!choice && matchMedia('(prefers-color-scheme: dark)').matches);
     const header = actions.filter(
       (a) => a.command !== SETTINGS && !((a.command === HISTORY || a.command === NEW_CHAT) && sidebarShown),
     );
@@ -385,6 +386,7 @@ interface SessionPreview {
     $('settingsBtn').hidden = !settings;
   }
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', renderActions);
+  window.addEventListener('wgpt-theme-change', renderActions);
 
   // ── Account footer ──────────────────────────────────────────────────────
 

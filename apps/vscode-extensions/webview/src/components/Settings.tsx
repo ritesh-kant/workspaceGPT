@@ -15,6 +15,7 @@ import DeploymentSettings from './settings/DeploymentSettings';
 import ImportSettings from './settings/ImportSettings';
 import McpSettings from './settings/McpSettings';
 import DefaultFolderSettings from './settings/DefaultFolderSettings';
+import AppearanceSettings from './settings/AppearanceSettings';
 import SectionShell, { SettingsLayoutContext } from './settings/SectionShell';
 import StatusDot from './settings/StatusDot';
 import { KNOWLEDGE_SOURCES, KnowledgeSourcesOverview } from './settings/knowledgeSources';
@@ -137,11 +138,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
       id: 'general',
       label: 'General',
       description: isRemote
-        ? 'Where answers come from, the account they are billed to, and a reset for this machine.'
-        : 'Where answers come from, the model that produces them, and a reset for this machine.',
+        ? 'Where answers come from, your account, appearance, and a reset for this machine.'
+        : 'Where answers come from, your model, appearance, and a reset for this machine.',
       render: () => (
         <>
           <ModeSelector />
+          <AppearanceSettings />
           {isRemote ? <RemoteAccountSettings /> : <ModelSettings />}
           {resetSection}
         </>

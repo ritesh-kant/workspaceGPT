@@ -343,7 +343,8 @@ interface UiFrame {
       ensureDom();
       toolbarEl ??= document.body.appendChild(el('div', 'wgpt-toolbar'));
       toolbarEl.textContent = '';
-      const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      const choice = document.documentElement.dataset.wgptTheme;
+      const dark = choice === 'dark' || (!choice && matchMedia('(prefers-color-scheme: dark)').matches);
       for (const item of items) {
         const b = el('button', 'wgpt-tool') as HTMLButtonElement;
         b.title = item.title;
@@ -361,6 +362,7 @@ interface UiFrame {
     });
   }
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => renderToolbar(toolbarItems));
+  window.addEventListener('wgpt-theme-change', () => renderToolbar(toolbarItems));
 
   function reply(id: number, value: unknown): void {
     send({ t: 'ui-result', id, value });
