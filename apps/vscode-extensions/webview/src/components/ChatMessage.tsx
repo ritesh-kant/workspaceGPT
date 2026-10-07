@@ -325,7 +325,9 @@ interface ChatMessageProps {
    * Rewrite this user message and re-ask from here. Absent while a run is in
    * flight (forking a live conversation would race the answer being streamed).
    */
-  onEdit?: (newContent: string) => void;
+  onEdit?: (newContent: string, attachments: ChatAttachment[]) => void;
+  /** Turns pasted/dropped files into attachments for the edit box (same limits as the composer). */
+  onStageFiles?: (files: File[], existingCount: number) => Promise<ChatAttachment[]>;
   /** Fired when this bubble enters/leaves edit mode so the parent can dim the rest of the chat. */
   onEditingChange?: (editing: boolean) => void;
   /** Thumbs up/down on this assistant response — the satisfaction signal. */
@@ -355,6 +357,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   onPublishSpike,
   onRunPlan,
   onEdit,
+  onStageFiles,
   onEditingChange,
   onFeedback,
   isLive,
@@ -369,9 +372,16 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   const tokensPerCredit = useChatStore((s) => s.tokensPerCredit);
   const prUrlTemplate = useGitStatusStore((s) => s.status?.prUrlTemplate);
   const [draft, setDraft] = useState<string | null>(null);
+  const [draftAttachments, setDraftAttachments] = useState<ChatAttachment[]>([]);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const isEditing = draft !== null;
   const canSend = !!(draft ?? '').trim();
+
+  const stageEditFiles = async (files: File[]) => {
+    if (!files.length || !onStageFiles) return;
+    const added = await onStageFiles(files, draftAttachments.length);
+    if (added.length) setDraftAttachments((prev) => [...prev, ...added]);
+  };
 
   const autosizeEdit = () => {
     const el = editRef.current;
@@ -399,7 +409,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     setDraft(null);
     // An empty draft is a no-op — don't re-run the turn.
     if (!next) return;
-    onEdit?.(next);
+    onEdit?.(next, draftAttachments);
   };
 
   const onEditKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -440,9 +450,39 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                 requestAnimationFrame(autosizeEdit);
               }}
               onKeyDown={onEditKeyDown}
+              onPaste={(e) => {
+                const files = Array.from(e.clipboardData?.files ?? []);
+                if (files.length) {
+                  e.preventDefault();
+                  stageEditFiles(files);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                stageEditFiles(Array.from(e.dataTransfer?.files ?? []));
+              }}
               rows={1}
               aria-label="Edit message"
             />
+            {draftAttachments.length > 0 && (
+              <div className="composer-attachments">
+                {draftAttachments.map((att, i) => (
+                  <div key={`${att.name}-${i}`} className="attachment-chip" title={att.name}>
+                    {att.kind === 'image' && <img src={att.content} alt={att.name} className="attachment-chip-thumb" />}
+                    <span className="attachment-chip-name">{att.name}</span>
+                    <button
+                      type="button"
+                      className="attachment-chip-remove"
+                      onClick={() => setDraftAttachments((prev) => prev.filter((_, j) => j !== i))}
+                      aria-label={`Remove ${att.name}`}
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="message-edit-toolbar">
               <button type="button" className="message-edit-cancel" onClick={() => setDraft(null)}>
                 Cancel
@@ -494,7 +534,10 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
               <button
                 type="button"
                 className="user-message-icon-button"
-                onClick={() => setDraft(content)}
+                onClick={() => {
+                  setDraftAttachments(attachments ?? []);
+                  setDraft(content);
+                }}
                 title="Edit and re-ask from here"
                 aria-label="Edit message"
               >
@@ -702,5 +745,6 @@ export default React.memo(ChatMessage, (prev, next) => (
   !!prev.onResume === !!next.onResume &&
   !!prev.onPublishSpike === !!next.onPublishSpike &&
   !!prev.onRunPlan === !!next.onRunPlan &&
-  !!prev.onEdit === !!next.onEdit
+  !!prev.onEdit === !!next.onEdit &&
+  !!prev.onStageFiles === !!next.onStageFiles
 ));

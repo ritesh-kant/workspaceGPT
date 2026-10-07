@@ -2394,7 +2394,7 @@ const App: React.FC = () => {
   // fresh turn. `historyOverride` carries the surviving prefix so the host's
   // model-facing history forks with the UI — without it the model would still
   // be answering the original question it can no longer see.
-  const handleEditMessage = (index: number, newContent: string) => {
+  const handleEditMessage = (index: number, newContent: string, editedAttachments: ChatAttachment[]) => {
     // Mirrors the render gate that shows this control in the first place
     // (`!isLoading && !isStreaming`) — belt-and-suspenders in case a stale
     // render lets the action fire while a turn is still technically live.
@@ -2419,7 +2419,7 @@ const App: React.FC = () => {
     addMessage({
       content: newContent,
       isUser: true,
-      ...(original.attachments?.length ? { attachments: original.attachments } : {}),
+      ...(editedAttachments.length ? { attachments: editedAttachments } : {}),
       ...(mentions.length > 0 ? { mentions } : {}),
     });
     setIsLoading(true);
@@ -2436,7 +2436,7 @@ const App: React.FC = () => {
       assistantMode,
       historyOverride,
       ...modeFlags(),
-      ...(original.attachments?.length ? { attachments: original.attachments } : {}),
+      ...(editedAttachments.length ? { attachments: editedAttachments } : {}),
       ...(mentions.length > 0 ? { mentions } : {}),
     });
   };
@@ -2758,9 +2758,10 @@ const App: React.FC = () => {
                     // Editing forks the conversation — only offered on user
                     // messages, and never while a run is in flight.
                     message.isUser && !isLoading && !isStreaming
-                      ? (newContent) => handleEditMessage(index, newContent)
+                      ? (newContent, editedAttachments) => handleEditMessage(index, newContent, editedAttachments)
                       : undefined
                   }
+                  onStageFiles={message.isUser ? async (files, n) => (await filesToAttachments(files, n)).attachments : undefined}
                   onEditingChange={
                     message.isUser
                       ? (editing) =>
