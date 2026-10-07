@@ -1102,7 +1102,8 @@ export class ChatService {
         codebase: isCodebaseAvailable,
         confluence: isWorkMode && !!settings?.state?.config?.confluence?.isAuthenticated,
         tickets: isWorkMode && !!getActiveTicketProvider(this.context),
-        browser: isWorkMode && isBrowserConnected(),
+        // false (not undefined) only where the browser is on offer, so the prompt can say it is disconnected.
+        browser: isWorkMode ? isBrowserConnected() : undefined,
       };
 
       // Read the @-mentioned files/folders while retrieval runs — they are

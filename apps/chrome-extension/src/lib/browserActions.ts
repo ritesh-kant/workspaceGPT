@@ -308,6 +308,12 @@ async function actTab(tabId?: unknown): Promise<chrome.tabs.Tab> {
   if (cancelled && Date.now() - cancelled < CANCEL_COOLDOWN_MS) {
     throw new Error('The user stopped WorkspaceGPT from controlling this tab (Cancel on Chrome\'s debugging bar). Ask them in chat before trying again.');
   }
+  if (tab.url && !/^(https?|file):/i.test(tab.url)) {
+    throw new Error(
+      `This tab is a ${tab.url.split(':')[0]}:// page, which Chrome does not let any extension control. ` +
+        'Open the page you want with browser_open_tab (or call browser_list_tabs and pass the tabId of an http(s) tab).'
+    );
+  }
   const groupId = await agentGroupId();
   if (groupId !== undefined && tab.groupId === groupId) return showAgentTab(tab);
   const focused = await chrome.windows.getLastFocused().catch(() => undefined);
@@ -938,12 +944,16 @@ export async function handleBrowserRequest(method: string, params: any): Promise
         const group = await chrome.tabGroups.get(groupId);
         tab = await chrome.tabs.create({ windowId: group.windowId, url, active: true });
         await chrome.tabs.group({ tabIds: tab.id!, groupId });
+        await chrome.windows.update(group.windowId, { focused: true }).catch(() => undefined);
       } else {
-        // First tab: its own window, so the agent never rearranges the user's.
-        const win = await chrome.windows.create({ url, focused: false });
-        tab = win.tabs![0];
-        const newGroup = await chrome.tabs.group({ tabIds: tab.id!, createProperties: { windowId: win.id } });
+        // First tab: a new tab in the window the user is in, put in a "WorkspaceGPT"
+        // group so it is marked as the agent's. A separate unfocused window opened
+        // behind the others, and the user saw nothing happen.
+        const current = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => undefined);
+        tab = await chrome.tabs.create({ windowId: current?.id, url, active: true });
+        const newGroup = await chrome.tabs.group({ tabIds: tab.id!, createProperties: { windowId: tab.windowId } });
         await chrome.tabGroups.update(newGroup, { title: GROUP_TITLE, color: 'blue' });
+        await chrome.windows.update(tab.windowId, { focused: true }).catch(() => undefined);
       }
       await settle(tab.id!, 30_000, 300);
       return tabSummary(tab.id!);
