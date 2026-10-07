@@ -49,6 +49,12 @@ export interface ServerOptions {
   extraOrigins: string[];
   /** The integrated terminal's socket (host/terminalHost.ts); absent in builds without it. */
   onTerminalSocket?: (ws: WebSocket) => void;
+  /**
+   * The saved theme choice ('light' | 'dark'; absent = follow the system). The
+   * loopback port is random per launch, so the pages' localStorage starts empty
+   * every time and cannot hold it.
+   */
+  appearance?: { get(): string | undefined; set(value: string | undefined): void };
   log?: (line: string) => void;
 }
 
@@ -127,6 +133,29 @@ export function startServer(opts: ServerOptions): Promise<DesktopServer> {
         return;
       }
       send(200, injectDesktop(surface.html), MIME['.html'], pageHeaders("'self'"));
+      return;
+    }
+
+    if (url.pathname === '/__desktop/appearance' && req.method === 'POST') {
+      if (!opts.appearance || !origins().has(req.headers.origin ?? '')) {
+        send(403, 'forbidden');
+        return;
+      }
+      let body = '';
+      req.on('data', (chunk) => {
+        if (body.length < 64) body += chunk;
+      });
+      req.on('end', () => {
+        opts.appearance!.set(body === 'light' || body === 'dark' ? body : undefined);
+        send(204, '');
+      });
+      return;
+    }
+
+    if (url.pathname === '/__desktop/appearance.js' && opts.appearance) {
+      const saved = opts.appearance.get();
+      const seed = `window.__wgptAppearance=${JSON.stringify(saved === 'light' || saved === 'dark' ? saved : null)};\n`;
+      send(200, seed + fs.readFileSync(path.join(opts.desktopAssetsDir, 'appearance.js'), 'utf8'), MIME['.js'] ?? 'text/javascript; charset=utf-8', { 'Cache-Control': 'no-store' });
       return;
     }
 

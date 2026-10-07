@@ -310,6 +310,10 @@ async function main(): Promise<void> {
     token,
     surfaces,
     desktopAssetsDir: path.join(__dirname, '..', 'bridge'),
+    appearance: {
+      get: () => desktopPrefs.get<string>('appearance'),
+      set: (value) => void desktopPrefs.update('appearance', value),
+    },
     extraOrigins: ['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost', ...args.allowOrigins],
     log: (l) => console.log(l),
   });
