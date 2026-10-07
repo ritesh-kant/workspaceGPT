@@ -109,6 +109,7 @@ import {
 } from './agent/commandTools';
 import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgroundJobs';
 import { browserRequest, isBrowserConnected } from './browser/browserBridge';
+import { isControlChromeEnabled } from './browser/browserPrefs';
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
@@ -1103,7 +1104,7 @@ export class ChatService {
         confluence: isWorkMode && !!settings?.state?.config?.confluence?.isAuthenticated,
         tickets: isWorkMode && !!getActiveTicketProvider(this.context),
         // false (not undefined) only where the browser is on offer, so the prompt can say it is disconnected.
-        browser: isWorkMode ? isBrowserConnected() : undefined,
+        browser: isWorkMode && isControlChromeEnabled(this.context) ? isBrowserConnected() : undefined,
       };
 
       // Read the @-mentioned files/folders while retrieval runs — they are

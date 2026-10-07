@@ -16,6 +16,9 @@ import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
 import { isPermission } from '../services/agent/permissionPolicy';
 import { ensureWorktree, getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
+import { isBrowserConnected } from '../services/browser/browserBridge';
+import { openChromeExtensionInstall } from '../services/browser/installChromeExtension';
+import { isControlChromeEnabled, setControlChromeEnabled } from '../services/browser/browserPrefs';
 import { ImportService } from '../services/import/importService';
 import type { ImportSource } from '../services/import/types';
 
@@ -128,6 +131,22 @@ export class ChatMessageHandler {
       case MESSAGE_TYPES.AGENT_SHIP_ALL:
         this.analyticsService.trackEvent('agent_ship_all_triggered');
         await this.handleShipAll(data.requestId);
+        return true;
+      case MESSAGE_TYPES.INSTALL_CHROME_EXTENSION:
+        this.analyticsService.trackEvent('chrome_extension_install_clicked');
+        this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.BROWSER_INSTALL_OPENED, ...(await openChromeExtensionInstall()) });
+        return true;
+      case MESSAGE_TYPES.GET_BROWSER_STATUS:
+      case MESSAGE_TYPES.SET_BROWSER_ENABLED:
+        if (data.type === MESSAGE_TYPES.SET_BROWSER_ENABLED) {
+          await setControlChromeEnabled(this.context, data.enabled === true);
+          this.analyticsService.trackEvent('control_chrome_toggled', { enabled: data.enabled === true });
+        }
+        this.webviewView.webview.postMessage({
+          type: MESSAGE_TYPES.BROWSER_STATUS,
+          enabled: isControlChromeEnabled(this.context),
+          connected: isBrowserConnected(),
+        });
         return true;
       case MESSAGE_TYPES.GET_RECENT_FOLDERS:
         this.webviewView.webview.postMessage({

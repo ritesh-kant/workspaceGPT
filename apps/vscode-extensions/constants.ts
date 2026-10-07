@@ -99,6 +99,17 @@ export const MESSAGE_TYPES = {
   // the scheme (never command:/file:), since the URL can come from model text.
   OPEN_EXTERNAL: 'open-external',
 
+  // The composer's + menu → Connectors → Control Chrome. Webview → host:
+  // GET_BROWSER_STATUS, SET_BROWSER_ENABLED {enabled}; host → webview:
+  // BROWSER_STATUS {enabled, connected} (connected = the Chrome extension has
+  // said hello to this host).
+  GET_BROWSER_STATUS: 'get-browser-status',
+  SET_BROWSER_ENABLED: 'set-browser-enabled',
+  BROWSER_STATUS: 'browser-status',
+  // Webview → host: open the Chrome extension's install page in Chrome. Answered by BROWSER_INSTALL_OPENED {inChrome}.
+  INSTALL_CHROME_EXTENSION: 'install-chrome-extension',
+  BROWSER_INSTALL_OPENED: 'browser-install-opened',
+
   // Webview → host: revert the workspace to the checkpoint taken right before
   // a given user turn's changes (per-message "Undo changes up to this point").
   // Host → webview: the outcome, so the button can clear or surface an error.

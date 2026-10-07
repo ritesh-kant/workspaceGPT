@@ -49,6 +49,7 @@ import { modelDefaultConfig } from './store/modelStore';
 // The word the Resume button sends, defined next to the patterns the host
 // parses it with — see continuationIntent's header for why it must be bare.
 import { RESUME_MESSAGE, RUN_PLAN_MESSAGE } from '../../src/utils/continuationIntent';
+import ComposerPlusMenu from './components/ComposerPlusMenu';
 import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS, isResearchWorkItem, researchWorkItemPrompt, publishSpikePrompt } from './constants';
 import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
@@ -1913,6 +1914,18 @@ const App: React.FC = () => {
     });
   };
 
+  /** "Add folder": start an @-mention, which lists the workspace's files and folders. */
+  const startFolderMention = () => {
+    const sep = inputValue && !/\s$/.test(inputValue) ? ' ' : '';
+    const next = `${inputValue}${sep}@`;
+    setInputValue(next);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(next.length, next.length);
+      syncMentionPicker(next, next.length);
+    });
+  };
+
   const handleStopMessage = () => {
     if (!currentSessionId) return;
     // Discard anything this session's run still emits (retrieval statuses
@@ -3031,18 +3044,12 @@ const App: React.FC = () => {
                   style={{ display: 'none' }}
                   onChange={handleFilePick}
                 />
-                <button
-                  type='button'
-                  className='attach-button action-btn'
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={pendingAttachments.length >= ATTACHMENT_LIMITS.MAX_FILES}
-                  title='Attach files or images'
-                  aria-label='Attach files or images'
-                >
-                  <svg width='15' height='15' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-                    <path d='M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-                  </svg>
-                </button>
+                <ComposerPlusMenu
+                  onAddFiles={() => fileInputRef.current?.click()}
+                  onAddFolder={startFolderMention}
+                  filesDisabled={pendingAttachments.length >= ATTACHMENT_LIMITS.MAX_FILES}
+                  showConnectors={isWorkMode && isDesktopHost()}
+                />
                 <button
                   type='button'
                   className='mode-chip'

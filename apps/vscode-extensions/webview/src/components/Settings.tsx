@@ -16,6 +16,7 @@ import ImportSettings from './settings/ImportSettings';
 import McpSettings from './settings/McpSettings';
 import DefaultFolderSettings from './settings/DefaultFolderSettings';
 import AppearanceSettings from './settings/AppearanceSettings';
+import ChromeSettings from './settings/ChromeSettings';
 import SectionShell, { SettingsLayoutContext } from './settings/SectionShell';
 import StatusDot from './settings/StatusDot';
 import { KNOWLEDGE_SOURCES, KnowledgeSourcesOverview } from './settings/knowledgeSources';
@@ -171,6 +172,16 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         render: item.render,
       })
     ),
+    ...(isDesktopHost()
+      ? [
+          {
+            id: 'connectors',
+            label: 'Connectors',
+            description: 'Let WorkspaceGPT work in tools on this machine, beyond your Knowledge sources.',
+            render: () => <ChromeSettings />,
+          } as SettingsPage,
+        ]
+      : []),
     ...(isDesktopHost()
       ? [
           {

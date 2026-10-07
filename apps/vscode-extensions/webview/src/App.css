@@ -4037,3 +4037,73 @@ button:disabled {
   cursor: pointer;
   user-select: none;
 }
+
+/* ── Composer + menu ──────────────────────────────────────────────────── */
+.plus-menu {
+  position: relative;
+  display: flex;
+}
+.plus-menu-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 250px;
+  padding: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-dropdown-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.plus-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent !important;
+  color: var(--vscode-foreground) !important;
+  border: none !important;
+  border-radius: 5px !important;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+.plus-menu-row:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground) !important;
+}
+.plus-menu-row:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.plus-menu-chevron {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground);
+}
+.plus-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 30px;
+  height: 17px;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 9px !important;
+  background: var(--vscode-input-background, rgba(128, 128, 128, 0.4)) !important;
+  cursor: pointer;
+}
+.plus-switch--on {
+  background: var(--vscode-button-background) !important;
+}
+.plus-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.12s;
+}
+.plus-switch--on .plus-switch-knob {
+  transform: translateX(13px);
+}
