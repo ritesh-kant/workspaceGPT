@@ -308,15 +308,24 @@ interface SessionPreview {
     handle.classList.add('dragging');
     app.classList.add('side-resizing');
     const left = $('side').getBoundingClientRect().left;
-    const move = (ev: PointerEvent) => app.style.setProperty('--side-w', clampSide(ev.clientX - left) + 'px');
+    let raw = $('side').getBoundingClientRect().width;
+    const move = (ev: PointerEvent) => {
+      raw = ev.clientX - left;
+      app.style.setProperty('--side-w', clampSide(raw) + 'px');
+    };
     const up = () => {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
       handle.removeEventListener('pointercancel', up);
       handle.classList.remove('dragging');
       app.classList.remove('side-resizing');
+      // Dragged well past the minimum: hide the sidebar, keeping the last width.
+      if (raw < SIDE_MIN - 60) {
+        setSidebar('closed');
+        return;
+      }
       try {
-        localStorage.setItem(WIDTH_KEY, String(clampSide($('side').getBoundingClientRect().width)));
+        localStorage.setItem(WIDTH_KEY, String(clampSide(raw)));
       } catch {
         /* ignore */
       }
