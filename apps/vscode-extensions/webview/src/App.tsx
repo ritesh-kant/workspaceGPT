@@ -1244,6 +1244,16 @@ const App: React.FC = () => {
         case MESSAGE_TYPES.NEW_CHAT:
           handleNewChatRef.current();
           break;
+        case MESSAGE_TYPES.SET_ASSISTANT_MODE: {
+          // From the Sessions panel's switch. A chat in progress was answered
+          // under the other mode, so leave it for a fresh one in the new mode.
+          const next = message.assistantMode === 'chat' ? 'chat' : 'work';
+          if (useChatStore.getState().assistantMode !== next) {
+            if (useChatStore.getState().messages.length > 0) handleNewChatRef.current();
+            setAssistantMode(next);
+          }
+          break;
+        }
         case MESSAGE_TYPES.LOAD_CHAT_SESSION:
           if (message.sessionId) handleSelectSessionRef.current(message.sessionId);
           break;

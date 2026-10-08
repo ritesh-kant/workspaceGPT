@@ -187,6 +187,10 @@ export const MESSAGE_TYPES = {
   // Chat webview → host: the Chat/Work switch moved. The Sessions panel lists
   // history too, so it has to filter by the same mode the chat is showing.
   ASSISTANT_MODE_CHANGED: 'assistant-mode-changed',
+  // Sessions panel → host → chat webview: the user flipped the Chat/Work switch
+  // in the panel. The chat owns the mode, so it applies it and reports back
+  // with ASSISTANT_MODE_CHANGED.
+  SET_ASSISTANT_MODE: 'set-assistant-mode',
 
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',

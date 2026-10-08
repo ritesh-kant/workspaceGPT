@@ -65,6 +65,11 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     void this.postMessage({ type: MESSAGE_TYPES.LOAD_CHAT_SESSION, sessionId });
   }
 
+  /** The Sessions panel's Chat/Work switch moved — the chat applies it. */
+  public setAssistantMode(assistantMode: 'chat' | 'work'): void {
+    void this.postMessage({ type: MESSAGE_TYPES.SET_ASSISTANT_MODE, assistantMode });
+  }
+
   /** A stored chat was deleted elsewhere (Sessions panel) — let the chat drop it. */
   public notifySessionDeleted(sessionId: string): void {
     void this.postMessage({ type: MESSAGE_TYPES.SESSION_DELETED, sessionId });

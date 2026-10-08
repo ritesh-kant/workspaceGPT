@@ -31,7 +31,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     private readonly historyService: HistoryService,
     private readonly onNewSession: () => void,
     private readonly onSelectSession: (sessionId: string) => void,
-    private readonly onDeleteSession: (sessionId: string) => void
+    private readonly onDeleteSession: (sessionId: string) => void,
+    private readonly onSetAssistantMode: (mode: 'chat' | 'work') => void
   ) {}
 
   public resolveWebviewView(
@@ -52,6 +53,13 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         this.activeSessionId = null;
         this.onNewSession();
         void this.postList();
+        return;
+      }
+      if (data?.type === MESSAGE_TYPES.SET_ASSISTANT_MODE) {
+        const mode = data.assistantMode === 'chat' ? 'chat' : 'work';
+        // List first so the panel flips at once; the chat confirms it after.
+        this.setAssistantMode(mode);
+        this.onSetAssistantMode(mode);
         return;
       }
       if (data?.type === MESSAGE_TYPES.LOAD_CHAT_SESSION && data.sessionId) {

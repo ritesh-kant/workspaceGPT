@@ -34,6 +34,37 @@ export class SessionsHtmlTemplate {
       height: 100%;
       padding: 6px 0 0;
     }
+    /* Chat / Work switch: two icon segments, the active one filled. */
+    .mode-switch {
+      display: flex;
+      flex-shrink: 0;
+    }
+    .nav-row { display: flex; align-items: center; gap: 4px; }
+    .nav-row .nav-item { flex: 1; min-width: 0; width: auto; }
+    .mode-switch-group {
+      display: flex;
+      gap: 2px;
+      padding: 1px;
+      border-radius: 7px;
+      border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.3));
+    }
+    .mode-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 22px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+    }
+    .mode-btn:hover { color: var(--vscode-foreground); }
+    .mode-btn.on {
+      background: var(--vscode-button-secondaryBackground, var(--vscode-list-hoverBackground));
+      color: var(--vscode-foreground);
+    }
     .nav { padding: 0 6px; }
     .nav-item {
       display: flex;
@@ -327,12 +358,28 @@ export class SessionsHtmlTemplate {
 <body>
   <div class="wrap">
     <div class="nav">
-      <button class="nav-item" id="newSession" type="button">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        <span>New Session</span>
-      </button>
+      <div class="nav-row">
+        <button class="nav-item" id="newSession" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span>New Session</span>
+        </button>
+        <div class="mode-switch">
+        <div class="mode-switch-group" role="group" aria-label="Chat or Work mode">
+          <button class="mode-btn" id="modeChat" type="button" data-mode="chat" title="Chat" aria-label="Chat" aria-pressed="false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="mode-btn" id="modeWork" type="button" data-mode="work" title="Work" aria-label="Work" aria-pressed="false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      </div>
       <button class="nav-item" id="searchToggle" type="button">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
@@ -358,6 +405,7 @@ export class SessionsHtmlTemplate {
       LOAD_CHAT_SESSION: MESSAGE_TYPES.LOAD_CHAT_SESSION,
       SESSIONS_LIST: MESSAGE_TYPES.SESSIONS_LIST,
       SESSIONS_TOGGLE_SEARCH: MESSAGE_TYPES.SESSIONS_TOGGLE_SEARCH,
+      SET_ASSISTANT_MODE: MESSAGE_TYPES.SET_ASSISTANT_MODE,
       DELETE_CHAT_HISTORY: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
       UPDATE_CHAT_SESSION_META: MESSAGE_TYPES.UPDATE_CHAT_SESSION_META,
       OPEN_SESSION_IN: MESSAGE_TYPES.OPEN_SESSION_IN,
@@ -468,7 +516,25 @@ export class SessionsHtmlTemplate {
 
     const BUCKET_ORDER = ['Today', 'Yesterday', 'Last 7 days', 'Older'];
 
+    function renderModeSwitch() {
+      for (const btn of document.querySelectorAll('.mode-btn')) {
+        const on = btn.getAttribute('data-mode') === mode;
+        btn.classList.toggle('on', on);
+        btn.setAttribute('aria-pressed', String(on));
+      }
+    }
+    document.querySelector('.mode-switch').addEventListener('click', (event) => {
+      const btn = event.target.closest('.mode-btn');
+      if (!btn) return;
+      const next = btn.getAttribute('data-mode');
+      if (next === mode) return;
+      mode = next;
+      renderModeSwitch();
+      vscode.postMessage({ type: MESSAGE_TYPES.SET_ASSISTANT_MODE, assistantMode: next });
+    });
+
     function render() {
+      renderModeSwitch();
       const now = Date.now();
       const needle = query.trim().toLowerCase();
       const matching = needle

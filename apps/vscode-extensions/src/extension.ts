@@ -95,6 +95,9 @@ export async function activate(context: vscode.ExtensionContext) {
     },
     (sessionId) => {
       webViewProvider.notifySessionDeleted(sessionId);
+    },
+    (mode) => {
+      webViewProvider.setAssistantMode(mode);
     }
   );
   webViewProvider.setSessionsView(sessionsViewProvider);
