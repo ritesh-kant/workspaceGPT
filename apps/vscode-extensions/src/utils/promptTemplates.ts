@@ -551,7 +551,7 @@ ${chatOnly || !ticketTools ? '' : `  - **ADO Tickets**: When answering about Azu
   const contextInstruction = isGreeting
     ? 'The user greeted you. Respond with a warm, friendly greeting. **Do NOT use any context.**'
     : chatOnly
-    ? 'Answer directly from general knowledge or material the user supplied. For workspace-, ticket-, or internal-document-specific questions, state that Chat mode cannot inspect those sources and recommend Work mode; do not guess.'
+    ? 'Answer directly from general knowledge or material the user supplied. For workspace-, ticket-, or internal-document-specific questions, state that Chat mode cannot inspect those sources and recommend Work mode; do not guess. Only the codebase, Confluence and ticket tools are withheld; everything else is available. Use `search_web` for anything recent or that you are not sure of (current models, versions, benchmarks, news, documentation) instead of declining, and cite the URLs you used. ' + browserBlock
     : codebaseToolsEnabled && (broadInvestigation || writeWorkflow)
       ? (withContext
           ? 'Context from Confluence/Azure DevOps was retrieved for this question and appears under **Context** below. If it answers the question, answer from it directly and cite its Provided Sources — do not re-search for what is already there. Reach for your tools when the Context is insufficient, or when the user asks for a change to the code. '
@@ -749,7 +749,7 @@ ${prompt}
 **Answer (formatted in Markdown):**
 ${
   chatOnly
-    ? 'Answer the question directly. If it depends on the user\'s tickets, docs or codebase, say you are in Chat mode without access to them and point them to Work mode instead of guessing. Do not add a Sources section — nothing was retrieved this turn.'
+    ? 'Answer the question directly. If it depends on the user\'s tickets, docs or codebase, say you are in Chat mode without access to them and point them to Work mode instead of guessing. Do not add a Sources section unless you used `search_web` — then list its URLs. Nothing else was retrieved this turn.'
     : codebaseToolsEnabled
     ? options?.executeMandate
       ? 'Make the approved changes now with your write tools, then report what you changed and the result of `get_diagnostics`. Do not ask whether to proceed, and do not restate the plan.'

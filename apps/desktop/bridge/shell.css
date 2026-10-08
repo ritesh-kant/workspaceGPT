@@ -30,12 +30,31 @@ button { font: inherit; color: inherit; }
 .side {
   width: var(--side-w);
   flex-shrink: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--wgpt-d-sidebar);
   border-right: 1px solid var(--wgpt-d-border);
 }
 .app[data-sidebar="closed"] .side { display: none; }
+
+/* Drag handle on the sidebar's right edge. */
+.side-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.side-resize:hover,
+.side-resize.dragging { background: var(--wgpt-d-border, rgba(128, 128, 128, 0.3)); }
+/* The iframes would swallow pointer events mid-drag. */
+.app.side-resizing iframe { pointer-events: none; }
+.app.side-resizing { cursor: col-resize; }
+@media (max-width: 719px) { .side-resize { display: none; } }
 
 .side-top {
   display: flex;

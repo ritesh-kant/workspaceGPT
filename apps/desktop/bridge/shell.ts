@@ -283,6 +283,50 @@ interface SessionPreview {
     applySidebar();
   }
 
+  // Drag the sidebar's right edge to resize it; the width persists.
+  const WIDTH_KEY = 'wgpt.desktop.sidebarWidth';
+  const SIDE_MIN = 200;
+  const SIDE_MAX = 600;
+  const clampSide = (w: number) => Math.min(SIDE_MAX, Math.max(SIDE_MIN, Math.round(w)));
+  try {
+    const w = Number(localStorage.getItem(WIDTH_KEY));
+    if (w) app.style.setProperty('--side-w', clampSide(w) + 'px');
+  } catch {
+    /* ignore */
+  }
+  const handle = $('sideResize');
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('dragging');
+    app.classList.add('side-resizing');
+    const left = $('side').getBoundingClientRect().left;
+    const move = (ev: PointerEvent) => app.style.setProperty('--side-w', clampSide(ev.clientX - left) + 'px');
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
+      handle.classList.remove('dragging');
+      app.classList.remove('side-resizing');
+      try {
+        localStorage.setItem(WIDTH_KEY, String(clampSide($('side').getBoundingClientRect().width)));
+      } catch {
+        /* ignore */
+      }
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+  });
+  handle.addEventListener('dblclick', () => {
+    app.style.removeProperty('--side-w');
+    try {
+      localStorage.removeItem(WIDTH_KEY);
+    } catch {
+      /* ignore */
+    }
+  });
+
   function applySidebar(): void {
     const open = hasSessionsView ? sidebar : 'closed';
     app.dataset.sidebar = open;

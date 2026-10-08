@@ -56,6 +56,7 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
         if let Some(w) = app2.get_webview_window(MAIN) {
             // Restarted sidecar (crash, or Open Folder…): same token, new port.
             let _ = w.navigate(page_url(port));
+            let _ = w.set_zoom(*app2.state::<Zoom>().0.lock().unwrap());
             return;
         }
         let token = app2.state::<sidecar::Supervisor>().token().to_string();
@@ -87,8 +88,11 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
                 ours || internal
             })
             .build();
-        if let Err(e) = built {
-            eprintln!("[shell] could not open the window: {e}");
+        match built {
+            Ok(w) => {
+                let _ = w.set_zoom(*app2.state::<Zoom>().0.lock().unwrap());
+            }
+            Err(e) => eprintln!("[shell] could not open the window: {e}"),
         }
     });
 }
@@ -110,6 +114,38 @@ fn restart_on_folder(app: &AppHandle, path: PathBuf) {
             eprintln!("[shell] {e}");
         }
     });
+}
+
+/// Page zoom, kept across launches in the app config dir.
+struct Zoom(Mutex<f64>);
+
+fn zoom_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("zoom.json"))
+}
+
+fn load_zoom(app: &AppHandle) -> f64 {
+    zoom_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["zoom"].as_f64())
+        .map_or(1.0, |z| z.clamp(0.5, 3.0))
+}
+
+/// `delta` of None resets to 100%.
+fn change_zoom(app: &AppHandle, delta: Option<f64>) {
+    let z = {
+        let state = app.state::<Zoom>();
+        let mut cur = state.0.lock().unwrap();
+        *cur = delta.map_or(1.0, |d| ((*cur + d) * 100.0).round() / 100.0).clamp(0.5, 3.0);
+        *cur
+    };
+    if let Some(w) = app.get_webview_window(MAIN) {
+        let _ = w.set_zoom(z);
+    }
+    if let Some(path) = zoom_path(app) {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+        let _ = std::fs::write(&path, serde_json::json!({ "zoom": z }).to_string());
+    }
 }
 
 /// The app-menu checkbox for notifications, kept so a click can read its new state.
@@ -164,7 +200,23 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
             &PredefinedMenuItem::select_all(app, None)?,
         ],
     )?;
-    let view = Submenu::with_items(app, "View", true, &[&reload, &PredefinedMenuItem::fullscreen(app, None)?])?;
+    let zoom_in = MenuItem::with_id(app, "zoom-in", "Zoom In", true, Some("CmdOrCtrl+="))?;
+    let zoom_out = MenuItem::with_id(app, "zoom-out", "Zoom Out", true, Some("CmdOrCtrl+-"))?;
+    let zoom_reset = MenuItem::with_id(app, "zoom-reset", "Actual Size", true, Some("CmdOrCtrl+0"))?;
+    let view = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[
+            &reload,
+            &PredefinedMenuItem::separator(app)?,
+            &zoom_in,
+            &zoom_out,
+            &zoom_reset,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::fullscreen(app, None)?,
+        ],
+    )?;
     let window = Submenu::with_items(
         app,
         "Window",
@@ -187,6 +239,9 @@ fn handle_menu(app: &AppHandle, id: &str) {
                 let _ = w.eval("location.reload()");
             }
         }
+        "zoom-in" => change_zoom(app, Some(0.1)),
+        "zoom-out" => change_zoom(app, Some(-0.1)),
+        "zoom-reset" => change_zoom(app, None),
         updater::MENU_ID => updater::menu_clicked(app),
         notify::MENU_ID => notify::menu_toggled(app, &app.state::<NotifyToggle>().0),
         "tray-show" => show_main(app),
@@ -263,6 +318,7 @@ fn main() {
         .manage(supervisor.clone())
         .setup(move |app| {
             app.manage(notify::Notifications::load(app.handle()));
+            app.manage(Zoom(Mutex::new(load_zoom(app.handle()))));
             *handle_slot.lock().unwrap() = Some(app.handle().clone());
             let (menu, check_updates, notify_toggle) = build_menu(app.handle())?;
             app.manage(NotifyToggle(notify_toggle));

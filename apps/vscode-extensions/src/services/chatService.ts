@@ -1104,7 +1104,7 @@ export class ChatService {
         confluence: isWorkMode && !!settings?.state?.config?.confluence?.isAuthenticated,
         tickets: isWorkMode && !!getActiveTicketProvider(this.context),
         // false (not undefined) only where the browser is on offer, so the prompt can say it is disconnected.
-        browser: isWorkMode && isControlChromeEnabled(this.context) ? isBrowserConnected() : undefined,
+        browser: isControlChromeEnabled(this.context) ? isBrowserConnected() : undefined,
       };
 
       // Read the @-mentioned files/folders while retrieval runs — they are
@@ -1563,7 +1563,10 @@ export class ChatService {
           effApiKeys,
           userDisplayName,
           currentSprint,
-          useCodebaseTools ? codebaseRoots : undefined,
+          // Chat mode runs the tool loop with no roots: toolAvailability withholds
+          // the codebase, Confluence and ticket tools there, so what remains is
+          // `search_web`, `ask_user` and the browser tools — none read org data.
+          useCodebaseTools ? codebaseRoots : isWorkMode ? undefined : [],
           effBaseUrl,
           attachments,
           resolvedMentions,
