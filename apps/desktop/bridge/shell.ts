@@ -168,10 +168,17 @@ interface SessionPreview {
   const frame = (viewType: string, label: string) => {
     const f = document.createElement('iframe');
     f.className = 'view';
-    f.title = label;
+    f.setAttribute('aria-label', label);
     // Same origin already inherits these; stated so Copy keeps working if that changes.
     f.allow = 'clipboard-read; clipboard-write';
     f.src = `/view/${encodeURIComponent(viewType)}`;
+    // Under a saved page zoom a frame can finish loading laid out at the
+    // unzoomed size (a white band beside it). Resizing it by a pixel and back
+    // once it has loaded makes it lay out again.
+    f.addEventListener('load', () => {
+      f.style.width = 'calc(100% - 1px)';
+      requestAnimationFrame(() => requestAnimationFrame(() => (f.style.width = '')));
+    });
     return f;
   };
   const chatFrame = frame(CHAT_VIEW, 'Chat');

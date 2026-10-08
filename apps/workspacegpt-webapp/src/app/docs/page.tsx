@@ -235,7 +235,9 @@ export default function DocsPage() {
               </Step>
 
               <Step number={5} title="WorkspaceGPT Desktop (macOS and Windows, no editor needed)">
-                <p>The same agent as a standalone app. On a Mac (Apple Silicon or Intel, macOS 12 or later), paste this into Terminal:</p>
+                <p>The same agent as a standalone app. The simplest way, on a Mac (macOS 12 or later) or Windows (x64) with Node.js 18+, is one npm command in any terminal:</p>
+                <CodeBlock language="bash">npx workspacegpt</CodeBlock>
+                <p>Or with curl, on a Mac (Apple Silicon or Intel, macOS 12 or later), paste this into Terminal:</p>
                 <CodeBlock language="bash">curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh</CodeBlock>
                 <p>
                   The installer downloads the build for your Mac, checks its SHA-256 against the release, and installs it into{" "}
@@ -248,8 +250,11 @@ export default function DocsPage() {
                 <p className="text-muted">
                   Desktop updates itself: it checks for a new version in the background, verifies its signature, and installs it the next time you quit or when you choose <strong className="text-white">Restart Now</strong>. Secrets live in the macOS Keychain (or Windows Credential Manager). When its window isn&apos;t in front, Desktop sends a notification when a run needs your review, finishes or fails.
                 </p>
-                <p>On Windows (x64), paste this into PowerShell:</p>
-                <CodeBlock language="powershell">irm https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | iex</CodeBlock>
+                <p>On Windows (x64), curl ships with Windows 10 and later. Paste this into PowerShell or Command Prompt:</p>
+                <CodeBlock language="powershell">curl.exe -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | powershell -NoProfile -ExecutionPolicy Bypass -Command -</CodeBlock>
+                <p className="text-muted">
+                  Prefer PowerShell alone? <code className="bg-white/10 px-1 rounded text-xs">irm https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | iex</code> does the same, but only inside PowerShell.
+                </p>
                 <p>
                   It checks the installer&apos;s SHA-256 and installs for your user only &mdash; no admin prompt. The installer isn&apos;t
                   code-signed yet: this PowerShell line isn&apos;t stopped by SmartScreen, but a <code className="bg-white/10 px-1 rounded text-xs">-setup.exe</code> downloaded

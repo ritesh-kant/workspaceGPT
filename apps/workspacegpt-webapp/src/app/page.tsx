@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "./_components/Icon";
 import { SiteNav } from "./_components/SiteNav";
 import { SiteFooter } from "./_components/SiteFooter";
@@ -128,18 +128,17 @@ function BrowserControlMock() {
 }
 
 /** Published by .github/workflows/desktop-publish.yml on every desktop-v* tag. */
-const DESKTOP_INSTALL = [
-  {
-    os: "macOS",
-    where: "Terminal",
+const DESKTOP_INSTALL = {
+  npm: { note: "macOS or Windows, needs Node.js 18+", command: "npx workspacegpt" },
+  macOS: {
+    note: "In Terminal",
     command: "curl -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.sh | sh",
   },
-  {
-    os: "Windows",
-    where: "PowerShell",
-    command: "irm https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | iex",
+  Windows: {
+    note: "In PowerShell or Command Prompt",
+    command: "curl.exe -fsSL https://github.com/ritesh-kant/workspaceGPT/releases/download/desktop-latest/install.ps1 | powershell -NoProfile -ExecutionPolicy Bypass -Command -",
   },
-] as const;
+} as const;
 const DESKTOP_RELEASES_URL = "https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&expanded=true";
 
 export default function Home() {
@@ -179,6 +178,11 @@ export default function Home() {
   };
 
   const [copied, setCopied] = useState<string | null>(null);
+  const [installMethod, setInstallMethod] = useState<"npm" | "curl">("npm");
+  const [curlOs, setCurlOs] = useState<"macOS" | "Windows">("macOS");
+  useEffect(() => {
+    if (/Win/i.test(navigator.platform)) setCurlOs("Windows");
+  }, []);
   const copyInstallCommand = (command: string) => {
     navigator.clipboard?.writeText(command).then(() => {
       setCopied(command);
@@ -811,25 +815,40 @@ export default function Home() {
                 <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">WorkspaceGPT Desktop</h3>
                 <p className="text-muted leading-relaxed mb-6">
                   No editor needed. Open a project folder and the agent reads, edits and tests it, with your Confluence,
-                  Jira and Azure DevOps knowledge in reach. Paste one line:
+                  Jira and Azure DevOps knowledge in reach. Install with npm or with curl, one line either way:
                 </p>
-                {DESKTOP_INSTALL.map((d) => (
-                  <div key={d.os} className="mb-3">
-                    <p className="text-xs text-faint mb-1.5">
-                      <span className="text-foreground font-medium">{d.os}</span> &middot; {d.where}
-                    </p>
-                    <div className="bg-background border border-line rounded-xl p-3 pl-4 font-mono text-xs sm:text-sm text-brand-blue flex items-start justify-between gap-3">
-                      <code className="break-all leading-relaxed">{d.command}</code>
-                      <button
-                        onClick={() => copyInstallCommand(d.command)}
-                        aria-label={`Copy the ${d.os} install command`}
-                        className="shrink-0 text-faint hover:text-foreground transition-colors p-1"
-                      >
-                        <Icon name={copied === d.command ? "check" : "copy"} size={18} />
-                      </button>
+                {(() => {
+                  const d = installMethod === "npm" ? DESKTOP_INSTALL.npm : DESKTOP_INSTALL[curlOs];
+                  const tab = (active: boolean) =>
+                    `px-3 py-1 rounded-full text-xs font-medium border transition-colors ${active ? "bg-brand/10 text-brand border-brand/30" : "text-faint border-line hover:text-foreground"}`;
+                  return (
+                    <div className="mb-3">
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                        {(["npm", "curl"] as const).map((m) => (
+                          <button key={m} onClick={() => setInstallMethod(m)} className={tab(installMethod === m)}>{m}</button>
+                        ))}
+                        {installMethod === "curl" && (
+                          <span className="flex gap-1.5 ml-auto">
+                            {(["macOS", "Windows"] as const).map((o) => (
+                              <button key={o} onClick={() => setCurlOs(o)} className={tab(curlOs === o)}>{o}</button>
+                            ))}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-faint mb-1.5">{d.note}</p>
+                      <div className="bg-background border border-line rounded-xl p-3 pl-4 font-mono text-xs sm:text-sm text-brand-blue flex items-start justify-between gap-3">
+                        <code className="break-all leading-relaxed">{d.command}</code>
+                        <button
+                          onClick={() => copyInstallCommand(d.command)}
+                          aria-label="Copy the install command"
+                          className="shrink-0 text-faint hover:text-foreground transition-colors p-1"
+                        >
+                          <Icon name={copied === d.command ? "check" : "copy"} size={18} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })()}
                 <ul className="space-y-2.5 text-sm text-muted mt-4 mb-6">
                   <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="check" size={16} /></span> Apple Silicon and Intel Macs (macOS 12+), and Windows x64</li>
                   <li className="flex gap-3"><span className="text-brand flex-shrink-0"><Icon name="refresh" size={16} /></span> Updates itself &mdash; every update is signed and verified before it installs</li>

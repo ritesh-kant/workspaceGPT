@@ -67,7 +67,31 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
             // sidebar away, so the old single-column size still works.
             .inner_size(1180.0, 800.0)
             .min_inner_size(420.0, 500.0)
-            .initialization_script(&token_script(&token));
+            .initialization_script(&token_script(&token))
+            // A saved zoom applied before the frames have loaded leaves them
+            // laid out at the unzoomed size (a white band beside and below the
+            // sidebar until the zoom changes again). Nudge it once the page and
+            // its frames are up, which is what pressing a zoom key does.
+            .on_page_load(|w, payload| {
+                if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                    return;
+                }
+                let app = w.app_handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1200));
+                    let again = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        let z = *again.state::<Zoom>().0.lock().unwrap();
+                        if (z - 1.0).abs() < f64::EPSILON {
+                            return;
+                        }
+                        if let Some(w) = again.get_webview_window(MAIN) {
+                            let _ = w.set_zoom(z + 0.01);
+                            let _ = w.set_zoom(z);
+                        }
+                    });
+                });
+            });
         // macOS: the page runs under a transparent title bar and draws its own
         // header; `data-tauri-drag-region` there moves the window
         // (capabilities/window-drag.json allows exactly that).

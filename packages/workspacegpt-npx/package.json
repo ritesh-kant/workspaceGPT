@@ -1,0 +1,13 @@
+{
+  "name": "workspacegpt",
+  "version": "1.0.1",
+  "description": "Install WorkspaceGPT Desktop: npx workspacegpt",
+  "keywords": ["workspacegpt", "installer", "confluence", "jira", "azure-devops", "coding-agent"],
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": { "workspacegpt": "bin/install.mjs" },
+  "files": ["bin", "README.md"],
+  "engines": { "node": ">=18" },
+  "repository": { "type": "git", "url": "git+https://github.com/ritesh-kant/workspaceGPT.git", "directory": "packages/workspacegpt-npx" },
+  "homepage": "https://github.com/ritesh-kant/workspaceGPT"
+}
