@@ -7,6 +7,7 @@ import { Icon } from "./_components/Icon";
 import { SiteNav } from "./_components/SiteNav";
 import { SiteFooter } from "./_components/SiteFooter";
 import { Reveal } from "./_components/Reveal";
+import { TeaserVideo } from "./_components/TeaserVideo";
 import { CHANGELOG, entryAnchor, formatDate, releaseLabel } from "./changelog/entries";
 
 /**
@@ -357,6 +358,12 @@ export default function Home() {
                   Get the desktop app
                 </Link>
                 <Link
+                  href="#teaser"
+                  className="text-muted hover:text-foreground font-medium px-2 py-3 transition-colors"
+                >
+                  &#9654; Watch the 30s teaser
+                </Link>
+                <Link
                   href="#modes"
                   className="text-muted hover:text-foreground font-medium px-2 py-3 transition-colors"
                 >
@@ -401,6 +408,19 @@ export default function Home() {
       </header>
 
       <main className="flex-grow z-10 relative">
+
+        {/* 30-second desktop teaser. Click-to-play, so YouTube loads nothing until asked. */}
+        <section data-reveal id="teaser" className="py-12 sm:py-16 scroll-mt-14">
+          <div className="container mx-auto px-6">
+            <div className="text-center mb-8">
+              <h2 className="text-3xl sm:text-4xl font-normal text-foreground mb-3 tracking-tight">See WorkspaceGPT Desktop in 30 seconds</h2>
+              <p className="text-muted text-base sm:text-lg max-w-2xl mx-auto">From ticket to verified fix, grounded in your Knowledge, with everything staying on your machine.</p>
+            </div>
+            <div className="max-w-4xl mx-auto">
+              <TeaserVideo />
+            </div>
+          </div>
+        </section>
 
         {/* Privacy Highlight Row */}
         <section className="py-12 border-y border-line bg-surface/40">
