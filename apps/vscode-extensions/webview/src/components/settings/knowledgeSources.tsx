@@ -36,6 +36,8 @@ export interface SourceStatus {
   ready: boolean;
   /** 0–100 while a sync or an index run is in flight. */
   progress?: number;
+  /** Turned on, signed in and scoped, whether or not the first index has finished. Unset reads as false. */
+  connected?: boolean;
 }
 
 export interface KnowledgeSource {
@@ -112,18 +114,18 @@ function syncedStatus(
   const indexed = !!s.isIndexingCompleted;
   if (s.isSyncing) {
     const progress = pct(syncProgress);
-    return { tone: indexed ? 'ok' : 'warn', text: `Syncing… ${progress}%`, ready: indexed, progress };
+    return { connected: true, tone: indexed ? 'ok' : 'warn', text: `Syncing… ${progress}%`, ready: indexed, progress };
   }
   if (s.isIndexing) {
     const progress = pct(indexProgress);
-    return { tone: indexed ? 'ok' : 'warn', text: `Indexing… ${progress}%`, ready: indexed, progress };
+    return { connected: true, tone: indexed ? 'ok' : 'warn', text: `Indexing… ${progress}%`, ready: indexed, progress };
   }
   if (!indexed) {
-    if (s.canResume || s.canResumeIndexing) return { tone: 'warn', text: 'Paused', action: 'Resume the sync', ready: false };
-    if (s.lastSyncTime) return { tone: 'warn', text: 'Indexing unfinished', action: 'Finish the sync', ready: false };
-    return { tone: 'warn', text: 'Not synced yet', action: 'Start the sync', ready: false };
+    if (s.canResume || s.canResumeIndexing) return { connected: true, tone: 'warn', text: 'Paused', action: 'Resume the sync', ready: false };
+    if (s.lastSyncTime) return { connected: true, tone: 'warn', text: 'Indexing unfinished', action: 'Finish the sync', ready: false };
+    return { connected: true, tone: 'warn', text: 'Not synced yet', action: 'Start the sync', ready: false };
   }
-  return { tone: 'ok', text: readyText, action: 'Manage', ready: true };
+  return { connected: true, tone: 'ok', text: readyText, action: 'Manage', ready: true };
 }
 
 export const KNOWLEDGE_SOURCES: KnowledgeSource[] = [

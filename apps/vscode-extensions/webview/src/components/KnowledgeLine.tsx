@@ -25,7 +25,8 @@ const KnowledgeLine: React.FC<KnowledgeLineProps> = ({ onOpen }) => {
     status: source.status(config),
     lastSync: source.lastSync?.(config),
   }));
-  const nothingConnected = rows.every((r) => r.status.tone !== 'ok');
+  const isConnected = (r: (typeof rows)[number]) => r.status.tone === 'ok' || !!r.status.connected;
+  const nothingConnected = !rows.some(isConnected);
   // Freshness once, for the most recently synced source, not per item.
   const freshest = rows
     .filter((r) => r.status.tone === 'ok' && r.lastSync)
@@ -37,7 +38,7 @@ const KnowledgeLine: React.FC<KnowledgeLineProps> = ({ onOpen }) => {
         {nothingConnected ? 'Connect your knowledge:' : 'Knows your org through'}
       </button>
       {rows.map(({ source, status }) => {
-        const connected = status.tone === 'ok';
+        const connected = status.tone === 'ok' || !!status.connected;
         return (
           <button
             type='button'

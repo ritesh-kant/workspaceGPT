@@ -14,6 +14,7 @@ import AgentTimeline from './components/AgentTimeline';
 import ChatHistorySidebar from './components/ChatHistorySidebar';
 import MentionPicker from './components/MentionPicker';
 import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
+import MyWorkTeaser from './components/MyWorkTeaser';
 import HomeGreeting from './components/HomeGreeting';
 import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowledgeSources';
 import QuickTipsSection from './components/QuickTipsSection';
@@ -504,7 +505,17 @@ const App: React.FC = () => {
   // host for work items while its settings still read as unconfigured.
   const adoOrgName = config.ado?.orgName;
   const adoProjectName = config.ado?.projectName;
-  const isAdoConnected = !!(config.ado?.isAuthenticated && adoOrgName && adoProjectName);
+  // "Connected" means on in Settings as well as signed in: the Knowledge dots
+  // and the host's tracker registry judge it the same way, so switching a
+  // source off takes its tickets off the home screen too.
+  const isAdoConnected = !!(config.ado?.isAdoEnabled && config.ado?.isAuthenticated && adoOrgName && adoProjectName);
+  const isJiraConnected = !!(
+    config.jira?.isJiraEnabled &&
+    config.jira?.isAuthenticated &&
+    config.jira?.siteUrl &&
+    config.jira?.projectKey
+  );
+  const isTrackerConnected = isAdoConnected || isJiraConnected;
 
   // Populated by the WORKSPACE_PATH reply; null until it arrives, so the picker
   // doesn't flash "no folder open" during the first render.
@@ -2042,12 +2053,12 @@ const App: React.FC = () => {
   }, []);
 
   /**
-   * Load "your work" whenever ADO is connected (and clear it when it isn't, so
+   * Load "your work" whenever a ticket source is connected (and clear it when it isn't, so
    * disconnecting doesn't leave a stale list on screen). Fires once per connect
    * rather than on every empty state, since the host answers from cache first.
    */
   useEffect(() => {
-    if (!isAdoConnected) {
+    if (!isTrackerConnected) {
       setMyWorkItems([]);
       setMyWorkLoaded(false);
       setMyWorkError(undefined);
@@ -2057,7 +2068,7 @@ const App: React.FC = () => {
     setMyWorkRefreshing(true);
     vscode.postMessage({ type: MESSAGE_TYPES.GET_MY_WORK_ITEMS });
     // Re-runs if org/project arrive or change (project switch, late hydration).
-  }, [isAdoConnected, adoOrgName, adoProjectName]);
+  }, [isAdoConnected, isJiraConnected, adoOrgName, adoProjectName]);
 
   const handleRefreshMyWork = () => {
     myWorkRetriesRef.current = 0;
@@ -2599,7 +2610,7 @@ const App: React.FC = () => {
           isConfluenceConnected ? (
             <div className='recent-chats-container'>
                 <HomeGreeting chatOnly={!isWorkMode} onOpenSettings={openSettings} />
-                {isWorkMode && isAdoConnected && (
+                {isWorkMode && isTrackerConnected && (
                   <MyWorkPanel
                     items={myWorkItems}
                     currentSprintName={myWorkSprint}
@@ -2613,6 +2624,7 @@ const App: React.FC = () => {
                     onOpenDefaultFolder={openDefaultFolderSettings}
                   />
                 )}
+                {isWorkMode && !isTrackerConnected && <MyWorkTeaser onOpen={openSettings} />}
               <div className='recent-chats-header'>
                 <div className='recent-chats-title-group'>
                   <h2>Recent Chats</h2>
@@ -2676,7 +2688,7 @@ const App: React.FC = () => {
           ) : (
             <div className='welcome-container'>
               <HomeGreeting chatOnly={!isWorkMode} onOpenSettings={openSettings} />
-              {isWorkMode && isAdoConnected && (
+              {isWorkMode && isTrackerConnected && (
                 <MyWorkPanel
                   items={myWorkItems}
                   currentSprintName={myWorkSprint}
@@ -2690,6 +2702,7 @@ const App: React.FC = () => {
                     onOpenDefaultFolder={openDefaultFolderSettings}
                 />
               )}
+              {isWorkMode && !isTrackerConnected && <MyWorkTeaser onOpen={openSettings} />}
               {isWorkMode && (
                 <>
                   <div className='prompt-suggestions'>

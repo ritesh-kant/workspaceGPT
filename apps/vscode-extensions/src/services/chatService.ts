@@ -492,9 +492,11 @@ export class ChatService {
       settings?.state?.config?.confluence?.isAuthenticated &&
       settings?.state?.config?.confluence?.isIndexingCompleted;
     const isAdoConnected =
+      settings?.state?.config?.ado?.isAdoEnabled &&
       settings?.state?.config?.ado?.isAuthenticated &&
       settings?.state?.config?.ado?.isIndexingCompleted;
     const isJiraConnected =
+      settings?.state?.config?.jira?.isJiraEnabled &&
       settings?.state?.config?.jira?.isAuthenticated &&
       settings?.state?.config?.jira?.isIndexingCompleted;
 
@@ -1068,10 +1070,12 @@ export class ChatService {
         settings?.state?.config?.confluence?.isIndexingCompleted;
       const isAdoConnected =
         isWorkMode &&
+        settings?.state?.config?.ado?.isAdoEnabled &&
         settings?.state?.config?.ado?.isAuthenticated &&
         settings?.state?.config?.ado?.isIndexingCompleted;
       const isJiraConnected =
         isWorkMode &&
+        settings?.state?.config?.jira?.isJiraEnabled &&
         settings?.state?.config?.jira?.isAuthenticated &&
         settings?.state?.config?.jira?.isIndexingCompleted;
 

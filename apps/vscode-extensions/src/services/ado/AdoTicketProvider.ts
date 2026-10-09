@@ -23,7 +23,7 @@ export class AdoTicketProvider implements TicketProvider {
 
   async isConnected(): Promise<boolean> {
     const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
-    return !!settings?.state?.config?.ado?.isAuthenticated;
+    return !!(settings?.state?.config?.ado?.isAdoEnabled && settings?.state?.config?.ado?.isAuthenticated);
   }
 
   fetchTicket(id: string, opts: { includeComments: boolean }): Promise<TicketDetail> {

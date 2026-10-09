@@ -45,7 +45,13 @@ export class TicketsMessageHandler {
    * work disappear because a token expired.
    */
   private async handleGetMyWorkItems(forceRefresh: boolean): Promise<void> {
-    const cached = this.context.globalState.get<MyTicketsResult>(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE);
+    const provider = getActiveTicketProvider(this.context);
+    // Switched off (or never connected): the cache belongs to a tracker that is
+    // no longer active, so it is neither served nor kept for the next one.
+    if (!provider) await this.context.globalState.update(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE, undefined);
+    const cached = provider
+      ? this.context.globalState.get<MyTicketsResult>(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE)
+      : undefined;
 
     if (cached && !forceRefresh) {
       this.webviewView.webview.postMessage({
@@ -55,7 +61,6 @@ export class TicketsMessageHandler {
       });
     }
 
-    const provider = getActiveTicketProvider(this.context);
     if (!provider) {
       // No tracker connected — an empty, error-free response is the correct
       // "you have no work" state here, not a thrown error the panel has to

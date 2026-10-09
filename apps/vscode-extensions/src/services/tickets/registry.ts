@@ -13,6 +13,10 @@ import { TicketProvider } from './TicketProvider';
  * contract `toolAvailability.ado` had before this file existed, kept
  * unchanged so gating a turn's tools never costs a network round-trip.
  *
+ * "Connected" also means switched on in Settings → Knowledge (isAdoEnabled /
+ * isJiraEnabled): turning a source off leaves the sign-in in place but must
+ * take the tracker out of play, the same way the Knowledge dots judge it.
+ *
  * ADO is checked first, so a workspace with both somehow configured keeps
  * today's ADO behavior rather than silently switching. The two-trackers-at-
  * once question (§9, out of scope for v1) is what would turn this into
@@ -29,10 +33,10 @@ import { TicketProvider } from './TicketProvider';
  */
 export function getActiveTicketProvider(context: vscode.ExtensionContext): TicketProvider | null {
   const settings: any = context.globalState.get(STORAGE_KEYS.SETTINGS);
-  if (settings?.state?.config?.ado?.isAuthenticated) {
+  if (settings?.state?.config?.ado?.isAdoEnabled && settings?.state?.config?.ado?.isAuthenticated) {
     return new AdoTicketProvider(context);
   }
-  if (settings?.state?.config?.jira?.isAuthenticated) {
+  if (settings?.state?.config?.jira?.isJiraEnabled && settings?.state?.config?.jira?.isAuthenticated) {
     return new JiraTicketProvider(context);
   }
   return null;

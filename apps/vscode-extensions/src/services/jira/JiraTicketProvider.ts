@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { STORAGE_KEYS } from '../../../constants';
 import { TicketProvider } from '../tickets/TicketProvider';
 import { MyTicketsResult, TicketDetail } from '../tickets/types';
 import { JiraAuthService } from './jiraAuthService';
@@ -22,6 +23,8 @@ export class JiraTicketProvider implements TicketProvider {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   async isConnected(): Promise<boolean> {
+    const settings: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
+    if (!settings?.state?.config?.jira?.isJiraEnabled) return false;
     return new JiraAuthService(this.context).isAuthenticated();
   }
 
