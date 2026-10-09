@@ -638,7 +638,9 @@
   border-radius: 12px;
   border: 1px solid var(--vscode-editor-lineHighlightBorder);
   background-color: var(--vscode-input-background);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Layout changes (desktop Settings/sidebar, window resizing) must settle
+     immediately. Only animate the composer's focus styling. */
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   overflow: visible;
 }
