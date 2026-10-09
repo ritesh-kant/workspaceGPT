@@ -165,6 +165,16 @@ interface SessionPreview {
 
   // ── Frames ──────────────────────────────────────────────────────────────
 
+  let nativeRefreshQueued = false;
+  const refreshNativeLayout = () => {
+    if (!w.__WGPT_DESKTOP__?.refreshLayout || nativeRefreshQueued) return;
+    nativeRefreshQueued = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      nativeRefreshQueued = false;
+      w.__WGPT_DESKTOP__.refreshLayout();
+    }));
+  };
+
   const frame = (viewType: string, label: string) => {
     const f = document.createElement('iframe');
     f.className = 'view';
@@ -172,12 +182,40 @@ interface SessionPreview {
     // Same origin already inherits these; stated so Copy keeps working if that changes.
     f.allow = 'clipboard-read; clipboard-write';
     f.src = `/view/${encodeURIComponent(viewType)}`;
-    // Under a saved page zoom a frame can finish loading laid out at the
-    // unzoomed size (a white band beside it). Resizing it by a pixel and back
-    // once it has loaded makes it lay out again.
-    f.addEventListener('load', () => {
+    // WebKit can retain an unzoomed frame surface after loading or being
+    // revealed from display:none (onboarding, Settings, sidebar toggling).
+    // Refresh both dimensions; flex:1 otherwise absorbs a width-only nudge.
+    let refreshing = false;
+    const refreshLayout = () => {
+      if (refreshing || !f.clientWidth || !f.clientHeight) return;
+      refreshing = true;
+      f.style.flex = 'none';
       f.style.width = 'calc(100% - 1px)';
-      requestAnimationFrame(() => requestAnimationFrame(() => (f.style.width = '')));
+      f.style.height = 'calc(100% - 1px)';
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        f.style.flex = '';
+        f.style.width = '';
+        f.style.height = '';
+        refreshing = false;
+      }));
+    };
+    let parentSize: ResizeObserver | undefined;
+    f.addEventListener('load', () => {
+      refreshNativeLayout();
+      refreshLayout();
+      parentSize?.disconnect();
+      // Observe the containing pane, so nudging the frame cannot trigger a
+      // resize loop. A hidden pane reports zero; revealing it triggers again.
+      let width = 0;
+      let height = 0;
+      parentSize = new ResizeObserver(([entry]) => {
+        const next = entry.contentRect;
+        if (next.width === width && next.height === height) return;
+        width = next.width;
+        height = next.height;
+        refreshLayout();
+      });
+      if (f.parentElement) parentSize.observe(f.parentElement);
     });
     return f;
   };
@@ -202,7 +240,9 @@ interface SessionPreview {
       let container: Element | null = null;
       const panels = new MutationObserver(checkPanel);
       const check = () => {
-        app.classList.toggle('onboarding', !!root.querySelector(':scope > .onboarding-overlay'));
+        const onboarding = !!root.querySelector(':scope > .onboarding-overlay');
+        if (app.classList.contains('onboarding') !== onboarding) refreshNativeLayout();
+        app.classList.toggle('onboarding', onboarding);
         const next = root.querySelector(':scope > .app-container > .chat-container');
         if (next !== container) {
           panels.disconnect();
@@ -220,7 +260,9 @@ interface SessionPreview {
         // Settings brings its own left column (its section nav, see
         // Settings.tsx's page layout); the sessions sidebar steps aside so the
         // window stays two columns, the way Cline's settings sit in its sidebar.
-        app.classList.toggle('settings-open', panel === 'Settings');
+        const settingsOpen = panel === 'Settings';
+        if (app.classList.contains('settings-open') !== settingsOpen) refreshNativeLayout();
+        app.classList.toggle('settings-open', settingsOpen);
         renderTitle();
       }
       // React may keep #root's element and swap only its class and children
@@ -345,6 +387,7 @@ interface SessionPreview {
 
   function applySidebar(): void {
     const open = hasSessionsView ? sidebar : 'closed';
+    if (app.dataset.sidebar !== open) refreshNativeLayout();
     app.dataset.sidebar = open;
     // On a narrow window the open sidebar floats over the chat.
     $('scrim').hidden = !(open === 'open' && NARROW.matches);

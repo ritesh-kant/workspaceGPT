@@ -637,6 +637,35 @@
   background-color: var(--vscode-button-hoverBackground);
 }
 
+/* Connection actions size to their label in both desktop pages and sidebars. */
+.connection-setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+.connection-setup > .description-text,
+.connection-setup > .form-group {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.settings-form .connection-button {
+  width: auto;
+  max-width: 100%;
+  align-self: flex-start;
+  display: inline-flex;
+  box-sizing: border-box;
+  padding: 9px 16px;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: normal;
+}
+.settings-form .primary-button-full.connection-button { border-color: transparent; }
+
 .button-full {
   width: 100% !important;
 }

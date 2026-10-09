@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "watch": "vite build --watch",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:mock": "vite build && node tools/preview.mjs",
+    "preview:onboarding": "vite build && PREVIEW_OPEN=1 PREVIEW_QUERY='?onboarding' node tools/preview.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

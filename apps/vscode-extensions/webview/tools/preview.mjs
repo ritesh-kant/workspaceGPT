@@ -42,6 +42,7 @@
  * onboarding and it will not come back out — reload and send the good one.
  */
 import * as http from 'http';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -61,6 +62,12 @@ const INJECTED = `
     setState: () => {},
   });
   window.__host = (m) => window.dispatchEvent(new MessageEvent('message', { data: m }));
+  // ?onboarding — behave like a first run: the host answers the settings
+  // request with no saved state, so the app lands on onboarding.
+  if (new URLSearchParams(location.search).has('onboarding')) {
+    window.addEventListener('load', () =>
+      setTimeout(() => window.__host({ type: 'get-global-state-response', key: 'settings' }), 300));
+  }
 </script>
 <style>
   /* Dark+ values. Only the variables the components actually reference. */
@@ -132,4 +139,11 @@ http
     res.writeHead(200, { 'Content-Type': MIME[path.extname(abs).slice(1)] ?? 'application/octet-stream' });
     res.end(body);
   })
-  .listen(PORT, '127.0.0.1', () => console.log(`webview preview → http://127.0.0.1:${PORT}`));
+  .listen(PORT, '127.0.0.1', () => {
+    const url = `http://127.0.0.1:${PORT}/${process.env.PREVIEW_QUERY ?? ''}`;
+    console.log(`webview preview → ${url}`);
+    if (process.env.PREVIEW_OPEN) {
+      const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+      spawn(opener, [url], { stdio: 'ignore', shell: process.platform === 'win32', detached: true }).unref();
+    }
+  });

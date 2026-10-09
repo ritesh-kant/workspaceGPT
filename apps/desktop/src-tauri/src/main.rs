@@ -13,6 +13,7 @@ mod updater;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
@@ -36,7 +37,7 @@ fn token_script(token: &str) -> String {
     let chrome = if cfg!(target_os = "macos") { "overlay" } else { "native" };
     format!(
         "(function(){{ if (location.protocol === 'http:' && location.hostname === '127.0.0.1') {{ \
-         Object.defineProperty(window, '__WGPT_DESKTOP__', {{ value: Object.freeze({{ token: '{token}', chrome: '{chrome}' }}) }}); }} }})();"
+         Object.defineProperty(window, '__WGPT_DESKTOP__', {{ value: Object.freeze({{ token: '{token}', chrome: '{chrome}', refreshLayout: function(){{ location.assign('workspacegpt://refresh-layout'); }} }}) }}); }} }})();"
     )
 }
 
@@ -45,6 +46,7 @@ fn show_main(app: &AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        refresh_zoom(app);
     }
 }
 
@@ -67,31 +69,7 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
             // sidebar away, so the old single-column size still works.
             .inner_size(1180.0, 800.0)
             .min_inner_size(420.0, 500.0)
-            .initialization_script(&token_script(&token))
-            // A saved zoom applied before the frames have loaded leaves them
-            // laid out at the unzoomed size (a white band beside and below the
-            // sidebar until the zoom changes again). Nudge it once the page and
-            // its frames are up, which is what pressing a zoom key does.
-            .on_page_load(|w, payload| {
-                if !matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                    return;
-                }
-                let app = w.app_handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(1200));
-                    let again = app.clone();
-                    let _ = app.run_on_main_thread(move || {
-                        let z = *again.state::<Zoom>().0.lock().unwrap();
-                        if (z - 1.0).abs() < f64::EPSILON {
-                            return;
-                        }
-                        if let Some(w) = again.get_webview_window(MAIN) {
-                            let _ = w.set_zoom(z + 0.01);
-                            let _ = w.set_zoom(z);
-                        }
-                    });
-                });
-            });
+            .initialization_script(&token_script(&token));
         // macOS: the page runs under a transparent title bar and draws its own
         // header; `data-tauri-drag-region` there moves the window
         // (capabilities/window-drag.json allows exactly that).
@@ -102,6 +80,12 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
             // (a link the page didn't route through openExternal) goes to the
             // system browser instead of replacing the chat.
             .on_navigation(move |url| {
+                // A private, write-free signal from the initialized shell.
+                // Cancel navigation: the loopback document stays loaded.
+                if url.scheme() == "workspacegpt" && url.host_str() == Some("refresh-layout") {
+                    refresh_zoom(&nav_app);
+                    return false;
+                }
                 let ours = url.scheme() == "http"
                     && url.host_str() == Some("127.0.0.1")
                     && url.port() == *nav_app.state::<CurrentPort>().0.lock().unwrap();
@@ -138,6 +122,42 @@ fn restart_on_folder(app: &AppHandle, path: PathBuf) {
             eprintln!("[shell] {e}");
         }
     });
+}
+
+/// Coalesce frame-load/reveal notifications while native WebKit repaints.
+struct LayoutRefresh(AtomicBool);
+
+fn refresh_zoom(app: &AppHandle) {
+    if (*app.state::<Zoom>().0.lock().unwrap() - 1.0).abs() < f64::EPSILON {
+        return;
+    }
+    if app.state::<LayoutRefresh>().0.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let first = app.clone();
+    if app.run_on_main_thread(move || {
+        let z = *first.state::<Zoom>().0.lock().unwrap();
+        if let Some(w) = first.get_webview_window(MAIN) {
+            let _ = w.set_zoom(z + 0.01);
+        }
+        // Start the delay after the first native change has actually run.
+        // Two set_zoom calls in one UI callback can be coalesced before paint.
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let second = first.clone();
+            if first.run_on_main_thread(move || {
+                let z = *second.state::<Zoom>().0.lock().unwrap();
+                if let Some(w) = second.get_webview_window(MAIN) {
+                    let _ = w.set_zoom(z);
+                }
+                second.state::<LayoutRefresh>().0.store(false, Ordering::SeqCst);
+            }).is_err() {
+                first.state::<LayoutRefresh>().0.store(false, Ordering::SeqCst);
+            }
+        });
+    }).is_err() {
+        app.state::<LayoutRefresh>().0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Page zoom, kept across launches in the app config dir.
@@ -338,6 +358,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(CurrentPort(Mutex::new(None)))
+        .manage(LayoutRefresh(AtomicBool::new(false)))
         .manage(updater::Updates::default())
         .manage(supervisor.clone())
         .setup(move |app| {

@@ -102,21 +102,21 @@ const ConfluenceSettings: React.FC = () => {
 
           {/* Not Authenticated State */}
           {!isAuthenticated && (
-            <div className='oauth-connect'>
+            <div className='oauth-connect connection-setup'>
               <p className="description-text">
                 Connect your Atlassian account to sync Confluence pages.
               </p>
               <button
                 onClick={startOAuth}
                 disabled={confluenceConfig?.isConnecting}
-                className="primary-button-full"
+                className="primary-button-full connection-button"
               >
                 {confluenceConfig?.isConnecting ? 'Connecting…' : 'Connect to Confluence'}
               </button>
               {confluenceConfig?.isConnecting && (
                 <button
                   onClick={cancelOAuth}
-                  className='secondary-button button-full mt-8'
+                  className='secondary-button connection-button'
                 >
                   Cancel
                 </button>

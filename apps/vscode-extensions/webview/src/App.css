@@ -700,6 +700,7 @@ input:focus {
 .input-wrapper textarea {
   flex: 0 0 auto;
   width: 100%;
+  min-width: 0;
   padding: 0.5rem;
   background-color: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
@@ -712,6 +713,11 @@ input:focus {
      measurement is ever stale (a reflow it hasn't seen yet) the tail must stay
      reachable by scrolling rather than being silently clipped. */
   overflow-y: auto;
+  /* Vertical overflow can make the default horizontal overflow compute to
+     auto. Keep zoom rounding and long unbroken text from adding a bottom bar. */
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   max-height: 168px;
   box-sizing: border-box;
 }

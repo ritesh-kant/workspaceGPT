@@ -68,7 +68,7 @@ const ChromeSettings: React.FC = () => {
         </div>
         {!connected && (
           <div className='form-group'>
-            <button type='button' className='primary-button-full' onClick={() => VSCodeAPI().postMessage({ type: MESSAGE_TYPES.INSTALL_CHROME_EXTENSION })}>
+            <button type='button' className='primary-button-full connection-button' onClick={() => VSCodeAPI().postMessage({ type: MESSAGE_TYPES.INSTALL_CHROME_EXTENSION })}>
               Install Chrome extension
             </button>
             <small className='form-text'>

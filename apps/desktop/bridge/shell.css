@@ -36,7 +36,21 @@ button { font: inherit; color: inherit; }
   background: var(--wgpt-d-sidebar);
   border-right: 1px solid var(--wgpt-d-border);
 }
-.app[data-sidebar="closed"] .side { display: none; }
+/* Keep the sessions frame laid out while hidden. WebKit can restore a
+   display:none iframe with an unzoomed backing surface, leaving white bands.
+   Parking it outside the window removes it from the main pane's flex layout
+   without destroying its viewport. visibility also removes it from focus/AX. */
+.app[data-sidebar="closed"] .side,
+.app.onboarding .side,
+.app.settings-open .side,
+.app.term-max .side {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -10000px;
+  visibility: hidden;
+  pointer-events: none;
+}
 
 /* Drag handle on the sidebar's right edge. */
 .side-resize {
@@ -85,6 +99,7 @@ button { font: inherit; color: inherit; }
   flex: 1;
   min-height: 0;
   display: flex;
+  background: var(--wgpt-d-sidebar);
 }
 .view {
   flex: 1;
@@ -94,6 +109,7 @@ button { font: inherit; color: inherit; }
   display: block;
   background: transparent;
 }
+.side-body > .view { background: var(--wgpt-d-sidebar); }
 
 .side-foot {
   display: flex;
@@ -275,7 +291,6 @@ button { font: inherit; color: inherit; }
 
 /* ── First-run setup: the chat's onboarding fills the window ────────── */
 
-.app.onboarding .side,
 .app.onboarding .scrim { display: none !important; }
 /* The header stays only as an empty strip: it is the window's drag area
    and keeps the setup clear of the traffic lights. */
@@ -284,7 +299,6 @@ button { font: inherit; color: inherit; }
 
 /* ── Settings: the chat's own nav column replaces the sessions sidebar ── */
 
-.app.settings-open .side,
 .app.settings-open .scrim,
 .app.settings-open #expandSide { display: none !important; }
 /* The nav column carries the "Settings" heading; the header keeps only its
@@ -368,5 +382,5 @@ button { font: inherit; color: inherit; }
 .term-view[hidden] { display: none; }
 .term-empty { padding: 16px; color: var(--wgpt-d-muted); }
 #termBtn.active { background: var(--wgpt-d-hover); color: var(--wgpt-d-fg); }
-.app.term-max .main, .app.term-max .side { display: none; }
+.app.term-max .main { display: none; }
 .app.term-max .term { width: auto; flex: 1; margin: 8px; }

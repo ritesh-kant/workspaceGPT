@@ -1297,6 +1297,13 @@ const App: React.FC = () => {
           // this surface inherits the right to write it.
           break;
         }
+        case MESSAGE_TYPES.RESET:
+          // The host wiped everything (Settings → Reset, or the Clear Data
+          // command). Hydration only routes to onboarding at startup, so a
+          // live reset has to send the user there itself.
+          useSettingsStore.getState().setOnboardingCompleted(false);
+          setActiveView('onboarding');
+          break;
         case MESSAGE_TYPES.GET_GLOBAL_STATE_RESPONSE:
           if (message.key === STORAGE_KEYS.SETTINGS) {
             const restoredConfig = message.state?.config || settingsDefaultConfig;

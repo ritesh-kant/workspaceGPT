@@ -114,19 +114,19 @@ const JiraSettings: React.FC = () => {
         <div className='settings-form'>
           {/* Not Authenticated State */}
           {!isAuthenticated && (
-            <div className='oauth-connect'>
+            <div className='oauth-connect connection-setup'>
               <p className='description-text'>
                 Connect your Atlassian account to sync Jira issues.
               </p>
               <button
                 onClick={startOAuth}
                 disabled={jiraConfig?.isConnecting}
-                className='primary-button-full'
+                className='primary-button-full connection-button'
               >
                 {jiraConfig?.isConnecting ? 'Connecting…' : 'Connect to Jira'}
               </button>
               {jiraConfig?.isConnecting && (
-                <button onClick={cancelOAuth} className='secondary-button button-full mt-8'>
+                <button onClick={cancelOAuth} className='secondary-button connection-button'>
                   Cancel
                 </button>
               )}

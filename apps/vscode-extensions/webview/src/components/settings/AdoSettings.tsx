@@ -184,13 +184,13 @@ const AdoSettings: React.FC = () => {
 
         {/* Not Authenticated State */}
         {!isAuthenticated && (
-          <div className="pat-connect">
+          <div className="pat-connect connection-setup">
             <p className='description-text'>
               Sign in with your Microsoft account to connect Azure DevOps —
               no app install or admin approval needed.
             </p>
             <button
-              className='primary-button-full'
+              className='primary-button-full connection-button'
               onClick={connectWithMicrosoft}
               disabled={adoConfig?.isConnecting}
             >
@@ -200,18 +200,18 @@ const AdoSettings: React.FC = () => {
             {!showMoreOptions ? (
               <button
                 type='button'
-                className='secondary-button button-full mt-8'
+                className='secondary-button connection-button'
                 onClick={() => setShowMoreOptions(true)}
               >
                 More sign-in options
               </button>
             ) : (
               <>
-                <p className='description-text mt-8'>
+                <p className='description-text'>
                   Already signed in to the Azure CLI (<code>az login</code>)?
                 </p>
                 <button
-                  className='secondary-button button-full'
+                  className='secondary-button connection-button'
                   onClick={connectWithAzureCli}
                   disabled={adoConfig?.isConnecting}
                 >
@@ -221,13 +221,13 @@ const AdoSettings: React.FC = () => {
                 {!showPatForm ? (
                   <button
                     type='button'
-                    className='secondary-button button-full mt-8'
+                    className='secondary-button connection-button'
                     onClick={() => setShowPatForm(true)}
                   >
                     Use a Personal Access Token instead
                   </button>
                 ) : (
-                  <div className="form-group mt-8">
+                  <div className="form-group">
                     <label>Personal Access Token</label>
                     <input
                       type="password"
@@ -236,7 +236,7 @@ const AdoSettings: React.FC = () => {
                       placeholder="Paste your Azure DevOps PAT"
                     />
                     <button
-                      className='secondary-button button-full mt-8'
+                      className='secondary-button connection-button mt-8'
                       onClick={submitPat}
                       disabled={!patInput.trim() || adoConfig?.isConnecting}
                     >

@@ -24,7 +24,7 @@ const COPILOT_ICON = (
   </svg>
 );
 
-const ModelSettings: React.FC = () => {
+const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> = ({ setupOnly = false, preferCopilot = false }) => {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [copilot, setCopilot] = useState<CopilotStatus | null>(null);
   const [copilotConnecting, setCopilotConnecting] = useState(false);
@@ -213,13 +213,21 @@ const ModelSettings: React.FC = () => {
     <SectionShell
       storageKey='model'
       title='Model'
-      summary={summary}
+      summary={preferCopilot && !copilotInUse ? 'Connect your GitHub Copilot account' : summary}
       needsAttention={configuredKeyCount === 0 || !!apiKeyError}
     >
       <div className='settings-form'>
         {copilot?.available && renderSubscriptions(copilot)}
 
-        {(!copilotInUse || showKeyProviders) && (
+        {preferCopilot && !copilot?.available && (
+          <p className='form-text' role='status'>
+            {copilot === null
+              ? 'Checking GitHub Copilot availability…'
+              : 'GitHub Copilot is unavailable in this host. In VS Code, install and enable GitHub Copilot Chat, or go back and choose another setup.'}
+          </p>
+        )}
+
+        {(!preferCopilot || showKeyProviders) && (!copilotInUse || showKeyProviders) && (
         <div className='form-group'>
           <label htmlFor='provider-select'>{copilot?.available ? 'Or use an API key' : 'Select Provider'}</label>
           <select
@@ -319,7 +327,7 @@ const ModelSettings: React.FC = () => {
             <small className='form-text error-message'>{apiKeyError}</small>
           )}
 
-        {showSelectModelValidator() && (
+        {(!preferCopilot || copilotInUse) && showSelectModelValidator() && (
           <div className='form-group'>
             <label htmlFor='model-select'>{copilotInUse ? 'GitHub Copilot model' : 'Select Model'}</label>
             <SearchableDropdown
@@ -337,7 +345,7 @@ const ModelSettings: React.FC = () => {
           </div>
         )}
 
-        {showSelectModelValidator() && (
+        {!setupOnly && showSelectModelValidator() && (
           <div className='form-group'>
             <label htmlFor='agent-model-select'>Model for agent runs (optional)</label>
             <SearchableDropdown
@@ -361,7 +369,7 @@ const ModelSettings: React.FC = () => {
           </div>
         )}
 
-        {showSelectModelValidator() && effortLevels.length > 0 && (
+        {!setupOnly && showSelectModelValidator() && effortLevels.length > 0 && (
           <div className='form-group'>
             <label htmlFor='effort-select'>Effort</label>
             <select
@@ -429,7 +437,7 @@ const ModelSettings: React.FC = () => {
               </span>
               <span className='source-desc'>
                 {status.unofficial
-                  ? "GitHub doesn't offer Copilot to desktop apps, so this signs in the way LiteLLM does. It can break, and heavy use can get Copilot access suspended."
+                  ? 'This desktop connection uses an unofficial Copilot API. It can break, and heavy use can get Copilot access suspended.'
                   : 'Your Copilot plan, through VS Code. No API key; requests count toward your Copilot usage.'}
               </span>
               <span className='source-status'>
