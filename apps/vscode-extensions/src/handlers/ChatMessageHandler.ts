@@ -14,6 +14,7 @@ import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
 import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
+import { getCiSnapshot, getFailureLog, pushCiFix } from '../services/agent/ciService';
 import { isPermission } from '../services/agent/permissionPolicy';
 import { ensureWorktree, getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
 import { isBrowserConnected } from '../services/browser/browserBridge';
@@ -127,6 +128,12 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.GET_GIT_STATUS:
         await this.handleGetGitStatus(data.paths);
+        return true;
+      case MESSAGE_TYPES.CI_GET_STATUS:
+        await this.handleCiStatus(data.sessionId);
+        return true;
+      case MESSAGE_TYPES.CI_PUSH_FIX:
+        await this.handleCiPushFix(data);
         return true;
       case MESSAGE_TYPES.AGENT_SHIP_ALL:
         this.analyticsService.trackEvent('agent_ship_all_triggered');
@@ -404,6 +411,33 @@ export class ChatMessageHandler {
     if (sessionId) this.service().sessionRoots(sessionId, stored);
     this.viewedSessionId = sessionId;
     await this.handleGetGitStatus();
+  }
+
+  /** Failing-log cache: the log of a given head commit is fetched once, not on every poll. */
+  private ciLog?: { sha: string; log: string };
+
+  /** Snapshot of CI for the PR on the chat's branch; the failing log rides along once it has failed. */
+  private async handleCiStatus(sessionId: unknown): Promise<void> {
+    const sid = typeof sessionId === 'string' ? sessionId : null;
+    try {
+      const cwd = this.viewedRoots()[0]?.uri.fsPath;
+      const snapshot = cwd ? await getCiSnapshot(cwd) : { state: 'none' as const, checks: [] };
+      if (cwd && snapshot.state === 'failed' && snapshot.pr) {
+        if (this.ciLog?.sha !== snapshot.pr.sha) this.ciLog = { sha: snapshot.pr.sha, log: await getFailureLog(cwd, snapshot.checks) };
+        snapshot.failureLog = this.ciLog.log;
+      }
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.CI_STATUS, sessionId: sid, ...snapshot });
+    } catch (error) {
+      this.handleError('Error getting CI status:', error);
+    }
+  }
+
+  /** Commit the fix to the PR's own branch and push it, so CI runs again. */
+  private async handleCiPushFix(data: { requestId?: string; files?: unknown; branch?: unknown; subject?: unknown }): Promise<void> {
+    const files = Array.isArray(data.files) ? data.files.filter((f): f is string => typeof f === 'string') : [];
+    const result = await pushCiFix(this.viewedRoots(), files, String(data.branch ?? ''), String(data.subject || 'fix: address failing CI'));
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.CI_PUSH_FIX_DONE, requestId: data.requestId, ok: result.pushed, error: result.error });
+    if (result.pushed) await this.handleGetGitStatus();
   }
 
   /**

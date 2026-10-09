@@ -130,6 +130,16 @@ export const MESSAGE_TYPES = {
   AGENT_SHIP_ALL: 'agent-ship-all',
   AGENT_SHIP_ALL_DONE: 'agent-ship-all-done',
 
+  // CI monitor for the PR on the chat's branch (GitHub, via the user's gh).
+  // Webview → host: CI_GET_STATUS {sessionId}. Host → webview: CI_STATUS
+  // {sessionId, ...snapshot}. Webview → host: CI_PUSH_FIX {sessionId, requestId,
+  // files, branch, subject} commits those files to the PR's own branch and
+  // pushes; host → webview: CI_PUSH_FIX_DONE {requestId, ok, error?}.
+  CI_GET_STATUS: 'ci-get-status',
+  CI_STATUS: 'ci-status',
+  CI_PUSH_FIX: 'ci-push-fix',
+  CI_PUSH_FIX_DONE: 'ci-push-fix-done',
+
   // New-chat screen folder + branch chips (desktop). Webview → host:
   // GET_RECENT_FOLDERS, OPEN_WORKSPACE_FOLDER {path?} (no path: system picker),
   // LIST_GIT_BRANCHES, SWITCH_GIT_BRANCH {branch, create}. Host → webview:

@@ -1838,6 +1838,44 @@ button:disabled {
   margin: 0.2em 0;
 }
 
+/* ── Skimmable answers (READABILITY_BLOCK in promptTemplates) ─────────────
+   Section headings get an accent rule, bold carries the key terms, bullets
+   are tinted, and a "> " blockquote reads as a callout card. */
+.markdown-content h2 {
+  margin: 1.4em 0 0.5em;
+  padding-bottom: 0.3em;
+  font-size: 1.1em;
+  font-weight: 650;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-textLink-foreground) 35%, transparent);
+}
+
+.markdown-content strong {
+  font-weight: 650;
+  color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
+}
+
+.markdown-content li::marker {
+  color: var(--vscode-textLink-foreground);
+}
+
+.markdown-content blockquote {
+  border-left-color: var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 9%, transparent);
+  padding: 0.5em 0.9em;
+  border-radius: 0 var(--wgpt-radius-md, 6px) var(--wgpt-radius-md, 6px) 0;
+  color: var(--vscode-foreground);
+}
+
+.markdown-content blockquote p {
+  margin: 0.2em 0;
+}
+
+.markdown-content hr {
+  border: 0;
+  border-top: 1px dashed var(--wgpt-border, var(--vscode-input-border));
+  margin: 1.2em 0;
+}
+
 /* GFM task-list checkboxes (remark-gfm) */
 .markdown-content input[type='checkbox'] {
   flex: none;
@@ -4147,3 +4185,101 @@ button:disabled {
 .my-work-teaser-connect:hover {
   text-decoration: underline;
 }
+
+/* CI monitor chip (CiChip.tsx), under the git status bar. */
+.ci-chip-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  border-radius: var(--wgpt-radius-md, 6px);
+  background: var(--wgpt-surface, var(--vscode-editorWidget-background));
+  font-size: 0.75rem;
+}
+.ci-chip-pr {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  font-weight: 600;
+}
+.ci-chip-branch {
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ci-chip-note {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.68rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ci-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.ci-caret { opacity: 0.6; font-size: 0.65rem; }
+.ci-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground);
+  flex-shrink: 0;
+}
+.ci-chip--passed .ci-dot, .ci-check--pass .ci-dot { background: var(--vscode-charts-green, #3fb950); }
+.ci-chip--failed .ci-dot, .ci-check--fail .ci-dot { background: var(--vscode-charts-red, #f85149); }
+.ci-chip--pending .ci-dot, .ci-check--pending .ci-dot { background: var(--vscode-charts-yellow, #d29922); }
+.ci-chip--merged .ci-dot { background: var(--vscode-charts-purple, #a371f7); }
+.ci-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  width: min(320px, 92vw);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  border-radius: var(--wgpt-radius-md, 8px);
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.ci-menu-title { color: var(--vscode-descriptionForeground); font-size: 0.7rem; }
+.ci-menu-state { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; }
+.ci-menu-count { margin-left: auto; color: var(--vscode-descriptionForeground); }
+.ci-checks { list-style: none; margin: 0; padding: 0; max-height: 140px; overflow: auto; display: flex; flex-direction: column; gap: 3px; }
+.ci-check { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
+.ci-check a { color: inherit; text-decoration: none; }
+.ci-check a:hover { text-decoration: underline; }
+.ci-menu-option { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; cursor: pointer; border-top: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.25)); padding-top: 8px; }
+.ci-menu-fix {
+  align-self: flex-start;
+  padding: 3px 10px;
+  border-radius: var(--wgpt-radius-md, 6px);
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  font-size: 0.74rem;
+}
+.ci-menu-fix:disabled { opacity: 0.5; cursor: default; }
+.ci-menu-hint { color: var(--vscode-descriptionForeground); font-size: 0.68rem; }
