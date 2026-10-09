@@ -19,12 +19,14 @@ import HomeGreeting from './components/HomeGreeting';
 import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowledgeSources';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
+import CiChip from './components/CiChip';
 import WorkspaceControls from './components/WorkspaceControls';
 import FolderSwitchDialog from './components/FolderSwitchDialog';
 import { folderName, sameFolder, useWorkspaceFolders } from './hooks/useWorkspaceFolders';
 import UsageLimitBar from './components/UsageLimitBar';
 import ContextMeter from './components/ContextMeter';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
+import { useCiSync } from './hooks/useCiSync';
 import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
@@ -595,6 +597,9 @@ const App: React.FC = () => {
 
   // One poll loop behind both the status bar and the composer's Create PR button.
   useGitStatusSync(!!hasWorkspaceFolder);
+  // Filled in once handleFixCi exists below; the CI hook only needs a stable way to call it.
+  const fixCiRef = useRef<(prompt: string) => void>(() => undefined);
+  const { fixNow: fixCiNow } = useCiSync(!!hasWorkspaceFolder && assistantMode === 'work', (prompt) => fixCiRef.current(prompt));
 
   const modelProviders = useModelProviders();
 
@@ -2401,6 +2406,32 @@ const App: React.FC = () => {
   };
 
   /**
+   * CI fix turn: the failing log as an ordinary user message through the
+   * normal send path (like handleResume), with the mode dial as it stands.
+   * The push afterwards is the host's (see useCiSync) — the model is told not to.
+   */
+  const handleFixCi = (promptText: string) => {
+    if (isLoading || isStreaming) return;
+    if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
+    resetStreamBuffer();
+    addMessage({ content: promptText, isUser: true, timestamp: Date.now() });
+    setIsLoading(true);
+    setIsStreaming(false);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId: currentSessionId,
+      message: promptText,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+      assistantMode,
+      ...modeFlags(),
+    });
+  };
+  fixCiRef.current = handleFixCi;
+
+  /**
    * "Publish to Confluence" on a spike report. Sent WITHOUT the autonomous
    * flag whatever the mode dial says: the user just clicked, so they are here
    * to answer where the page goes and which template to follow — the
@@ -2955,6 +2986,7 @@ const App: React.FC = () => {
             <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
           )}
           {isWorkMode && hasWorkspaceFolder && <GitStatusBar />}
+          {isWorkMode && hasWorkspaceFolder && <CiChip onFixNow={fixCiNow} />}
         </div>
         <div
           className={`input-container${pendingQuestion ? ' input-container--question' : ''}${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}

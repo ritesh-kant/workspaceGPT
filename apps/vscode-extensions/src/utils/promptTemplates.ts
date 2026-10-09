@@ -92,6 +92,19 @@ const clip = (text: string, max: number): string =>
  * is out of scope there by contract). Keep it short: this is the part of the
  * prompt that has to survive being read on turn 30 of a long transcript.
  */
+/**
+ * How an explanatory answer (research, "tell me about X", architecture, a
+ * comparison) is shaped so it can be skimmed. Without it a model returns
+ * correct but dense paragraphs, and the user stops reading. The webview styles
+ * the pieces this asks for (App.css .markdown-content). A run that has its own
+ * FINAL REPORT / SPIKE REPORT FORMAT keeps that structure — this only governs
+ * the free-form answers.
+ */
+const READABILITY_BLOCK =
+  'Shape explanatory answers to be skimmed, not read: open with a one-line "TL;DR" in bold (the answer itself, not a preview of it); then short sections under `##` headings that each start with one fitting emoji (🎯 purpose, 🏗️ architecture, 🔄 flow, 🧰 tech stack, 🚀 deploy/CI, 👥 people, ⚠️ risks, ✅ done/next); ' +
+  'keep paragraphs to 1–2 sentences and turn any list of three or more things into bullets with the key term in **bold** followed by a short gloss; use a table when comparing things or listing name · role · detail; put the single most important caveat or takeaway in a `> ` blockquote; ' +
+  'bold only what the reader must not miss (names, numbers, decisions) — never whole sentences; end with one "💡 Where to go next" line pointing at the most useful follow-up. Skip all of this for a short factual reply, and when a FINAL REPORT FORMAT or SPIKE REPORT FORMAT applies, follow that instead. ';
+
 export const HOW_TO_WORK = `## HOW TO WORK
 - **Investigate until you can state the answer — for a bug, the root cause — in one sentence with a \`file:line\`. Then stop investigating.** Several "plausible causes" means you are not there yet; more reads after you are there just burn the budget you need for the fix.
 - **A request to DO something is a task to carry out, not to describe.** "Can you / would you be able to / could you download, fetch, run, generate, backfill, query…" asks you to do it — it is not a yes/no question. Do it with your tools (\`run_command\` runs the project's own scripts and CLIs; the user approves each command), then report what happened and where the output is. Answer with instructions instead only when the user asked HOW, WHY or WHAT, or when the one thing you lack is something only they can supply (a credential, a running service you confirmed is down) — then say exactly what is missing. A script you read that does what they asked is the means, not the answer.
@@ -451,7 +464,8 @@ export function createStructuredPrompt(
   const conductBlock =
     'Talking to the user: when you need a decision or fact only they can give, call `ask_user` (a clickable card; its result is their answer) — never ask in prose, and never end your answer on a question. ' +
     'Do not narrate your tool calls — the panel shows each step. Write text between tool calls only when a phase turns up a finding worth knowing, in one line. ' +
-    'Never put sentences in code fences; fences are for code and commands. ';
+    'Never put sentences in code fences; fences are for code and commands. ' +
+    READABILITY_BLOCK;
   const orgKnowledgeBlock =
     ticketTools || docTools
       ? 'Org knowledge — this is what you have that a repo-only assistant does not; use it. ' +
@@ -551,7 +565,7 @@ ${chatOnly || !ticketTools ? '' : `  - **ADO Tickets**: When answering about Azu
   const contextInstruction = isGreeting
     ? 'The user greeted you. Respond with a warm, friendly greeting. **Do NOT use any context.**'
     : chatOnly
-    ? 'Answer directly from general knowledge or material the user supplied. For workspace-, ticket-, or internal-document-specific questions, state that Chat mode cannot inspect those sources and recommend Work mode; do not guess. Only the codebase, Confluence and ticket tools are withheld; everything else is available. Use `search_web` for anything recent or that you are not sure of (current models, versions, benchmarks, news, documentation) instead of declining, and cite the URLs you used. ' + browserBlock
+    ? 'Answer directly from general knowledge or material the user supplied. For workspace-, ticket-, or internal-document-specific questions, state that Chat mode cannot inspect those sources and recommend Work mode; do not guess. Only the codebase, Confluence and ticket tools are withheld; everything else is available. Use `search_web` for anything recent or that you are not sure of (current models, versions, benchmarks, news, documentation) instead of declining, and cite the URLs you used. ' + READABILITY_BLOCK + browserBlock
     : codebaseToolsEnabled && (broadInvestigation || writeWorkflow)
       ? (withContext
           ? 'Context from Confluence/Azure DevOps was retrieved for this question and appears under **Context** below. If it answers the question, answer from it directly and cite its Provided Sources — do not re-search for what is already there. Reach for your tools when the Context is insufficient, or when the user asks for a change to the code. '
