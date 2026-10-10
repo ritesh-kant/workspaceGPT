@@ -24,10 +24,23 @@ export async function ghInstalled(): Promise<boolean> {
   return runGh(['--version']).then(() => true, () => false);
 }
 
-/** The token `gh` holds for `host`, or undefined when not signed in there. */
-export async function ghToken(host: string): Promise<string | undefined> {
-  const out = await runGh(['auth', 'token', '--hostname', host]).catch(() => '');
+/** The token `gh` holds for `host` (for `user`, when several accounts are signed in), or undefined when not signed in there. */
+export async function ghToken(host: string, user?: string): Promise<string | undefined> {
+  const out = await runGh(['auth', 'token', '--hostname', host, ...(user ? ['--user', user] : [])]).catch(() => '');
   return out.trim() || undefined;
+}
+
+/** Every account `gh` is signed in to on `host`. Empty when gh is missing or too old for `--json`, which keeps single-account behaviour. */
+export async function ghAccounts(host: string): Promise<Array<{ login: string; active: boolean }>> {
+  // `gh auth status` exits non-zero when any one account has a bad token but still prints the rest, so read stdout either way.
+  const out = await new Promise<string>((resolve) =>
+    execFile('gh', ['auth', 'status', '--hostname', host, '--json', 'hosts'], { env: ghEnv({ GH_PROMPT_DISABLED: '1', NO_COLOR: '1' }), timeout: 10_000, windowsHide: true }, (_e, stdout) => resolve(stdout || '')));
+  try {
+    const list: any[] = JSON.parse(out).hosts?.[host] ?? [];
+    return list.filter((a) => a?.state === 'success' && a.login).map((a) => ({ login: String(a.login), active: !!a.active }));
+  } catch {
+    return [];
+  }
 }
 
 export interface GhLogin {

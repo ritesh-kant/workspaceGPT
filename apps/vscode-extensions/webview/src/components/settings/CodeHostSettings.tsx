@@ -48,6 +48,8 @@ const CodeHostSettings: React.FC = () => {
   const [username, setUsername] = useState('');
   const [token, setToken] = useState('');
   const [detected, setDetected] = useState<string | null>(null);
+  const [ghAccounts, setGhAccounts] = useState<string[]>([]);
+  const [ghAccount, setGhAccount] = useState<string | undefined>();
   const [ghCode, setGhCode] = useState<{ code: string; url: string } | null>(null);
 
   useEffect(() => {
@@ -59,6 +61,8 @@ const CodeHostSettings: React.FC = () => {
       if (event.data?.type !== MESSAGE_TYPES.CODEHOST_STATUS) return;
       setGhCode(null);
       setDetected(event.data.detected?.host ?? null);
+      setGhAccounts(event.data.ghAccounts ?? []);
+      setGhAccount(event.data.ghAccount);
       const list: Connection[] = event.data.connections ?? [];
       setConnections(list);
       setNotice({ error: event.data.error, warning: event.data.warning });
@@ -134,7 +138,22 @@ const CodeHostSettings: React.FC = () => {
             <span className='connected-label'>
               <StatusDot tone='ok' />
               Using your GitHub CLI sign-in for <strong>{detected}</strong>
+              {ghAccounts.length === 1 && <> as {ghAccounts[0]}</>}
             </span>
+          </div>
+        )}
+
+        {detected && ghAccounts.length > 1 && (
+          <div className='form-group'>
+            <label>GitHub account for Home</label>
+            <select className='settings-select' value={ghAccount ?? ''} onChange={(e) => vscode.postMessage({ type: MESSAGE_TYPES.CODEHOST_SET_GH_ACCOUNT, login: e.target.value })}>
+              {ghAccounts.map((login) => (
+                <option key={login} value={login}>
+                  {login}
+                </option>
+              ))}
+            </select>
+            <p className='description-text'>Home lists pull requests for this account. Your other repositories and the GitHub CLI's own active account are not changed.</p>
           </div>
         )}
 

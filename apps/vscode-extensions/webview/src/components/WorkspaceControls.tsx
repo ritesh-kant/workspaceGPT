@@ -193,7 +193,8 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
     const onMessage = (event: MessageEvent) => {
       const m = event.data;
       if (m?.type === MESSAGE_TYPES.RECENT_FOLDERS) {
-        setCurrent(m.current ?? '');
+        // The folder the chat on screen works in, which need not be the window's open one.
+        setCurrent(m.viewed || m.current || '');
         setRecent(Array.isArray(m.recent) ? m.recent : []);
         setHome(m.home ?? '');
       } else if (m?.type === MESSAGE_TYPES.GIT_BRANCHES) {
@@ -224,7 +225,8 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
   };
   const openFolder = (path?: string) => {
     if (path !== undefined && path === current) return setCloseSignal((n) => n + 1);
-    send(path === undefined ? 'pick-folder' : 'open-folder', { type: MESSAGE_TYPES.OPEN_WORKSPACE_FOLDER, path });
+    // Only this chat's folder changes: the host is not restarted, so chats already running are untouched.
+    send('set-folder', { type: MESSAGE_TYPES.SET_NEW_CHAT_FOLDER, path });
   };
   const switchBranch = (branch: string, create: boolean) => {
     if (!create && !useWorktree && branch === status?.branch) return setCloseSignal((n) => n + 1);
@@ -281,9 +283,9 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
       <div className='workspace-controls-row'>
         <ChipMenu
           icon={<FolderIcon />}
-          label={pending === 'open-folder' ? 'Opening…' : current ? baseName(current) : 'Open a folder'}
-          title={busy ? busyTitle : current ? tilde(current) : 'Pick the folder the agent works in'}
-          disabled={disabled}
+          label={pending === 'set-folder' ? 'Opening…' : current ? baseName(current) : 'Open a folder'}
+          title={current ? tilde(current) : 'Pick the folder the agent works in'}
+          disabled={pending !== null}
           searchPlaceholder='Search folders, or type a path'
           rows={folderRows}
           emptyLabel='No folders yet. Type a path or use Open folder…'

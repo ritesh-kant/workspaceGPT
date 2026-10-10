@@ -113,6 +113,15 @@ fn open_folder(app: &AppHandle) {
     });
 }
 
+/// Shows the folder dialog for the sidecar's request `id` and sends back the pick (null when cancelled).
+fn pick_folder(app: &AppHandle, id: u64) {
+    let app2 = app.clone();
+    app.dialog().file().set_title("Choose a folder for this chat").pick_folder(move |picked| {
+        let path = picked.and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned());
+        app2.state::<sidecar::Supervisor>().send(serde_json::json!({ "type": "picked-folder", "id": id, "path": path }));
+    });
+}
+
 fn restart_on_folder(app: &AppHandle, path: PathBuf) {
     eprintln!("[shell] opening folder {}", path.display());
     let sup = app.state::<sidecar::Supervisor>().inner().clone();
@@ -306,6 +315,7 @@ fn main() {
     let update_slot = handle_slot.clone();
     let notify_slot = handle_slot.clone();
     let open_folder_slot = handle_slot.clone();
+    let pick_folder_slot = handle_slot.clone();
     let supervisor = sidecar::Supervisor::new(
         token,
         Arc::new(move |port| {
@@ -343,6 +353,13 @@ fn main() {
                         let _ = app.run_on_main_thread(move || open_folder(&app2));
                     }
                 }
+            }
+        }),
+        // A chat's own folder pick: the same dialog, but nothing restarts.
+        Arc::new(move |id| {
+            if let Some(app) = pick_folder_slot.lock().unwrap().as_ref() {
+                let app2 = app.clone();
+                let _ = app.run_on_main_thread(move || pick_folder(&app2, id));
             }
         }),
     );

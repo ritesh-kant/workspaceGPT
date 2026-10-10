@@ -11,6 +11,8 @@
 //!   Restart Now on the update notice; `@@WGPT_NOTIFY@@ {…}` when a run needs
 //!   the user or finished (notify.rs); `@@WGPT_OPEN_FOLDER@@ {"path":…|null}`
 //!   when the page asked to open a folder (null: show the picker first);
+//!   `@@WGPT_PICK_FOLDER@@ {"id":…}` to show the folder picker without
+//!   restarting, answered on stdin with {"type":"picked-folder","id":…,"path":…|null};
 //!   everything else is log output, echoed here.
 //!
 //! No orphans (docs/design/desktop.md challenge #6):
@@ -33,6 +35,7 @@ const PROFILE_IN_USE_PREFIX: &str = "@@WGPT_PROFILE_IN_USE@@ ";
 const UPDATE_RESTART_PREFIX: &str = "@@WGPT_UPDATE_RESTART@@";
 const NOTIFY_PREFIX: &str = "@@WGPT_NOTIFY@@ ";
 const OPEN_FOLDER_PREFIX: &str = "@@WGPT_OPEN_FOLDER@@ ";
+const PICK_FOLDER_PREFIX: &str = "@@WGPT_PICK_FOLDER@@ ";
 const MAX_RESTARTS_PER_MINUTE: usize = 3;
 
 pub type ReadyCallback = Arc<dyn Fn(u16) + Send + Sync>;
@@ -41,6 +44,8 @@ pub type RestartCallback = Arc<dyn Fn() + Send + Sync>;
 pub type NotifyCallback = Arc<dyn Fn(&str) + Send + Sync>;
 /// A folder to restart on, or None to show the folder picker first.
 pub type OpenFolderCallback = Arc<dyn Fn(Option<PathBuf>) + Send + Sync>;
+/// Show the folder picker for request `id`; the answer goes back through `Supervisor::send`.
+pub type PickFolderCallback = Arc<dyn Fn(u64) + Send + Sync>;
 
 struct Running {
     child: Child,
@@ -79,6 +84,7 @@ pub struct Supervisor {
     on_update_restart: RestartCallback,
     on_notify: NotifyCallback,
     on_open_folder: OpenFolderCallback,
+    on_pick_folder: PickFolderCallback,
 }
 
 /// 32 random bytes, hex — goes to the sidecar over stdin and to the page via
@@ -134,6 +140,7 @@ impl Supervisor {
         on_update_restart: RestartCallback,
         on_notify: NotifyCallback,
         on_open_folder: OpenFolderCallback,
+        on_pick_folder: PickFolderCallback,
     ) -> Self {
         Supervisor {
             state: Arc::new(Mutex::new(State {
@@ -152,6 +159,7 @@ impl Supervisor {
             on_update_restart,
             on_notify,
             on_open_folder,
+            on_pick_folder,
         }
     }
 
@@ -223,6 +231,10 @@ impl Supervisor {
             } else if let Some(json) = line.strip_prefix(OPEN_FOLDER_PREFIX) {
                 let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
                 (self.on_open_folder)(v["path"].as_str().map(PathBuf::from));
+            } else if let Some(json) = line.strip_prefix(PICK_FOLDER_PREFIX) {
+                if let Some(id) = serde_json::from_str::<serde_json::Value>(json).ok().and_then(|v| v["id"].as_u64()) {
+                    (self.on_pick_folder)(id);
+                }
             } else if line.starts_with(UPDATE_RESTART_PREFIX) {
                 (self.on_update_restart)();
             } else if let Some(json) = line.strip_prefix(PROFILE_IN_USE_PREFIX) {

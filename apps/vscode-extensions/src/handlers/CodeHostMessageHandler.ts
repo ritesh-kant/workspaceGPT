@@ -50,6 +50,14 @@ export class CodeHostMessageHandler {
         await this.connections.remove(String(data.id ?? ''));
         await this.postStatus();
         return true;
+      case MESSAGE_TYPES.CODEHOST_SET_GH_ACCOUNT:
+        try {
+          await this.connections.setGhAccount(String(data.login ?? ''));
+          await this.postStatus();
+        } catch (e) {
+          await this.postStatus({ error: e instanceof Error ? e.message : String(e) });
+        }
+        return true;
       default:
         return false;
     }
@@ -73,6 +81,7 @@ export class CodeHostMessageHandler {
     // With no usable folder, github.com through gh is still enough to list the user's own PRs.
     const cliHost = (folder ? (await this.connections.viaGhCli(folder).catch(() => null))?.host : undefined) ?? (await this.connections.defaultGitHub().catch(() => null));
     const detected = cliHost && !connections.some((c) => c.kind === cliHost.kind && c.host === cliHost.host) ? { host: cliHost.host } : undefined;
-    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.CODEHOST_STATUS, connections, detected, ...extra });
+    const { accounts, selected } = await this.connections.ghAccountChoice();
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.CODEHOST_STATUS, connections, detected, ghAccounts: accounts, ghAccount: selected, ...extra });
   }
 }

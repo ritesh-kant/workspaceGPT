@@ -148,6 +148,9 @@ export const MESSAGE_TYPES = {
   GET_RECENT_FOLDERS: 'get-recent-folders',
   RECENT_FOLDERS: 'recent-folders',
   OPEN_WORKSPACE_FOLDER: 'open-workspace-folder',
+  // {path?} (no path: native picker). Points the chat on screen that has not sent yet at a folder, without restarting the host.
+  // Answers with WORKSPACE_ACTION_RESULT {action: 'set-folder'}; RECENT_FOLDERS then carries {viewed}.
+  SET_NEW_CHAT_FOLDER: 'set-new-chat-folder',
   LIST_GIT_BRANCHES: 'list-git-branches',
   GIT_BRANCHES: 'git-branches',
   SWITCH_GIT_BRANCH: 'switch-git-branch',
@@ -365,6 +368,7 @@ export const MESSAGE_TYPES = {
   CODEHOST_CONNECT_TOKEN: 'codehost-connect-token',
   CODEHOST_DISCONNECT: 'codehost-disconnect',
   CODEHOST_STATUS: 'codehost-status',
+  CODEHOST_SET_GH_ACCOUNT: 'codehost-set-gh-account',
 
   CHECK_VERCEL_CONNECTION: 'check-vercel-connection',
   START_VERCEL_OAUTH: 'start-vercel-oauth',
@@ -559,6 +563,8 @@ export const STORAGE_KEYS = {
   GITHUB_OAUTH_TOKENS: 'github-oauth-tokens',
   // The code-host connections (GitHub / GitLab / Bitbucket): [{ kind, host, token, login, … }] — see codehost/connections.ts.
   CODE_HOST_CONNECTIONS: 'code-host-connections',
+  // Which signed-in `gh` account Home lists pull requests for (login only, not a secret); gh's own active account is never changed.
+  CODE_HOST_GH_ACCOUNT: 'code-host-gh-account',
   // (Optional GitHub App mode — see GitHubAppAuthService)
   GITHUB_APP_INSTALLATION: 'github-app-installation',
   GITHUB_INSTALLATION_TOKEN_CACHE: 'github-installation-token-cache',

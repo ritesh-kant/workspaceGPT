@@ -262,7 +262,7 @@ export async function loadHomeActivity(context: vscode.ExtensionContext, onSecti
   const target = workspaceFolder ? await connections.forRepo(workspaceFolder).catch(() => null) : null;
   const repo = target?.repo;
   // The workspace's host through the GitHub CLI's sign-in counts as connected too.
-  if (target && !hosts.some((h) => h.kind === target.host.kind && h.host === target.host.host)) hosts.push(target.host);
+  if (target && !hosts.some((h) => h.kind === target.host.kind && h.host === target.host.host)) hosts.push(await connections.forHome(target.host));
   // No folder (or one on a host gh doesn't know): github.com through gh still lists the user's own PRs.
   if (!hosts.length) {
     const fallback = await connections.defaultGitHub().catch(() => null);

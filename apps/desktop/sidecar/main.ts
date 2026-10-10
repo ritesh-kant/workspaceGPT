@@ -61,6 +61,10 @@ const UPDATE_RESTART_PREFIX = '@@WGPT_UPDATE_RESTART@@';
 const NOTIFY_PREFIX = '@@WGPT_NOTIFY@@ ';
 /** src-tauri/src/sidecar.rs: open this folder (`path`), or the folder picker when `path` is null. */
 const OPEN_FOLDER_PREFIX = '@@WGPT_OPEN_FOLDER@@ ';
+/** src-tauri/src/sidecar.rs: show the folder picker and answer with `{"type":"picked-folder","id","path"}` on stdin; nothing restarts. */
+const PICK_FOLDER_PREFIX = '@@WGPT_PICK_FOLDER@@ ';
+const pendingFolderPicks = new Map<number, (folder: string | undefined) => void>();
+let folderPickSeq = 0;
 const CHAT_VIEW_ID = 'workspacegpt.chatView';
 /**
  * In VS Code this list sits in the primary sidebar while the chat is
@@ -280,6 +284,12 @@ async function main(): Promise<void> {
     ...(args.parentStdio && {
       openFolder: (folder: string | undefined) =>
         process.stdout.write(`${OPEN_FOLDER_PREFIX}${JSON.stringify({ path: folder ?? null })}\n`),
+      pickFolder: () =>
+        new Promise<string | undefined>((resolve) => {
+          const id = ++folderPickSeq;
+          pendingFolderPicks.set(id, resolve);
+          process.stdout.write(`${PICK_FOLDER_PREFIX}${JSON.stringify({ id })}\n`);
+        }),
     }),
   });
   setWorkspaceFolders(folders);
@@ -469,6 +479,9 @@ async function main(): Promise<void> {
             .then((choice) => {
               if (choice === 'Restart Now') process.stdout.write(`${UPDATE_RESTART_PREFIX} {}\n`);
             });
+        } else if (cmd.type === 'picked-folder' && typeof cmd.id === 'number') {
+          pendingFolderPicks.get(cmd.id)?.(typeof cmd.path === 'string' ? cmd.path : undefined);
+          pendingFolderPicks.delete(cmd.id);
         } else if (cmd.type === 'diagnostics') console.log('[desktop] diagnostics:', JSON.stringify(writeDiagnostics()));
         else if (cmd.type === 'command' && typeof cmd.id === 'string' && titleActions.some((a) => a.command === cmd.id)) {
           compat.commands.executeCommand(cmd.id).catch((err) => console.error(`[desktop] ${cmd.id} failed:`, err));

@@ -5,7 +5,7 @@ import { STORAGE_KEYS } from '../../../constants';
 import { GitHubOAuthService } from '../deployment/githubOAuthService';
 import { BITBUCKET_CLOUD, BitbucketHost } from './bitbucket';
 import { GITHUB_COM, GitHubHost } from './github';
-import { GhLogin, ghInstalled, ghToken, startGhLogin } from './ghCli';
+import { GhLogin, ghAccounts, ghInstalled, ghToken, startGhLogin } from './ghCli';
 import { GitLabHost } from './gitlab';
 import type { CodeHost, CodeHostConnection, CodeHostConnectionSummary, CodeHostKind, RepoRef } from './types';
 import { KIND_LABEL } from './types';
@@ -108,8 +108,33 @@ export class CodeHostConnections {
    * still need the folder.
    */
   async defaultGitHub(): Promise<CodeHost | null> {
-    const token = await ghToken(GITHUB_COM);
+    const token = await ghToken(GITHUB_COM, (await this.ghAccountChoice()).selected);
     return token ? new GitHubHost(GITHUB_COM, token) : null;
+  }
+
+  /**
+   * The `gh` accounts on github.com and the one Home uses. With a single
+   * account there is nothing to choose; with several, the user's pick (if it is
+   * still signed in) wins and otherwise gh's active account does. Only ever
+   * read: `gh`'s active account is never switched, so other repos are untouched.
+   */
+  async ghAccountChoice(): Promise<{ accounts: string[]; selected?: string }> {
+    const found = await ghAccounts(GITHUB_COM);
+    const accounts = found.map((a) => a.login);
+    if (accounts.length < 2) return { accounts };
+    const pinned = this.context.globalState.get<string>(STORAGE_KEYS.CODE_HOST_GH_ACCOUNT);
+    return { accounts, selected: pinned && accounts.includes(pinned) ? pinned : found.find((a) => a.active)?.login };
+  }
+
+  async setGhAccount(login: string): Promise<void> {
+    if (!(await this.ghAccountChoice()).accounts.includes(login)) throw new Error(`${login} isn't signed in to the GitHub CLI.`);
+    await this.context.globalState.update(STORAGE_KEYS.CODE_HOST_GH_ACCOUNT, login);
+  }
+
+  /** For Home: a gh-sourced github.com host re-pointed at the chosen account; anything else is returned as is. */
+  async forHome(host: CodeHost): Promise<CodeHost> {
+    if (host.kind !== 'github' || host.host !== GITHUB_COM) return host;
+    return (await this.defaultGitHub().catch(() => null)) ?? host;
   }
 
   /** The connection that owns the repo `cwd`'s origin points at (or, failing that, the GitHub CLI's sign-in), and that repo. */

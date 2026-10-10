@@ -885,6 +885,22 @@ export class ChatService {
     return { roots: [{ name: path.basename(folder), uri: vscode.Uri.file(folder) }] };
   }
 
+  /**
+   * Points a chat that has not run yet at `folder`. Refused once it has a live
+   * run or any history: a chat's folder is fixed by its first turn.
+   */
+  public setSessionFolder(sessionId: string, folder: string): boolean {
+    const run = this.runFor(sessionId);
+    if (run.worker || run.chatHistory.length) return false;
+    run.workspaceFolder = folder;
+    return true;
+  }
+
+  /** The folder this chat works in, if it has one yet. */
+  public folderOf(sessionId: string): string | undefined {
+    return this.runs.get(sessionId)?.workspaceFolder;
+  }
+
   /** A session's roots, for the window-level actions on the chat on screen (git bar, @-picker, file links). */
   public sessionRoots(sessionId: string, storedFolder?: string): NamedRoot[] {
     const run = this.runFor(sessionId);

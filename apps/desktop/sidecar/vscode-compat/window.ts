@@ -44,6 +44,14 @@ async function showQuickPick(itemsOrPromise: any, options?: { placeHolder?: stri
   return options?.canPickMany ? picked.map((i) => items[i]) : items[picked[0]!];
 }
 
+/** Folder picking only: the desktop has no file browser, but the shell's native folder dialog does the job. */
+async function showOpenDialog(options?: { canSelectFolders?: boolean; canSelectFiles?: boolean; canSelectMany?: boolean }): Promise<Uri[] | undefined> {
+  if (!options?.canSelectFolders || options.canSelectFiles || options.canSelectMany) return notSupported('window.showOpenDialog', 'only a single-folder picker is available')();
+  if (!runtime.pickFolder) return notSupported('window.showOpenDialog', 'no desktop shell to show a folder picker (headless)')();
+  const picked = await runtime.pickFolder();
+  return picked ? [Uri.file(picked)] : undefined;
+}
+
 async function showInputBox(options?: {
   title?: string;
   prompt?: string;
@@ -166,6 +174,7 @@ export const window = {
   showErrorMessage: showMessage('error'),
   showQuickPick,
   showInputBox,
+  showOpenDialog,
   registerWebviewViewProvider,
   showTextDocument,
   createOutputChannel,

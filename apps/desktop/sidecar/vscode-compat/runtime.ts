@@ -110,6 +110,12 @@ export interface DesktopRuntime {
    * when `folder` is undefined. Undefined when there is no shell (headless).
    */
   openFolder?(folder: string | undefined): void;
+  /**
+   * The shell's native folder picker, answering with the folder or undefined
+   * when cancelled. Unlike `openFolder` nothing restarts. Undefined when there
+   * is no shell (headless).
+   */
+  pickFolder?(): Promise<string | undefined>;
 }
 
 const logOnlyUi: DesktopUi = {

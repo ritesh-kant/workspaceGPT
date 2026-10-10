@@ -17,7 +17,7 @@ import { shipAllChanges } from '../services/agent/shipService';
 import { getCiSnapshot, getCiSnapshotViaHost, getFailureLog, getFailureLogViaHost, pushCiFix } from '../services/agent/ciService';
 import { CodeHostConnections } from '../services/codehost/connections';
 import { isPermission } from '../services/agent/permissionPolicy';
-import { ensureWorktree, getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
+import { ensureWorktree, getDefaultFolder, getRecentFolders, listBranches, openFolder, pickFolder, recordRecentFolder, resolveFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
 import { isBrowserConnected } from '../services/browser/browserBridge';
 import { openChromeExtensionInstall } from '../services/browser/installChromeExtension';
 import { isControlChromeEnabled, setControlChromeEnabled } from '../services/browser/browserPrefs';
@@ -44,6 +44,8 @@ export class ChatMessageHandler {
   private gitStatusTimer?: ReturnType<typeof setTimeout>;
   /** The chat on screen (SESSION_CHANGED); null for a new chat that has not sent yet. */
   private viewedSessionId: string | null = null;
+  /** Folder picked for the chat on screen while it has no session yet (set by the chip); handed to it at its first send. */
+  private newChatFolder?: string;
   private gitStatusWatchRoot?: string;
   private sessionChangeSeq = 0;
 
@@ -160,6 +162,7 @@ export class ChatMessageHandler {
         this.webviewView.webview.postMessage({
           type: MESSAGE_TYPES.RECENT_FOLDERS,
           current: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
+          viewed: this.viewedRoots()[0]?.uri.fsPath ?? '',
           recent: getRecentFolders(this.context),
           home: os.homedir(),
           defaultFolder: getDefaultFolder(this.context) ?? '',
@@ -203,6 +206,10 @@ export class ChatMessageHandler {
         await this.runWorkspaceAction(typeof data.path === 'string' ? 'open-folder' : 'pick-folder', () =>
           openFolder(typeof data.path === 'string' ? data.path : undefined)
         );
+        return true;
+      case MESSAGE_TYPES.SET_NEW_CHAT_FOLDER:
+        this.analyticsService.trackEvent('workspace_folder_switch', { picker: typeof data.path !== 'string', perChat: true });
+        await this.handleSetNewChatFolder(data.path);
         return true;
       case MESSAGE_TYPES.LIST_GIT_BRANCHES:
         await this.handleListGitBranches();
@@ -283,6 +290,8 @@ export class ChatMessageHandler {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
       const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, autonomous, planMode, assistantMode, executePlan, turnAction, permission } = data;
+      // The first send of a chat whose folder was picked on the chip: record it before the run resolves its roots.
+      if (this.newChatFolder && !this.viewedSessionId) this.chatService.sessionRoots(sessionId, this.newChatFolder);
       await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, !!autonomous, !!planMode, assistantMode === 'chat' ? 'chat' : 'work', !!executePlan, turnAction === 'publish-spike' ? 'publish-spike' : undefined, isPermission(permission) ? permission : undefined);
     } catch (error) {
       this.analyticsService.trackEvent('message_send_error', {
@@ -398,8 +407,45 @@ export class ChatMessageHandler {
    * one open in the window. A new chat that has not sent yet works in the open one.
    */
   private viewedRoots(): NamedRoot[] {
-    if (!this.viewedSessionId) return getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+    if (!this.viewedSessionId) {
+      if (this.newChatFolder) return [{ name: path.basename(this.newChatFolder), uri: vscode.Uri.file(this.newChatFolder) }];
+      return getNamedRoots(vscode.workspace.workspaceFolders ?? []);
+    }
     return this.service().sessionRoots(this.viewedSessionId);
+  }
+
+  /**
+   * The folder chip on a chat that has not sent yet: that chat works in `folder`
+   * from its first message. Nothing restarts, so other chats keep running in
+   * theirs. With no path the system picker asks first.
+   */
+  private async handleSetNewChatFolder(requested: unknown): Promise<void> {
+    const reply = (ok: boolean, error?: string) =>
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.WORKSPACE_ACTION_RESULT, action: 'set-folder', ok, error });
+    try {
+      const picked = typeof requested === 'string' ? requested : await pickFolder();
+      if (!picked) {
+        reply(true); // picker cancelled
+        return;
+      }
+      const folder = resolveFolder(picked);
+      const open = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const sessionId = this.viewedSessionId;
+      if (sessionId) {
+        if (!this.service().setSessionFolder(sessionId, folder)) {
+          reply(false, 'This chat has already started, so its folder is fixed.');
+          return;
+        }
+      } else {
+        this.newChatFolder = folder === open ? undefined : folder;
+      }
+      await recordRecentFolder(this.context, folder);
+      await this.handleGetGitStatus();
+      await this.handleMessage({ type: MESSAGE_TYPES.GET_RECENT_FOLDERS });
+      reply(true);
+    } catch (error) {
+      reply(false, error instanceof Error ? error.message : String(error));
+    }
   }
 
   /** The chat on screen changed: learn its recorded folder once, then refresh the git bar for it. */
@@ -411,6 +457,8 @@ export class ChatMessageHandler {
     if (change !== this.sessionChangeSeq) return;
     if (sessionId) this.service().sessionRoots(sessionId, stored);
     this.viewedSessionId = sessionId;
+    // A folder picked for an unsent chat belongs to that chat only.
+    if (sessionId) this.newChatFolder = undefined;
     await this.handleGetGitStatus();
   }
 
@@ -683,12 +731,12 @@ export class ChatMessageHandler {
       // one being saved (a backgrounded session saves itself while the user
       // is elsewhere). Only used when the file has no mode yet — see
       // saveHistory, where the first stored value wins.
-      // The folder is this host's: every run in it works in that folder.
+      // The chat's own folder (picked on the chip, or where its first turn ran), else the open one.
       await this.historyService.saveHistory(
         data.sessionId,
         data.messages,
         this.chatService?.assistantModeFor(data.sessionId),
-        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+        this.chatService?.folderOf(data.sessionId) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
       );
     } catch (error) {
       console.error('Error saving chat history:', error);

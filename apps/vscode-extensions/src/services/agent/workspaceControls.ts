@@ -66,6 +66,19 @@ export async function takePendingStart(context: vscode.ExtensionContext, current
   return fresh && currentFolder && path.resolve(currentFolder) === pending.folder ? pending.start : undefined;
 }
 
+/** `~` expanded and made absolute; throws unless it is an existing folder. */
+export function resolveFolder(folder: string): string {
+  const resolved = path.resolve(folder.trim().replace(/^~(?=$|[\\/])/, process.env.HOME ?? '~'));
+  if (!isDirectory(resolved)) throw new Error(`"${folder}" is not a folder.`);
+  return resolved;
+}
+
+/** The system folder picker, answering with the folder or undefined when cancelled. Nothing restarts. */
+export async function pickFolder(): Promise<string | undefined> {
+  const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Use this folder' });
+  return picked?.[0]?.fsPath;
+}
+
 function isDirectory(p: string): boolean {
   try {
     return fs.statSync(p).isDirectory();
@@ -93,9 +106,10 @@ export async function listBranches(cwd: string): Promise<{ current?: string; bra
   const [current, refs] = await Promise.all([
     git(cwd, ['branch', '--show-current']).catch(() => ''),
     // Most recently committed first: the branch someone wants is usually recent.
-    git(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads']),
+    git(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(refname)', 'refs/heads']),
   ]);
-  return { current: current || undefined, branches: refs.split('\n').filter(Boolean) };
+  return { current: current || undefined, // Full refname, prefix stripped: `:short` turns an ambiguous `main` into `heads/main`, which `git switch` rejects.
+    branches: refs.split('\n').filter(Boolean).map(r => r.replace(/^refs\/heads\//, '')) };
 }
 
 /**
