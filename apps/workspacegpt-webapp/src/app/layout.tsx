@@ -94,6 +94,22 @@ const jsonLd = {
       "@type": "SoftwareApplication",
       "@id": `${SITE_URL}/#software`,
       name: "WorkspaceGPT",
+      // Disambiguates from the unrelated Google Workspace add-on "GPT Workspace".
+      alternateName: ["Workspace GPT", "WorkspaceGPT coding agent"],
+      featureList: [
+        "Reads Confluence pages, Jira issues and Azure DevOps work items mid-task",
+        "Edits code across files and verifies with your linter, type-checker and tests",
+        "Edits and creates Confluence pages, with review before anything is written",
+        "On-device indexing and embeddings; zero data retention",
+        "Runs fully offline with Ollama, or with managed models in Remote mode",
+        "Works in VS Code, Cursor, Antigravity, and as a desktop app for macOS and Windows",
+      ],
+      screenshot: `${SITE_URL}/screenshots/hero-grounded-answer.png`,
+      sameAs: [
+        "https://github.com/ritesh-kant/workspaceGPT",
+        "https://marketplace.visualstudio.com/items?itemName=Riteshkant.workspacegpt-extension",
+        "https://devnotes.tech/tag/workspacegpt/",
+      ],
       description:
         "A coding agent with zero data retention. It searches, reads and edits your code and runs your checks to verify the result, while connected Confluence, Jira and Azure DevOps knowledge is indexed on-device in both Local and Remote mode.",
       url: SITE_URL,
@@ -118,7 +134,16 @@ const jsonLd = {
       "@id": `${SITE_URL}/#website`,
       url: SITE_URL,
       name: "WorkspaceGPT",
-      publisher: { "@id": `${SITE_URL}/#software` },
+      publisher: { "@id": `${SITE_URL}/#org` },
+    },
+    {
+      "@type": "Organization",
+      "@id": `${SITE_URL}/#org`,
+      name: "WorkspaceGPT",
+      url: SITE_URL,
+      logo: `${SITE_URL}/icon.png`,
+      email: "contact@workspacegpt.in",
+      sameAs: ["https://github.com/ritesh-kant/workspaceGPT"],
     },
   ],
 };

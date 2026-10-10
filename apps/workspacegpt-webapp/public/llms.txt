@@ -1,0 +1,18 @@
+# WorkspaceGPT
+
+> WorkspaceGPT is a coding agent that knows your whole org. It reads your Confluence pages, Jira issues and Azure DevOps work items mid-task, edits and verifies your code (linter, type-checker, tests), can update the Confluence page afterwards, and never stores your data: indexing and embeddings run on-device and nothing is retained server-side. It runs in VS Code, Cursor and Antigravity, or as a desktop app for macOS and Windows. Local mode runs fully offline with Ollama; Remote mode (preview) uses a managed model.
+
+Not to be confused with "GPT Workspace" (gpt.space), a Google Workspace add-on.
+
+## Use cases
+- [AI coding agent for Confluence](https://www.workspacegpt.in/use-cases/confluence-ai-coding-agent): code from your design docs, with cited sources
+- [AI coding agent for Azure DevOps](https://www.workspacegpt.in/use-cases/azure-devops-ai-coding-agent): start a run from an assigned work item
+- [AI coding agent for Jira and Confluence](https://www.workspacegpt.in/use-cases/jira-ai-coding-agent): issues and docs searched together
+- [Private AI coding agent](https://www.workspacegpt.in/use-cases/private-ai-coding-agent): zero data retention, runs offline
+
+## Docs
+- [Documentation](https://www.workspacegpt.in/docs): install, providers, connecting Knowledge, troubleshooting
+- [Deployment automation](https://www.workspacegpt.in/docs/deployment): release config-sync and hotfix workflows
+- [Changelog](https://www.workspacegpt.in/changelog)
+- [Privacy policy](https://www.workspacegpt.in/privacy)
+- [Support](https://www.workspacegpt.in/support)

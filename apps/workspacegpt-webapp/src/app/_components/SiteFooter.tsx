@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { USE_CASES } from "../use-cases/content";
 
 const LINKS = [
   { href: "/docs", label: "Docs" },
@@ -40,6 +41,13 @@ export function SiteFooter() {
             )}
             <a href="mailto:contact@workspacegpt.in" className="text-muted hover:text-white transition-colors">Contact</a>
           </div>
+        </div>
+        <div className="mt-8 flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-faint">
+          {USE_CASES.map((u) => (
+            <Link key={u.slug} href={`/use-cases/${u.slug}`} className="hover:text-white transition-colors">
+              {u.h1}
+            </Link>
+          ))}
         </div>
         <div className="mt-12 pt-8 border-t border-line text-center flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-faint text-sm">© {new Date().getFullYear()} WorkspaceGPT. Proprietary Software.</p>

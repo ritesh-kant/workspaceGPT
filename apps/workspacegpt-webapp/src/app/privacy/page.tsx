@@ -9,6 +9,14 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/privacy",
   },
+  openGraph: {
+    type: "website",
+    url: "/privacy",
+    siteName: "WorkspaceGPT",
+    title: "WorkspaceGPT Privacy Policy",
+    description:
+      "Zero-retention privacy policy: your documents, code and search index never leave your machine.",
+  },
 };
 
 const UPDATED = "September 28, 2026";

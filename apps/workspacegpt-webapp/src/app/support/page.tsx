@@ -10,6 +10,14 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/support",
   },
+  openGraph: {
+    type: "website",
+    url: "/support",
+    siteName: "WorkspaceGPT",
+    title: "WorkspaceGPT Support",
+    description:
+      "Contact support, report an issue, or read the WorkspaceGPT docs.",
+  },
 };
 
 const GITHUB_ISSUES = "https://github.com/ritesh-kant/workspaceGPT/issues";

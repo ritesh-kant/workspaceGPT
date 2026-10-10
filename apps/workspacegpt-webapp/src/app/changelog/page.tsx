@@ -12,6 +12,14 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/changelog",
   },
+  openGraph: {
+    type: "website",
+    url: "/changelog",
+    siteName: "WorkspaceGPT",
+    title: "WorkspaceGPT Changelog",
+    description:
+      "What's new in WorkspaceGPT: Confluence page editing, browser control, WorkspaceGPT Desktop for macOS and Windows, and every release since.",
+  },
 };
 
 const RELEASES_URL = "https://github.com/ritesh-kant/workspaceGPT/releases";
