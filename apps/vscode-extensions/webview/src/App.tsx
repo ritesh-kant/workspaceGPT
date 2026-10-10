@@ -16,6 +16,7 @@ import MentionPicker from './components/MentionPicker';
 import MyWorkPanel, { WorkItemSummary } from './components/MyWorkPanel';
 import MyWorkTeaser from './components/MyWorkTeaser';
 import HomeGreeting from './components/HomeGreeting';
+import WorkHome from './components/WorkHome';
 import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowledgeSources';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
@@ -685,6 +686,21 @@ const App: React.FC = () => {
   // view — the pinned action bar above the composer takes over then.
   const [reviewActionsOffscreen, setReviewActionsOffscreen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const [composerExpanded, setComposerExpanded] = useState(false);
+  useEffect(() => {
+    // On macOS a pointer click needn't focus a button. Keep controls mounted
+    // through pointer-down, blur, and click; collapse only on leaving the composer.
+    const leaveComposer = (event: Event) => {
+      if (event.target instanceof Node && !composerRef.current?.contains(event.target)) setComposerExpanded(false);
+    };
+    document.addEventListener('pointerdown', leaveComposer);
+    document.addEventListener('focusin', leaveComposer);
+    return () => {
+      document.removeEventListener('pointerdown', leaveComposer);
+      document.removeEventListener('focusin', leaveComposer);
+    };
+  }, []);
   // Files staged in the composer, sent with the next message.
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   // Transient note when a picked/pasted file was rejected (type/size/count).
@@ -1392,6 +1408,10 @@ const App: React.FC = () => {
           setHistoryList(message.historyList || []);
           break;
         case MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE: {
+          const currentConfig = useSettingsStore.getState().config;
+          const activeTracker = currentConfig.ado?.isAdoEnabled && currentConfig.ado?.isAuthenticated ? 'ado'
+            : currentConfig.jira?.isJiraEnabled && currentConfig.jira?.isAuthenticated ? 'jira' : undefined;
+          if (message.tracker && message.tracker !== activeTracker) break;
           // Two responses arrive per request when a cache exists (cache, then
           // fresh); each simply replaces the list. Only the fresh one ends the
           // refreshing state.
@@ -2070,10 +2090,13 @@ const App: React.FC = () => {
       return;
     }
     myWorkRetriesRef.current = 0;
+    setMyWorkItems([]);
+    setMyWorkLoaded(false);
+    setMyWorkError(undefined);
     setMyWorkRefreshing(true);
     vscode.postMessage({ type: MESSAGE_TYPES.GET_MY_WORK_ITEMS });
     // Re-runs if org/project arrive or change (project switch, late hydration).
-  }, [isAdoConnected, isJiraConnected, adoOrgName, adoProjectName]);
+  }, [isAdoConnected, isJiraConnected, adoOrgName, adoProjectName, config.ado?.userDisplayName, config.jira?.siteUrl, config.jira?.projectKey, config.jira?.accountId]);
 
   const handleRefreshMyWork = () => {
     myWorkRetriesRef.current = 0;
@@ -2610,6 +2633,7 @@ const App: React.FC = () => {
   // the connect-your-docs tip, the composer's context and autonomy pickers —
   // has nothing to offer and is left out.
   const isWorkMode = assistantMode === 'work';
+  const showWorkHome = isDesktopHost() && isWorkMode && showTips && messages.length === 0;
   // Chat and Work keep separate histories. The Sessions panel (shown when the
   // chat is opened in an editor tab) lists them from the host, which has no
   // other way to know which mode is on screen.
@@ -2635,9 +2659,25 @@ const App: React.FC = () => {
 
   return (
     <div className='app-container'>
-      <div className='chat-container'>
+      <div className={`chat-container${showWorkHome ? ' chat-container--work-home' : ''}`}>
         {showTips && messages.length === 0 && <div className='mode-bar'>{modeSwitch}</div>}
-        {showTips && messages.length === 0 ? (
+        {showWorkHome ? (
+          <WorkHome
+            items={myWorkItems}
+            currentSprintName={myWorkSprint}
+            isLoading={!myWorkLoaded}
+            error={myWorkError}
+            isRefreshing={myWorkRefreshing}
+            onRefresh={handleRefreshMyWork}
+            onStart={(item) => startTicket({ kind: 'autoRun', item })}
+            sessionForTicket={(item) => modeHistoryList.find((session) => session.ticketUrl === item.url)?.id}
+            onResume={handleSelectSession}
+            onPrompt={(prompt) => startTicket({ kind: 'prompt', prompt, subject: 'Pull request' })}
+            onOpenSettings={openSettings}
+            defaultFolderName={defaultFolderName}
+            onOpenDefaultFolder={openDefaultFolderSettings}
+          />
+        ) : showTips && messages.length === 0 ? (
           isConfluenceConnected ? (
             <div className='recent-chats-container'>
                 <HomeGreeting chatOnly={!isWorkMode} onOpenSettings={openSettings} />
@@ -2989,7 +3029,10 @@ const App: React.FC = () => {
           {isWorkMode && hasWorkspaceFolder && <CiChip onFixNow={fixCiNow} />}
         </div>
         <div
-          className={`input-container${pendingQuestion ? ' input-container--question' : ''}${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}
+          ref={composerRef}
+          onFocusCapture={() => setComposerExpanded(true)}
+          onPointerDownCapture={() => setComposerExpanded(true)}
+          className={`input-container${composerExpanded || inputValue || pendingAttachments.length || confirmingFull ? ' input-container--expanded' : ''}${pendingQuestion ? ' input-container--question' : ''}${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}
           onDragOver={(e) => {
             if (e.dataTransfer?.types?.includes('Files')) {
               e.preventDefault();
@@ -3097,6 +3140,7 @@ const App: React.FC = () => {
               </div>
             )}
             <div className='input-controls'>
+              {showWorkHome && modeSwitch}
               <div className='input-selectors'>
                 <input
                   ref={fileInputRef}

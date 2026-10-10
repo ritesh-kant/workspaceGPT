@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
+import { randomUUID } from 'crypto';
 import { ATLASSIAN_OAUTH, STORAGE_KEYS } from '../../../constants';
 
 export interface OAuthTokens {
@@ -68,6 +69,9 @@ export class ConfluenceAuthService {
 
     // Save tokens securely
     await this.saveTokens(tokens);
+    // A fresh connection may be another account on the same site. Never reuse
+    // that account's read-mention fingerprints; no token goes into globalState.
+    await this.context.globalState.update('confluence-home-account-scope', randomUUID());
 
     // Save site info in global state
     await this.context.globalState.update(

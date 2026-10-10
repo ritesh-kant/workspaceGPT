@@ -6,6 +6,8 @@ export interface ChatSessionPreview {
   id: string;
   title: string;
   updatedAt: number;
+  /** Exact source link, so Home never matches the same number in another tracker/org. */
+  ticketUrl?: string;
   /**
    * Which mode this chat was held in. Sessions written before the Chat/Work
    * switch existed have no stored value and read as 'work' — that is what
@@ -32,6 +34,18 @@ export interface ChatMessage {
   content: string;
   isUser: boolean;
   isError?: boolean;
+}
+
+/** Resume only the ticket the run actually worked on, not another search hit. */
+export function sessionTicketUrl(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (const message of [...messages].reverse()) {
+    const summary = message?.turnSummary;
+    if (!summary?.ticketId || !Array.isArray(summary.refs)) continue;
+    const ref = summary.refs.find((r: any) => r.kind === 'work-item' && String(r.id) === String(summary.ticketId) && typeof r.url === 'string');
+    if (ref) return ref.url;
+  }
+  return undefined;
 }
 
 /** Longest title the history list can show before it ellipsizes anyway. */
@@ -308,10 +322,12 @@ export class HistoryService {
             const title = firstUserMessage ? deriveSessionTitle(firstUserMessage.content) : data.title || 'New Chat';
 
             const diffs = sessionDiffStats(data.messages);
+            const ticketUrl = sessionTicketUrl(data.messages);
             previews.push({
               id: data.id,
               title: meta[data.id]?.title || title,
               updatedAt: data.updatedAt,
+              ...(ticketUrl && { ticketUrl }),
               ...(meta[data.id]?.pinned && { pinned: true }),
               ...(meta[data.id]?.group && { group: meta[data.id].group }),
               assistantMode: data.assistantMode === 'chat' ? 'chat' : 'work',

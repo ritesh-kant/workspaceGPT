@@ -5,6 +5,7 @@ import { ConfluenceMessageHandler } from './ConfluenceMessageHandler';
 import { AdoMessageHandler } from './AdoMessageHandler';
 import { JiraMessageHandler } from './JiraMessageHandler';
 import { TicketsMessageHandler } from './TicketsMessageHandler';
+import { HomeActivityMessageHandler } from './HomeActivityMessageHandler';
 import { ChatMessageHandler } from './ChatMessageHandler';
 import { SystemMessageHandler } from './SystemMessageHandler';
 import { DeploymentMessageHandler } from './DeploymentMessageHandler';
@@ -40,6 +41,7 @@ export class WebviewMessageHandler {
   private adoHandler: AdoMessageHandler;
   private jiraHandler: JiraMessageHandler;
   private ticketsHandler: TicketsMessageHandler;
+  private homeActivityHandler: HomeActivityMessageHandler;
   private chatHandler: ChatMessageHandler;
   private systemHandler: SystemMessageHandler;
   private deploymentHandler: DeploymentMessageHandler;
@@ -57,6 +59,7 @@ export class WebviewMessageHandler {
     this.adoHandler = new AdoMessageHandler(webviewView, context, this.analyticsService);
     this.jiraHandler = new JiraMessageHandler(webviewView, context, this.analyticsService);
     this.ticketsHandler = new TicketsMessageHandler(webviewView, context);
+    this.homeActivityHandler = new HomeActivityMessageHandler(webviewView, context);
     this.chatHandler = new ChatMessageHandler(webviewView, context, this.analyticsService, this.historyService);
     this.systemHandler = new SystemMessageHandler(webviewView, context, this.analyticsService);
     this.deploymentHandler = new DeploymentMessageHandler(webviewView, context, this.analyticsService);
@@ -115,6 +118,7 @@ export class WebviewMessageHandler {
     if (await this.adoHandler.handleMessage(data)) return;
     if (await this.jiraHandler.handleMessage(data)) return;
     if (await this.ticketsHandler.handleMessage(data)) return;
+    if (await this.homeActivityHandler.handleMessage(data)) return;
     if (await this.chatHandler.handleMessage(data)) return;
     if (await this.deploymentHandler.handleMessage(data)) return;
     if (await this.systemHandler.handleMessage(data)) {

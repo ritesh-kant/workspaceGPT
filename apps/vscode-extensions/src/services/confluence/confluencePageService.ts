@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ConfluenceAuthService, ConfluenceSite } from './confluenceAuthService';
+import { resolveConfluenceWebUrl } from './confluenceWebUrl';
 import { AdfDoc, adfToMarkdown, editPage, EditMode, markdownToAdf } from './confluenceAdf';
 
 export interface ConfluencePageDetail {
@@ -99,9 +100,7 @@ async function confluenceApi(context: vscode.ExtensionContext): Promise<Confluen
 }
 
 function webUrl(site: ConfluenceSite, links: any): string {
-  let webui: string = links?.webui ?? '';
-  if (webui && !webui.startsWith('/')) webui = '/' + webui;
-  return webui ? `${site.url.replace(/\/$/, '')}/wiki${webui}` : '';
+  return resolveConfluenceWebUrl(`${site.url.replace(/\/$/, '')}/wiki`, links?.webui ?? '', links);
 }
 
 async function readPage(api: ConfluenceApi, pageId: string, extraQuery = ''): Promise<{ data: any; doc: AdfDoc | null }> {

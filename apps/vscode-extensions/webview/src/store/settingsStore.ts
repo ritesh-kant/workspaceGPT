@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { VSCodeAPI } from '../vscode';
 import { WorkspaceMode } from '../constants';
+import { selectTracker } from '../../../src/services/tickets/trackerSelection';
 
 
 export interface SettingsConfig {
@@ -196,18 +197,18 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       config: settingsDefaultConfig,
       setConfig: (config) =>
-        set({ config: { ...settingsDefaultConfig, ...config } }),
+        set({ config: selectTracker({ ...settingsDefaultConfig, ...config }) }),
       updateConfig: (section, field, value) => {
         set((state) => {
           const newConfig = { ...state.config };
           // Add type checking and logging
           console.log(`Updating ${section}.${String(field)} to:`, value);
           if (section in newConfig) {
-            (newConfig[section] as any)[field] = value;
+            newConfig[section] = { ...newConfig[section], [field]: value };
           } else {
             console.warn(`Invalid update attempt: ${section}.${String(field)}`);
           }
-          return { config: newConfig };
+          return { config: selectTracker(newConfig, section === 'jira' ? 'jira' : undefined) };
         });
       },
       batchUpdateConfig: (section, updates) => {
@@ -217,7 +218,7 @@ export const useSettingsStore = create<SettingsState>()(
             ...newConfig[section],
             ...updates
           };
-          return { config: newConfig };
+          return { config: selectTracker(newConfig, section === 'jira' ? 'jira' : undefined) };
         });
       },
       setMode: (mode) => set((state) => ({ config: { ...state.config, mode } })),
@@ -243,10 +244,10 @@ export const useSettingsStore = create<SettingsState>()(
       merge: (persisted: any, current) => ({
         ...current,
         ...(persisted ?? {}),
-        config: {
+        config: selectTracker({
           ...settingsDefaultConfig,
           ...((persisted as any)?.config ?? {}),
-        },
+        }),
       }),
     }
   )

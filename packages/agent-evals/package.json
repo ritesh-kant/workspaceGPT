@@ -8,6 +8,7 @@
     "selftest": "node src/run.mjs --selftest",
     "eval": "node src/run.mjs",
     "units": "node src/headless/unit-tests.mjs",
+    "home-units": "node src/headless/home-activity-tests.mjs",
     "smoke": "node src/headless/agent-smoke.mjs",
     "bench:agent": "node src/headless/agent-smoke.mjs --runs 5",
     "bench:retrieval:index": "node src/retrieval/build-fixture-index.mjs",

@@ -19,6 +19,7 @@ import { MyTicketsResult } from '../services/tickets/types';
  * disconnect.
  */
 export class TicketsMessageHandler {
+  private generation = 0;
   constructor(
     private readonly webviewView: vscode.WebviewView,
     private readonly context: vscode.ExtensionContext
@@ -45,16 +46,23 @@ export class TicketsMessageHandler {
    * work disappear because a token expired.
    */
   private async handleGetMyWorkItems(forceRefresh: boolean): Promise<void> {
+    const generation = ++this.generation;
     const provider = getActiveTicketProvider(this.context);
+    const scope = this.trackerScope();
+    const post = (payload: any) => {
+      if (generation !== this.generation || scope !== this.trackerScope()) return;
+      this.webviewView.webview.postMessage({ tracker: provider?.kind, ...payload });
+    };
     // Switched off (or never connected): the cache belongs to a tracker that is
     // no longer active, so it is neither served nor kept for the next one.
     if (!provider) await this.context.globalState.update(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE, undefined);
-    const cached = provider
-      ? this.context.globalState.get<MyTicketsResult>(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE)
+    const stored = provider
+      ? this.context.globalState.get<MyTicketsResult & { trackerScope?: string }>(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE)
       : undefined;
+    const cached = stored?.trackerScope === scope ? stored : undefined;
 
     if (cached && !forceRefresh) {
-      this.webviewView.webview.postMessage({
+      post({
         type: MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE,
         ...cached,
         fromCache: true,
@@ -66,7 +74,7 @@ export class TicketsMessageHandler {
       // "you have no work" state here, not a thrown error the panel has to
       // render as a failure.
       if (!cached) {
-        this.webviewView.webview.postMessage({
+        post({
           type: MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE,
           items: [],
           fetchedAt: new Date().toISOString(),
@@ -78,8 +86,9 @@ export class TicketsMessageHandler {
 
     try {
       const fresh = await provider.listMyTickets();
-      await this.context.globalState.update(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE, fresh);
-      this.webviewView.webview.postMessage({
+      if (generation !== this.generation || scope !== this.trackerScope()) return;
+      await this.context.globalState.update(STORAGE_KEYS.ADO_MY_WORK_ITEMS_CACHE, { ...fresh, trackerScope: scope });
+      post({
         type: MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE,
         ...fresh,
         fromCache: false,
@@ -87,7 +96,7 @@ export class TicketsMessageHandler {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`Could not fetch assigned ${provider.label} work items:`, message);
-      this.webviewView.webview.postMessage({
+      post({
         type: MESSAGE_TYPES.GET_MY_WORK_ITEMS_RESPONSE,
         // Keep whatever we already had on screen; flag the staleness instead.
         ...(cached ?? { items: [], fetchedAt: '' }),
@@ -95,5 +104,13 @@ export class TicketsMessageHandler {
         error: message,
       });
     }
+  }
+
+  private trackerScope(): string {
+    const config = this.context.globalState.get<any>(STORAGE_KEYS.SETTINGS)?.state?.config;
+    const kind = getActiveTicketProvider(this.context)?.kind;
+    return JSON.stringify(kind === 'ado'
+      ? [kind, config?.ado?.orgName, config?.ado?.projectName, config?.ado?.userDisplayName]
+      : [kind, config?.jira?.siteUrl, config?.jira?.projectKey, config?.jira?.accountId]);
   }
 }

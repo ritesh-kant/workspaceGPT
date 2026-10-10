@@ -173,6 +173,7 @@ interface ChatSessionPreview {
   id: string;
   title: string;
   updatedAt: number;
+  ticketUrl?: string;
   /** Which mode the chat was held in. Absent on sessions saved before the Chat/Work switch — those read as 'work'. */
   assistantMode?: 'chat' | 'work';
   pinned?: boolean;
