@@ -29,6 +29,108 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-10",
+    releases: [{ product: "Desktop", version: "0.0.22–0.0.27" }],
+    title: "A home for your work, and CI that fixes itself",
+    summary:
+      "The desktop app now separates chatting from ticket work, and can watch your pull request's checks for you.",
+    items: [
+      {
+        icon: "clipboard-list",
+        title: "Chat and Work modes",
+        body: "Switch the Sessions panel between Chat and Work. Work groups your sessions by the folder they ran in and opens on a compact home with your tickets and recent activity.",
+      },
+      {
+        icon: "git-pull-request",
+        title: "CI monitoring and auto-fix",
+        body: "After a pull request is opened, WorkspaceGPT reads its checks and can start a session to fix a failing one. You decide whether it pushes.",
+      },
+      {
+        icon: "sliders",
+        title: "Resizable sidebar and zoom",
+        body: "Drag the sidebar to the width you like, and zoom the whole app in or out. Settings no longer jump around when you switch pages.",
+      },
+      {
+        icon: "sparkles",
+        title: "Simpler first run",
+        body: "Onboarding offers clearer setup options, and the Knowledge sources you haven't connected show a Connect button instead of hiding.",
+      },
+    ],
+  },
+  {
+    date: "2026-10-07",
+    releases: [{ product: "Desktop", version: "0.0.14–0.0.21" }],
+    title: "You choose how much the agent may do",
+    summary:
+      "A permission dial, a built-in terminal, and your existing chats brought across from other tools.",
+    items: [
+      {
+        icon: "shield-check",
+        title: "Plan, Manual, Auto or Full access",
+        body: "One dial above the composer sets what the agent may do without asking. Plan can't write at all, and “Run plan” carries a plan out in Agent mode. Manual asks before every change, Auto asks only for risky ones, and Full access, shown in red, asks for nothing.",
+      },
+      {
+        icon: "terminal",
+        title: "Integrated terminal",
+        body: "A terminal panel sits next to the conversation. Commands in code blocks have a Run button, and long-running jobs the agent starts keep going in the background.",
+      },
+      {
+        icon: "download",
+        title: "Import chats from Claude Code and Cursor",
+        body: "Bring your earlier conversations in. Chats from Claude Code worktrees are filed under their own repository.",
+      },
+      {
+        icon: "folder",
+        title: "Each chat works in its own folder",
+        body: "A session keeps the folder it started in, even if you open a different one later. The Sessions list pages 20 at a time, and a right-click menu opens, pins, renames, groups or deletes a chat.",
+      },
+      {
+        icon: "arrow-right",
+        title: "Every run ends with a next step",
+        body: "When the agent finishes it either does the next step, offers it as a question, or lists what's left, so you're never left guessing.",
+      },
+      {
+        icon: "globe",
+        title: "Connectors, themes and browser fixes",
+        body: "A Connectors page manages Control Chrome. Light and dark themes are remembered across launches, agent tabs open in your own Chrome window, and editing a message keeps its attachments.",
+      },
+    ],
+  },
+  {
+    date: "2026-09-30",
+    releases: [{ product: "Desktop", version: "0.0.9–0.0.13" }],
+    title: "Spike tickets become researched docs",
+    summary:
+      "Research tickets get a written answer, and Confluence edits are reviewed in one go.",
+    items: [
+      {
+        icon: "file-text",
+        title: "Spikes research, write and publish",
+        body: "On a spike, the agent searches every connected source, writes its findings to a markdown file in docs/spikes, lists its references, and offers a Publish to Confluence button.",
+      },
+      {
+        icon: "message-square",
+        title: "It asks when it needs you",
+        body: "Open questions appear as a card you can answer, instead of the agent guessing and carrying on.",
+      },
+      {
+        icon: "pen",
+        title: "One review for several Confluence edits",
+        body: "Section edits to the same page are batched into a single diff, and pasted edit links are recognised.",
+      },
+      {
+        icon: "folder",
+        title: "A default folder for ticket work",
+        body: "Pick where ticket work happens once. A popup confirms when a task would switch folders, and the title bar shows the folder.",
+      },
+      {
+        icon: "plug",
+        title: "Copilot prompt caching",
+        body: "GitHub Copilot runs reuse cached prompts, count one request per action, and have an effort picker.",
+      },
+    ],
+  },
+  {
     date: "2026-09-28",
     releases: [
       { product: "Desktop", version: "0.0.8" },

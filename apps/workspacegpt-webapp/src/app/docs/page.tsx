@@ -13,6 +13,7 @@ const sections = [
   { id: "ai-providers", label: "AI Providers" },
   { id: "codebase", label: "Codebase Exploration" },
   { id: "work-modes", label: "Chat, Work & Autonomy" },
+  { id: "desktop-features", label: "Desktop App" },
   { id: "embeddings", label: "Embeddings & Vector Storage" },
   { id: "confluence", label: "Confluence" },
   { id: "jira", label: "Jira" },
@@ -491,15 +492,16 @@ ollama pull mistral`}</CodeBlock>
 
             <h3 className="text-lg font-semibold text-white mb-4">How much it does on its own</h3>
             <p className="text-muted text-sm leading-relaxed mb-4">
-              In Work mode, the chip in the composer cycles through three settings:
+              In Work mode, the permission menu in the composer sets what the agent may do without asking:
             </p>
             <div className="overflow-x-auto rounded-xl border border-line mb-4">
               <table className="w-full text-sm">
                 <tbody className="divide-y divide-line">
                   {[
-                    ["Agent", "Default. Edits apply on their own and are checkpointed, so you can revert the whole turn. Starting a run from a ticket in Your work uses this."],
-                    ["Plan", "Investigates and proposes the exact edits without changing anything. Reply “go ahead” to run the plan."],
-                    ["Ask", "Every edit is shown as a diff for you to approve or reject first."],
+                    ["Plan", "Investigates and proposes the exact edits without changing anything; it has no write tools. Choose Run plan to carry the plan out in Auto."],
+                    ["Manual", "Every edit and command is shown as a card for you to approve or reject first."],
+                    ["Auto", "Default. Edits apply on their own and are checkpointed, so you can revert the whole turn. Commands that look risky or unfamiliar still ask. Starting a run from a ticket in Your work uses this."],
+                    ["Full access", "Commands and Confluence edits run without cards. It is shown in red, needs an inline confirmation each time, and is never restored from a previous session. A short list of destructive commands stays blocked."],
                   ].map(([name, what]) => (
                     <tr key={name} className="bg-background align-top">
                       <td className="px-5 py-3 font-medium text-white whitespace-nowrap">{name}</td>
@@ -510,9 +512,25 @@ ollama pull mistral`}</CodeBlock>
               </table>
             </div>
             <p className="text-muted text-sm leading-relaxed mb-8">
-              Changes outside your workspace are never automatic: a Confluence edit always waits for your approval, and
-              Agent-mode runs don&apos;t write to Confluence at all (see{" "}
+              Unless you choose Full access, a Confluence edit waits for your approval (see{" "}
               <a href="#confluence-write" className="text-brand hover:underline">Edit and create pages</a>).
+              When the agent needs a decision from you it asks in a question card instead of guessing, and every run
+              ends with its next step: it does it, offers it as a question, or lists what&apos;s left.
+            </p>
+
+            <h3 className="text-lg font-semibold text-white mb-4">Spike tickets</h3>
+            <p className="text-muted text-sm leading-relaxed mb-8">
+              On a research ticket the agent searches every connected Knowledge source, writes its findings to a
+              markdown file in <code className="bg-white/10 px-1 rounded text-xs">docs/spikes</code>, lists its
+              references, and asks about anything open under <em>Needs your input</em>. A{" "}
+              <strong className="text-white">Publish to Confluence</strong> button then turns the file into a draft page.
+            </p>
+
+            <h3 className="text-lg font-semibold text-white mb-4">Folders</h3>
+            <p className="text-muted text-sm leading-relaxed mb-8">
+              A chat keeps working in the folder it started in, even if you open another one later. Ticket work can use
+              a default folder you set once, and a popup confirms before a task would switch folders. Git worktrees are
+              supported for branch work.
             </p>
 
             <h3 className="text-lg font-semibold text-white mb-4">From ticket to pull request</h3>
@@ -524,6 +542,31 @@ ollama pull mistral`}</CodeBlock>
               <code className="bg-white/10 px-1 rounded text-xs">git</code> and browser session, so no token passes
               through the agent.
             </p>
+            <p className="text-muted text-sm leading-relaxed mt-4">
+              In WorkspaceGPT Desktop, once the pull request exists the git status bar shows its checks. If one fails,
+              start a session that reads the log and fixes it; you decide whether it pushes.
+            </p>
+          </section>
+
+          {/* ── Desktop app ───────────────────────────────────── */}
+          <SectionAnchor id="desktop-features" />
+          <section className="mb-16">
+            <SectionTitle>WorkspaceGPT Desktop</SectionTitle>
+            <SectionSubtitle>What the standalone app adds around the same agent.</SectionSubtitle>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <Card icon="terminal" title="Integrated terminal" accent="brand">
+                <p>A terminal panel beside the conversation. Code blocks have a Run button, and long-running jobs the agent starts keep going in the background.</p>
+              </Card>
+              <Card icon="download" title="Import your chats" accent="blue">
+                <p>Bring conversations in from Claude Code and Cursor. Claude Code worktree chats are filed under their repository.</p>
+              </Card>
+              <Card icon="clock" title="Sessions" accent="brand">
+                <p>Switch between Chat and Work. Groups page 20 at a time, and a right-click menu opens, pins, renames, groups or deletes a chat.</p>
+              </Card>
+              <Card icon="sliders" title="Layout and themes" accent="blue">
+                <p>Drag the sidebar to the width you like, zoom the app, and pick light or dark; the choice is remembered. A Connectors page manages Control Chrome.</p>
+              </Card>
+            </div>
           </section>
 
           {/* ── Embeddings & Vector Storage ──────────────────────── */}
