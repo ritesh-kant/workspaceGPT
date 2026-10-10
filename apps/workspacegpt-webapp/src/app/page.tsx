@@ -361,7 +361,7 @@ export default function Home() {
                   href="#teaser"
                   className="text-muted hover:text-foreground font-medium px-2 py-3 transition-colors"
                 >
-                  &#9654; Watch the 30s teaser
+                  &#9654; Watch the 40s teaser
                 </Link>
                 <Link
                   href="#modes"
@@ -409,12 +409,12 @@ export default function Home() {
 
       <main className="flex-grow z-10 relative">
 
-        {/* 30-second desktop teaser. Click-to-play, so YouTube loads nothing until asked. */}
+        {/* 40-second desktop teaser. Click-to-play, so YouTube loads nothing until asked. */}
         <section data-reveal id="teaser" className="py-12 sm:py-16 scroll-mt-14">
           <div className="container mx-auto px-6">
             <div className="text-center mb-8">
-              <h2 className="text-3xl sm:text-4xl font-normal text-foreground mb-3 tracking-tight">See WorkspaceGPT Desktop in 30 seconds</h2>
-              <p className="text-muted text-base sm:text-lg max-w-2xl mx-auto">From ticket to verified fix, grounded in your Knowledge, with everything staying on your machine.</p>
+              <h2 className="text-3xl sm:text-4xl font-normal text-foreground mb-3 tracking-tight">See WorkspaceGPT Desktop in 40 seconds</h2>
+              <p className="text-muted text-base sm:text-lg max-w-2xl mx-auto">Your tickets, reviews and mentions in one place — grounded in your Knowledge, with everything staying on your machine.</p>
             </div>
             <div className="max-w-4xl mx-auto">
               <TeaserVideo />
