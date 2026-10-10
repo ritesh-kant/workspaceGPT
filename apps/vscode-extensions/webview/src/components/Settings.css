@@ -2388,6 +2388,7 @@ input.dep-preset-dropdown {
   flex-direction: column;
   gap: 0.125rem;
   min-width: 0;
+  flex: 1;
 }
 
 .import-name {
