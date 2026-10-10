@@ -41,7 +41,7 @@ const CiChip: React.FC<{ onFixNow: () => void }> = ({ onFixNow }) => {
   const branch = useGitStatusStore((s) => s.status?.branch);
   const hostConnected = useCodeHostConnected();
   const openSettings = useUiStore((s) => s.openSettings);
-  // Nothing to show until a PR exists. The exception is a GitHub-shaped repo
+  // Nothing to show until an open PR exists. The exception is a GitHub-shaped repo
   // whose PR can't be looked up: then the row is a skeleton that says why and
   // offers the fix, off the default branches so it isn't noise on every branch.
   if (!snapshot?.pr) {
@@ -61,6 +61,9 @@ const CiChip: React.FC<{ onFixNow: () => void }> = ({ onFixNow }) => {
     return null;
   }
   const { pr, state } = snapshot;
+  // A merged or closed PR is history, not this branch's work in flight; on main it is
+  // an old PR that once had this head name. CI only matters while the PR is live.
+  if (state === 'merged' || state === 'closed') return null;
   // What needs a look first: the list scrolls, so failures must not hide below the fold.
   const rank = { fail: 0, pending: 1, pass: 2 } as const;
   const checks = [...snapshot.checks].sort((a, b) => rank[a.state] - rank[b.state]);
