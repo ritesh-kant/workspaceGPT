@@ -177,6 +177,14 @@ export const MESSAGE_TYPES = {
   IMPORT_RUN: 'import-run',
   IMPORT_PROGRESS: 'import-progress',
   IMPORT_RESULT: 'import-result',
+  // Settings → Memory. host: MEMORY_GET / MEMORY_SAVE {name,kind,text} / MEMORY_DELETE {name}
+  // / MEMORY_CLEAR / MEMORY_SET_ENABLED {enabled}, every one answered by MEMORY_STATE {enabled, entries}.
+  MEMORY_GET: 'memory-get',
+  MEMORY_SAVE: 'memory-save',
+  MEMORY_DELETE: 'memory-delete',
+  MEMORY_CLEAR: 'memory-clear',
+  MEMORY_SET_ENABLED: 'memory-set-enabled',
+  MEMORY_STATE: 'memory-state',
   OPEN_SESSION_IN: 'open-session-in',
   GET_CHAT_SESSION: 'get-chat-session',
   GET_CHAT_SESSION_RESPONSE: 'get-chat-session-response',

@@ -111,6 +111,7 @@ import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgrou
 import { browserRequest, isBrowserConnected } from './browser/browserBridge';
 import { isControlChromeEnabled } from './browser/browserPrefs';
 import { loadWorkspaceRules } from './agent/rulesFiles';
+import { memoryEnabled, saveMemory, userMemoryBlock } from './agent/userMemory';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
 import { addCreditTally, creditTallyForCall, CreditTally, emptyCreditTally } from '../utils/creditTally';
@@ -1109,6 +1110,7 @@ export class ChatService {
         tickets: isWorkMode && !!getActiveTicketProvider(this.context),
         // false (not undefined) only where the browser is on offer, so the prompt can say it is disconnected.
         browser: isControlChromeEnabled(this.context) ? isBrowserConnected() : undefined,
+        memory: memoryEnabled(this.context.globalState),
       };
 
       // Read the @-mentioned files/folders while retrieval runs — they are
@@ -1812,6 +1814,8 @@ export class ChatService {
         return this.findConfluenceLocation(args);
       case 'ask_user':
         return this.askUser(run, args);
+      case 'save_memory':
+        return saveMemory(this.context.globalState, args);
       case 'search_web':
         return searchWeb(this.context, args, (message) => this.postStatus(run, message));
       case 'browser_list_tabs':
@@ -2577,6 +2581,8 @@ export class ChatService {
         return { kind: 'edit', title: 'Created Confluence page', detail: String(args?.title ?? '') };
       case 'find_confluence_location':
         return { kind: 'search', title: 'Looked for a place in Confluence for', detail: String(args?.title ?? '') };
+      case 'save_memory':
+        return { kind: 'info', title: args?.forget ? 'Forgot from memory' : 'Saved to memory', detail: String(args?.text ?? args?.name ?? '').slice(0, 90) };
       case 'ask_user':
         return { kind: 'info', title: 'Asked you', detail: normalizeQuestions(args).map((q) => q.header || q.question).join(' · ') };
       case 'search_web':
@@ -2795,6 +2801,8 @@ export class ChatService {
         return 'Looking for where this page belongs in Confluence...';
       case 'ask_user':
         return 'Waiting for your answer…';
+      case 'save_memory':
+        return 'Saving to memory...';
       case 'search_web':
         return `Searching the web for "${args?.query ?? ''}"...`;
       case 'browser_list_tabs':
@@ -3176,6 +3184,7 @@ Query: "${query}"`;
           workspaceRules: codebaseRoots?.length
             ? [loadWorkspaceRules(codebaseRoots), verificationRecipesBlock(this.context)].filter(Boolean).join('\n\n') || undefined
             : undefined,
+          userMemory: memoryEnabled(this.context.globalState) ? userMemoryBlock(this.context.globalState) : undefined,
           executeMandate,
           resumeTranscript,
           ticketContext: ticketContext ? toTicketPromptContext(ticketContext) : undefined,

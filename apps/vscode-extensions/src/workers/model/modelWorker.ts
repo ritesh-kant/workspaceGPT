@@ -111,6 +111,8 @@ interface WorkerData {
   promptProfile?: 'full' | 'narrow';
   /** Merged project rules files (.workspacegpt/rules.md, CLAUDE.md, …). */
   workspaceRules?: string;
+  /** Remembered user preferences block (services/agent/userMemory.ts). */
+  userMemory?: string;
   /**
    * This turn carries out a plan the user just approved, so it is expected to
    * WRITE. Switches the prompt out of plan mode and arms the gate that catches
@@ -214,6 +216,7 @@ const {
   repoOrientation,
   promptProfile,
   workspaceRules,
+  userMemory,
   contextWindowOverride,
   executeMandate,
   resumeTranscript,
@@ -605,6 +608,24 @@ const TOOL_DEFS = [
           summary: { type: 'string', description: 'One or two sentences on what the page covers — used to find similar pages.' },
         },
         required: ['title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_memory',
+      description:
+        'Remember one lasting fact about this user (preference, working style, team convention) for future chats. Same name updates it; forget:true removes it. Not for one-off task details, code facts, Knowledge content or secrets.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Short label, e.g. "package-manager".' },
+          kind: { type: 'string', enum: ['preference', 'style', 'context'] },
+          text: { type: 'string', description: 'The fact, one sentence, under 200 chars.' },
+          forget: { type: 'boolean' },
+        },
+        required: ['name'],
       },
     },
   },
@@ -1541,6 +1562,7 @@ async function generateResponse(): Promise<void> {
         repoOrientation,
         promptProfile,
         workspaceRules,
+        userMemory,
         textAttachments,
         imageAttachmentNames: imageAttachments?.map((img) => img.name),
         mentionedFiles,

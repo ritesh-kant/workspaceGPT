@@ -24,6 +24,8 @@ export interface ToolAvailability {
   tickets: boolean;
   /** The WorkspaceGPT Chrome extension is connected to this host right now (services/browser/browserBridge.ts). Optional: a host that predates it offers no browser tools. */
   browser?: boolean;
+  /** User memory is switched on (Settings → Memory): offers `save_memory`. */
+  memory?: boolean;
 }
 
 /**
@@ -56,6 +58,7 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   find_confluence_location: 'confluence',
   update_confluence_page: 'confluence',
   create_confluence_page: 'confluence',
+  save_memory: 'memory',
   search_tickets: 'tickets',
   get_ticket: 'tickets',
   browser_list_tabs: 'browser',

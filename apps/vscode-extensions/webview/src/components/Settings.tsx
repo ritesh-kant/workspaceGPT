@@ -17,6 +17,7 @@ import McpSettings from './settings/McpSettings';
 import DefaultFolderSettings from './settings/DefaultFolderSettings';
 import AppearanceSettings from './settings/AppearanceSettings';
 import ChromeSettings from './settings/ChromeSettings';
+import MemorySettings from './settings/MemorySettings';
 import SectionShell, { SettingsLayoutContext } from './settings/SectionShell';
 import StatusDot from './settings/StatusDot';
 import { KNOWLEDGE_SOURCES, KnowledgeSourcesOverview } from './settings/knowledgeSources';
@@ -172,6 +173,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         render: item.render,
       })
     ),
+    {
+      id: 'memory',
+      label: 'Memory',
+      description: 'What WorkspaceGPT has learned about how you work, so it adapts to your style. See it, edit it, or turn it off.',
+      render: () => <MemorySettings />,
+    },
     ...(isDesktopHost()
       ? [
           {
@@ -344,6 +351,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         <JiraSettings />
 
         <WebSearchSettings />
+
+        <MemorySettings />
 
         <div className='beta-section'>
           <button

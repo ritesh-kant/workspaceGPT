@@ -404,7 +404,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean; browser?: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; fullAccess?: boolean; planMode?: boolean; chatOnly?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean; browser?: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; userMemory?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; fullAccess?: boolean; planMode?: boolean; chatOnly?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -747,7 +747,7 @@ This run has Full access. Where anything above says a command shows the user an 
 ${personalityPrompt}
 ${howToWorkBlock}${planModeBlock}${autonomousBlock}${fullAccessBlock}${options?.autonomous && !options?.ticketContext ? FINAL_REPORT_FORMAT : ''}${contextInstruction}
 
-${workspaceBlock}${todayBlock}${adoContextBlock}
+${workspaceBlock}${options?.userMemory ?? ''}${todayBlock}${adoContextBlock}
 ${ticketBlock}${contextBlock}${sourcesMarkdown}
 
 **Chat History:**

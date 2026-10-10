@@ -5,6 +5,7 @@ import { clearWorkspaceGPTData } from 'src/utils/clearData';
 import { AnalyticsService } from '../services/analyticsService';
 import { installMcpServer } from '../utils/mcpInstaller';
 import { isMcpInstalled } from '../utils/mcpStatusChecker';
+import { clearMemories, listMemories, memoryEnabled, saveMemory, setMemoryEnabled } from '../services/agent/userMemory';
 import { syncContextKeys } from '../utils/syncContextKeys';
 import { preserveHostOwnedSyncFields } from '../utils/syncStateStore';
 
@@ -71,11 +72,32 @@ export class SystemMessageHandler {
       case MESSAGE_TYPES.TEST_QDRANT_CONNECTION:
         await this.handleTestQdrantConnection(data);
         return true;
+      case MESSAGE_TYPES.MEMORY_GET:
+      case MESSAGE_TYPES.MEMORY_SAVE:
+      case MESSAGE_TYPES.MEMORY_DELETE:
+      case MESSAGE_TYPES.MEMORY_CLEAR:
+      case MESSAGE_TYPES.MEMORY_SET_ENABLED:
+        await this.handleMemory(data);
+        return true;
       case MESSAGE_TYPES.COLLAPSE_SIDEBAR:
         await collapseWorkspaceGptSidebar(data?.dock);
         return true;
     }
     return false;
+  }
+
+  /** Settings → Memory: apply the change, then answer with the whole state. */
+  private async handleMemory(data: any): Promise<void> {
+    const store = this.context.globalState;
+    if (data.type === MESSAGE_TYPES.MEMORY_SAVE) await saveMemory(store, data);
+    else if (data.type === MESSAGE_TYPES.MEMORY_DELETE) await saveMemory(store, { name: data.name, forget: true });
+    else if (data.type === MESSAGE_TYPES.MEMORY_CLEAR) await clearMemories(store);
+    else if (data.type === MESSAGE_TYPES.MEMORY_SET_ENABLED) await setMemoryEnabled(store, !!data.enabled);
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.MEMORY_STATE,
+      enabled: memoryEnabled(store),
+      entries: listMemories(store),
+    });
   }
 
   /**
