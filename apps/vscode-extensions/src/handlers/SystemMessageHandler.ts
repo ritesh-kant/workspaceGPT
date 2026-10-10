@@ -89,14 +89,20 @@ export class SystemMessageHandler {
   /** Settings → Memory: apply the change, then answer with the whole state. */
   private async handleMemory(data: any): Promise<void> {
     const store = this.context.globalState;
-    if (data.type === MESSAGE_TYPES.MEMORY_SAVE) await saveMemory(store, data);
-    else if (data.type === MESSAGE_TYPES.MEMORY_DELETE) await saveMemory(store, { name: data.name, forget: true });
+    // A refused save (e.g. text that looks like a credential) says why, instead of silently snapping back.
+    let error: string | undefined;
+    if (data.type === MESSAGE_TYPES.MEMORY_SAVE) {
+      const result = await saveMemory(store, data);
+      if (!result.ok) error = result.message;
+    }
+    if (data.type === MESSAGE_TYPES.MEMORY_DELETE) await saveMemory(store, { name: data.name, forget: true });
     else if (data.type === MESSAGE_TYPES.MEMORY_CLEAR) await clearMemories(store);
     else if (data.type === MESSAGE_TYPES.MEMORY_SET_ENABLED) await setMemoryEnabled(store, !!data.enabled);
     this.webviewView.webview.postMessage({
       type: MESSAGE_TYPES.MEMORY_STATE,
       enabled: memoryEnabled(store),
       entries: listMemories(store),
+      ...(error && { error }),
     });
   }
 

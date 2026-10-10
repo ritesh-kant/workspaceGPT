@@ -71,6 +71,14 @@
 .work-home-empty { font-size: 12px; color: var(--vscode-descriptionForeground); margin: 12px 0 4px; max-width: 370px; }
 .work-home-note { font-size: 11px; color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground)); margin: 7px 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .work-home-note button { margin-left: 5px; }
+.work-home-callout { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--vscode-editorWidget-background, transparent) 70%, transparent); border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, transparent)); color: var(--vscode-foreground); }
+.work-home-callout svg { flex: none; color: var(--vscode-descriptionForeground); }
+.work-home-callout div { flex: 1; min-width: 0; }
+.work-home-callout strong { font-size: 12px; font-weight: 600; }
+.work-home-callout p { margin: 2px 0 0; font-size: 11px; line-height: 1.4; color: var(--vscode-descriptionForeground); }
+.work-home-callout button { flex: none; font-size: 11px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--vscode-button-border, var(--vscode-widget-border, currentColor)); background: var(--vscode-button-secondaryBackground, transparent); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); cursor: pointer; }
+.work-home-callout button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
+.work-home--tiny .work-home-callout p { display: none; }
 .work-home-skeleton > div { padding: 13px 0; border-bottom: 1px solid var(--wgpt-border); }
 .work-home-skeleton span { display: block; height: 7px; width: 78%; border-radius: 3px; background: var(--vscode-button-secondaryBackground); opacity: .6; }
 .work-home-skeleton span + span { margin-top: 9px; width: 45%; height: 5px; }
@@ -109,7 +117,13 @@
 .work-home--tiny .work-home-section-head { padding-bottom: 0; min-height: 20px; }
 .work-home--tiny .work-home-tabs { padding: 2px 0; }
 .work-home--tiny .work-home-board .work-home-row--pr .work-home-meta { display: none; }
-.work-home--narrow .work-home-folder { display: none; }
+.work-home--narrow .work-home-folder:not(.work-home-folder--needed) { display: none; }
+/* Not set yet: this is the first thing to do, so it reads as an action, not a link. */
+.work-home-folder--needed { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-weight: 600; background: var(--vscode-button-background); color: var(--vscode-button-foreground) !important; text-decoration: none; animation: work-home-folder-glow 2.4s ease-out 3; }
+.work-home-folder--needed::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.work-home-folder--needed:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+@keyframes work-home-folder-glow { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--vscode-button-background) 55%, transparent); } 70%, 100% { box-shadow: 0 0 0 8px transparent; } }
+@media (prefers-reduced-motion: reduce) { .work-home-folder--needed { animation: none; } }
 .work-home--narrow .work-home-board { display: block; }
 .work-home--narrow .work-home-heading { gap: 7px; }
 .work-home--narrow .work-home-inbox .work-home-row { gap: 8px; }
@@ -137,10 +151,7 @@
 .work-home-ticket-detail > button { margin-right: 15px; }
 /* The desktop owns the viewport. Keep the overview and composer in one frame. */
 .chat-container--work-home { overflow: hidden; --wgpt-gutter: max(28px, calc((100% - 1124px) / 2)); }
-.chat-container--work-home .mode-bar { display: none; }
-.chat-container--work-home > .input-container { flex-shrink: 0; margin: 8px var(--wgpt-gutter) 14px; padding: 8px 12px; }
-.chat-container--work-home > .input-container:not(:focus-within):not(.input-container--expanded) .input-controls { display: none; }
-.chat-container--work-home > .input-container:not(:focus-within):not(.input-container--expanded) textarea { height: 32px !important; min-height: 32px; overflow-y: hidden !important; }
+.chat-container--work-home > .input-container { flex-shrink: 0; margin: 8px var(--wgpt-gutter) 14px; padding: 6px 10px; }
 .chat-container--work-home > .workspace-controls { flex-shrink: 0; margin-left: var(--wgpt-gutter); margin-right: var(--wgpt-gutter); }
 .chat-container--work-home > .composer-status-bars { flex-shrink: 0; padding-left: var(--wgpt-gutter); padding-right: var(--wgpt-gutter); }
 @media (max-height: 650px) {

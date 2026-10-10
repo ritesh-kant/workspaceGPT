@@ -8,6 +8,7 @@ import { deleteDirectory } from './deleteDirectory';
 const STORAGE_DIRECTORIES = [
   'confluence',
   'ado',
+  'jira',
   // Retained only to purge indexes created by the retired codebase pipeline.
   'codebase',
   'chats',
@@ -15,14 +16,16 @@ const STORAGE_DIRECTORIES = [
   'agent-resume',
 ];
 
-const STORAGE_FILES = ['agent-actions.jsonl', 'deployment-runs.jsonl'];
+const STORAGE_FILES = ['agent-actions.jsonl', 'deployment-runs.jsonl', 'import-log.json'];
 
 const SECRET_KEYS = [
   STORAGE_KEYS.CONFLUENCE_OAUTH_TOKENS,
   STORAGE_KEYS.ADO_AUTH_MODE,
   STORAGE_KEYS.ADO_PAT,
   STORAGE_KEYS.ADO_MSAL_CACHE,
+  STORAGE_KEYS.JIRA_OAUTH_TOKENS,
   STORAGE_KEYS.GITHUB_OAUTH_TOKENS,
+  STORAGE_KEYS.CODE_HOST_CONNECTIONS,
   STORAGE_KEYS.GITHUB_APP_INSTALLATION,
   STORAGE_KEYS.GITHUB_INSTALLATION_TOKEN_CACHE,
   STORAGE_KEYS.VERCEL_OAUTH_TOKENS,

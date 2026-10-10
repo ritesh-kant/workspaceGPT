@@ -108,9 +108,11 @@ const FolderSwitchDialog: React.FC<FolderSwitchDialogProps> = ({
     ? 'Choose a folder'
     : phase === 'opening'
       ? `Opening ${selectedName}…`
-      : selectedIsOpen
-        ? `Start in ${selectedName}`
-        : `Switch to ${selectedName}`;
+      : // The selected row above names the folder; a long name in the
+        // button only truncated.
+        selectedIsOpen
+        ? 'Start here'
+        : 'Switch and start';
   // Only a folder that is not open needs the switch, and a running chat blocks that.
   const blockedByRun = busy && !!selected && !selectedIsOpen;
 

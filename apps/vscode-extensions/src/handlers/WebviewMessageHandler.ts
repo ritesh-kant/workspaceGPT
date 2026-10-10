@@ -4,6 +4,7 @@ import { AnalyticsService } from '../services/analyticsService';
 import { ConfluenceMessageHandler } from './ConfluenceMessageHandler';
 import { AdoMessageHandler } from './AdoMessageHandler';
 import { JiraMessageHandler } from './JiraMessageHandler';
+import { CodeHostMessageHandler } from './CodeHostMessageHandler';
 import { TicketsMessageHandler } from './TicketsMessageHandler';
 import { HomeActivityMessageHandler } from './HomeActivityMessageHandler';
 import { ChatMessageHandler } from './ChatMessageHandler';
@@ -40,6 +41,7 @@ export class WebviewMessageHandler {
   private confluenceHandler: ConfluenceMessageHandler;
   private adoHandler: AdoMessageHandler;
   private jiraHandler: JiraMessageHandler;
+  private codeHostHandler: CodeHostMessageHandler;
   private ticketsHandler: TicketsMessageHandler;
   private homeActivityHandler: HomeActivityMessageHandler;
   private chatHandler: ChatMessageHandler;
@@ -58,6 +60,7 @@ export class WebviewMessageHandler {
     this.confluenceHandler = new ConfluenceMessageHandler(webviewView, context, this.analyticsService);
     this.adoHandler = new AdoMessageHandler(webviewView, context, this.analyticsService);
     this.jiraHandler = new JiraMessageHandler(webviewView, context, this.analyticsService);
+    this.codeHostHandler = new CodeHostMessageHandler(webviewView, context, this.analyticsService);
     this.ticketsHandler = new TicketsMessageHandler(webviewView, context);
     this.homeActivityHandler = new HomeActivityMessageHandler(webviewView, context);
     this.chatHandler = new ChatMessageHandler(webviewView, context, this.analyticsService, this.historyService);
@@ -117,6 +120,7 @@ export class WebviewMessageHandler {
     if (await this.confluenceHandler.handleMessage(data)) return;
     if (await this.adoHandler.handleMessage(data)) return;
     if (await this.jiraHandler.handleMessage(data)) return;
+    if (await this.codeHostHandler.handleMessage(data)) return;
     if (await this.ticketsHandler.handleMessage(data)) return;
     if (await this.homeActivityHandler.handleMessage(data)) return;
     if (await this.chatHandler.handleMessage(data)) return;

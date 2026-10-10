@@ -64,6 +64,12 @@ function inlineText(node: AdfNode): string {
     case 'inlineCard':
     case 'blockCard':
       return (node.attrs?.url as string) ?? '';
+    case 'status':
+      return (node.attrs?.text as string) ?? '';
+    case 'date': {
+      const ms = Number(node.attrs?.timestamp);
+      return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : '';
+    }
     default:
       return (node.content ?? []).map(inlineText).join('');
   }
@@ -72,7 +78,7 @@ function inlineText(node: AdfNode): string {
 /** One table row, cells joined with " | " — enough fidelity for a prompt block; ADF's merged-cell attrs are ignored. */
 function tableRowText(row: AdfNode): string {
   return (row.content ?? [])
-    .map((cell) => (cell.content ?? []).map(inlineText).join(' ').trim())
+    .map((cell) => (cell.content ?? []).flatMap((n) => blockLines(n)).join(' ').trim())
     .join(' | ');
 }
 
@@ -106,6 +112,15 @@ function blockLines(node: AdfNode, indent = ''): string[] {
       });
       return lines;
     }
+    case 'taskList':
+    case 'decisionList':
+      // Items hold inline nodes directly (no paragraph), so the default branch
+      // below would find no text in them and drop every checklist entry.
+      return (node.content ?? []).map((item) => {
+        const done = item.attrs?.state === 'DONE';
+        const marker = item.type === 'decisionItem' ? '→ ' : done ? '☑ ' : '☐ ';
+        return `${indent}${marker}${(item.content ?? []).map(inlineText).join('')}`;
+      });
     case 'table':
       return (node.content ?? []).map((row) => `${indent}${tableRowText(row)}`);
     case 'rule':
@@ -154,20 +169,23 @@ function textNode(text: string, marks?: AdfMark[]): AdfNode {
   return marks?.length ? { type: 'text', text, marks } : { type: 'text', text };
 }
 
-/** Inline `` `code` `` and `**bold**` — the same two marks reportToHtml recognises. */
+/** Inline `` `code` ``, `**bold**` and `[text](url)` links (ADF does not auto-link a bare URL in a posted comment). */
 function inlineNodes(raw: string): AdfNode[] {
   const nodes: AdfNode[] = [];
-  const re = /`([^`]+)`|\*\*([^*]+)\*\*/g;
+  const re = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(raw))) {
     if (m.index > last) nodes.push(textNode(raw.slice(last, m.index)));
     if (m[1] !== undefined) nodes.push(textNode(m[1], [{ type: 'code' }]));
-    else nodes.push(textNode(m[2], [{ type: 'strong' }]));
+    else if (m[2] !== undefined) nodes.push(textNode(m[2], [{ type: 'strong' }]));
+    else nodes.push(textNode(m[3], [{ type: 'link', attrs: { href: m[4] } }]));
     last = m.index + m[0].length;
   }
   if (last < raw.length) nodes.push(textNode(raw.slice(last)));
-  return nodes.length ? nodes : [textNode(raw)];
+  // ADF rejects a text node with empty text (Jira answers 400), so an empty
+  // cell or line is an empty content array, never `{ type: 'text', text: '' }`.
+  return nodes.length ? nodes : raw ? [textNode(raw)] : [];
 }
 
 /** Markdown → ADF, mirroring reportToHtml's exact subset (see file doc comment). */
@@ -184,6 +202,8 @@ export function markdownToAdf(markdown: string): AdfDoc {
   const flushTable = () => {
     if (!tableRows.length) return;
     const rows = tableRows.filter((r) => !/^\s*\|?\s*:?-{2,}/.test(r));
+    tableRows = [];
+    if (!rows.length) return;
     content.push({
       type: 'table',
       content: rows.map((r) => ({
@@ -198,7 +218,6 @@ export function markdownToAdf(markdown: string): AdfDoc {
           })),
       })),
     });
-    tableRows = [];
   };
 
   for (const raw of markdown.split('\n')) {

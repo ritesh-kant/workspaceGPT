@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES } from '../../constants';
 import SectionShell from './SectionShell';
+import StatusDot from './StatusDot';
 
 interface BrowserStatus {
   enabled: boolean;
@@ -42,7 +43,16 @@ const ChromeSettings: React.FC = () => {
   };
 
   const connected = !!status?.connected;
-  const summary = !status ? '' : connected ? '✅ Connected to Chrome' : 'Chrome extension not connected';
+  const summary = !status ? (
+    ''
+  ) : connected ? (
+    <>
+      <StatusDot tone='ok' />
+      Connected to Chrome
+    </>
+  ) : (
+    'Chrome extension not connected'
+  );
 
   return (
     <SectionShell storageKey='connector-chrome' title='Control Chrome' summary={summary} defaultOpen>
@@ -54,16 +64,17 @@ const ChromeSettings: React.FC = () => {
         <div className='form-group'>
           <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <span>Allow WorkspaceGPT to control Chrome</span>
-            <button
-              type='button'
-              role='switch'
-              aria-checked={!!status?.enabled}
-              aria-label='Allow WorkspaceGPT to control Chrome'
-              className={`plus-switch${status?.enabled ? ' plus-switch--on' : ''}`}
-              onClick={() => setEnabled(!status?.enabled)}
-            >
-              <span className='plus-switch-knob' />
-            </button>
+            {/* The same switch as every other Settings toggle. */}
+            <span className='toggle-switch'>
+              <input
+                type='checkbox'
+                role='switch'
+                checked={!!status?.enabled}
+                aria-label='Allow WorkspaceGPT to control Chrome'
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+              <span className='slider round' />
+            </span>
           </label>
         </div>
         {!connected && (

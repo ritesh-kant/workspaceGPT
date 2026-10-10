@@ -4,6 +4,7 @@ import { MESSAGE_TYPES } from '../constants';
 import { VSCodeAPI } from '../vscode';
 import { useSettingsStore } from '../store';
 import { prepareToConnect } from './settings/knowledgeSources';
+import { useCodeHostConnected } from '../hooks/useCodeHostConnected';
 import type { WorkItemSummary } from './MyWorkPanel';
 import { HOME_ACTIVITY_MESSAGES } from '../../../src/services/home/types';
 import type { HomeActivity, HomeMention, HomePullRequest } from '../../../src/services/home/types';
@@ -90,6 +91,7 @@ export default function WorkHome(props: Props) {
   const [showTip, setShowTip] = useState(false);
   const [size, setSize] = useState({ height: 360, width: 900 });
   const [dialog, setDialog] = useState<Tab | 'connect' | 'github' | WorkItemSummary | null>(null);
+  const hostConnected = useCodeHostConnected();
   const [page, setPage] = useState(0);
   const [showRead, setShowRead] = useState(false);
   const [feedError, setFeedError] = useState('');
@@ -123,6 +125,12 @@ export default function WorkHome(props: Props) {
     return () => { window.removeEventListener('message', receive); window.removeEventListener('focus', refreshOnFocus); clearInterval(timer); requestId.current = ''; };
     // Identity changes invalidate both lists and read state before new requests.
   }, [identityScope]);
+  // Connecting a code host in Settings changes what the PR list can show: refresh now instead of at the next 5-minute tick.
+  const hostWasConnected = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (hostWasConnected.current === false && hostConnected) refreshActivity();
+    hostWasConnected.current = hostConnected;
+  }, [hostConnected]);
   useEffect(() => {
     const element = container.current;
     if (!element) return;
@@ -194,7 +202,7 @@ export default function WorkHome(props: Props) {
   </article>;
   const prRow = (pr: HomePullRequest) => <article className='work-home-row work-home-row--pr' key={pr.id}>
     <div className='work-home-row-body'><button className='work-home-row-title' type='button' onClick={() => openUrl(pr)}>{badge(pr.id, pr.revision)}<span>{pr.title}</span></button>
-      <div className='work-home-meta'>{pr.source === 'ado' ? 'ADO' : 'GitHub'} #{pr.number} · {pr.author}{pr.updatedAt && ` · ${relativeTime(pr.updatedAt)}`}</div>
+      <div className='work-home-meta'>{({ ado: 'ADO', github: 'GitHub', gitlab: 'GitLab', bitbucket: 'Bitbucket' } as const)[pr.source]} #{pr.number} · {pr.author}{pr.updatedAt && ` · ${relativeTime(pr.updatedAt)}`}</div>
       <div className='work-home-pr-status'>{prStates[pr.state]} · {pr.repository}</div></div>
     <div className='work-home-row-actions'>{(pr.ownership === 'review' || pr.state === 'changes-requested') && <button className='work-home-link' type='button' onClick={() => review(pr)}>{pr.ownership === 'mine' ? 'Address feedback' : 'Review with agent'}</button>}<button className='work-home-link' type='button' onClick={() => openUrl(pr)}>View PR ↗</button></div>
   </article>;
@@ -217,10 +225,16 @@ export default function WorkHome(props: Props) {
   </section>;
   const prSection = <section className='work-home-prs'>
     {sectionHead('Pull requests', tracker ? activity.pullRequests.items.length : undefined, 'prs')}
+    {!props.defaultFolderName && hostConnected === false && <div className='work-home-callout' role='note'>
+      <svg viewBox='0 0 24 24' width='18' height='18' fill='none' aria-hidden='true'><path d='M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-9z' stroke='currentColor' strokeWidth='1.6' strokeLinejoin='round' /></svg>
+      <div><strong>Choose your default folder</strong><p>WorkspaceGPT reads its Git remote to find your repository's pull requests and CI.</p></div>
+      <button type='button' onClick={props.onOpenDefaultFolder}>Choose folder</button>
+    </div>}
     {tracker && <div className='work-home-tabs' role='group' aria-label='Pull request views'>{(['review', 'mine'] as const).map((tab) => <button type='button' key={tab} aria-pressed={prTab === tab} className={prTab === tab ? 'is-active' : ''} onClick={() => setPrTab(tab)}>{tab === 'review' ? 'To review' : 'Your PRs'} · {activity.pullRequests.items.filter((pr) => pr.ownership === tab).length}</button>)}</div>}
     {!tracker ? <>{skeleton(1)}<p className='work-home-empty'>Reviews waiting on you and the status of your PRs.</p><button className='work-home-link' type='button' onClick={() => setDialog('connect')}>Connect your tracker →</button></> : <>
       {pending.includes('pullRequests') && !prs.length ? <p className='work-home-empty' role='status'>Loading PRs…</p> : prs.slice(0, prLimit).map(prRow)}
-      {activity.pullRequests.error && <div className='work-home-note' role='status'>{activity.pullRequests.error}{jira && <button className='work-home-link' type='button' onClick={() => setDialog('github')}>Set up GitHub PRs →</button>}</div>}
+      {activity.pullRequests.error && <div className='work-home-note' role='status'>{activity.pullRequests.error}{jira && !hostConnected && <button className='work-home-link' type='button' onClick={() => setDialog('github')}>Set up GitHub PRs →</button>}</div>}
+      {hostConnected === false && !!props.defaultFolderName && <div className='work-home-note' role='status'>No code host is connected, so pull requests from GitHub, GitLab or Bitbucket aren't listed.<button className='work-home-link' type='button' onClick={() => props.onOpenSettings('codehost')}>Connect a code host →</button></div>}
       {!pending.includes('pullRequests') && !activity.pullRequests.error && !prs.length && <p className='work-home-empty'>{prTab === 'review' ? 'No reviews waiting on you.' : 'No open PRs authored by you.'}</p>}
     </>}
   </section>;
@@ -256,7 +270,7 @@ export default function WorkHome(props: Props) {
   const tip = <aside className='work-home-tip'><span>Tip</span>{!tracker ? 'Connect Jira or Azure DevOps to start work directly from your assigned tickets.' : confluence ? 'Ask WorkspaceGPT to explain a ticket using its linked Confluence design pages.' : 'Start work reads the ticket, finds the affected code, and runs relevant checks.'}</aside>;
 
   return <div className={`work-home work-home--${layout}${narrow ? ' work-home--narrow' : ''}${short ? ' work-home--short' : ''}${size.height < 320 ? ' work-home--tiny' : ''}`} ref={container}>
-    <div className='work-home-heading'><h1><span className='work-home-mark' aria-hidden='true'>✦</span>Your work</h1><div className='work-home-heading-actions'><button className='work-home-link work-home-folder' type='button' onClick={props.onOpenDefaultFolder} title='Choose the folder ticket work starts in'>{props.defaultFolderName ?? 'Set default folder'}</button><button className='work-home-refresh' type='button' aria-label='Refresh your work' disabled={props.isRefreshing || pending.length > 0} onClick={() => { props.onRefresh(); refreshActivity(); }}>↻</button><div className='work-home-switch' role='group' aria-label='Homepage layout'>{(['board', 'inbox'] as const).map((value) => <button type='button' key={value} aria-pressed={layout === value} className={layout === value ? 'is-active' : ''} onClick={() => { setLayout(value); try { localStorage.setItem('workspacegpt.homeLayout', value); } catch { /* Session-only preference. */ } }}>{value === 'board' ? 'Board' : 'Inbox'}</button>)}</div></div></div>
+    <div className='work-home-heading'><h1><span className='work-home-mark' aria-hidden='true'>✦</span>Your work</h1><div className='work-home-heading-actions'><button className={`work-home-link work-home-folder${props.defaultFolderName ? '' : ' work-home-folder--needed'}`} type='button' onClick={props.onOpenDefaultFolder} title={props.defaultFolderName ? 'Choose the folder ticket work starts in' : 'Set this first: the folder WorkspaceGPT works in'}>{props.defaultFolderName ?? 'Set default folder'}</button><button className='work-home-refresh' type='button' aria-label='Refresh your work' disabled={props.isRefreshing || pending.length > 0} onClick={() => { props.onRefresh(); refreshActivity(); }}>↻</button><div className='work-home-switch' role='group' aria-label='Homepage layout'>{(['board', 'inbox'] as const).map((value) => <button type='button' key={value} aria-pressed={layout === value} className={layout === value ? 'is-active' : ''} onClick={() => { setLayout(value); try { localStorage.setItem('workspacegpt.homeLayout', value); } catch { /* Session-only preference. */ } }}>{value === 'board' ? 'Board' : 'Inbox'}</button>)}</div></div></div>
     <p className='work-home-intro'>{tracker || confluence ? 'Pick up a ticket. Move a review forward.' : 'Connect your Knowledge to bring your work here.'}</p>
     {(layout === 'inbox' || narrow) && <div className='work-home-filters' role='group' aria-label='Work categories'>{(['all', 'tickets', 'prs', 'mentions'] as const).filter((tab) => !narrow || layout === 'inbox' || tab !== 'all').map((tab) => <button type='button' key={tab} aria-pressed={filter === tab} className={filter === tab ? 'is-active' : ''} onClick={() => setFilter(tab)}>{tab === 'all' ? 'Overview' : tab === 'tickets' ? tracker ? `Tickets · ${ticketItems.length}` : 'Tickets' : tab === 'prs' ? tracker ? `PRs · ${activity.pullRequests.items.length}` : 'PRs' : tracker || confluence ? `Mentions · ${unreadMentions}` : 'Mentions'}</button>)}</div>}
     {layout === 'board' ? <div className='work-home-board' ref={overview}>{(!narrow || filter === 'tickets' || filter === 'all') && ticketSection}{(!narrow || filter === 'prs') && prSection}{(!narrow || filter === 'mentions') && mentionsSection}{showTip && tip}</div> : <div className='work-home-inbox' ref={overview}>{entries.length ? entries.slice(0, inboxLimit).map(renderEntry) : !tracker && !confluence ? <div className='work-home-inbox-setup'>{skeleton(2)}<p className='work-home-empty'>Your tickets, PR reviews, and mentions will appear here.</p><button className='work-home-link' type='button' onClick={() => setDialog('connect')}>Choose your Knowledge sources →</button></div> : <p className='work-home-empty' role='status'>{pending.length ? 'Loading recent work…' : 'No items in this view.'}</p>}{entries.length > inboxLimit && <button className='work-home-link work-home-more' type='button' onClick={() => openList(filter === 'all' ? 'tickets' : filter)}>View {filter === 'all' ? 'all tickets' : `all ${entries.length} items`} →</button>}{showTip && tip}</div>}

@@ -633,7 +633,7 @@
 .input-container {
   display: flex;
   flex-direction: column;
-  padding: 0.75rem;
+  padding: 0.5rem 0.625rem;
   margin: 0.25rem 0.5rem 0.5rem;
   border-radius: 12px;
   border: 1px solid var(--vscode-editor-lineHighlightBorder);
@@ -654,7 +654,7 @@
 .input-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.125rem;
   width: 100%;
 }
 .input-wrapper input,
@@ -703,7 +703,7 @@ input:focus {
   flex: 0 0 auto;
   width: 100%;
   min-width: 0;
-  padding: 0.5rem;
+  padding: 0.25rem 0.25rem;
   background-color: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border-radius: 4px;
@@ -4266,13 +4266,18 @@ button:disabled {
 .ci-menu-title { color: var(--vscode-descriptionForeground); font-size: 0.7rem; }
 .ci-menu-state { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; }
 .ci-menu-count { margin-left: auto; color: var(--vscode-descriptionForeground); }
-.ci-checks { list-style: none; margin: 0; padding: 0; max-height: 140px; overflow: auto; display: flex; flex-direction: column; gap: 3px; }
-.ci-check { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
+.ci-checks { list-style: none; margin: 0; padding: 0; max-height: 174px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.ci-check { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; line-height: 1.4; min-height: 20px; flex-shrink: 0; }
+.ci-check a, .ci-check { min-width: 0; overflow-wrap: anywhere; }
+.ci-check--fail { color: var(--vscode-errorForeground, inherit); }
 .ci-check a { color: inherit; text-decoration: none; }
 .ci-check a:hover { text-decoration: underline; }
-.ci-menu-option { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; cursor: pointer; border-top: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.25)); padding-top: 8px; }
+.ci-menu-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.25)); padding-top: 10px; }
+.ci-menu-option { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; cursor: pointer; min-width: 0; }
+/* The global `input` rule (flex: 1; padding) would stretch the box and push the label away. */
+.ci-menu-option input { flex: none; width: 14px; height: 14px; padding: 0; margin: 0; accent-color: var(--vscode-button-background); cursor: pointer; }
 .ci-menu-fix {
-  align-self: flex-start;
+  flex-shrink: 0;
   padding: 3px 10px;
   border-radius: var(--wgpt-radius-md, 6px);
   border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.35));

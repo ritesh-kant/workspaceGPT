@@ -36,6 +36,22 @@ export interface ChatMessage {
   isError?: boolean;
 }
 
+/**
+ * Write through a temp file and a rename, so a reader (the sessions list, a
+ * concurrent save's merge) never sees a half-written chat, and a quit mid-save
+ * leaves the previous copy instead of a truncated one.
+ */
+async function writeFileAtomic(uri: vscode.Uri, bytes: Uint8Array): Promise<void> {
+  const tmp = vscode.Uri.file(`${uri.fsPath}.${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
+  await vscode.workspace.fs.writeFile(tmp, bytes);
+  try {
+    await vscode.workspace.fs.rename(tmp, uri, { overwrite: true });
+  } catch (e) {
+    await vscode.workspace.fs.delete(tmp).then(undefined, () => undefined);
+    throw e;
+  }
+}
+
 /** Resume only the ticket the run actually worked on, not another search hit. */
 export function sessionTicketUrl(messages: unknown): string | undefined {
   if (!Array.isArray(messages)) return undefined;
@@ -154,7 +170,7 @@ export class HistoryService {
 
   private async writeMeta(meta: Record<string, SessionMeta>): Promise<void> {
     await ensureDirectoryExists(this.context.globalStorageUri.fsPath);
-    await vscode.workspace.fs.writeFile(this.metaFile, new TextEncoder().encode(JSON.stringify(meta)));
+    await writeFileAtomic(this.metaFile, new TextEncoder().encode(JSON.stringify(meta)));
   }
 
   /** Merge a change into a chat's meta; an empty string or false clears that field. */
@@ -238,7 +254,7 @@ export class HistoryService {
     };
 
     const writeData = new TextEncoder().encode(JSON.stringify(data));
-    await vscode.workspace.fs.writeFile(filePath, writeData);
+    await writeFileAtomic(filePath, writeData);
   }
 
   private get importLogFile(): vscode.Uri {
@@ -258,7 +274,7 @@ export class HistoryService {
   public async appendImportLog(entry: ImportLogEntry): Promise<void> {
     const log = [entry, ...(await this.readImportLog())].slice(0, 50);
     await ensureDirectoryExists(this.context.globalStorageUri.fsPath);
-    await vscode.workspace.fs.writeFile(this.importLogFile, new TextEncoder().encode(JSON.stringify(log)));
+    await writeFileAtomic(this.importLogFile, new TextEncoder().encode(JSON.stringify(log)));
   }
 
   /** Whether a saved chat with this id exists. */
@@ -292,7 +308,7 @@ export class HistoryService {
       messages: chat.messages,
     };
     const filePath = vscode.Uri.file(path.join(this.historyDir.fsPath, `${sessionId}.json`));
-    await vscode.workspace.fs.writeFile(filePath, new TextEncoder().encode(JSON.stringify(data)));
+    await writeFileAtomic(filePath, new TextEncoder().encode(JSON.stringify(data)));
     return true;
   }
 

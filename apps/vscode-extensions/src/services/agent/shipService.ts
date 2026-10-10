@@ -3,8 +3,8 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import { NamedRoot, resolveAgainstRoots } from '../codebase/codebaseTools';
 import { getActiveTicketProvider } from '../tickets/registry';
+import { CodeHostConnections } from '../codehost/connections';
 import {
-  CONVENTIONAL_TYPES,
   cutAtWord,
   deriveShipTitle,
   turnCommitType,
@@ -25,9 +25,9 @@ import {
  * Deliberately uses the user's own `git` and browser session — no token ever
  * passes through the agent, and it works for GitHub, Azure Repos, GitLab and
  * Bitbucket alike because the PR itself is created by the user on the page
- * that opens. The commit lands on a fresh `<type>/…` branch (Conventional
- * Commits type, from the ticket's work item type), never on the branch the
- * user was on.
+ * that opens. From the default branch the commit lands on a fresh `<type>/…`
+ * branch (Conventional Commits type, from the ticket's work item type); from
+ * any other branch it lands there. The PR always targets the default branch.
  */
 
 export interface ShipInput {
@@ -82,6 +82,19 @@ async function currentBranch(gitCwd: string): Promise<string> {
   return git(gitCwd, ['branch', '--show-current']).catch(() => '');
 }
 
+/**
+ * The repo's default branch — what a PR should target. `origin/HEAD` when the
+ * clone set it, else whichever of main/master exists on origin, else "main".
+ */
+async function defaultBranch(gitCwd: string): Promise<string> {
+  const head = await git(gitCwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).catch(() => '');
+  if (head) return head.replace(/^origin\//, '');
+  for (const name of ['main', 'master']) {
+    if (await git(gitCwd, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`]).catch(() => '')) return name;
+  }
+  return 'main';
+}
+
 export async function shipChanges(
   context: vscode.ExtensionContext,
   roots: NamedRoot[],
@@ -110,7 +123,10 @@ export async function shipChanges(
   const filesFromTop = relFiles.map((f) => path.relative(gitCwd, path.join(cwd, f)));
   const baseBranch = await currentBranch(gitCwd);
   if (!baseBranch) throw new Error('HEAD is detached — check out a branch first.');
-  if (new RegExp(`^(${CONVENTIONAL_TYPES.join('|')})/`).test(baseBranch)) warnings.push(`Branching from an existing agent branch (${baseBranch}).`);
+  // PRs target the default branch. Only from the default branch itself do we
+  // cut a new one; on any other branch the work is committed there.
+  const targetBranch = await defaultBranch(gitCwd);
+  const newBranch = baseBranch === targetBranch;
 
   // The webview's copy of a turn carries no title (AGENT_TURN_SUMMARY never
   // sends one), so the client-payload fallback used after a host restart
@@ -119,16 +135,19 @@ export async function shipChanges(
   const shortTitle = cutAtWord(title.replace(/\s+/g, ' ').trim(), 72);
   const commitType = turnCommitType({ ...input, title });
   const slug = slugify(input.ticketId ? `${input.ticketId}-${title}` : title);
-  let branch = `${commitType}/${slug}`;
-  const existing = await git(gitCwd, ['branch', '--list', branch]);
+  let branch = newBranch ? `${commitType}/${slug}` : baseBranch;
+  const existing = newBranch ? await git(gitCwd, ['branch', '--list', branch]) : '';
   if (existing) branch = `${branch}-${Date.now().toString(36).slice(-4)}`;
 
   // Only one tracker is ever connected (§9): the ticket named in `input`
   // always belongs to whichever one that is.
   const ticketProvider = input.ticketId ? getActiveTicketProvider(context) : null;
+  const codeHost = await new CodeHostConnections(context).forRepo(gitCwd).catch(() => null);
 
-  onStatus(`Creating branch ${branch}…`);
-  await git(gitCwd, ['checkout', '-b', branch]);
+  if (newBranch) {
+    onStatus(`Creating branch ${branch}…`);
+    await git(gitCwd, ['checkout', '-b', branch]);
+  }
   try {
     onStatus(`Committing ${filesFromTop.length} file${filesFromTop.length === 1 ? '' : 's'}…`);
     await git(gitCwd, ['add', '--', ...filesFromTop]);
@@ -138,8 +157,10 @@ export async function shipChanges(
     await git(gitCwd, ['commit', '--quiet', '-m', message, '--', ...filesFromTop]);
   } catch (e) {
     // Leave the user where they were rather than on a half-made branch.
-    await git(gitCwd, ['checkout', '--quiet', baseBranch]).catch(() => undefined);
-    await git(gitCwd, ['branch', '-D', branch]).catch(() => undefined);
+    if (newBranch) {
+      await git(gitCwd, ['checkout', '--quiet', baseBranch]).catch(() => undefined);
+      await git(gitCwd, ['branch', '-D', branch]).catch(() => undefined);
+    }
     throw e;
   }
   const commitSha = await git(gitCwd, ['rev-parse', 'HEAD']);
@@ -152,7 +173,13 @@ export async function shipChanges(
     try {
       await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch]);
       pushed = true;
-      prUrl = pullRequestUrl(remote, baseBranch, branch, shortTitle, input.report);
+      prUrl = codeHost
+        ? await codeHost.host.createPr(codeHost.repo, { base: targetBranch, head: branch, title: shortTitle, body: input.report }).catch((e) => {
+            warnings.push(`Pushed, but could not open the ${codeHost.host.prNoun} on ${codeHost.host.host}: ${e instanceof Error ? e.message : String(e)}`);
+            return undefined;
+          })
+        : undefined;
+      prUrl ??= pullRequestUrl(remote, targetBranch, branch, shortTitle, input.report);
       if (prUrl) {
         onStatus('Opening the pull-request page…');
         await vscode.env.openExternal(vscode.Uri.parse(prUrl));
@@ -179,7 +206,7 @@ export async function shipChanges(
     }
   }
 
-  return { branch, baseBranch, commitSha, prUrl, pushed, ticketCommented, warnings };
+  return { branch, baseBranch: newBranch ? baseBranch : '', commitSha, prUrl, pushed, ticketCommented, warnings };
 }
 
 export interface ShipAllResult {
@@ -207,7 +234,8 @@ export interface ShipAllResult {
 export async function shipAllChanges(
   roots: NamedRoot[],
   onStatus: (text: string) => void,
-  askTitle: (suggestion: string, paths: string[]) => Promise<string | undefined>
+  askTitle: (suggestion: string, paths: string[]) => Promise<string | undefined>,
+  connections?: CodeHostConnections
 ): Promise<ShipAllResult | null> {
   if (!roots.length) throw new Error('No workspace folder is open.');
   const cwd = roots[0].uri.fsPath;
@@ -219,6 +247,8 @@ export async function shipAllChanges(
   });
   const baseBranch = await currentBranch(gitCwd);
   if (!baseBranch) throw new Error('HEAD is detached — check out a branch first.');
+  const targetBranch = await defaultBranch(gitCwd);
+  const newBranch = baseBranch === targetBranch;
 
   // -uall so an untracked directory lands as its files, not one "dir/" entry —
   // the inferred type and subject read the individual paths.
@@ -232,19 +262,23 @@ export async function shipAllChanges(
   const parsed = parseConventionalSubject(answer) ?? { type: inferredType, subject: answer.trim() };
   const commitSubject = `${parsed.type}: ${parsed.subject}`;
 
-  let branch = `${parsed.type}/${slugify(parsed.subject)}`;
-  const existing = await git(gitCwd, ['branch', '--list', branch]);
+  let branch = newBranch ? `${parsed.type}/${slugify(parsed.subject)}` : baseBranch;
+  const existing = newBranch ? await git(gitCwd, ['branch', '--list', branch]) : '';
   if (existing) branch = `${branch}-${Date.now().toString(36).slice(-4)}`;
 
-  onStatus(`Creating branch ${branch}…`);
-  await git(gitCwd, ['checkout', '-b', branch]);
+  if (newBranch) {
+    onStatus(`Creating branch ${branch}…`);
+    await git(gitCwd, ['checkout', '-b', branch]);
+  }
   try {
     onStatus('Staging changes…');
     await git(gitCwd, ['add', '-A']);
     await git(gitCwd, ['commit', '--quiet', '-m', commitSubject]);
   } catch (e) {
-    await git(gitCwd, ['checkout', '--quiet', baseBranch]).catch(() => undefined);
-    await git(gitCwd, ['branch', '-D', branch]).catch(() => undefined);
+    if (newBranch) {
+      await git(gitCwd, ['checkout', '--quiet', baseBranch]).catch(() => undefined);
+      await git(gitCwd, ['branch', '-D', branch]).catch(() => undefined);
+    }
     throw e;
   }
   const commitSha = await git(gitCwd, ['rev-parse', 'HEAD']);
@@ -257,7 +291,14 @@ export async function shipAllChanges(
     try {
       await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch]);
       pushed = true;
-      prUrl = pullRequestUrl(remote, baseBranch, branch, commitSubject, '');
+      const codeHost = await connections?.forRepo(gitCwd).catch(() => null);
+      prUrl = codeHost
+        ? await codeHost.host.createPr(codeHost.repo, { base: targetBranch, head: branch, title: commitSubject, body: '' }).catch((e) => {
+            warnings.push(`Pushed, but could not open the ${codeHost.host.prNoun} on ${codeHost.host.host}: ${e instanceof Error ? e.message : String(e)}`);
+            return undefined;
+          })
+        : undefined;
+      prUrl ??= pullRequestUrl(remote, targetBranch, branch, commitSubject, '');
       if (prUrl) {
         onStatus('Opening the pull-request page…');
         await vscode.env.openExternal(vscode.Uri.parse(prUrl));
@@ -271,5 +312,5 @@ export async function shipAllChanges(
     warnings.push('No "origin" remote — committed locally only.');
   }
 
-  return { branch, baseBranch, commitSha, prUrl, pushed, warnings };
+  return { branch, baseBranch: newBranch ? baseBranch : '', commitSha, prUrl, pushed, warnings };
 }

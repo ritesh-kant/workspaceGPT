@@ -46,6 +46,9 @@ export const DISCOVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
   'get_confluence_page',
   'search_tickets',
   'get_ticket',
+  'list_prs',
+  'get_pr',
+  'get_repo_issue',
   'search_web',
 ]);
 

@@ -686,21 +686,6 @@ const App: React.FC = () => {
   // view — the pinned action bar above the composer takes over then.
   const [reviewActionsOffscreen, setReviewActionsOffscreen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null);
-  const [composerExpanded, setComposerExpanded] = useState(false);
-  useEffect(() => {
-    // On macOS a pointer click needn't focus a button. Keep controls mounted
-    // through pointer-down, blur, and click; collapse only on leaving the composer.
-    const leaveComposer = (event: Event) => {
-      if (event.target instanceof Node && !composerRef.current?.contains(event.target)) setComposerExpanded(false);
-    };
-    document.addEventListener('pointerdown', leaveComposer);
-    document.addEventListener('focusin', leaveComposer);
-    return () => {
-      document.removeEventListener('pointerdown', leaveComposer);
-      document.removeEventListener('focusin', leaveComposer);
-    };
-  }, []);
   // Files staged in the composer, sent with the next message.
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   // Transient note when a picked/pasted file was rejected (type/size/count).
@@ -2435,14 +2420,23 @@ const App: React.FC = () => {
    */
   const handleFixCi = (promptText: string) => {
     if (isLoading || isStreaming) return;
-    if (currentSessionId) stoppedSessionsRef.current.delete(currentSessionId);
+    // The chip also shows on the new-chat screen: give the fix its own chat,
+    // like every other send path, or it is never saved and its replies land
+    // in whichever chat is open next.
+    let sessionId = currentSessionId;
+    if (!sessionId) {
+      sessionId = generateSessionId();
+      setCurrentSessionId(sessionId);
+      currentSessionIdRef.current = sessionId;
+    }
+    stoppedSessionsRef.current.delete(sessionId);
     resetStreamBuffer();
     addMessage({ content: promptText, isUser: true, timestamp: Date.now() });
     setIsLoading(true);
     setIsStreaming(false);
     vscode.postMessage({
       type: MESSAGE_TYPES.SEND_MESSAGE,
-      sessionId: currentSessionId,
+      sessionId,
       message: promptText,
       modelId: selectedModelProvider?.selectedModel,
       provider: selectedModelProvider.provider,
@@ -2660,7 +2654,7 @@ const App: React.FC = () => {
   return (
     <div className='app-container'>
       <div className={`chat-container${showWorkHome ? ' chat-container--work-home' : ''}`}>
-        {showTips && messages.length === 0 && <div className='mode-bar'>{modeSwitch}</div>}
+        {showTips && messages.length === 0 && !isDesktopHost() && <div className='mode-bar'>{modeSwitch}</div>}
         {showWorkHome ? (
           <WorkHome
             items={myWorkItems}
@@ -3029,10 +3023,7 @@ const App: React.FC = () => {
           {isWorkMode && hasWorkspaceFolder && <CiChip onFixNow={fixCiNow} />}
         </div>
         <div
-          ref={composerRef}
-          onFocusCapture={() => setComposerExpanded(true)}
-          onPointerDownCapture={() => setComposerExpanded(true)}
-          className={`input-container${composerExpanded || inputValue || pendingAttachments.length || confirmingFull ? ' input-container--expanded' : ''}${pendingQuestion ? ' input-container--question' : ''}${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}
+          className={`input-container${pendingQuestion ? ' input-container--question' : ''}${isDraggingFile ? ' input-container--dragging' : ''}${editingIndex !== null ? ' input-container--muted' : ''}`}
           onDragOver={(e) => {
             if (e.dataTransfer?.types?.includes('Files')) {
               e.preventDefault();
@@ -3140,7 +3131,6 @@ const App: React.FC = () => {
               </div>
             )}
             <div className='input-controls'>
-              {showWorkHome && modeSwitch}
               <div className='input-selectors'>
                 <input
                   ref={fileInputRef}

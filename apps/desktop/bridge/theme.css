@@ -223,5 +223,10 @@ body {
   background: var(--vscode-editor-background);
   color: var(--vscode-editor-foreground);
   font-family: var(--vscode-font-family);
+}
+/* Body only, as in a VS Code webview: <html> keeps the 16px default, and the
+   views size everything in rem against it. A 13px root shrank every rem in
+   the desktop by a fifth (Settings card text came out at 10.4px). */
+body {
   font-size: var(--vscode-font-size);
 }

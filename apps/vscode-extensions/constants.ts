@@ -355,6 +355,17 @@ export const MESSAGE_TYPES = {
   GITHUB_INSTALL_ERROR: 'github-install-error',
   DISCONNECT_GITHUB: 'disconnect-github',
 
+  // Code-host connections (GitHub / GitLab / Bitbucket: PRs, CI, Create PR, agent tools)
+  // — see services/codehost/connections.ts. github.com via OAuth; everything else by token.
+  CODEHOST_GET_STATUS: 'codehost-get-status',
+  CODEHOST_CONNECT_OAUTH: 'codehost-connect-oauth',
+  CODEHOST_CANCEL_OAUTH: 'codehost-cancel-oauth',
+  CODEHOST_CONNECT_GH: 'codehost-connect-gh',
+  CODEHOST_GH_CODE: 'codehost-gh-code',
+  CODEHOST_CONNECT_TOKEN: 'codehost-connect-token',
+  CODEHOST_DISCONNECT: 'codehost-disconnect',
+  CODEHOST_STATUS: 'codehost-status',
+
   CHECK_VERCEL_CONNECTION: 'check-vercel-connection',
   START_VERCEL_OAUTH: 'start-vercel-oauth',
   CANCEL_VERCEL_OAUTH: 'cancel-vercel-oauth',
@@ -546,6 +557,8 @@ export const STORAGE_KEYS = {
   JIRA_EMBEDDING_PROGRESS: 'jira-embedding-progress',
   // Deployment automation — write-scoped creds (SecretStorage), never shared to Chrome
   GITHUB_OAUTH_TOKENS: 'github-oauth-tokens',
+  // The code-host connections (GitHub / GitLab / Bitbucket): [{ kind, host, token, login, … }] — see codehost/connections.ts.
+  CODE_HOST_CONNECTIONS: 'code-host-connections',
   // (Optional GitHub App mode — see GitHubAppAuthService)
   GITHUB_APP_INSTALLATION: 'github-app-installation',
   GITHUB_INSTALLATION_TOKEN_CACHE: 'github-installation-token-cache',

@@ -325,11 +325,12 @@ function buildTicketBlock(
   t?: TicketPromptContext,
   implementMandate = false,
   lookupOnly = false,
+  trackerLabel = 'Azure DevOps',
 ): string {
   if (!t) return '';
   const lines: string[] = [
     `## Ticket #${t.id}: ${t.title}`,
-    `(Fetched live from Azure DevOps just before this turn — this IS the current ticket; do not call get_ticket for #${t.id} again.)`,
+    `(Fetched live from ${trackerLabel} just before this turn — this IS the current ticket; do not call get_ticket for #${t.id} again.)`,
     `- ${t.type} · State: ${t.state}${t.assignedTo ? ` · Assigned to: ${t.assignedTo}` : ''}${t.sprint ? ` · Sprint: ${t.sprint}` : ''}`,
     `- URL: ${t.url}${t.parentId ? ` · Parent: #${t.parentId}` : ''}`,
   ];
@@ -721,6 +722,7 @@ This run has Full access. Where anything above says a command shows the user an 
         options?.ticketContext,
         !!options?.implementMandate,
         !!options?.ticketLookupOnly,
+        options?.ticketTrackerLabel,
       )
     : '';
 

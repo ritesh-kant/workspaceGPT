@@ -366,6 +366,11 @@ html[data-wgpt-desktop="chat"] .section-empty,
 html[data-wgpt-desktop="chat"] .section-status {
   color: var(--wgpt-d-muted);
 }
+/* Switches: a white knob when on, as on macOS and the composer's switches.
+   The view uses the button text colour, which is dark navy on this accent. */
+html[data-wgpt-desktop] input:checked + .slider:before {
+  background-color: #fff;
+}
 /* Mode cards are <button>s: reset the webview's white button text. */
 html[data-wgpt-desktop="chat"] .mode-card {
   border-color: var(--wgpt-d-border-strong);

@@ -499,7 +499,7 @@ const TOOL_DEFS = [
     function: {
       name: 'search_tickets',
       description:
-        'Semantic search over Azure DevOps work items by DESCRIPTION or topic (e.g. "tickets about checkout retries"). Searches the local synced index, so it may be stale and is unreliable for exact IDs — when you already have a ticket ID, use get_ticket instead.',
+        'Semantic search over the connected tracker\'s tickets (Azure DevOps work items or Jira issues) by DESCRIPTION or topic (e.g. "tickets about checkout retries"). Searches the local synced index, so it may be stale and is unreliable for exact IDs — when you already have a ticket ID, use get_ticket instead.',
       parameters: {
         type: 'object',
         properties: {
@@ -515,14 +515,14 @@ const TOOL_DEFS = [
     function: {
       name: 'get_ticket',
       description:
-        'Read ONE Azure DevOps work item by ID, live from Azure DevOps (always current, never truncated). Use this whenever the user names a ticket — it returns the title, state, assignee, sprint, description and acceptance criteria. Read the ticket BEFORE exploring code so you implement what was actually asked for.',
+        'Read ONE ticket by ID (an Azure DevOps work item, or a Jira issue key like "PROJ-123"), live from the tracker (always current, never truncated). Use this whenever the user names a ticket — it returns the title, state, assignee, sprint, description and acceptance criteria. Read the ticket BEFORE exploring code so you implement what was actually asked for.',
       parameters: {
         type: 'object',
         properties: {
           id: {
             type: 'string',
             description:
-              'Work item ID as the user wrote it — any prefix is tolerated ("1234", "TKT-1234", "#1234"), and a full work-item URL ("https://dev.azure.com/{org}/{project}/_workitems/edit/1234") also works.',
+              'Ticket ID as the user wrote it. Azure DevOps: any prefix is tolerated ("1234", "TKT-1234", "#1234"). Jira: the full issue key ("PROJ-123"). A full ticket URL (dev.azure.com/.../_workitems/edit/1234 or .../browse/PROJ-123) also works.',
           },
           includeComments: {
             type: 'boolean',
@@ -531,6 +531,57 @@ const TOOL_DEFS = [
           },
         },
         required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_prs',
+      description:
+        'List pull requests (merge requests on GitLab) on the connected code host — GitHub, GitLab or Bitbucket — read-only. scope "repo" (default) = the repository\'s PRs; "mine" = PRs the user opened; "review-requested" = PRs waiting for the user\'s review. Defaults to this workspace\'s repository.',
+      parameters: {
+        type: 'object',
+        properties: {
+          scope: { type: 'string', enum: ['repo', 'mine', 'review-requested'], description: 'Which PRs (default "repo").' },
+          state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Default "open".' },
+          repo: { type: 'string', description: 'owner/name (GitLab: group/subgroup/name; Bitbucket: workspace/repo); omit for this workspace\'s repository.' },
+          limit: { type: 'number', description: 'Max results (default 20, max 50).' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_pr',
+      description:
+        'Read ONE pull request (merge request on GitLab) from the connected code host, live: title, description, branches, reviews, and the changed files with their diffs (capped). Use it when the user names a PR/MR (#123 or a URL) — read it before judging or reviewing the change. Read-only.',
+      parameters: {
+        type: 'object',
+        properties: {
+          number: { type: 'number', description: 'The PR number (GitLab: the MR "iid", the !123 number).' },
+          repo: { type: 'string', description: 'owner/name; omit for this workspace\'s repository.' },
+          includeDiff: { type: 'boolean', description: 'Include per-file diffs (default true). Pass false for just the summary.' },
+          includeComments: { type: 'boolean', description: 'Also fetch the discussion and review comments. Costly in tokens.' },
+        },
+        required: ['number'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_repo_issue',
+      description: 'Read ONE issue from the repository host (GitHub, GitLab or Bitbucket) by number, live. Read-only. A ticket tracker\'s tickets (Azure DevOps, Jira) are read with get_ticket instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          number: { type: 'number', description: 'The issue number.' },
+          repo: { type: 'string', description: 'owner/name; omit for this workspace\'s repository.' },
+          includeComments: { type: 'boolean', description: 'Also fetch the discussion.' },
+        },
+        required: ['number'],
       },
     },
   },

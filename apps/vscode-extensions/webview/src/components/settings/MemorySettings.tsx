@@ -22,11 +22,15 @@ const MemorySettings: React.FC = () => {
   const [state, setState] = useState<{ enabled: boolean; entries: Entry[] } | null>(null);
   const [editing, setEditing] = useState<{ name: string; text: string } | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const m = event.data;
-      if (m?.type === MESSAGE_TYPES.MEMORY_STATE) setState({ enabled: m.enabled, entries: m.entries ?? [] });
+      if (m?.type === MESSAGE_TYPES.MEMORY_STATE) {
+        setState({ enabled: m.enabled, entries: m.entries ?? [] });
+        setError(m.error ?? null);
+      }
     };
     window.addEventListener('message', onMessage);
     VSCodeAPI().postMessage({ type: MESSAGE_TYPES.MEMORY_GET });
@@ -50,20 +54,27 @@ const MemorySettings: React.FC = () => {
     >
       <div className='settings-form'>
         <div className='form-group'>
-          <label>
-            <input
-              type='checkbox'
-              checked={state?.enabled ?? true}
-              disabled={!state}
-              onChange={(e) => post({ type: MESSAGE_TYPES.MEMORY_SET_ENABLED, enabled: e.target.checked })}
-            />{' '}
-            Remember my preferences and working style
+          {/* A switch, like every other on/off in Settings. */}
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <span>Remember my preferences and working style</span>
+            <span className='toggle-switch'>
+              <input
+                type='checkbox'
+                role='switch'
+                checked={state?.enabled ?? true}
+                disabled={!state}
+                onChange={(e) => post({ type: MESSAGE_TYPES.MEMORY_SET_ENABLED, enabled: e.target.checked })}
+              />
+              <span className='slider round' />
+            </span>
           </label>
           <span className='import-detail'>
             WorkspaceGPT saves short notes when you state or correct a lasting preference. They are kept on this machine,
             never include your Knowledge content or secrets, and add about 600 tokens at most to a request.
           </span>
         </div>
+
+        {error && <span className='error-message' role='alert'>{error}</span>}
 
         {state && entries.length === 0 && (
           <span className='import-detail'>
@@ -91,6 +102,7 @@ const MemorySettings: React.FC = () => {
                 <span className='import-detail'>{entry.text}</span>
               )}
             </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
             {editing?.name === entry.name ? (
               <>
                 <button type='button' className='secondary-button' onClick={() => saveEdit(entry)}>
@@ -115,6 +127,7 @@ const MemorySettings: React.FC = () => {
                 </button>
               </>
             )}
+            </div>
           </div>
         ))}
 

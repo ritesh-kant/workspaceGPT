@@ -35,6 +35,8 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
     const vscode = VSCodeAPI();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
+    // The PR this fix was started for: a fix that opens a new chat clears the snapshot (see below).
+    let fixPr: CiSnapshot['pr'];
 
     const request = () => vscode.postMessage({ type: MESSAGE_TYPES.CI_GET_STATUS, sessionId: useChatStore.getState().currentSessionId });
     const schedule = (ms: number) => {
@@ -56,8 +58,10 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
       }
       ci.spendAttempt(snap.pr.number, snap.pr.sha);
       ci.setNote(null);
-      ci.setPhase('fixing', chat.currentSessionId);
+      fixPr = snap.pr;
       sendFixRef.current(ciFixPrompt(snap.pr, snap.failureLog));
+      // Read after sending: from the new-chat screen the send is what gives the chat its id.
+      ci.setPhase('fixing', useChatStore.getState().currentSessionId);
     };
     startFixRef.current = () => {
       const snap = useCiStore.getState().snapshot;
@@ -89,13 +93,25 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
       const ci = useCiStore.getState();
       const ended = (prev.isLoading || prev.isStreaming) && !state.isLoading && !state.isStreaming;
       if (!ended || ci.phase !== 'fixing') return;
-      const pr = ci.snapshot?.pr;
+      const pr = fixPr ?? ci.snapshot?.pr;
       if (!pr || ci.fixSessionId !== state.currentSessionId) {
         ci.setPhase('idle');
         return;
       }
+      // Claimed now, not in the timeout: a run's end can land as two loading→idle
+      // updates inside 400ms, and each would otherwise push the same fix.
+      ci.setPhase('pushing', ci.fixSessionId);
       // Next tick: the run's last file records land with the same update.
       setTimeout(() => {
+        // Stopped, errored or never sent: the fix turn posts no rollup, and
+        // nothing the user stopped is pushed to the PR.
+        const msgs = useChatStore.getState().messages;
+        const fixPrompt = msgs.map((m) => m.isUser).lastIndexOf(true);
+        if (!msgs.slice(fixPrompt + 1).some((m) => m.turnSummary)) {
+          ci.setPhase('idle');
+          ci.setNote('The fix run did not finish, so nothing was pushed.');
+          return;
+        }
         const files = chatUncommittedFiles();
         if (!files.length) {
           ci.setPhase('idle');

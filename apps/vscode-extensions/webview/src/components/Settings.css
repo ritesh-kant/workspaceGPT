@@ -792,6 +792,14 @@
   opacity: 0.7;
 }
 
+/* Settings dropdowns: the same small caret as .settings-select, not a
+   text-sized ▼ beside it. */
+.settings-form .searchable-dropdown-trigger .trigger-arrow {
+  font-size: 0.55rem;
+  opacity: 1;
+  color: var(--vscode-descriptionForeground);
+}
+
 .spinner {
   display: inline-flex;
   animation: rotate 1s linear infinite;
@@ -1122,6 +1130,11 @@
   opacity: 0;
   width: 0;
   height: 0;
+  /* Out of flow, so a container's input padding (.form-group input) can't
+     give the hidden box a size. */
+  position: absolute;
+  padding: 0;
+  border: 0;
 }
 
 .slider {
@@ -2392,6 +2405,15 @@ input.dep-preset-dropdown {
 
 .import-name {
   font-weight: 600;
+}
+
+/* Help text under a control (<small className='form-text'>). It had no rule,
+   so it fell to the browser's <small>: smaller than the details around it and
+   in the full text colour. */
+.form-text {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
 }
 
 .import-detail {

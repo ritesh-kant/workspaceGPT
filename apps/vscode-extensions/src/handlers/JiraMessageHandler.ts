@@ -153,6 +153,8 @@ export class JiraMessageHandler {
           availableProjects: [],
           accountId: '',
           displayName: '',
+          // Per-site custom field id — a different site has a different one.
+          sprintFieldId: undefined,
           isSyncing: false,
           isIndexing: false,
           canResume: false,

@@ -14,7 +14,8 @@ import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
 import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
-import { getCiSnapshot, getFailureLog, pushCiFix } from '../services/agent/ciService';
+import { getCiSnapshot, getCiSnapshotViaHost, getFailureLog, getFailureLogViaHost, pushCiFix } from '../services/agent/ciService';
+import { CodeHostConnections } from '../services/codehost/connections';
 import { isPermission } from '../services/agent/permissionPolicy';
 import { ensureWorktree, getDefaultFolder, getRecentFolders, listBranches, openFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
 import { isBrowserConnected } from '../services/browser/browserBridge';
@@ -421,9 +422,14 @@ export class ChatMessageHandler {
     const sid = typeof sessionId === 'string' ? sessionId : null;
     try {
       const cwd = this.viewedRoots()[0]?.uri.fsPath;
-      const snapshot = cwd ? await getCiSnapshot(cwd) : { state: 'none' as const, checks: [] };
+      // The code-host connection that owns this repo when there is one; the gh CLI otherwise.
+      const target = cwd ? await new CodeHostConnections(this.context).forRepo(cwd) : null;
+      const snapshot = cwd ? ((target && (await getCiSnapshotViaHost(cwd, target))) || (await getCiSnapshot(cwd))) : { state: 'none' as const, checks: [] };
       if (cwd && snapshot.state === 'failed' && snapshot.pr) {
-        if (this.ciLog?.sha !== snapshot.pr.sha) this.ciLog = { sha: snapshot.pr.sha, log: await getFailureLog(cwd, snapshot.checks) };
+        if (this.ciLog?.sha !== snapshot.pr.sha) {
+          const log = (target && (await getFailureLogViaHost(snapshot.checks, target))) || (await getFailureLog(cwd, snapshot.checks));
+          this.ciLog = { sha: snapshot.pr.sha, log };
+        }
         snapshot.failureLog = this.ciLog.log;
       }
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.CI_STATUS, sessionId: sid, ...snapshot });
@@ -549,7 +555,8 @@ export class ChatMessageHandler {
             ignoreFocusOut: true,
             validateInput: (v) => (v.trim() ? undefined : 'Enter a short description of the change.'),
           })
-        )
+        ),
+        new CodeHostConnections(this.context)
       );
       if (!result) {
         reply({ ok: false, cancelled: true });

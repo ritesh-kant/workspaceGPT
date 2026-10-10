@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 // ModelSettings (rendered as an onboarding step below) relies on Settings.css
 // for its form/button/status classes — imported explicitly here so
 // onboarding doesn't depend on Settings.tsx happening to load first.
+import { BRAND_ICON } from '../../assets/brandIcon';
 import '../Settings.css';
 import './Onboarding.css';
 import { useSettingsStore, useSelectedModelProvider } from '../../store';
@@ -151,7 +152,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
     <div className='onboarding-overlay' ref={overlayRef}>
       <div className='onboarding-card'>
         <header className='onboarding-brand'>
-          <span className='onboarding-brand-mark'><SetupIcon kind='spark' /></span>
+          <img className='onboarding-brand-mark' src={BRAND_ICON} alt='' />
           <span>WorkspaceGPT</span>
           <span className='onboarding-brand-caption'>A little setup. A lot of context.</span>
         </header>

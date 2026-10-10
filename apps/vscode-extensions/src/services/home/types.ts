@@ -4,7 +4,7 @@ export interface HomePullRequest {
   number: string;
   title: string;
   url: string;
-  source: 'ado' | 'github';
+  source: 'ado' | 'github' | 'gitlab' | 'bitbucket';
   repository: string;
   author: string;
   updatedAt: string;

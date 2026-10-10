@@ -8,6 +8,9 @@ import { JiraAuthService, jiraApiBase } from '../jira/jiraAuthService';
 import { ConfluenceAuthService } from '../confluence/confluenceAuthService';
 import { resolveConfluenceWebUrl } from '../confluence/confluenceWebUrl';
 import { getActiveTicketProvider } from '../tickets/registry';
+import { CodeHostConnections } from '../codehost/connections';
+import { ghEnv } from '../codehost/ghCli';
+import type { CodeHost, RepoRef } from '../codehost/types';
 import { HomeActivity, HomeMention, HomePullRequest, HomeSection, adoReviewState, adfText, hasJiraMention } from './types';
 
 const LOOKBACK_DAYS = 30;
@@ -21,18 +24,23 @@ export function activityRevision(value: unknown): string {
 
 /** No response bodies or credentials in errors/analytics. Never follow auth-bearing redirects. */
 async function request(url: string, authHeader: string, init?: RequestInit): Promise<any> {
-  const response = await fetch(url, {
-    ...init,
-    redirect: 'error',
-    signal: AbortSignal.timeout(12_000),
-    headers: { Authorization: authHeader, Accept: 'application/json', ...(init?.headers ?? {}) },
-  });
-  if (!response.ok) {
+  // Every call here is a read, so a transient gateway error is safe to retry.
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, {
+      ...init,
+      redirect: 'error',
+      signal: AbortSignal.timeout(12_000),
+      headers: { Authorization: authHeader, Accept: 'application/json', ...(init?.headers ?? {}) },
+    });
+    if (response.ok) return response.json();
+    if ([429, 502, 503, 504].includes(response.status) && attempt < 2) {
+      await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+      continue;
+    }
     throw new Error(response.status === 401 || response.status === 403
       ? 'Access denied. Reconnect this source and check its read permissions.'
       : `Could not refresh activity (${response.status}). Try again.`);
   }
-  return response.json();
 }
 
 async function mapLimited<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -47,24 +55,27 @@ async function mapLimited<T, R>(items: T[], fn: (item: T) => Promise<R>): Promis
   return results;
 }
 
-function gh(args: string[]): Promise<any> {
+function gh(args: string[], host?: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    execFile('gh', args, { timeout: 25_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
-      if (error) return reject(new Error('Sign in to GitHub CLI with gh auth login, then refresh.'));
+    execFile('gh', args, { env: ghEnv(), timeout: 25_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
+      if (error) return reject(new Error(`Sign in to GitHub CLI with gh auth login${host ? ` --hostname ${host}` : ''}, then refresh.`));
       try { resolve(JSON.parse(stdout)); } catch { reject(new Error('GitHub returned an invalid activity response.')); }
     });
   });
 }
 
 /** Jira is a ticket tracker, not a PR host. Reuse an existing local GitHub CLI sign-in. */
-async function githubPullRequests(): Promise<HomeSection<HomePullRequest>> {
-  const user = await gh(['api', 'user']);
+async function githubPullRequests(host?: string): Promise<HomeSection<HomePullRequest>> {
+  const h = host && host !== 'github.com' ? ['--hostname', host] : [];
+  const user = await gh(['api', ...h, 'user'], host);
   const fields = 'id number title url updatedAt isDraft reviewDecision author { login } repository { nameWithOwner }';
   const query = `query($mine:String!,$review:String!){
     mine:search(query:$mine,type:ISSUE,first:50){issueCount nodes{... on PullRequest{${fields}}}}
     review:search(query:$review,type:ISSUE,first:50){issueCount nodes{... on PullRequest{${fields}}}}
   }`;
-  const result = await gh(['api', 'graphql', '-f', `query=${query}`, '-f', `mine=is:pr is:open author:${user.login} sort:updated-desc`, '-f', `review=is:pr is:open review-requested:${user.login} sort:updated-desc`]);
+  const mine = `is:pr is:open author:${user.login} sort:updated-desc`;
+  const review = `is:pr is:open review-requested:${user.login} sort:updated-desc`;
+  const result = await gh(['api', 'graphql', ...h, '-f', `query=${query}`, '-f', `mine=${mine}`, '-f', `review=${review}`], host);
   if (result.errors || !result.data) throw new Error('Could not refresh GitHub pull requests. Check your repository access.');
   const items: HomePullRequest[] = [];
   for (const ownership of ['mine', 'review'] as const) {
@@ -78,7 +89,53 @@ async function githubPullRequests(): Promise<HomeSection<HomePullRequest>> {
         updatedAt: pr.updatedAt, ownership, state, revision: activityRevision([pr.updatedAt, state]) });
     }
   }
-  return { items, limited: result.data.mine.issueCount > 50 || result.data.review.issueCount > 50, coverage: 'Open GitHub PRs · up to 50 per view' };
+  return { items, limited: result.data.mine.issueCount > 50 || result.data.review.issueCount > 50, coverage: `Open GitHub PRs${host && host !== 'github.com' ? ` on ${host}` : ''} · up to 50 per view` };
+}
+
+/** Host of the open workspace's `origin` when it is GitHub-shaped (github.com or Enterprise), else undefined. */
+async function workspaceGithubHost(): Promise<string | undefined> {
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!cwd) return undefined;
+  const remote = await new Promise<string>((resolve) =>
+    execFile('git', ['remote', 'get-url', 'origin'], { cwd, timeout: 5_000, windowsHide: true }, (e, out) => resolve(e ? '' : out.trim())));
+  const host = /^(?:https?:\/\/(?:[^@/]+@)?|git@|ssh:\/\/git@)([^/:]+)[/:]/.exec(remote)?.[1];
+  return host && !/dev\.azure\.com|visualstudio\.com|gitlab|bitbucket/.test(host) ? host : undefined;
+}
+
+/** One section from every connected code host's pull requests, plus the gh CLI as a fallback when none is connected. */
+async function codeHostPullRequests(hosts: CodeHost[], repo: RepoRef | undefined): Promise<Array<PromiseSettledResult<HomeSection<HomePullRequest>>>> {
+  return Promise.allSettled(hosts.map(async (host): Promise<HomeSection<HomePullRequest>> => {
+    const { items, limited, coverage, warning } = await host.homePrs(repo);
+    return {
+      ...(warning ? { error: warning } : {}),
+      items: items.map((pr): HomePullRequest => ({ ...pr, source: host.kind, revision: activityRevision(pr.revisionParts) })),
+      limited,
+      coverage,
+    };
+  }));
+}
+
+/** Tracker PRs (ADO) and code-host PRs listed together; with Jira only the code hosts are. */
+async function trackerAndHostPullRequests(ado: ReturnType<typeof adoContext> | null, hosts: CodeHost[], repo: RepoRef | undefined): Promise<HomeSection<HomePullRequest>> {
+  // No connected host: fall back to gh when the workspace's origin is GitHub-shaped.
+  const ghHost = !hosts.length ? await workspaceGithubHost() : undefined;
+  const settled = [
+    ...(ado ? [await Promise.allSettled([ado.then(adoPullRequests)]).then((r) => r[0])] : []),
+    ...(await codeHostPullRequests(hosts, repo)),
+    ...(ghHost ? [await Promise.allSettled([githubPullRequests(ghHost)]).then((r) => r[0])] : []),
+  ];
+  const sections = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+  const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed && !sections.length) throw failed.reason;
+  return {
+    items: sections.flatMap((x) => x.items),
+    limited: sections.some((x) => x.limited),
+    coverage: sections.map((x) => x.coverage).filter(Boolean).join(' · '),
+    ...((): { error?: string } => {
+      const notes = [failed ? (failed.reason instanceof Error ? failed.reason.message : 'Could not refresh some pull requests.') : '', ...sections.map((x) => x.error ?? '')].filter(Boolean);
+      return notes.length ? { error: notes.join(' ') } : {};
+    })(),
+  };
 }
 
 async function adoContext(context: vscode.ExtensionContext) {
@@ -199,15 +256,27 @@ export async function loadHomeActivity(context: vscode.ExtensionContext, onSecti
   const provider = getActiveTicketProvider(context);
   const config = context.globalState.get<any>(STORAGE_KEYS.SETTINGS)?.state?.config;
   const ado = provider?.kind === 'ado' ? adoContext(context) : null;
+  const connections = new CodeHostConnections(context);
+  const hosts = await connections.hosts().catch(() => [] as CodeHost[]);
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const target = workspaceFolder ? await connections.forRepo(workspaceFolder).catch(() => null) : null;
+  const repo = target?.repo;
+  // The workspace's host through the GitHub CLI's sign-in counts as connected too.
+  if (target && !hosts.some((h) => h.kind === target.host.kind && h.host === target.host.host)) hosts.push(target.host);
+  // No folder (or one on a host gh doesn't know): github.com through gh still lists the user's own PRs.
+  if (!hosts.length) {
+    const fallback = await connections.defaultGitHub().catch(() => null);
+    if (fallback) hosts.push(fallback);
+  }
   const jobs: Array<Promise<void>> = [];
   const run = <K extends keyof HomeActivity>(key: K, fn: () => Promise<HomeActivity[K]>) => {
     jobs.push(fn().then((value) => onSection(key, value)).catch((error) => onSection(key, { items: [], error: error instanceof Error ? error.message : 'Could not refresh activity.' } as HomeActivity[K])));
   };
   if (ado) {
-    run('pullRequests', async () => adoPullRequests(await ado));
+    run('pullRequests', () => trackerAndHostPullRequests(ado, hosts, repo));
     run('trackerMentions', async () => adoMentions(await ado));
   } else if (provider?.kind === 'jira') {
-    run('pullRequests', githubPullRequests);
+    run('pullRequests', () => trackerAndHostPullRequests(null, hosts, repo));
     run('trackerMentions', () => jiraMentions(context));
   } else {
     onSection('pullRequests', { items: [], setup: 'Connect your ticket tracker to get started.' });

@@ -332,6 +332,40 @@ Native-app checks (`tauri dev`), each reproduced on the old code first:
 Not covered: Remote sign-in and real Confluence/ADO/Jira connections (need
 accounts); Windows' notepad fallback.
 
+## QA pass (2026-10-10)
+
+Fresh scratch profile (`WGPT_DESKTOP_SECRETS=memory`), headless sidecar in the
+browser pane, Custom provider → local mock OpenAI server scripted to issue real
+tool calls (create/edit/save_memory/ask_user, 500s, stalls). Covered:
+onboarding, Work home, Chat/Work sessions, Manual/Auto review, Stop (mid-review,
+mid-backoff, mid-run), Undo, ask_user, Memory, CI auto-fix, reload, 420 px, light
+theme, every Settings page. Fixed:
+
+- **Chat files written non-atomically.** `historyService` truncated then wrote,
+  so the sessions list read a half-written chat (`Unexpected end of JSON input`
+  in the log) and a concurrent save's merge fell back to defaults (could re-file
+  mode/folder); a quit mid-save would leave a truncated chat. Now temp + rename.
+- **Settings → Memory edit silently reverted** when refused (credential-like
+  text): the host dropped `saveMemory`'s message. Now shown; Edit/Forget sit
+  together (the row's `space-between` spread three children).
+- **CI "Fix now" from the new-chat screen ran with `sessionId: null`**: the fix
+  chat was never saved and its replies could land in the next chat opened. It
+  now gets its own chat; the PR it was started for is pinned (opening the chat
+  clears the snapshot).
+- **CI fix pushed twice**: a run's end can arrive as two loading→idle updates
+  inside the 400 ms window; the push is now claimed immediately.
+- **CI fix after Stop/error**: pushed earlier unshipped files and said "finished
+  without changing any files". Now nothing is pushed unless the fix turn posted
+  its rollup.
+- **Sidebar drag-to-close** left `--side-w` clamped at 200 px; restored.
+
+Checked, not bugs: Stop on a pending review ("Not applied — run stopped"), no
+retries after Stop during provider backoff, background session finishes intact,
+WebKit parses Jira's `+0530` offsets. Not fixed (product calls): onboarding has
+no exit while no model is reachable; the Knowledge step is headed "Optional".
+Pre-existing on `1309c87`: 3 `units` failures (tool requirements map, two ticket
+prompts) from the memory commit.
+
 ## Findings from Phase 0 (and what was done)
 
 1. **Title-bar actions don't exist outside VS Code.** Settings, History and New

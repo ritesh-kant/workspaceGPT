@@ -44,3 +44,24 @@ export function detectTicketId(message: string): string | null {
   }
   return found;
 }
+
+/**
+ * Jira's counterpart to detectTicketId: the issue KEY is the identity
+ * (`PROJ-123`), so — unlike a work item, where an org prefix is noise — it is
+ * returned whole, uppercased, and a bare number means nothing. A key's project
+ * part may carry digits and underscores (`D2C-1234`), and a browse URL counts.
+ * Same ambiguity rule as detectTicketId: two different keys → null.
+ */
+const JIRA_KEY_PATTERNS: RegExp[] = [
+  /\/browse\/([A-Z][A-Z0-9_]+-\d+)\b/gi,
+  /(?<![\w/-])([A-Z][A-Z0-9_]+-\d+)\b/g,
+];
+
+export function detectJiraKey(message: string): string | null {
+  const text = String(message ?? '');
+  const keys = new Set<string>();
+  for (const re of JIRA_KEY_PATTERNS) {
+    for (const m of text.matchAll(re)) keys.add(m[1].toUpperCase());
+  }
+  return keys.size === 1 ? [...keys][0] : null;
+}

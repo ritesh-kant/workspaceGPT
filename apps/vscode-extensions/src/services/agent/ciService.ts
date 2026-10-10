@@ -2,6 +2,9 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import type { NamedRoot } from '../codebase/codebaseTools';
 import { resolveAgainstRoots } from '../codebase/codebaseTools';
+import { CodeHostRequestError } from '../codehost/http';
+import { ghEnv } from '../codehost/ghCli';
+import type { CiCheck as HostCiCheck, CodeHost, PrRef, RepoRef } from '../codehost/types';
 
 /**
  * CI monitoring for the pull request on the chat's current branch. GitHub
@@ -12,11 +15,7 @@ import { resolveAgainstRoots } from '../codebase/codebaseTools';
 
 export type CiState = 'none' | 'pending' | 'passed' | 'failed' | 'merged' | 'closed' | 'unavailable';
 
-export interface CiCheck {
-  name: string;
-  state: 'pass' | 'fail' | 'pending';
-  url?: string;
-}
+export type CiCheck = HostCiCheck;
 
 export interface CiSnapshot {
   state: CiState;
@@ -35,7 +34,7 @@ const MAX_LOG_RUNS = 2;
 
 function run(file: string, args: string[], cwd: string, timeout = GH_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1' };
+    const env = ghEnv({ GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1' });
     execFile(file, args, { cwd, env, timeout, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         const e = new Error((stderr || err.message).trim()) as Error & { code?: string };
@@ -80,10 +79,19 @@ export async function getCiSnapshot(cwd: string): Promise<CiSnapshot> {
     raw = await run('gh', ['pr', 'view', '--json', 'number,url,state,headRefName,headRefOid,statusCheckRollup'], cwd);
   } catch (e) {
     const err = e as Error & { code?: string };
-    if (err.code === 'ENOENT') return { state: 'unavailable', reason: 'Install the GitHub CLI (gh) to monitor CI.', checks: [] };
     if (/no pull requests? found/i.test(err.message)) return { state: 'none', checks: [] };
-    if (/auth login|not logged in|GH_TOKEN/i.test(err.message)) return { state: 'unavailable', reason: 'Run `gh auth login` to monitor CI.', checks: [] };
-    if (/none of the git remotes|not a git repository|could not resolve to a Repository/i.test(err.message)) return { state: 'none', checks: [] };
+    // gh missing / not signed in / host unknown: worth surfacing for any host a connection exists for.
+    // Azure Repos has no such connection here, so it stays quiet.
+    const missing = err.code === 'ENOENT';
+    const signedOut = /auth login|not logged in|GH_TOKEN|none of the git remotes/i.test(err.message);
+    if (missing || signedOut) {
+      const remote = await run('git', ['remote', 'get-url', 'origin'], cwd, 10_000).catch(() => '');
+      const host = /^(?:https?:\/\/(?:[^@/]+@)?|git@|ssh:\/\/git@)([^/:]+)[/:]/.exec(remote.trim())?.[1];
+      if (!host || /dev\.azure\.com|visualstudio\.com/.test(host)) return { state: 'none', checks: [] };
+      const kind = /gitlab/.test(host) ? 'GitLab' : /bitbucket/.test(host) ? 'Bitbucket' : 'GitHub';
+      return { state: 'unavailable', reason: kind === 'GitHub' && signedOut && !missing ? `gh isn't signed in to ${host} — run: gh auth login --hostname ${host}, or connect GitHub in Settings.` : `Connect ${kind} in Settings to see this branch's pull request checks.`, checks: [] };
+    }
+    if (/not a git repository|could not resolve to a Repository/i.test(err.message)) return { state: 'none', checks: [] };
     return { state: 'unavailable', reason: err.message.split('\n')[0].slice(0, 160), checks: [] };
   }
   let data: { number: number; url: string; state: string; headRefName: string; headRefOid: string; statusCheckRollup?: RollupItem[] };
@@ -101,6 +109,38 @@ export async function getCiSnapshot(cwd: string): Promise<CiSnapshot> {
   // going is incomplete, and a second failure may be on its way.
   if (checks.some((c) => c.state === 'pending')) return { state: 'pending', pr, checks };
   return { state: checks.some((c) => c.state === 'fail') ? 'failed' : 'passed', pr, checks };
+}
+
+/**
+ * The same snapshot as getCiSnapshot, through the code host's own API
+ * (GitHub, GitLab or Bitbucket) instead of the `gh` CLI. Null when `cwd`'s
+ * origin isn't on a connected host, so the caller can fall back. Never throws.
+ */
+export async function getCiSnapshotViaHost(cwd: string, target: { host: CodeHost; repo: RepoRef }): Promise<CiSnapshot | null> {
+  const branch = (await run('git', ['branch', '--show-current'], cwd, 10_000).catch(() => '')).trim();
+  if (!branch) return null;
+  const { host, repo } = target;
+  try {
+    const found: PrRef | null = await host.findPr(repo, branch);
+    if (!found) return { state: 'none', checks: [] };
+    const pr = { number: found.number, url: found.url, branch: found.branch, sha: found.sha };
+    const checks = await host.checks(repo, found);
+    if (found.state === 'merged') return { state: 'merged', pr, checks };
+    if (found.state === 'closed') return { state: 'closed', pr, checks };
+    if (!checks.length) return { state: 'none', pr, checks };
+    if (checks.some((c) => c.state === 'pending')) return { state: 'pending', pr, checks };
+    return { state: checks.some((c) => c.state === 'fail') ? 'failed' : 'passed', pr, checks };
+  } catch (e) {
+    return { state: 'unavailable', reason: e instanceof CodeHostRequestError ? e.message : 'Could not reach the code host.', checks: [] };
+  }
+}
+
+/** Failing jobs' log tails through the code host; undefined when none of the failures have a readable log. */
+export async function getFailureLogViaHost(checks: CiCheck[], target: { host: CodeHost; repo: RepoRef }): Promise<string | undefined> {
+  const log = await target.host.failureLog(target.repo, checks).catch(() => undefined);
+  if (!log) return undefined;
+  const head = `Failing checks: ${checks.filter((c) => c.state === 'fail').map((c) => c.name).join(', ')}`;
+  return `${head}\n\n${log.length > LOG_MAX_CHARS ? log.slice(-LOG_MAX_CHARS) : log}`;
 }
 
 /** Last lines of the failing GitHub Actions jobs' logs, capped — enough to see the error, not the whole run. */

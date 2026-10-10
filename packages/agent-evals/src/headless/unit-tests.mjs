@@ -25,7 +25,8 @@ const writeTools = await import(path.join(outDir, 'agentWriteTools.mjs'));
 const commandTools = await import(path.join(outDir, 'commandTools.mjs'));
 const { CheckpointService } = await import(path.join(outDir, 'checkpointService.mjs'));
 const { loadWorkspaceRules } = await import(path.join(outDir, 'rulesFiles.mjs'));
-const { detectTicketId } = await import(path.join(outDir, 'ticketDetection.mjs'));
+const { detectTicketId, detectJiraKey } = await import(path.join(outDir, 'ticketDetection.mjs'));
+const jiraAdf = await import(path.join(outDir, 'adf.mjs'));
 const { extractSearchTerms, termWeight, scout } = await import(path.join(outDir, 'explorationPhase.mjs'));
 const codebaseTools = await import(path.join(outDir, 'codebaseTools.mjs'));
 const { runExploreSubagent, EXPLORE_TOOL_NAMES, defaultExploreConfig } = await import(path.join(outDir, 'exploreSubagent.mjs'));
@@ -562,6 +563,57 @@ console.log('\nticketDetection (work-item references in user messages)');
   });
   await t('same ticket referenced twice → id', () => {
     assert.strictEqual(detectTicketId('ticket 1234 — see #1234 for details'), '1234');
+  });
+}
+
+// ═══ Jira — the key IS the id, and ADF has its own rules ═══
+console.log('\ndetectJiraKey + jira/adf (Jira parity with the ADO path)');
+{
+  await t('seeded "Work on ticket PROJ-123" → the whole key, not the digits', () => {
+    assert.strictEqual(detectJiraKey('Work on ticket PROJ-123 (Checkout fails) — read the ticket'), 'PROJ-123');
+  });
+  await t('short numbers and digit-bearing project keys are keys too', () => {
+    assert.strictEqual(detectJiraKey('fix PROJ-12 today'), 'PROJ-12');
+    assert.strictEqual(detectJiraKey('implement D2C-1234'), 'D2C-1234');
+  });
+  await t('a browse URL gives its key once (not twice)', () => {
+    assert.strictEqual(detectJiraKey('see https://acme.atlassian.net/browse/ENG-4821 please'), 'ENG-4821');
+  });
+  await t('two different keys → null; same key twice → key; none → null', () => {
+    assert.strictEqual(detectJiraKey('compare ENG-1 with ENG-2'), null);
+    assert.strictEqual(detectJiraKey('ENG-7 — see browse/ENG-7'), 'ENG-7');
+    assert.strictEqual(detectJiraKey('how does checkout work? ticket 1234'), null);
+  });
+  await t('ADO detector is unchanged (still the digit run)', () => {
+    assert.strictEqual(detectTicketId('please look at TKT-987654 today'), '987654');
+  });
+  const node = (type, content, attrs) => ({ type, ...(attrs ? { attrs } : {}), ...(content ? { content } : {}) });
+  const text = (s) => ({ type: 'text', text: s });
+  await t('adfToText keeps checklist items, status and date', () => {
+    const doc = node('doc', [
+      node('taskList', [node('taskItem', [text('Handle null cart')], { state: 'TODO' }), node('taskItem', [text('Add retry')], { state: 'DONE' })]),
+      node('paragraph', [text('State '), node('status', null, { text: 'IN REVIEW' }), text(' due '), node('date', null, { timestamp: '1760000000000' })]),
+    ]);
+    const out = jiraAdf.adfToText(doc);
+    assert.match(out, /☐ Handle null cart/);
+    assert.match(out, /☑ Add retry/);
+    assert.match(out, /State IN REVIEW due 2025-10-09/);
+  });
+  await t('adfToText keeps a list inside a table cell readable', () => {
+    const cell = node('tableCell', [node('bulletList', [node('listItem', [node('paragraph', [text('one')])]), node('listItem', [node('paragraph', [text('two')])])])]);
+    assert.match(jiraAdf.adfToText(node('doc', [node('table', [node('tableRow', [cell])])])), /• one • two/);
+  });
+  await t('markdownToAdf never emits an empty text node (Jira rejects it)', () => {
+    const doc = jiraAdf.markdownToAdf('| Check | Result |\n| --- | --- |\n| lint | |\n| test | pass |');
+    const empties = [];
+    (function walk(n) { if (n.type === 'text' && !n.text) empties.push(n); (n.content || []).forEach(walk); })(doc);
+    assert.strictEqual(empties.length, 0);
+  });
+  await t('markdownToAdf turns [text](url) into a link mark', () => {
+    const doc = jiraAdf.markdownToAdf('**Run** · [open pull request](https://github.com/o/r/pull/5)');
+    const link = doc.content[0].content.find((n) => n.marks?.[0]?.type === 'link');
+    assert.strictEqual(link.text, 'open pull request');
+    assert.strictEqual(link.marks[0].attrs.href, 'https://github.com/o/r/pull/5');
   });
 }
 
@@ -3380,7 +3432,7 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
       'list_directory', 'find_files', 'run_command', 'check_command', 'run_checks', 'get_diagnostics', 'git_status', 'git_diff',
       'git_log', 'git_blame', 'edit_file', 'create_file', 'delete_file', 'search_docs', 'get_confluence_page',
       'find_confluence_location', 'update_confluence_page', 'create_confluence_page',
-      'search_tickets', 'get_ticket', 'browser_list_tabs', 'browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_read_page',
+      'save_memory', 'search_tickets', 'get_ticket', 'list_prs', 'get_pr', 'get_repo_issue', 'browser_list_tabs', 'browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_read_page',
       'browser_read_tree', 'browser_screenshot', 'browser_act', 'browser_eval', 'browser_console', 'browser_network',
     ];
     assert.deepEqual(Object.keys(TOOL_REQUIREMENTS).sort(), expected.sort());

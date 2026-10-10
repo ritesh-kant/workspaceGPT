@@ -10,6 +10,7 @@ import RemoteAccountSettings from './settings/RemoteAccountSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
 import JiraSettings from './settings/JiraSettings';
+import CodeHostSettings from './settings/CodeHostSettings';
 import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
 import ImportSettings from './settings/ImportSettings';
@@ -173,6 +174,12 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         render: item.render,
       })
     ),
+    {
+      id: 'codehost',
+      label: 'Code hosts',
+      description: 'Where your code lives: GitHub, GitLab or Bitbucket. Powers your pull requests, CI status and Create PR. Not a Knowledge source: nothing is indexed.',
+      render: () => <CodeHostSettings />,
+    },
     {
       id: 'memory',
       label: 'Memory',
@@ -351,6 +358,8 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
         <JiraSettings />
 
         <WebSearchSettings />
+
+        <CodeHostSettings />
 
         <MemorySettings />
 

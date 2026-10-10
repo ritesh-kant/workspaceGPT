@@ -40,6 +40,10 @@
  *
  * Sending a settings response with no `state` first puts the app into
  * onboarding and it will not come back out — reload and send the good one.
+ *
+ * `?desktop` (or `?desktop=light`) renders as the desktop app does: the
+ * `data-wgpt-desktop` attribute plus apps/desktop/bridge theme.css and
+ * skin.css, read on every request so CSS edits show on reload.
  */
 import * as http from 'http';
 import { spawn } from 'child_process';
@@ -50,6 +54,7 @@ import { fileURLToPath } from 'url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(here, '../dist');
 const PORT = Number(process.env.PORT ?? 7391);
+const DESKTOP_BRIDGE = path.resolve(here, '../../../desktop/bridge');
 
 /** Minimal stand-in for the webview host: the API object plus a theme. */
 const INJECTED = `
@@ -134,7 +139,17 @@ http
     }
     let body = fs.readFileSync(abs);
     if (file === '/index.html') {
-      body = Buffer.from(String(body).replace('</head>', `${INJECTED}</head>`));
+      const desktop = new URLSearchParams((req.url || '').split('?')[1] ?? '').get('desktop');
+      const desktopHead =
+        desktop === null
+          ? ''
+          : `<script>document.documentElement.setAttribute('data-wgpt-desktop', 'chat');` +
+            `document.documentElement.setAttribute('data-wgpt-theme', ${JSON.stringify(desktop === 'light' ? 'light' : 'dark')});</script>` +
+            ['theme.css', 'skin.css']
+              .map((f) => `<style>${fs.readFileSync(path.join(DESKTOP_BRIDGE, f), 'utf8')}</style>`)
+              .join('');
+      // The desktop styles go after the bundle's CSS, as the bridge loads them.
+      body = Buffer.from(String(body).replace('</head>', `${INJECTED}</head>`).replace('</body>', `${desktopHead}</body>`));
     }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(abs).slice(1)] ?? 'application/octet-stream' });
     res.end(body);

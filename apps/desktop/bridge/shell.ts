@@ -320,6 +320,7 @@ interface SessionPreview {
     app.classList.add('side-resizing');
     const left = $('side').getBoundingClientRect().left;
     let raw = $('side').getBoundingClientRect().width;
+    const widthBefore = app.style.getPropertyValue('--side-w');
     const move = (ev: PointerEvent) => {
       raw = ev.clientX - left;
       app.style.setProperty('--side-w', clampSide(raw) + 'px');
@@ -332,6 +333,9 @@ interface SessionPreview {
       app.classList.remove('side-resizing');
       // Dragged well past the minimum: hide the sidebar, keeping the last width.
       if (raw < SIDE_MIN - 60) {
+        // The drag already clamped --side-w to the minimum: put back the width it had.
+        if (widthBefore) app.style.setProperty('--side-w', widthBefore);
+        else app.style.removeProperty('--side-w');
         setSidebar('closed');
         return;
       }

@@ -72,6 +72,8 @@ import { deriveShipTitle } from './agent/shipHelpers';
 import { CheckpointService, RevertResult, checkpointServiceFor } from './agent/checkpointService';
 import { resolveMentions, ResolvedMention } from './codebase/mentionResolver';
 import { TicketDetail } from './ado/adoWorkItemService';
+import { CodeHostConnections } from './codehost/connections';
+import { runCodeHostTool } from './codehost/tools';
 import { getActiveTicketProvider } from './tickets/registry';
 import { collectRefs, mergeRefs, refsFromTicket, RunRef } from './agent/referenceIndex';
 import { getPrUrlTemplate } from './agent/gitStatusService';
@@ -84,7 +86,7 @@ import {
   suggestConfluenceLocation,
   PreparedConfluenceWrite,
 } from './confluence/confluencePageService';
-import { detectTicketId } from 'src/utils/ticketDetection';
+import { detectJiraKey, detectTicketId } from 'src/utils/ticketDetection';
 import { detectConfluenceUrls } from 'src/utils/confluenceUrlDetection';
 import { decideTurnRouting } from 'src/utils/turnRouting';
 import { TicketPromptContext } from 'src/utils/promptTemplates';
@@ -253,7 +255,7 @@ function describeUnavailableSource(source: DataSource, settings: any): string {
   if (source === 'CODEBASE') {
     return 'no folder is open in this window';
   }
-  const config = settings?.state?.config?.[source === 'ADO' ? 'ado' : 'confluence'];
+  const config = settings?.state?.config?.[source === 'ADO' ? 'ado' : source === 'JIRA' ? 'jira' : 'confluence'];
   if (!config?.isAuthenticated) {
     return 'it is not connected yet, so connect it in Settings';
   }
@@ -1111,6 +1113,11 @@ export class ChatService {
         // false (not undefined) only where the browser is on offer, so the prompt can say it is disconnected.
         browser: isControlChromeEnabled(this.context) ? isBrowserConnected() : undefined,
         memory: memoryEnabled(this.context.globalState),
+        // A connection, or the GitHub CLI already signed in to this workspace's host.
+        codeHost:
+          isWorkMode &&
+          ((await new CodeHostConnections(this.context).summaries()).length > 0 ||
+            !!(codebaseRoots[0] && (await new CodeHostConnections(this.context).viaGhCli(codebaseRoots[0].uri.fsPath).catch(() => null)))),
       };
 
       // Read the @-mentioned files/folders while retrieval runs — they are
@@ -1300,7 +1307,7 @@ export class ChatService {
         }
 
         const sourceLabel = prelimPlan.sources
-          .map((s) => (s === 'ADO' ? 'Azure DevOps' : 'Confluence'))
+          .map((s) => SOURCE_LABELS[s])
           .join(' & ');
         this.postStatus(run, `Searching ${sourceLabel}...`);
 
@@ -1385,7 +1392,8 @@ export class ChatService {
       // model can still call get_ticket itself mid-loop.
       let ticketContext: TicketDetail | null = null;
       const ticketProvider = getActiveTicketProvider(this.context);
-      const ticketId = ticketProvider ? detectTicketId(message) : null;
+      // A Jira key's prefix is its identity, so Jira gets its own detector; ADO keeps the digit-run one.
+      const ticketId = ticketProvider ? (ticketProvider.kind === 'jira' ? detectJiraKey(message) : detectTicketId(message)) : null;
       // Sticky across the session, so a resume record written by a later
       // continuation turn still names the ticket the run is about.
       if (ticketId) run.lastTicketId = ticketId;
@@ -1804,6 +1812,10 @@ export class ChatService {
         if (!provider) throw new Error('No ticket tracker is connected. Connect one in Settings.');
         return provider.fetchTicket(String(args?.id ?? ''), { includeComments: !!args?.includeComments });
       }
+      case 'list_prs':
+      case 'get_pr':
+      case 'get_repo_issue':
+        return runCodeHostTool(name, args, new CodeHostConnections(this.context), roots[0]?.uri.fsPath);
       case 'get_confluence_page':
         return fetchConfluencePage(this.context, args?.pageId ?? '');
       case 'update_confluence_page':
@@ -2481,7 +2493,7 @@ export class ChatService {
       if (run) this.postStatus(run, '');
       const summary =
         (result.pushed ? `Branch ${result.branch} pushed` : `Committed locally on ${result.branch} (not pushed)`) +
-        ` — your working copy is now on ${result.branch} (was ${result.baseBranch})` +
+        (result.baseBranch ? ` — your working copy is now on ${result.branch} (was ${result.baseBranch})` : '') +
         (result.prUrl ? ' — pull-request page opened' : '') +
         (result.ticketCommented ? ` — report posted on #${shipInput.ticketId}` : '');
       if (run) {
@@ -2567,6 +2579,12 @@ export class ChatService {
         };
       case 'get_ticket':
         return { kind: 'read', title: 'Read ticket', detail: String(args?.id ?? '') };
+      case 'get_pr':
+        return { kind: 'read', title: 'Read pull request', detail: `#${args?.number ?? ''}` };
+      case 'get_repo_issue':
+        return { kind: 'read', title: 'Read issue', detail: `#${args?.number ?? ''}` };
+      case 'list_prs':
+        return { kind: 'search', title: 'Listed pull requests', detail: String(args?.scope ?? 'repo') };
       case 'get_confluence_page':
         return { kind: 'read', title: 'Read Confluence page', detail: String(args?.pageId ?? '') };
       case 'update_confluence_page':
@@ -2727,8 +2745,12 @@ export class ChatService {
         return { summary: result?.provider === 'duckduckgo-basic' ? `(basic search) ${count}` : count };
       }
       case 'get_ticket':
+      case 'get_pr':
+      case 'get_repo_issue':
         // The state is the useful at-a-glance fact ("Active", "Resolved").
         return result?.state ? { summary: String(result.state) } : {};
+      case 'list_prs':
+        return { summary: plural(result?.pullRequests?.length ?? 0, 'PR') };
       case 'get_confluence_page':
         return result?.title ? { summary: String(result.title) } : {};
       case 'browser_list_tabs':
@@ -2791,6 +2813,12 @@ export class ChatService {
         return `Searching ${getActiveTicketProvider(this.context)?.label ?? 'Azure DevOps'} for "${args?.query ?? ''}"...`;
       case 'get_ticket':
         return `Reading ticket ${args?.id ?? ''}...`;
+      case 'get_pr':
+        return `Reading pull request #${args?.number ?? ''}...`;
+      case 'get_repo_issue':
+        return `Reading issue #${args?.number ?? ''}...`;
+      case 'list_prs':
+        return 'Listing pull requests...';
       case 'get_confluence_page':
         return `Reading Confluence page ${args?.pageId ?? ''}...`;
       case 'update_confluence_page':

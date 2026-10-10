@@ -36,6 +36,7 @@ const UNITS = [
   'src/utils/queryPlanner.ts',
   'src/utils/queryClassifier.ts',
   'src/utils/ticketDetection.ts',
+  'src/services/jira/adf.ts',
   'src/utils/confluenceUrlDetection.ts',
   'src/utils/turnOutcome.ts',
   'src/utils/turnRouting.ts',
