@@ -694,6 +694,14 @@ input:focus {
   border-color: var(--vscode-focusBorder);
 }
 
+/* The rule above is for text fields; it must not stretch a checkbox or radio
+   to fill its flex row, which pushes it away from its label. */
+input[type='checkbox'],
+input[type='radio'] {
+  flex: none;
+  width: auto;
+}
+
 /* Composer textarea — auto-grows (see autosizeInput in App.tsx) up to ~7
    lines, then scrolls internally. Mirrors the plain `input` look above.
    `flex: 0 0 auto` is required: .input-wrapper is a column flex container,
