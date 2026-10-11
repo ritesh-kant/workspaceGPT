@@ -18,6 +18,13 @@ import * as net from 'net';
  * guess.
  */
 
+/**
+ * Chat sessions started from the Chrome side panel (chromeChat.ts). They may read
+ * pages but never change one: the panel has no way to show the user what an action did.
+ */
+export const PANEL_SESSION_PREFIX = 'chrome-';
+export const isPanelSession = (sessionId: string): boolean => sessionId.startsWith(PANEL_SESSION_PREFIX);
+
 /** Chrome refuses a message from a native host larger than this. */
 const MAX_HOST_TO_BROWSER_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -33,6 +40,16 @@ interface Pending {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
+}
+
+/**
+ * Requests that start on the extension's side (the side panel asking a
+ * question). Answered with any number of `{type:'event', id, ...}` messages.
+ */
+export type ExtensionRequestHandler = (method: string, params: any, reply: (event: unknown) => void) => void;
+let extensionRequestHandler: ExtensionRequestHandler | undefined;
+export function onExtensionRequest(handler: ExtensionRequestHandler): void {
+  extensionRequestHandler = handler;
 }
 
 let server: net.Server | null = null;
@@ -64,6 +81,19 @@ function onMessage(conn: Connection, msg: any): void {
   if (msg?.type === 'hello') {
     conn.hello = { version: msg.version, userAgent: msg.userAgent };
     console.log(`[browser-bridge] extension ${msg.version ?? '?'} connected`);
+    return;
+  }
+  if (msg?.type === 'ask' && typeof msg.id === 'number') {
+    const reply = (event: unknown) => {
+      if (conn.socket.destroyed) return;
+      try {
+        send(conn, { type: 'event', id: msg.id, ...(event as object) });
+      } catch (err) {
+        console.warn('[browser-bridge] could not reply to the browser:', err);
+      }
+    };
+    if (!extensionRequestHandler) reply({ kind: 'error', message: 'This WorkspaceGPT Desktop cannot answer questions from the browser yet.' });
+    else extensionRequestHandler(String(msg.method), msg.params ?? {}, reply);
     return;
   }
   if (msg?.type === 'response' && typeof msg.id === 'number') {
@@ -135,7 +165,7 @@ export function browserRequest<T = unknown>(method: string, params: unknown = {}
   const conn = activeConnection();
   if (!conn) {
     return Promise.reject(
-      new Error('No browser is connected. Turn on "Let WorkspaceGPT use this browser" in the WorkspaceGPT Chrome extension.')
+      new Error('No browser is connected. Install the WorkspaceGPT Chrome extension, open WorkspaceGPT Desktop once, and keep it running.')
     );
   }
   const id = nextId++;

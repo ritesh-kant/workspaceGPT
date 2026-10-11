@@ -56,6 +56,8 @@ const sidecar = {
     'workspacegpt-extension-diff': path.join(extDir, 'src/services/agent/agentDiffProvider.ts'),
     // The socket the Chrome extension's relay connects to — the same module chatService reads.
     'workspacegpt-extension-browser': path.join(extDir, 'src/services/browser/browserBridge.ts'),
+    // The side panel's questions, answered by this host's own chat (the panel holds no provider).
+    'workspacegpt-extension-chromechat': path.join(extDir, 'src/services/browser/chromeChat.ts'),
     'posthog-node': path.join(here, 'host/posthogShim.ts'),
     'posthog-node-real': realPosthog,
   },

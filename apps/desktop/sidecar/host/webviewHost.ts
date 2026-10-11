@@ -139,6 +139,11 @@ export class ViewSurface {
     };
   }
 
+  /** A message the extension should treat as if the page had sent it — the Chrome side panel's questions (chromeChat.ts). */
+  injectMessage(message: unknown): void {
+    this.received.fire(message);
+  }
+
   get connected(): boolean {
     return !!this.socket && this.socket.readyState === 1;
   }

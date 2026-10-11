@@ -29,59 +29,76 @@ body {
 .header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 
 .header h1 {
-  font-size: 1.1em;
+  font-size: 0.95em;
   font-weight: 650;
   margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
-.header h1 .logo {
+.header .logo {
   width: 22px;
   height: 22px;
   border-radius: 6px;
   flex-shrink: 0;
 }
 
+.spacer {
+  flex: 1;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.dot.connected { background: #22c55e; }
+.dot.offline { background: #f59e0b; }
+.dot.off { background: var(--muted); opacity: 0.5; }
+.dot.connecting { animation: pending-pulse 1.4s ease-in-out infinite; }
+
 .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1.05em;
-  padding: 4px 8px;
-  border-radius: 6px;
+  padding: 6px;
+  border-radius: 8px;
   color: inherit;
-  opacity: 0.75;
+  opacity: 0.7;
   transition: background 0.15s, opacity 0.15s;
 }
 
-.icon-button:hover {
+.icon-button:hover:not(:disabled) {
   background: var(--surface);
   opacity: 1;
+}
+
+.icon-button:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 /* ── Messages ───────────────────────────────────────── */
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 14px;
+  padding: 16px 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .message {
-  line-height: 1.5;
-  padding: 9px 12px;
-  border-radius: 12px;
-  max-width: 92%;
+  line-height: 1.55;
   word-wrap: break-word;
   overflow-wrap: anywhere;
 }
@@ -90,39 +107,267 @@ body {
   white-space: pre-wrap;
   background: var(--user-bubble);
   align-self: flex-end;
-  border-bottom-right-radius: 4px;
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: 14px 14px 4px 14px;
 }
 
+/* Answers read as a document, not a speech bubble. */
 .message.assistant {
-  background: var(--surface);
-  align-self: flex-start;
-  border-bottom-left-radius: 4px;
-  max-width: 100%;
+  align-self: stretch;
 }
 
 .message.error {
   white-space: pre-wrap;
-  background: rgba(239, 68, 68, 0.12);
+  align-self: stretch;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
   color: #ef4444;
-  align-self: flex-start;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 0.92em;
 }
 
-.message.pending {
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--muted);
-  font-style: italic;
-  animation: pending-pulse 1.4s ease-in-out infinite;
+  font-size: 0.9em;
+}
+
+.typing {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: typing-bounce 1.2s ease-in-out infinite;
+}
+.typing i:nth-child(2) { animation-delay: 0.15s; }
+.typing i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
 }
 
 @keyframes pending-pulse {
-  0%, 100% { opacity: 0.55; }
+  0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
 
-.empty {
+.thinking-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── History ────────────────────────────────────────── */
+.history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.history-empty {
   color: var(--muted);
   text-align: center;
-  margin-top: 40px;
+  font-size: 0.9em;
+  margin: 40px 16px;
   line-height: 1.5;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 10px;
+}
+
+.history-row:hover {
+  background: var(--surface);
+}
+
+.history-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 9px 10px;
+}
+
+.history-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-time {
+  color: var(--muted);
+  font-size: 0.8em;
+}
+
+/* ── Open tab ───────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 6px 6px 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.tab-bar svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.tab-bar.on {
+  color: var(--accent);
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.07);
+}
+
+.tab-bar.add {
+  padding: 8px 12px;
+  border-style: dashed;
+  cursor: pointer;
+}
+
+.tab-bar.add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.tab-bar-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-bar-label {
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+}
+
+.tab-bar-title {
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-bar.on .tab-bar-title {
+  color: inherit;
+}
+
+.message-tab {
+  margin-top: 4px;
+  font-size: 0.75em;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Welcome ────────────────────────────────────────── */
+.welcome {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 0 6px 24px;
+}
+
+.welcome-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  margin-bottom: 6px;
+}
+
+.welcome h2 {
+  margin: 0;
+  font-size: 1.15em;
+  font-weight: 650;
+}
+
+.welcome p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.starters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.starter {
+  text-align: left;
+  font: inherit;
+  font-size: 0.9em;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.starter:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.starter:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  font-size: 0.9em;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.notice span {
+  color: var(--muted);
 }
 
 /* ── Markdown content ───────────────────────────────── */
@@ -205,48 +450,70 @@ body {
 
 /* ── Composer ───────────────────────────────────────── */
 .composer {
-  display: flex;
-  gap: 8px;
-  padding: 12px 14px;
-  border-top: 1px solid var(--border);
+  padding: 8px 12px 12px;
 }
 
-.composer textarea {
-  flex: 1;
-  resize: none;
-  border-radius: 10px;
+.composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
   border: 1px solid var(--border);
-  padding: 9px 10px;
-  font: inherit;
-  background: transparent;
-  color: inherit;
+  border-radius: 14px;
+  padding: 6px 6px 6px 12px;
   transition: border-color 0.15s;
 }
 
-.composer textarea:focus {
-  outline: none;
+.composer-box:focus-within {
   border-color: var(--accent);
 }
 
-.primary-button {
-  border: none;
-  border-radius: 10px;
-  background: var(--accent);
-  color: white;
-  padding: 0 16px;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 550;
-  transition: background 0.15s;
+.composer-box.disabled {
+  opacity: 0.6;
 }
 
-.primary-button:hover:not(:disabled) {
+.composer-box textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 6px 0;
+  font: inherit;
+  line-height: 1.4;
+  max-height: 140px;
+  scrollbar-width: none;
+  background: transparent;
+  color: inherit;
+}
+
+.send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.send:hover:not(:disabled) {
   background: var(--accent-strong);
 }
 
-.primary-button:disabled {
-  opacity: 0.45;
+.send:disabled {
+  opacity: 0.35;
   cursor: default;
+}
+
+.send.stop span {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: white;
 }
 
 /* ── Settings ───────────────────────────────────────── */

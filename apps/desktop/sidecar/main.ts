@@ -45,6 +45,7 @@ import { createViewSurface, type ViewSurface } from './host/webviewHost';
 import { watchForAttention } from './host/notifier';
 import { registerBrowserHost } from './host/browserHost';
 import { startBrowserBridge } from 'workspacegpt-extension-browser';
+import { attachChromeChat } from 'workspacegpt-extension-chromechat';
 import { recordOriginalContent } from 'workspacegpt-extension-diff';
 import { startServer, type DesktopServer } from './host/server';
 import { createTerminalHost } from './host/terminalHost';
@@ -346,6 +347,11 @@ async function main(): Promise<void> {
   } catch (err) {
     console.warn('[desktop] browser bridge not started:', err);
   }
+
+  attachChromeChat(ctx.context as { globalState: { get(key: string): unknown } }, {
+    received: { fire: (m) => surface.injectMessage(m) },
+    posted: surface.posted,
+  });
 
   const chat = webviewViewProviders.get(CHAT_VIEW_ID);
   if (!chat) throw new Error(`activate() registered no provider for ${CHAT_VIEW_ID}`);

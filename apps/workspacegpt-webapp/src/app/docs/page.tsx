@@ -773,11 +773,11 @@ ollama pull mistral`}</CodeBlock>
                   (0.3.0 or later). Open Desktop once so it can register itself with your browsers. It works with Chrome, Chromium, Brave, Edge and Arc.
                 </p>
               </Step>
-              <Step number={2} title="Turn it on in the Chrome extension">
+              <Step number={2} title="Check the Chrome extension is connected">
                 <p>
-                  Open the extension&apos;s side panel, go to <strong className="text-white">Settings</strong>, and check{" "}
-                  <strong className="text-white">Let WorkspaceGPT use this browser</strong>. Chrome asks for permission
-                  first. The panel shows <em>Connected to WorkspaceGPT Desktop</em> once the two are talking.
+                  There is nothing to switch on: the extension connects by itself while Desktop is running. Open the
+                  extension&apos;s side panel and look for <em>Connected to WorkspaceGPT Desktop</em> in{" "}
+                  <strong className="text-white">Settings</strong>.
                 </p>
               </Step>
               <Step number={3} title="Ask the agent to use it">
@@ -996,7 +996,7 @@ ollama pull mistral`}</CodeBlock>
                 },
                 {
                   problem: "Browser tools don't appear, or the extension says “Not connected”",
-                  fix: "Browser control needs WorkspaceGPT Desktop 0.0.6 or later on macOS. Open Desktop once after installing it so it can register with your browsers, then turn on “Let WorkspaceGPT use this browser” in the Chrome extension's Settings. Make sure Desktop is running.",
+                  fix: "Browser control needs WorkspaceGPT Desktop 0.0.6 or later on macOS. Open Desktop once after installing it so it can register with your browsers, then check that the Chrome extension's side panel says it is connected. Make sure Desktop is running.",
                 },
                 {
                   problem: "A sync shows no progress after a restart",

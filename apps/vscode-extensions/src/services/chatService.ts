@@ -110,7 +110,8 @@ import {
   describeAutonomousRefusal,
 } from './agent/commandTools';
 import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgroundJobs';
-import { browserRequest, isBrowserConnected } from './browser/browserBridge';
+import { browserRequest, isBrowserConnected, isPanelSession } from './browser/browserBridge';
+import { BROWSER_CHANGE_TOOL_NAMES } from '../workers/model/toolScope';
 import { isControlChromeEnabled } from './browser/browserPrefs';
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { memoryEnabled, saveMemory, userMemoryBlock } from './agent/userMemory';
@@ -1128,6 +1129,7 @@ export class ChatService {
         tickets: isWorkMode && !!getActiveTicketProvider(this.context),
         // false (not undefined) only where the browser is on offer, so the prompt can say it is disconnected.
         browser: isControlChromeEnabled(this.context) ? isBrowserConnected() : undefined,
+        ...(isPanelSession(sessionId) ? { browserReadOnly: true } : {}),
         memory: memoryEnabled(this.context.globalState),
         // A connection, or the GitHub CLI already signed in to this workspace's host.
         codeHost:
@@ -1779,6 +1781,9 @@ export class ChatService {
     roots: NamedRoot[],
     stepId?: string
   ): Promise<unknown> {
+    if (BROWSER_CHANGE_TOOL_NAMES.has(name) && isPanelSession(run.sessionId)) {
+      throw new Error('Pages are read-only from the Chrome side panel — describe what you would change instead.');
+    }
     switch (name) {
       case 'search_codebase':
         return searchCodebase(args, roots);

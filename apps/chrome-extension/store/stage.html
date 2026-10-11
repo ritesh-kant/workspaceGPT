@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>store stage</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    color: #1b1b3a;
+    background:
+      radial-gradient(900px 600px at 85% 10%, rgba(99,102,241,.22), transparent 60%),
+      radial-gradient(700px 500px at 0% 100%, rgba(56,189,248,.18), transparent 60%),
+      #f4f5ff;
+    overflow: hidden;
+  }
+  .stage { display: none; height: 100%; }
+  body[data-scene="chat"] .shot, body[data-scene="welcome"] .shot, body[data-scene="history"] .shot { display: flex; }
+  body[data-scene="tile"] .tile { display: flex; }
+
+  /* ── 1280×800 screenshots ─────────────────────────── */
+  .shot { align-items: center; gap: 56px; padding: 0 72px; }
+  .copy { flex: 1; min-width: 0; }
+  .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 20px; margin-bottom: 36px; }
+  .brand img { width: 40px; height: 40px; border-radius: 11px; box-shadow: 0 4px 14px rgba(79,70,229,.35); }
+  h1 { margin: 0 0 20px; font-size: 54px; line-height: 1.08; letter-spacing: -0.02em; }
+  h1 em { font-style: normal; color: #4f46e5; }
+  .sub { font-size: 22px; line-height: 1.5; color: #4a4a6a; margin: 0 0 32px; max-width: 460px; }
+  .points { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; font-size: 18px; color: #2c2c52; }
+  .points li { display: flex; gap: 10px; align-items: center; }
+  .points li::before { content: ''; width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    background: #4f46e5 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 12l4 4 8-8'/%3E%3C/svg%3E") center/14px no-repeat; }
+
+  .window { width: 700px; height: 660px; flex-shrink: 0; border-radius: 16px; background: #fff; overflow: hidden;
+    box-shadow: 0 30px 80px rgba(40,40,110,.28), 0 0 0 1px rgba(30,30,80,.08); display: flex; flex-direction: column; }
+  .bar { height: 44px; background: #e9eaf6; display: flex; align-items: center; gap: 8px; padding: 0 14px; flex-shrink: 0; }
+  .bar i { width: 12px; height: 12px; border-radius: 50%; background: #c9cbe0; }
+  .bar .url { margin-left: 14px; flex: 1; height: 26px; border-radius: 13px; background: #fff; color: #6b6b8d; font-size: 13px; display: flex; align-items: center; padding: 0 14px; }
+  .content { flex: 1; display: flex; min-height: 0; }
+  .page { flex: 1; padding: 28px 26px; min-width: 0; background: #fff; }
+  .page h2 { margin: 0 0 6px; font-size: 24px; color: #26264a; }
+  .page .crumb { font-size: 12px; color: #8a8aa8; margin-bottom: 18px; }
+  .line { height: 9px; border-radius: 5px; background: #e8e9f4; margin: 11px 0; }
+  .line.s { width: 70%; } .line.m { width: 88%; } .line.xs { width: 45%; }
+  .block { height: 62px; border-radius: 10px; background: #f0f1fb; margin: 18px 0; }
+  .panel { width: 372px; flex-shrink: 0; border-left: 1px solid #e3e4f2; }
+  .panel iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+  /* ── 440×280 small tile ───────────────────────────── */
+  .tile { width: 440px; height: 280px; align-items: center; justify-content: center; flex-direction: column; text-align: center; gap: 10px; padding: 0 28px; }
+  .tile img { width: 64px; height: 64px; border-radius: 17px; box-shadow: 0 8px 22px rgba(79,70,229,.38); }
+  .tile .name { font-size: 30px; font-weight: 750; letter-spacing: -0.01em; }
+  .tile .tag { font-size: 16px; color: #4a4a6a; line-height: 1.4; }
+  .tile .pill { margin-top: 6px; font-size: 13px; font-weight: 600; color: #4f46e5; background: rgba(99,102,241,.12); border-radius: 999px; padding: 6px 14px; }
+</style>
+</head>
+<body>
+<div class="stage shot">
+  <div class="copy">
+    <div class="brand"><img src="/panel/icon.png" alt="" />WorkspaceGPT</div>
+    <h1 id="h"></h1>
+    <p class="sub" id="sub"></p>
+    <ul class="points" id="pts"></ul>
+  </div>
+  <div class="window">
+    <div class="bar"><i></i><i></i><i></i><div class="url">wiki.example.com/release</div></div>
+    <div class="content">
+      <div class="page">
+        <div class="crumb">Platform › Engineering</div>
+        <h2>Release process</h2>
+        <div class="line m"></div><div class="line"></div><div class="line s"></div>
+        <div class="block"></div>
+        <div class="line"></div><div class="line m"></div><div class="line xs"></div>
+        <div class="line"></div><div class="line s"></div><div class="line m"></div>
+        <div class="block"></div>
+        <div class="line"></div><div class="line s"></div>
+      </div>
+      <div class="panel"><iframe id="f" title="WorkspaceGPT side panel"></iframe></div>
+    </div>
+  </div>
+</div>
+
+<div class="stage tile">
+  <img src="/panel/icon.png" alt="" />
+  <div class="name">WorkspaceGPT</div>
+  <div class="tag">Ask your Confluence, Jira and<br />Azure DevOps Knowledge from any tab</div>
+  <div class="pill">Side panel for Chrome</div>
+</div>
+
+<script>
+  const scene = new URLSearchParams(location.search).get('scene') || 'chat';
+  document.body.dataset.scene = scene;
+  const COPY = {
+    chat: {
+      h: 'Ask your Knowledge, <em>right from the tab</em> you’re on',
+      sub: 'Answers from Confluence, Jira and Azure DevOps in a side panel — with the page you’re reading as context.',
+      pts: ['Reads the open page — never changes it', 'Cites the pages it used', 'Runs through WorkspaceGPT Desktop'],
+    },
+    welcome: {
+      h: 'Your team’s Knowledge, <em>one question</em> away',
+      sub: 'Powered by WorkspaceGPT Desktop: your model, your index, kept on your own machine.',
+      pts: ['No API keys in the browser', 'Starts with questions worth asking', 'Connects on its own when the desktop app is open'],
+    },
+    history: {
+      h: 'Pick up <em>where you left off</em>',
+      sub: 'Every conversation is saved in your browser. Reopen one and keep going.',
+      pts: ['Saved locally in your browser', 'Reopen any chat with its context', 'Delete a conversation any time'],
+    },
+  };
+  if (COPY[scene]) {
+    h.innerHTML = COPY[scene].h; sub.textContent = COPY[scene].sub;
+    pts.innerHTML = COPY[scene].pts.map((p) => `<li>${p}</li>`).join('');
+    f.src = `/panel/sidepanel.html#${scene}`;
+    const t = setInterval(() => {
+      try { if (f.contentDocument.documentElement.dataset.ready === '1') { clearInterval(t); document.body.dataset.ready = '1'; } } catch {}
+    }, 100);
+  } else {
+    window.addEventListener('load', () => (document.body.dataset.ready = '1'));
+  }
+</script>
+</body>
+</html>

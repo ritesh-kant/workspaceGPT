@@ -1,184 +1,62 @@
-# WorkspaceGPT for Chrome (parked)
+# WorkspaceGPT for Chrome
 
-> **Status: parked.** New pairings are impossible: the share model below needs a
-> cloud-reachable index (Gemini embeddings + Qdrant cloud), and WorkspaceGPT's
-> index is now on-device only. The Chrome Web Store listing stays up and
-> existing installs keep working against what they were configured with. The
-> "Share to Chrome" UI is hidden in the VS Code extension. This README was the
-> repo's `ARCHITECTURE.md` until 2026-09-25; the system as a whole is described
-> in [docs/architecture.md](../../docs/architecture.md).
-
-This side panel lets you ask questions over your Confluence & Azure DevOps
-knowledge from Chrome. The share model has two clients and **no backend of its own**:
-
-- **VS Code extension** (`apps/vscode-extensions`) — the **master**. Syncs and
-  indexes sources, holds all credentials, and is where everything is configured.
-- **Chrome extension** (`apps/chrome-extension`) — a **read-only consumer**. It
-  is configured entirely from a "share code" produced by VS Code, then talks
-  directly to Gemini / Qdrant / the LLM.
-- **Vercel function** (`apps/confluence-auth-proxy`) — Confluence OAuth token
-  exchange only (the one thing that genuinely needs a server-side `client_secret`).
-
-There is **no proxy/worker** in the data path. Sharing is done by copying an
-encoded bundle of credentials from VS Code into Chrome.
-
----
-
-## 1. Roles
-
-### VS Code = master / indexer (full control)
-- Configurable: AI provider + model + key; embeddings (**local ONNX** or
-  **Gemini**); vector store (**local file** or **Qdrant cloud**).
-- Syncs Confluence/ADO, embeds the corpus, and — in cloud mode — populates
-  Qdrant. Can run **fully local** for personal use.
-
-### Chrome = read-only consumer (born from "Share")
-- No manual configuration. You paste a single **share code** into Settings; that
-  code carries the credentials it needs.
-- Embeds the query with Gemini, searches Qdrant, and streams the answer from the
-  LLM — all directly, client-side.
-
-### "Gemini everywhere" invariant
-Corpus and query **must** share one embedding model/vector space. ONNX (384-dim)
-and Gemini (768-dim, MRL-truncated) are incompatible — cross-querying returns
-garbage. Therefore **sharing requires Gemini embeddings + Qdrant cloud**; local
-ONNX (Chrome can't run it) and local file store (Chrome can't reach it) are not
-shareable. Every index carries an `embedding:{provider,model,dimensions,
-normalized}` manifest; `checkEmbeddingCompat` fails search loud on mismatch.
-
----
-
-## 2. The sharing model: keys-in-bundle
-
-The Chrome extension needs to call Gemini (embed query), Qdrant (search), and the
-LLM (chat). Rather than route those through a server, **the share code *is* the
-credentials**: VS Code packages its own keys into a small bundle, base64-encodes
-it, and copies it to the clipboard. The user pastes it into Chrome, which stores
-it locally and uses it directly.
+A side panel that asks **WorkspaceGPT Desktop** your questions, and lets the
+desktop agent use the tabs in this Chrome profile. The extension holds **no
+model, no API key and no index** — everything runs in the desktop app. The
+system as a whole is described in [docs/architecture.md](../../docs/architecture.md).
 
 ```
-VS Code (master, holds all keys)
-   │  "Share to Chrome Extension"
-   │  gate: Gemini embed + Qdrant cloud + chat key
-   └── base64( {qdrant, gemini, llm} )  ──►  clipboard
-                                              │
-                                   (user pastes the code)
-                                              ▼
-Chrome (stores the decoded creds in chrome.storage.local)
-   ├── Gemini  embedContent(query)            → query vector
-   ├── Qdrant  /points/search (per source)    → hits
-   └── LLM     /chat/completions (SSE)         → streamed answer
+side panel ──connect()──▶ service worker ──connectNative──▶ browser-relay ──socket──▶ desktop host
+(src/sidepanel)           (src/lib/browserControl.ts)       (apps/desktop/sidecar)   (src/services/browser/)
 ```
 
-**Embeddings are never transferred.** They already live in Qdrant cloud (VS Code
-pushed them during sync). The share bundle is **credentials only** — a few
-hundred bytes.
+One native-messaging port to `com.workspacegpt.bridge` carries both directions:
 
-### Share bundle (the decoded share code)
-```jsonc
-{
-  "v": 2,
-  "qdrant": { "url": "...", "apiKey": "...", "collectionPrefix": "" },
-  "gemini": { "apiKeys": ["..."] },          // model/dims are pinned (gemini-embedding-001, 768)
-  "llm":    { "baseUrl": "...", "apiKeys": ["..."], "model": "..." }
-}
+| Direction | Message | What it is |
+| --- | --- | --- |
+| desktop → extension | `request` / `response` | Browser control: list tabs, click, type, screenshot (`browserActions.ts`) |
+| extension → desktop | `ask` / `event` | A side-panel question; the desktop streams back `status`, `chunk`, `restart`, `done`, `error` |
+
+## Who decides the provider
+
+The desktop. A `chat` ask is run by `apps/vscode-extensions/src/services/browser/chromeChat.ts`
+as an ordinary chat session (`chrome-<id>`), using the provider and model picked
+in Desktop's Settings → Model (Copilot, an API key, or Remote), the local index
+and the Knowledge sources. The panel only renders the stream. Nothing about a
+provider, key or Copilot token ever reaches Chrome.
+
+- The panel cannot answer review cards, so anything that would wait on one
+  (a file write, a command, a Confluence write, an `ask_user` question) is
+  declined and the model is told to answer without it.
+- Closing the panel stops its run on the desktop.
+- Follow-ups in one open panel share one desktop session.
+
+## Using it
+
+1. Install and open WorkspaceGPT Desktop (0.0.5+); pick a model in Settings → Model.
+2. Ask. The connection is always on (native messaging and site access are
+   granted at install) and works only while the desktop app is running;
+   ⚙ Settings shows whether it is connected.
+
+## Build
+
+```bash
+cd apps/chrome-extension && pnpm build   # load dist/ unpacked
+pnpm package                             # zip for the Chrome Web Store
 ```
 
-`gemini.apiKeys` / `llm.apiKeys` carry every key configured for 429 failover in
-VS Code (not just the first) — Chrome retries with the next key on a rate limit,
-same as the VS Code extension. `v: 1` bundles (single `apiKey` string) still
-decode; `decodeShareCode` normalizes either shape into an `apiKeys[]` list.
+## History
 
-Producer: `apps/vscode-extensions/src/utils/shareToChrome.ts`.
-Consumer: `apps/chrome-extension/src/lib/storage.ts` (`ShareBundle`, `decodeShareCode`).
-Chrome-side failover: `apps/chrome-extension/src/lib/keyFailover.ts` (`withKeyFailover`,
-mirrors `apps/vscode-extensions/src/utils/apiKeyFailover.ts`), used in
-`apps/chrome-extension/src/lib/ragService.ts` for the LLM call; Gemini embedding
-rotation is built into `GeminiEmbeddingProvider` in `packages/embedding-core`.
+Until 2026-10 this was a standalone client: a "share code" from VS Code carried
+Gemini, Qdrant and LLM keys into Chrome, which searched and generated on its
+own. That path (and its Gemini/Qdrant host permissions) was removed because the
+index is on-device only and sharing keys defeats the privacy model. The Vercel
+function `apps/confluence-auth-proxy` is unrelated (Confluence OAuth only).
 
-### Security model & tradeoff
-- The share code contains **real API keys in plain form** (base64 is encoding,
-  not encryption). Anyone with the code — or access to the browser's storage —
-  has those keys. The UI says so.
-- It is meant for sharing to **your own browser or people you trust**, not for
-  public posting.
-- **Revocation = rotate your keys.** There is no central registry to revoke; an
-  old code stops working once you rotate the Qdrant / Gemini / LLM keys it carries.
+## Not verified yet
 
----
-
-## 3. Why no server
-
-This extension is **public** — anyone can install it and share to their own
-browser. A central credential-holding service (we prototyped a Cloudflare Worker
-+ KV, and considered a Vercel proxy and GitHub/Google login) was rejected because
-for a public tool it would make the maintainer:
-
-1. **A custodian of every user's API keys** — thousands of strangers' Gemini /
-   Qdrant / LLM secrets sitting in one account's storage, and liable for them.
-2. **A cost/abuse center** — all users' search + chat traffic funneled through
-   one free-tier account.
-
-Keys-in-bundle removes both: each user owns their own keys and their own risk,
-nothing is hosted, nothing is paid for, and there is no login or admin secret to
-manage. The only retained server is the Confluence OAuth token exchange
-(`apps/confluence-auth-proxy`, on Vercel), which can't run client-side because it
-needs a confidential `client_secret`.
-
----
-
-## 4. Client flows
-
-### VS Code — creating a share
-`workspacegpt.shareToChrome` (reachable from the sidebar `⋯` menu **and** the ⚙
-Settings panel → "Share to Chrome" → **Create share code**):
-1. Reads current settings via `getEmbeddingSettings` / `getVectorStoreSettings` /
-   `getLlmSettings`.
-2. Gates on Gemini embeddings + Qdrant cloud + a chat model with a key.
-3. Builds the bundle, base64-encodes it, copies it to the clipboard, and shows a
-   warning that it contains plain keys.
-
-The ⚙-panel button posts a `SHARE_TO_CHROME` message that `SystemMessageHandler`
-turns into the command — no admin secret, no Worker URL, no login.
-
-### Chrome — using a share
-`src/sidepanel/Settings.tsx` provides a paste-the-share-code box; `decodeShareCode`
-validates and stores it. `src/lib/ragService.ts` then, per question:
-1. `GeminiEmbeddingProvider.embedOne(query, 'query')` → query vector.
-2. `QdrantVectorStore.search(vector, topK, source)` across the selected sources,
-   merged + sorted.
-3. `POST {llm.baseUrl}/chat/completions` (stream) → SSE deltas rendered live.
-
----
-
-## 5. Shared code
-
-`packages/embedding-core` (`@workspace-gpt/embedding-core`) is the single source
-of truth for embedding identity/profiles, the Gemini provider, the Qdrant store,
-the compat check, and `makeVectorStore`. It is consumed by **both** the VS Code
-extension and the Chrome extension, so the two can't drift on embedding shape or
-vector-store behavior.
-
----
-
-## 6. Deployment & operations
-
-- **Sharing requires no deployment.** Build and install the two extensions; the
-  share code is generated and consumed entirely on the users' machines.
-  - VS Code: `cd apps/vscode-extensions && pnpm build` (webview is built first via
-    `tsc && vite build`, then the host via esbuild).
-  - Chrome: `cd apps/chrome-extension && pnpm build` → load `dist/` unpacked.
-- **Confluence OAuth (Vercel):** `apps/confluence-auth-proxy` exposes `api/token.ts`.
-  Set `ATLASSIAN_CLIENT_ID` + `ATLASSIAN_CLIENT_SECRET` in the Vercel project.
-
----
-
-## 7. Known limitations / deferred
-
-- Cloud sync re-upserts the full index each run (no incremental tracking).
-- Deletions don't propagate to Qdrant.
-- Chrome has no chat-history persistence.
-- Chunking deferred — long docs are truncated, not split.
-- `collectionPrefix` is carried in the bundle but VS Code always sends `""`.
-- The share code is plain (base64) — there is no encryption or central revocation
-  by design; rotate keys to invalidate old codes.
+- A run in real Chrome: the wire path is tested through the real sidecar with a
+  fake extension client and a mock model (ask → agent run → streamed chunks →
+  done), but the panel UI and the service worker relay have not been driven in a
+  browser.
+- Copilot and Remote as the selected provider via this path.

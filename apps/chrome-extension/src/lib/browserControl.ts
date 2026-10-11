@@ -1,4 +1,5 @@
 import { handleBrowserRequest } from './browserActions';
+import { BRIDGE_STATUS_KEY, BridgeStatus, CHAT_PORT_NAME } from './bridgeShared';
 
 /**
  * Lets WorkspaceGPT Desktop's agent use the tabs in THIS profile — the one
@@ -10,39 +11,38 @@ import { handleBrowserRequest } from './browserActions';
  * { type: 'request', id, method, params }, answers go back as
  * { type: 'response', id, result | error }.
  *
- * Off until the user turns it on in Settings (BROWSER_CONTROL_KEY), which is
- * also when Chrome asks for BRIDGE_PERMISSIONS. What the agent can do once
+ * Always on: there is no switch, the bridge connects whenever the worker runs. What the agent can do once
  * connected is in browserActions.ts.
  */
 
-export const BROWSER_CONTROL_KEY = 'browserControlEnabled';
-export const BRIDGE_STATUS_KEY = 'browserBridgeStatus';
-/** Requested from the Settings switch (a user gesture), removed when it is turned off. */
-export const BRIDGE_PERMISSIONS: chrome.permissions.Permissions = { permissions: ['nativeMessaging'], origins: ['<all_urls>'] };
-
-export interface BridgeStatus {
-  connected: boolean;
-  /** Why the last attempt failed — usually that WorkspaceGPT Desktop is not running or not installed. */
-  error?: string;
-  at: number;
-}
 
 const HOST_NAME = 'com.workspacegpt.bridge';
 const RETRY_ALARM = 'wgpt-browser-bridge';
 
 let port: chrome.runtime.Port | null = null;
 
+/** Side-panel questions in flight to the desktop, by the id the desktop knows them under. */
+const asks = new Map<number, { panel: chrome.runtime.Port; panelId: number; sessionId?: string }>();
+let nextAskId = 1;
+
+function failAsks(message: string, only?: (a: { panel: chrome.runtime.Port }) => boolean): void {
+  for (const [id, a] of asks) {
+    if (only && !only(a)) continue;
+    asks.delete(id);
+    try {
+      a.panel.postMessage({ id: a.panelId, kind: 'error', message });
+    } catch {
+      /* the panel is gone */
+    }
+  }
+}
+
 function setStatus(status: Omit<BridgeStatus, 'at'>): void {
   void chrome.storage.local.set({ [BRIDGE_STATUS_KEY]: { ...status, at: Date.now() } });
 }
 
-async function isEnabled(): Promise<boolean> {
-  const stored = await chrome.storage.local.get(BROWSER_CONTROL_KEY);
-  return stored[BROWSER_CONTROL_KEY] === true && (await chrome.permissions.contains(BRIDGE_PERMISSIONS));
-}
-
 export async function connectBridge(): Promise<void> {
-  if (port || !(await isEnabled())) return;
+  if (port) return;
   let p: chrome.runtime.Port;
   try {
     p = chrome.runtime.connectNative(HOST_NAME);
@@ -53,6 +53,7 @@ export async function connectBridge(): Promise<void> {
   port = p;
   p.onMessage.addListener((msg) => void onMessage(p, msg));
   p.onDisconnect.addListener(() => {
+    failAsks('WorkspaceGPT Desktop stopped answering. Is it still running?');
     // "Native host has exited" — the desktop app is not running — or
     // "Specified native messaging host not found" — it was never installed.
     const error = chrome.runtime.lastError?.message;
@@ -63,25 +64,12 @@ export async function connectBridge(): Promise<void> {
   setStatus({ connected: true });
 }
 
-export function disconnectBridge(): void {
-  port?.disconnect();
-  port = null;
-  setStatus({ connected: false, error: 'Turned off' });
-}
-
 /** Retry on a timer: the desktop app may start after the browser. An open port keeps the worker alive; a closed one lets it sleep. */
 export function installBridge(): void {
   chrome.alarms.create(RETRY_ALARM, { periodInMinutes: 0.5 });
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === RETRY_ALARM) void connectBridge();
   });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !(BROWSER_CONTROL_KEY in changes)) return;
-    if (changes[BROWSER_CONTROL_KEY].newValue === true) void connectBridge();
-    else disconnectBridge();
-  });
-  // Revoked from chrome://extensions rather than from our switch.
-  chrome.permissions.onRemoved.addListener(() => disconnectBridge());
   void connectBridge();
 }
 
@@ -89,6 +77,19 @@ export function installBridge(): void {
 let queue: Promise<unknown> = Promise.resolve();
 
 async function onMessage(p: chrome.runtime.Port, msg: any): Promise<void> {
+  if (msg?.type === 'event' && typeof msg.id === 'number') {
+    // The desktop's answer to a side-panel question: pass it on, and forget the ask once it ends.
+    const a = asks.get(msg.id);
+    if (!a) return;
+    const { type: _type, id: _id, ...event } = msg;
+    try {
+      a.panel.postMessage({ id: a.panelId, ...event });
+    } catch {
+      asks.delete(msg.id);
+    }
+    if (msg.kind === 'done' || msg.kind === 'error') asks.delete(msg.id);
+    return;
+  }
   if (msg?.type !== 'request' || typeof msg.id !== 'number') return;
   const run = () => handleBrowserRequest(String(msg.method), msg.params ?? {});
   const result = queue.then(run, run);
@@ -98,4 +99,40 @@ async function onMessage(p: chrome.runtime.Port, msg: any): Promise<void> {
   } catch (err) {
     p.postMessage({ type: 'response', id: msg.id, error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+/**
+ * The side panel asks its questions here instead of holding a model: the
+ * desktop picks the provider and runs the chat. Panel → { id, method, params };
+ * answers come back as { id, kind: status | chunk | restart | done | error, ... }.
+ */
+export function installChatRelay(): void {
+  chrome.runtime.onConnect.addListener((panel) => {
+    if (panel.name !== CHAT_PORT_NAME) return;
+    panel.onMessage.addListener(async (msg: { id: number; method: string; params?: { sessionId?: string } }) => {
+      // The panel asking to be connected now rather than at the next 30s retry.
+      if (msg.method === 'connect') {
+        await connectBridge();
+        return;
+      }
+      if (!port) await connectBridge();
+      if (!port) {
+        const stored = await chrome.storage.local.get(BRIDGE_STATUS_KEY);
+        const why = (stored[BRIDGE_STATUS_KEY] as BridgeStatus | undefined)?.error;
+        panel.postMessage({ id: msg.id, kind: 'error', message: `Not connected to WorkspaceGPT Desktop${why ? ` — ${why.replace(/\.+$/, '')}` : ''}.` });
+        return;
+      }
+      const askId = nextAskId++;
+      asks.set(askId, { panel, panelId: msg.id, sessionId: msg.params?.sessionId });
+      port.postMessage({ type: 'ask', id: askId, method: msg.method, params: msg.params ?? {} });
+    });
+    // Closing the panel stops what it asked for, so a run isn't left going with nobody reading.
+    panel.onDisconnect.addListener(() => {
+      for (const [id, a] of asks) {
+        if (a.panel !== panel) continue;
+        asks.delete(id);
+        if (a.sessionId) port?.postMessage({ type: 'ask', id: nextAskId++, method: 'chat.stop', params: { sessionId: a.sessionId } });
+      }
+    });
+  });
 }

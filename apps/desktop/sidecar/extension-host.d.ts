@@ -21,4 +21,10 @@ declare module 'workspacegpt-extension-diff' {
 declare module 'workspacegpt-extension-browser' {
   export function startBrowserBridge(socketPath: string): void;
 }
+declare module 'workspacegpt-extension-chromechat' {
+  export function attachChromeChat(
+    context: { globalState: { get(key: string): unknown } },
+    surface: { received: { fire(message: unknown): void }; posted: { event(listener: (message: any) => void): { dispose(): void } } }
+  ): void;
+}
 declare module 'posthog-node-real';

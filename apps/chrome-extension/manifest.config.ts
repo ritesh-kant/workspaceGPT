@@ -3,9 +3,9 @@ import { defineManifest } from '@crxjs/vite-plugin';
 export default defineManifest({
   manifest_version: 3,
   name: 'WorkspaceGPT',
-  version: '0.3.0',
+  version: '0.4.0',
   description:
-    'Ask questions about your Confluence & Azure DevOps knowledge, in the browser.',
+    'Ask your Confluence, Jira and Azure DevOps Knowledge from a side panel. Answers come from WorkspaceGPT Desktop.',
   icons: {
     '16': 'icon.png',
     '32': 'icon.png',
@@ -28,23 +28,10 @@ export default defineManifest({
   side_panel: {
     default_path: 'sidepanel.html',
   },
-  // The WorkspaceGPT Desktop browser bridge (src/lib/browserControl.ts,
-  // browserActions.ts). debugger — real clicks and keys, console and network
-  // logs — can only be a required permission, so it disables existing
-  // installs until re-approved (decided 2026-09-25 for parity with Claude in
-  // Chrome / Codex). Native messaging and every-site access stay optional and
-  // are asked for only when the user turns the bridge on.
-  permissions: ['sidePanel', 'storage', 'alarms', 'scripting', 'debugger', 'tabGroups'],
-  optional_permissions: ['nativeMessaging'],
-  optional_host_permissions: ['<all_urls>'],
-  // The extension talks directly to Gemini (query embedding), Qdrant (search),
-  // and the configured LLM — all using credentials from the share code.
-  host_permissions: [
-    'https://generativelanguage.googleapis.com/*',
-    'https://*.qdrant.io/*',
-    'https://api.openai.com/*',
-    'https://api.groq.com/*',
-    'https://openrouter.ai/*',
-    'https://integrate.api.nvidia.com/*',
-  ],
+  // The WorkspaceGPT Desktop bridge (src/lib/browserControl.ts, browserActions.ts):
+  // on by default, so everything it needs is granted at install. debugger (real
+  // clicks and keys, console and network logs) can only be a required
+  // permission, so existing installs are disabled until re-approved.
+  permissions: ['sidePanel', 'storage', 'alarms', 'scripting', 'debugger', 'tabGroups', 'nativeMessaging'],
+  host_permissions: ['<all_urls>'],
 });

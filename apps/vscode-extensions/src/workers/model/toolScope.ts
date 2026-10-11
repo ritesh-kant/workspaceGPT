@@ -24,6 +24,8 @@ export interface ToolAvailability {
   tickets: boolean;
   /** The WorkspaceGPT Chrome extension is connected to this host right now (services/browser/browserBridge.ts). Optional: a host that predates it offers no browser tools. */
   browser?: boolean;
+  /** The run may read pages but not change them (Chrome side panel questions): the browser tools that act are withheld. */
+  browserReadOnly?: boolean;
   /** A code host (GitHub, GitLab, Bitbucket) is connected: `list_prs`, `get_pr`, `get_repo_issue`. */
   codeHost?: boolean;
   /** User memory is switched on (Settings → Memory): offers `save_memory`. */
@@ -92,10 +94,19 @@ interface NamedToolDef {
 export function scopeToolDefs<T extends NamedToolDef>(defs: readonly T[], availability?: ToolAvailability): T[] {
   if (!availability) return [...defs];
   return defs.filter((d) => {
+    if (availability.browserReadOnly && BROWSER_CHANGE_TOOL_NAMES.has(d.function.name)) return false;
     const needs = TOOL_REQUIREMENTS[d.function.name];
     return !needs || availability[needs];
   });
 }
+
+/** Browser tools that change a page or a tab. Withheld when `browserReadOnly`; also refused at execution. */
+export const BROWSER_CHANGE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'browser_act',
+  'browser_eval',
+  'browser_navigate',
+  'browser_close_tab',
+]);
 
 /** Tools that change the workspace or Confluence. */
 export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
