@@ -65,8 +65,16 @@ export interface RefResolver {
  * item with that number. `marked` (the text said "PR") decides it; otherwise
  * the default wins, since prose overwhelmingly means the ticket.
  */
-function resolve(id: string, marked: boolean, resolver: RefResolver): { url: string | null; title?: string } {
-  const known = resolver.refs?.filter((ref) => ref.id === id) ?? [];
+function resolve(
+  id: string,
+  marked: boolean,
+  resolver: RefResolver
+): { url: string | null; title?: string; unverified?: boolean } {
+  const all = resolver.refs?.filter((ref) => ref.id === id) ?? [];
+  // The host found nothing the run read that contains this id (referenceIndex.ts
+  // findUnverifiedIds). Any real provenance for it wins over that verdict.
+  const known = all.filter((ref) => ref.kind !== 'unverified');
+  if (all.length && !known.length) return { url: null, unverified: true };
   const kind = marked
     ? 'pull-request'
     : known.length === 1
@@ -93,7 +101,8 @@ export function linkifyTicketIds(markdown: string, resolver: RefResolver): strin
   const linkifySegment = (segment: string): string =>
     segment.replace(TICKET_ID_RE, (match, prefix: string, prId?: string, ticketId?: string) => {
       const id = prId ?? ticketId ?? '';
-      const { url, title } = resolve(id, !!prId, resolver);
+      const { url, title, unverified } = resolve(id, !!prId, resolver);
+      if (unverified) return `${match} (⚠ not seen in this run)`;
       if (!url) return match;
       const label = title ? ` "${title.replace(/"/g, '')}"` : '';
       return `${prefix}[#${id}](${url}${label})`;

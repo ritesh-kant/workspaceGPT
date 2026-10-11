@@ -79,7 +79,7 @@ export const normalizeAgentStep = (step: AgentStep | string): AgentStep =>
 /** One id a run's tools returned, and what it refers to (host: services/agent/referenceIndex.ts). */
 export interface RunRef {
   id: string;
-  kind: 'work-item' | 'pull-request' | 'commit';
+  kind: 'work-item' | 'pull-request' | 'commit' | 'unverified';
   url?: string;
   label?: string;
 }

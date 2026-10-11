@@ -22,12 +22,15 @@
  *    the run never saw still gets the default (work-item) reading, so ids
  *    quoted inside a ticket's own description keep working.
  *
- * The same table is what a later honesty gate needs to spot an id in an answer
- * that no tool in the run ever returned.
+ * The same table is what the honesty gate uses to spot an id in an answer that
+ * nothing the run saw contains — see {@link findUnverifiedIds}.
  */
 
-/** What an id refers to. `commit` is recorded for provenance; nothing links it (hashes are cited in code spans). */
-export type RefKind = 'work-item' | 'pull-request' | 'commit';
+/**
+ * What an id refers to. `commit` is recorded for provenance; nothing links it (hashes are cited in code spans).
+ * `unverified` is the gate's verdict, not a source's: the answer cites this id and nothing the run saw contains it.
+ */
+export type RefKind = 'work-item' | 'pull-request' | 'commit' | 'unverified';
 
 export interface RunRef {
   /** The id as it appears in prose, without any `#`: '1384667', '12359', '6d5ba9b81b3'. */
@@ -176,4 +179,40 @@ export function mergeRefs(table: RunRef[], incoming: RunRef[]): void {
     if (table.some((existing) => existing.id === ref.id && existing.kind === ref.kind)) continue;
     table.push(ref);
   }
+}
+
+/**
+ * Beyond this many distinct numbers the seen-set stops being a record of what
+ * the run saw, so the gate declines to judge rather than flag a real id.
+ */
+const MAX_SEEN_IDS = 200_000;
+
+/** Every number in `text` joins `seen`. Generous on purpose: the gate may only err toward silence. */
+export function noteSeenIds(seen: Set<string>, text: string): void {
+  for (const m of text.matchAll(/\d+/g)) {
+    if (seen.size >= MAX_SEEN_IDS) return;
+    seen.add(m[0]);
+  }
+}
+
+/** Fenced and inline code and anything already a link — an id there is a literal, not a citation. */
+const CITATION_SKIP_RE =
+  /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`|!?\[[^\]\n]*\]\([^)\n]*\)|<[^>\s]+>|\bhttps?:\/\/\S+/g;
+/** Mirrors the renderer's TICKET_ID_RE (webview/src/utils/ticketRefs.ts) — the ids it would turn into links. */
+const CITED_ID_RE = /(^|[^\w`#])(?:(?:PR|pull request)\s*#(\d+)|#(\d{4,}))\b/gi;
+
+/**
+ * Ids the answer cites as `#<id>` that appear nowhere in `seen` — the user's
+ * messages, the fetched ticket, retrieved context, and every tool result. Such
+ * an id was not read this run, so the renderer shows it as unverified instead
+ * of a link to a same-numbered record. Declines (returns nothing) when `seen`
+ * overflowed, since absence from it then proves nothing.
+ */
+export function findUnverifiedIds(answer: string, seen: Set<string>): RunRef[] {
+  if (seen.size >= MAX_SEEN_IDS) return [];
+  const cited = new Set<string>();
+  for (const m of String(answer ?? '').replace(CITATION_SKIP_RE, ' ').matchAll(CITED_ID_RE)) {
+    cited.add(m[2] ?? m[3]);
+  }
+  return [...cited].filter((id) => !seen.has(id)).map((id) => ({ id, kind: 'unverified' as const }));
 }

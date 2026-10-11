@@ -75,7 +75,7 @@ import { TicketDetail } from './ado/adoWorkItemService';
 import { CodeHostConnections } from './codehost/connections';
 import { runCodeHostTool } from './codehost/tools';
 import { getActiveTicketProvider } from './tickets/registry';
-import { collectRefs, mergeRefs, refsFromTicket, RunRef } from './agent/referenceIndex';
+import { collectRefs, findUnverifiedIds, mergeRefs, noteSeenIds, refsFromTicket, RunRef } from './agent/referenceIndex';
 import { getPrUrlTemplate } from './agent/gitStatusService';
 import {
   confluenceWriteBlocker,
@@ -302,6 +302,8 @@ interface SessionRun {
    * see referenceIndex.ts for why the renderer cannot work this out alone.
    */
   turnRefs: RunRef[];
+  /** Every number the session's runs have seen (tool results, tickets, user text) — what the unverified-id gate checks an answer against. */
+  seenIds: Set<string>;
   /** `origin`'s PR url template for this turn's workspace — stamped onto pull-request refs as they are recorded. */
   turnPrUrlTemplate?: string;
   /**
@@ -762,6 +764,7 @@ export class ChatService {
         turnCredits: emptyCreditTally(),
         turnFilesChanged: new Map(),
         turnRefs: [],
+        seenIds: new Set(),
         turnStepsPosted: 0,
         userAskedRepoWide: false,
         sessionWritesApplied: 0,
@@ -3347,6 +3350,16 @@ Query: "${query}"`;
                 ticketContext && isResearchWorkItem(ticketContext.type)
                   ? [...run.turnFilesChanged.values()].find((f) => f.kind === 'create' && /\.md$/i.test(f.path))?.path
                   : undefined;
+              // Honesty gate: an id the answer cites that nothing this session
+              // read is flagged on the card instead of linked. The record is
+              // everything the model could have seen — this turn's inputs, the
+              // history, and (noted as they returned) the tool results.
+              noteSeenIds(run.seenIds, message);
+              if (ticketContext) noteSeenIds(run.seenIds, JSON.stringify(ticketContext));
+              for (const r of searchResults) noteSeenIds(run.seenIds, JSON.stringify(r));
+              for (const m of resolvedMentions) noteSeenIds(run.seenIds, m.content);
+              for (const h of run.chatHistory) noteSeenIds(run.seenIds, h.content);
+              const unverifiedRefs = findUnverifiedIds((fullContent || streamedContent).trim(), run.seenIds);
               this.post(run, {
                 type: MESSAGE_TYPES.AGENT_TURN_SUMMARY,
                 durationMs: Date.now() - run.turnStartMs,
@@ -3357,7 +3370,7 @@ Query: "${query}"`;
                 filesChanged: [...run.turnFilesChanged.values()],
                 checkpointSha: shippable ? run.turnFirstCheckpointSha ?? undefined : undefined,
                 ticketId: ticketContext?.id,
-                refs: run.turnRefs.length ? [...run.turnRefs] : undefined,
+                refs: run.turnRefs.length || unverifiedRefs.length ? [...run.turnRefs, ...unverifiedRefs] : undefined,
                 shippable,
                 ...(workerDiagnostics ? { diagnostics: workerDiagnostics } : {}),
                 ...(spikeDocPath && ticketContext ? { spikeDoc: { path: spikeDocPath, ticketId: ticketContext.id } } : {}),
@@ -3603,6 +3616,7 @@ Query: "${query}"`;
                     // Provenance, recorded while the result is still structured:
                     // once it is prose in the answer, which namespace an id
                     // belongs to is unrecoverable.
+                    noteSeenIds(run.seenIds, summary);
                     mergeRefs(
                       run.turnRefs,
                       collectRefs(result.name!, toolResult, {

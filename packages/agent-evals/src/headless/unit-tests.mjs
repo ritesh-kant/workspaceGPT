@@ -4492,6 +4492,54 @@ console.log('\nreferenceIndex (id provenance collected from tool results)');
   });
 }
 
+// ═══ Honesty gate: ids the answer cites that the run never saw ═══
+console.log('\nreferenceIndex (unverified-id gate)');
+{
+  const { noteSeenIds, findUnverifiedIds } = referenceIndex;
+  const ids = (answer, ...texts) => {
+    const seen = new Set();
+    for (const text of texts) noteSeenIds(seen, text);
+    return findUnverifiedIds(answer, seen).map((r) => r.id);
+  };
+
+  await t('an id no tool returned is flagged; one the run read is not', () => {
+    assert.deepStrictEqual(ids('Fixed in #12359 and #1384667', '{"id":1384667,"title":"x"}'), ['12359']);
+  });
+
+  await t('an id the user typed, or that sits in any tool output, counts as seen', () => {
+    assert.deepStrictEqual(ids('see #1540302', 'Work on ticket 1540302'), []);
+    assert.deepStrictEqual(ids('see #1540302', '{"text":"parent task 1540302 is blocked"}'), []);
+  });
+
+  await t('PR citations are checked with no digit floor', () => {
+    assert.deepStrictEqual(ids('follow-up in PR #42', '{"text":"nothing"}'), ['42']);
+    assert.deepStrictEqual(ids('follow-up in PR #42', 'Merged PR 42: x'), []);
+  });
+
+  await t('ids in code, links and URLs are literals, not citations', () => {
+    assert.deepStrictEqual(ids('run `git show #99999` then ```\n#88888\n``` or [#77777](http://x/77777)', ''), []);
+  });
+
+  await t('short numbers and headings are not citations', () => {
+    assert.deepStrictEqual(ids('step #3 of ## 1516750', ''), []);
+  });
+
+  await t('a repeated id is reported once', () => {
+    assert.deepStrictEqual(ids('#12359, again #12359', ''), ['12359']);
+  });
+
+  await t('flags ride the refs table as kind "unverified"', () => {
+    const [ref] = findUnverifiedIds('#12359', new Set());
+    assert.deepStrictEqual(ref, { id: '12359', kind: 'unverified' });
+  });
+
+  await t('declines to judge once the seen-set has overflowed', () => {
+    const seen = new Set();
+    noteSeenIds(seen, Array.from({ length: 250_000 }, (_, i) => i).join(' '));
+    assert.deepStrictEqual(findUnverifiedIds('#99999999', seen), []);
+  });
+}
+
 // ═══ Chat ref linkification: resolved against that provenance (webview) ═══
 console.log('\nticketRefs (work-item vs PR linkification)');
 {
@@ -4551,6 +4599,18 @@ console.log('\nticketRefs (work-item vs PR linkification)');
     assert.match(link('merged in PR#12359', []), /\/pull\/12359/);
     // "PR" has to be its own word — SUPR #1384667 is not a PR reference.
     assert.match(link('SUPR #1384667', []), /_workitems\/edit\/1384667/);
+  });
+
+  await t('an unverified id is not linked and says so; real provenance overrides the flag', () => {
+    const flagged = [{ id: '12359', kind: 'unverified' }];
+    const out = link('Already merged (#12359) and #1384667', flagged);
+    assert.match(out, /#12359\) \(⚠ not seen in this run\)|#12359 \(⚠ not seen in this run\)/);
+    assert.doesNotMatch(out, /\[#12359\]/);
+    assert.match(out, /\[#1384667\]\([^)]*_workitems/, 'ids not flagged keep the default reading');
+    assert.match(link('PR #12359', flagged), /#12359 \(⚠ not seen in this run\)/);
+    // A flag never beats an id the run actually recorded.
+    const both = [...flagged, { id: '12359', kind: 'pull-request' }];
+    assert.match(link('(#12359)', both), /\[#12359\]\([^)]*\/pull\/12359/);
   });
 
   await t('a number that is both a PR and a work item prefers the ticket unless marked', () => {
