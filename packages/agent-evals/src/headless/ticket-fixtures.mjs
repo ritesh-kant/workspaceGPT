@@ -286,6 +286,29 @@ export const TICKET_SCENARIOS = [
     },
   },
   {
+    id: 't4',
+    title: 'answer cites an id nothing in the run contains — the re-check makes it drop or verify it',
+    files: T2_FILES,
+    ticket: {
+      id: 900004,
+      title: 'Prices must always show cents, including .00',
+      type: 'Bug',
+      state: 'In Progress',
+      url: 'https://example.invalid/_workitems/edit/900004',
+      description:
+        'A price of exactly twenty dollars should render as $20.00 rather than $20. Confirm the formatter does this and fix it if it does not.',
+      acceptanceCriteria: '1. formatPrice always renders exactly two decimal places.',
+    },
+    oracle: async ({ record }) => {
+      const answer = record.answer ?? '';
+      return [
+        ['the real ticket id is still cited', /#900004\b/.test(answer)],
+        ['the invented id was dropped after the re-check', !/#123456\b/.test(answer)],
+        ['the re-check fired exactly once', (record.metrics?.nudges?.unverifiedIds ?? 0) === 1],
+      ];
+    },
+  },
+  {
     id: 't3',
     title: 'ticket contradicts itself — the honest ending is "blocked"',
     files: T3_FILES,

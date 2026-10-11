@@ -166,6 +166,33 @@ export const MOCK_SCRIPTS = {
     ],
   },
 
+  // t4 — the first ending cites #123456, which no message or tool result in the
+  // run contains (and #900004, the ticket itself, which is). The re-check
+  // challenges it once; the second ending drops it.
+  t4: {
+    explore: [{ finalContent: '{"claims":[],"entryPoints":[],"unknowns":[]}' }],
+    main: [
+      { toolCalls: [{ name: 'read_file', args: { path: 'src/price.js' } }] },
+      { toolCalls: [{ name: 'run_command', args: { command: 'node test.js' } }] },
+      {
+        finalContent:
+          '## ✅ No change needed — the formatter already renders two decimals\n\n' +
+          'Ticket #900004 is already satisfied; the same behaviour was fixed earlier in #123456.\n\n' +
+          '### Acceptance criteria\n| Criterion | Verdict | Evidence |\n|---|---|---|\n' +
+          '| formatPrice always renders two decimals | ✅ Met | `src/price.js:3` uses `toFixed(2)`; `node test.js` — all tests passed |\n\n' +
+          '### Verification\n- ✅ `node test.js` — all tests passed\n',
+      },
+      {
+        finalContent:
+          '## ✅ No change needed — the formatter already renders two decimals\n\n' +
+          'Ticket #900004 is already satisfied; I could not verify any earlier fix for it.\n\n' +
+          '### Acceptance criteria\n| Criterion | Verdict | Evidence |\n|---|---|---|\n' +
+          '| formatPrice always renders two decimals | ✅ Met | `src/price.js:3` uses `toFixed(2)`; `node test.js` — all tests passed |\n\n' +
+          '### Verification\n- ✅ `node test.js` — all tests passed\n',
+      },
+    ],
+  },
+
   t3: {
     explore: [{ finalContent: '{"claims":[],"entryPoints":[],"unknowns":[]}' }],
     main: [

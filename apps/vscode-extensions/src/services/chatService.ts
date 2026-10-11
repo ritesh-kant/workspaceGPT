@@ -3616,7 +3616,8 @@ Query: "${query}"`;
                     // Provenance, recorded while the result is still structured:
                     // once it is prose in the answer, which namespace an id
                     // belongs to is unrecoverable.
-                    noteSeenIds(run.seenIds, summary);
+                    // A failed lookup echoes the id it was asked for — not evidence the id exists.
+                    if (!(toolResult as { error?: unknown } | null)?.error) noteSeenIds(run.seenIds, summary);
                     mergeRefs(
                       run.turnRefs,
                       collectRefs(result.name!, toolResult, {

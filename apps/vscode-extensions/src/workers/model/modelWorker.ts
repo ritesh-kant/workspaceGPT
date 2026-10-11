@@ -31,6 +31,7 @@ import {
   isUnfinishedWriteRun,
   writeWasExpected,
 } from './answerGates';
+import { findUnverifiedIds, noteSeenIds } from '../../services/agent/referenceIndex';
 import { normalizeModelId } from '../../utils/normalizeModelId';
 import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
 import { consumeStream, shouldRetryEmptyStream } from './streamOutcome';
@@ -2693,6 +2694,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         ticketCompletionNudgeUsed ? 'ticket' : '',
         missingToolClaimNudgeUsed ? 'missingTool' : '',
         proseQuestionNudgeUsed ? 'proseQuestion' : '',
+        unverifiedIdsNudgeUsed ? 'unverifiedIds' : '',
         phantomChangesNudgesUsed > 0 ? `phantom×${phantomChangesNudgesUsed}` : '',
         forceReadUsed ? 'forceRead' : '',
         commitNarrowingApplied ? 'narrowed' : '',
@@ -2790,6 +2792,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   let missingToolClaimNudgeUsed = false;
   /** One-shot: the answer ended on a question asked in prose instead of through ask_user. */
   let proseQuestionNudgeUsed = false;
+  // One-shot: the answer cites `#id`s that nothing in this run contains (see
+  // referenceIndex.findUnverifiedIds). The host still flags any that survive.
+  let unverifiedIdsNudgeUsed = false;
 
   // Once the cumulative tool-output budget is gone, every further tool call
   // gets back nothing but the "[budget exhausted]" marker — the model can't
@@ -2990,6 +2995,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         prematureAmbiguity: prematureAmbiguityNudgeUsed ? 1 : 0,
         ticketCompletion: ticketCompletionNudgeUsed ? 1 : 0,
         missingToolClaim: missingToolClaimNudgeUsed ? 1 : 0,
+        unverifiedIds: unverifiedIdsNudgeUsed ? 1 : 0,
         completenessReflectionUsed,
         autoDiagnosticsRuns,
         forceRead: forceReadUsed ? 1 : 0,
@@ -3444,6 +3450,35 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
             'If the question needs no answer, rewrite the ending without it.',
         });
         continue;
+      }
+      // The answer cites `#id`s that no message, ticket or tool result in this
+      // run contains — the model made them up or half-remembered them. Confront
+      // once with the ids, so it reads them (or drops them) instead of
+      // delivering a plausible link to someone else's record. Only ever ADDS a
+      // turn: the seen-set is every number the model was shown, deliberately
+      // generous, and the model's own earlier prose and FAILED lookups (which
+      // echo the id they were asked for) are not evidence.
+      if (!unverifiedIdsNudgeUsed && !budgetExhausted && outcome.content) {
+        const seen = new Set<string>();
+        for (const m of messages) {
+          if (m.role === 'assistant') continue;
+          const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
+          if (m.role === 'tool' && text.startsWith('{"error"')) continue;
+          noteSeenIds(seen, text);
+        }
+        const unverified = findUnverifiedIds(outcome.content, seen).map((r) => `#${r.id}`);
+        if (unverified.length > 0) {
+          unverifiedIdsNudgeUsed = true;
+          messages.push({ role: 'assistant', content: outcome.content });
+          messages.push({
+            role: 'user',
+            content:
+              `CHECK: your answer cites ${unverified.join(', ')}, but nothing you were given or any tool returned in this run contains ${unverified.length > 1 ? 'those ids' : 'that id'} — ` +
+              'it was not read, so it may be a different record or not exist. For each one, look it up with the tool that can return it (get_ticket / search_tickets for work items, git_log for pull requests) ' +
+              'and keep it only if the result confirms it is what you said; otherwise remove it or say plainly that you could not verify it. Do not invent identifiers.',
+          });
+          continue;
+        }
       }
       // The answer declares itself blocked because a write tool is "not
       // exposed"/"unavailable" — categorically false: TOOL_DEFS is sent whole

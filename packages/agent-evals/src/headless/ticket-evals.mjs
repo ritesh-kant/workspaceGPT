@@ -47,7 +47,7 @@ const argOf = (name, dflt) => {
 };
 
 const LIVE = has('live');
-const ONLY = argOf('scenarios', 't1,t2,t3,f1').split(',');
+const ONLY = argOf('scenarios', 't1,t2,t3,t4,f1').split(',');
 const PROFILES = argOf('profiles', 'strong-model,small-model').split(',');
 const RUNS = Number(argOf('runs', '1'));
 
@@ -139,6 +139,13 @@ function mechanismChecks(sc, profile, state, record) {
   ]);
   out.push(['P1: the operating norms reached the model', mainText.includes('## HOW TO WORK')]);
 
+  if (sc.id === 't4') {
+    // The re-check reached the model, naming the unread id and only that one.
+    out.push([
+      'the unverified-id re-check was delivered, naming #123456 only',
+      /CHECK: your answer cites #123456, but nothing/.test(mainText),
+    ]);
+  }
   if (sc.id === 't1') {
     // P3 — a real sub-loop ran, it was offered no write tool, and what came
     // back to the caller was findings rather than file contents.
