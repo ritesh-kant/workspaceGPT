@@ -117,13 +117,7 @@
 .work-home--tiny .work-home-section-head { padding-bottom: 0; min-height: 20px; }
 .work-home--tiny .work-home-tabs { padding: 2px 0; }
 .work-home--tiny .work-home-board .work-home-row--pr .work-home-meta { display: none; }
-.work-home--narrow .work-home-folder:not(.work-home-folder--needed) { display: none; }
-/* Not set yet: this is the first thing to do, so it reads as an action, not a link. */
-.work-home-folder--needed { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-weight: 600; background: var(--vscode-button-background); color: var(--vscode-button-foreground) !important; text-decoration: none; animation: work-home-folder-glow 2.4s ease-out 3; }
-.work-home-folder--needed::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.work-home-folder--needed:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
-@keyframes work-home-folder-glow { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--vscode-button-background) 55%, transparent); } 70%, 100% { box-shadow: 0 0 0 8px transparent; } }
-@media (prefers-reduced-motion: reduce) { .work-home-folder--needed { animation: none; } }
+.work-home--narrow .work-home-folder { display: none; }
 .work-home--narrow .work-home-board { display: block; }
 .work-home--narrow .work-home-heading { gap: 7px; }
 .work-home--narrow .work-home-inbox .work-home-row { gap: 8px; }

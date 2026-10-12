@@ -90,7 +90,7 @@ const MyWorkPanel: React.FC<MyWorkPanelProps> = ({
           )}
         </h2>
         <div className='my-work-header-actions'>
-          {onOpenDefaultFolder && (
+          {onOpenDefaultFolder && defaultFolderName && (
             <button
               type='button'
               className='my-work-folder'
