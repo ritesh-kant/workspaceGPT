@@ -4485,3 +4485,16 @@ button:disabled {
   flex-shrink: 1;
   min-width: 0;
 }
+
+.mermaid-diagram { overflow-x: auto; text-align: center; margin: 8px 0; }
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+
+.zoomable-image { cursor: zoom-in; }
+.image-viewer { position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,.78); display: flex; flex-direction: column; }
+.image-viewer-bar { display: flex; gap: 6px; align-items: center; justify-content: center; padding: 8px; }
+.image-viewer-bar button { background: var(--vscode-button-secondaryBackground, #3a3d41); color: var(--vscode-button-secondaryForeground, #fff); border: 0; border-radius: 4px; padding: 4px 10px; cursor: pointer; font: inherit; }
+.image-viewer-bar button:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+.image-viewer-pct { min-width: 48px; text-align: center; color: #fff; font-size: 12px; }
+.image-viewer-stage { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; cursor: grab; }
+.image-viewer-stage:active { cursor: grabbing; }
+.image-viewer-stage img { max-width: 92%; max-height: 92%; user-select: none; background: var(--vscode-editor-background, #1e1e1e); padding: 12px; border-radius: 6px; }

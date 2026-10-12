@@ -3666,6 +3666,26 @@ console.log('\nconfluenceAdf (page read/edit — edits touch one section, everyt
     assert.ok(on.includes('stop and ask the user in chat'));
     assert.ok(!build(false).includes('browser_act'));
   });
+  await t('a ```mermaid block is found in page order and swapped for its image, keeping the source in an expand', async () => {
+    const adf = await import(path.join(outDir, 'confluenceAdf.mjs'));
+    const doc = adf.markdownToAdf('# T\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\ntext\n\n```mermaid\nflowchart LR\n  C --> D\n```\n\n```bash\nls\n```\n');
+    assert.deepEqual(adf.mermaidSources(doc), ['flowchart LR\n  A --> B', 'flowchart LR\n  C --> D']);
+    // first diagram attached, second failed to render → stays a code block
+    const out = adf.attachDiagrams(doc, [{ fileId: 'f1', collection: 'contentId-9', width: 300, height: 100 }, null]);
+    const types = out.content.map((n) => n.type);
+    assert.deepEqual(types, ['heading', 'mediaSingle', 'expand', 'paragraph', 'codeBlock', 'codeBlock']);
+    const media = out.content[1].content[0];
+    assert.deepEqual(media.attrs, { id: 'f1', type: 'file', collection: 'contentId-9', width: 300, height: 100 });
+    assert.equal(out.content[2].attrs.title, 'Diagram source (Mermaid)');
+    assert.equal(out.content[2].content[0].attrs.language, 'mermaid');
+    assert.equal(doc.content.length, 5, 'the input doc is not mutated');
+  });
+  await t('a non-mermaid code block and a nested mermaid block are never touched', async () => {
+    const adf = await import(path.join(outDir, 'confluenceAdf.mjs'));
+    const doc = adf.markdownToAdf('```bash\nls\n```\n\n:::panel info\n```mermaid\nflowchart LR\n  A --> B\n```\n:::\n');
+    assert.deepEqual(adf.mermaidSources(doc), []);
+    assert.deepEqual(adf.attachDiagrams(doc, []), doc);
+  });
   await t('Confluence write tools are offered only when Confluence is connected', () => {
     for (const name of ['update_confluence_page', 'create_confluence_page', 'find_confluence_location']) {
       assert.equal(TOOL_REQUIREMENTS[name], 'confluence', name);
@@ -5415,6 +5435,62 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     assert.equal(sc.parseSlashCommand('/debug'), null, 'no trailing space yet: the picker handles it');
     assert.equal(sc.parseSlashCommand('/init something'), null, 'an unknown command is just text');
     assert.equal(sc.parseSlashCommand('please /debug this'), null);
+  });
+
+  await t('hasRegressionCue: "it used to work" wording in the message or the ticket; ordinary bug reports do not match', async () => {
+    const { hasRegressionCue, ticketTexts } = await import(path.join(outDir, 'regressionCue.mjs'));
+    for (const yes of ['this was working before the last release', 'checkout used to work', 'it stopped working yesterday', 'broke after the refactor', 'started failing since the upgrade', 'this is a regression', 'no longer saves the draft', 'worked fine in v2.3 but not now', 'since the last deploy the cart is wrong', 'the last working version was 4.1']) {
+      assert.ok(hasRegressionCue(yes), yes);
+    }
+    for (const no of ['the login page throws on empty password', 'cart total is wrong', 'app crashes when I open settings', 'add a dark mode toggle', '', undefined]) {
+      assert.ok(!hasRegressionCue(no), String(no));
+    }
+    assert.ok(hasRegressionCue('fix it', 'nothing here', 'it used to work on staging'), 'any of the texts');
+    assert.ok(!hasRegressionCue('add a regression test for it'), 'a regression TEST is not a report that it broke');
+    assert.ok(!hasRegressionCue(debugWorkItemPrompt('1520855')), "the app's own bug-button prompt must never read as a regression report");
+    assert.ok(hasRegressionCue('this is a regression from 2.3'));
+    assert.deepEqual(ticketTexts({ title: 'T', description: 'D', comments: [{ text: 'C' }] }), ['T', 'D', 'C']);
+    assert.deepEqual(ticketTexts(null), []);
+  });
+
+  await t('DebugTracker with a regression cue: the edit gate and the "confirmed" claim both ask for the git history; any git tool result clears it', () => {
+    const confirmed = '### Root cause — confirmed\nThe loop stops short (src/cart.js:L3). Evidence: E1.';
+    const prove = (d) => {
+      d.addHypothesis('loop bound', 'last item missing');
+      d.noteCommand({ command: 'jest cart', exitCode: 1, output: 'short' });
+      d.resolve('H1', 'confirmed', ['E1']);
+      d.noteWrite('src/cart.js');
+      d.noteCommand({ command: 'jest cart', exitCode: 0 });
+      d.noteCounterfactual({ revertedExitCode: 1, command: 'jest cart', files: ['src/cart.js'] });
+    };
+    const plain = new DebugTracker(false);
+    prove(plain);
+    assert.deepEqual(plain.claimIssues(confirmed), [], 'no cue: history is not demanded');
+    const reg = new DebugTracker(true);
+    prove(reg);
+    assert.ok(reg.claimIssues(confirmed).some((x) => /git history .* never checked/.test(x)));
+    assert.match(reg.ledgerMarkdown(), /Regression: reported as working before — git history was NOT checked/);
+    reg.noteGitHistory();
+    assert.deepEqual(reg.claimIssues(confirmed), []);
+    assert.match(reg.ledgerMarkdown(), /git history was checked/);
+    const gate = new DebugTracker(true);
+    gate.addHypothesis('a', 'x'); gate.addHypothesis('b', 'y');
+    gate.noteCommand({ command: 't', exitCode: 1, output: 'f' });
+    assert.match(gate.editReadiness(), /worked before.*git_log \/ git_blame.*git_bisect/s);
+    gate.noteGitHistory();
+    assert.equal(gate.editReadiness(), null);
+    assert.equal(new DebugTracker(false).isRegression, false);
+  });
+
+  await t('prompt: the regression paragraph appears after the Debug protocol only when the message or ticket says it used to work', () => {
+    const base = { codebaseToolsEnabled: true, implementMandate: true, debugMode: true };
+    const reg = createStructuredPrompt([], 'the cart total was working before the last release', '', undefined, null, base);
+    assert.ok(reg.includes('This was reported as working before — find the commit that broke it'));
+    assert.ok(reg.indexOf('## DEBUG MODE') < reg.indexOf('This was reported as working before'), 'a subsection of the protocol, not above it');
+    assert.ok(createStructuredPrompt([], 'x', '', undefined, null, { ...base, ticketContext: { id: '1', title: 'Cart total wrong', type: 'Bug', state: 'Active', url: 'https://x/1', comments: [{ author: 'a', text: 'this used to work on staging' }] } }).includes('find the commit that broke it'), 'cue in a ticket comment');
+    assert.ok(!createStructuredPrompt([], 'the cart total is wrong', '', undefined, null, base).includes('find the commit that broke it'));
+    assert.ok(!createStructuredPrompt([], 'it used to work', '', undefined, null, { ...base, debugMode: false }).includes('find the commit that broke it'), 'only in Debug mode');
+    assert.ok(createStructuredPrompt([], 'x', '', undefined, null, base).includes('Introduced by'), 'the report format carries the line');
   });
 
   await t('withProbeOutput reads real text: CRLF output and quoted values come through unescaped', () => {

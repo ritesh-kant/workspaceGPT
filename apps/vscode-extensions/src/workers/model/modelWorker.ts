@@ -63,6 +63,7 @@ import {
   pruneStaleHarnessMessages,
 } from './resumeHygiene';
 import { DebugTracker, claimedRootCauseStatus, isTestPath } from './debugState';
+import { hasRegressionCue, ticketTexts } from '../../utils/regressionCue';
 import { AutoVerifyTracker, CheckResultLike, CheckKindName, PendingCheck, AUTO_CHECKABLE_FILE_RE } from './autoVerify';
 import { stripLineNumbers } from '../../services/codebase/lineNumbers';
 import { logPromptCall } from './promptTokenDebug';
@@ -739,7 +740,7 @@ const TOOL_DEFS = [
     function: {
       name: 'create_confluence_page',
       description:
-        "Create a new Confluence page from markdown, in the space/parent the user chose (see find_confluence_location). Created as a DRAFT only the user can see unless they asked to publish. The user reviews the full page and its location before it is created. Same markdown rules as update_confluence_page; no ⟦keep⟧ tokens in a new page. " +
+        "Create a new Confluence page from markdown, in the space/parent the user chose (see find_confluence_location). Created as a DRAFT only the user can see unless they asked to publish. The user reviews the full page and its location before it is created. Same markdown rules as update_confluence_page; no ⟦keep⟧ tokens in a new page. A ```mermaid block is drawn and attached to the page as an image, so pass it through unchanged. " +
         "FORMAT: when the page is a kind the org already writes (a spike, SDR, RFC, runbook, postmortem…), first open 2–3 recent pages of that kind in the target space with get_confluence_page (search_docs / find_confluence_location surface them) and follow their title pattern and section order, carrying your content into their sections. If there are none, or they disagree, ask for a template or example page URL with ask_user — never invent a house style.",
       parameters: {
         type: 'object',
@@ -1310,7 +1311,7 @@ const MAX_TOOL_ITERATIONS = SAFETY_ITERATION_CEILING;
 const TICKET_RESEARCH_RUN = !!ticketContext && isResearchWorkItem(ticketContext.type);
 // Debug mode's record of what the run has established (hypotheses, evidence, the
 // proof state). Null outside Debug mode, so nothing below costs a normal run anything.
-const debugTracker = debugMode && !chatOnly ? new DebugTracker() : null;
+const debugTracker = debugMode && !chatOnly ? new DebugTracker(hasRegressionCue(prompt, ...ticketTexts(ticketContext))) : null;
 let debugEditGateUsed = false;
 let debugClaimNudgesUsed = 0;
 const TICKET_IMPLEMENT_MANDATE = !!executeMandate || IMPLEMENT_MANDATE_RE.test(prompt) || hasWriteIntent(prompt);
@@ -4204,6 +4205,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           }
           const withCommand = tc.name === 'run_command' && ran && !(rawResult as { command?: unknown }).command ? { ...(rawResult as object), command: ran } : rawResult;
           recorded = debugTracker.noteCommand(withCommand as Parameters<DebugTracker['noteCommand']>[0]);
+        } else if (tc.name === 'git_log' || tc.name === 'git_blame' || tc.name === 'git_bisect') {
+          debugTracker.noteGitHistory();
         } else if (tc.name === 'counterfactual_check') {
           const ev = debugTracker.noteCounterfactual(rawResult as Parameters<DebugTracker['noteCounterfactual']>[0]);
           if (ev) recorded = [ev];

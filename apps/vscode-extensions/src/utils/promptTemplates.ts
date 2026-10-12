@@ -2,6 +2,7 @@ import { EmbeddingSearchResult } from 'src/types/types';
 import { HARNESS_LIMIT_NOUN, LimitKind } from '../workers/model/resumeHygiene';
 import { isResearchWorkItem } from '../../constants';
 import { PROBE_MARKER } from '../services/agent/debugProbes';
+import { hasRegressionCue, ticketTexts } from './regressionCue';
 
 /** The turn-scoped extras a user message can carry, shared by both prompt builders below. */
 interface TurnExtras {
@@ -118,7 +119,7 @@ const clip = (text: string, max: number): string =>
 const READABILITY_BLOCK =
   'Shape explanatory answers to be skimmed, not read: open with a one-line "TL;DR" in bold (the answer itself, not a preview of it); then short sections under `##` headings that each start with one fitting emoji (🎯 purpose, 🏗️ architecture, 🔄 flow, 🧰 tech stack, 🚀 deploy/CI, 👥 people, ⚠️ risks, ✅ done/next); ' +
   'keep paragraphs to 1–2 sentences and turn any list of three or more things into bullets with the key term in **bold** followed by a short gloss; use a table when comparing things or listing name · role · detail; put the single most important caveat or takeaway in a `> ` blockquote; ' +
-  'bold only what the reader must not miss (names, numbers, decisions) — never whole sentences; end with one "💡 Where to go next" line pointing at the most useful follow-up. Skip all of this for a short factual reply, and when a FINAL REPORT FORMAT or SPIKE REPORT FORMAT applies, follow that instead. ';
+  'bold only what the reader must not miss (names, numbers, decisions) — never whole sentences; end with one "💡 Where to go next" line pointing at the most useful follow-up. When the answer explains a flow, a sequence or a system with several interacting parts, include ONE ```mermaid diagram (flowchart or sequenceDiagram, labelled arrows, drawn only from what you actually read, dashed and marked "unconfirmed" for anything you could not confirm) under the matching heading; leave it out for anything simple and do not redraw it on later turns unless the user asks. Skip all of this for a short factual reply, and when a FINAL REPORT FORMAT or SPIKE REPORT FORMAT applies, follow that instead. ';
 
 export const HOW_TO_WORK = `## HOW TO WORK
 - **Investigate until you can state the answer — for a bug, the root cause — in one sentence with a \`file:line\`. Then stop investigating.** Several "plausible causes" means you are not there yet; more reads after you are there just burn the budget you need for the fix.
@@ -283,6 +284,8 @@ Create it with \`create_file\` at \`docs/spikes/<id>-<short-kebab-title>.md\` (r
 <each option with pros and cons, and which one you recommend>
 ## Recommendation
 <the change set as \`path:line\` — what and why; not applied>
+## Diagram  (only when the spike is about a flow, an integration or an architecture)
+<ONE \`\`\`mermaid block, written once here and never regenerated: the systems or components, the arrows between them labelled with the protocol or event, drawn only from what you read. Draw anything you could not confirm with a dashed arrow and say "unconfirmed" in its label. Skip the section when the spike has nothing to draw.>
 ## Estimate
 <size, the files/flows touched, what dominates the effort>
 ## Risks and dependencies
@@ -361,6 +364,7 @@ Use one of these instead when it applies:
 
 ### Root cause — confirmed | probable | not found
 <1–2 sentences: the MECHANISM — the first wrong value, branch or timing, and why the symptom followed — anchored to \`path/from/repo/root.ts:L18-L32\`. Then "Evidence: E1, E3" using ids the run RECORDED (a failing run, a probe's values, the fix reverted). Not the crash site unless that is where the wrong value begins.>
+When the report says it USED TO WORK, add one line: "Introduced by \`abc1234\` (date, author — subject)" from git history, or "History did not show an introducing commit."
 Use **confirmed** only when: the repro failed before the fix, passes after it, and fails again with the fix reverted (counterfactual_check). Use **probable** when the evidence points here but one check is missing — then name that single check. Use **not found** when it is not established, listing what was ruled out. Never write "confirmed" without those; an honest "probable" is a good ending, a wrong "confirmed" is the worst one.
 
 ### Fix  (omit when nothing changed)
@@ -388,8 +392,15 @@ Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\`; a work ite
  * being able to state it for a bug — something that ran, not something that read
  * plausibly. See docs/design/debug-mode.md §4.
  */
-function debugModeBlock(planMode: boolean): string {
-  return planMode
+/**
+ * Added to the Debug block when the user's message or the ticket says the thing
+ * used to work: a regression has a commit, and git history can name it.
+ */
+const REGRESSION_BLOCK = `**This was reported as working before — find the commit that broke it.** Start from history, not from the code as it is now: \`git_log\` the files in the failing path (recent first) and \`git_blame\` the suspect lines. Take the "last good" point from what the report gives (a date, a release, a version, "since the last deploy") and check the commits after it. With a deterministic repro command and a known-good commit, \`git_bisect\` names the commit for you (clean working tree, before you edit). If the report gives no point you can use, ask the user with \`ask_user\`. Then read that commit's diff and find which line made it fail — that line is the root cause. Name the commit (short hash, date, author, subject) in the report, or say plainly that history did not show one.
+`;
+
+function debugModeBlock(planMode: boolean, regression = false): string {
+  const base = planMode
     ? `## DEBUG MODE — INVESTIGATE, DO NOT MODIFY
 This is a bug and this turn is read-only: find the root cause and propose the fix, change nothing.
 - Anchor first: a stack-trace frame, the exact error message (search_codebase for the string), or the failing test name. Open those file:lines before anything else.
@@ -411,6 +422,7 @@ This is a bug. The deliverable is the MECHANISM that produced the symptom, shown
 8. **Report** in the DEBUG REPORT FORMAT. Say **probable** (naming the one check that would settle it) or **not found** (listing what was ruled out) whenever the proof above is incomplete — that is a finished, honest ending, and it is never a reason to make an edit you cannot justify.
 Probe lines carry the marker ${PROBE_MARKER}:<id>; never write one yourself, never commit one, and never probe a secret.
 `;
+  return regression ? `${base}${REGRESSION_BLOCK}` : base;
 }
 
 function buildTicketBlock(
@@ -781,7 +793,9 @@ Do NOT call edit_file/create_file/delete_file this turn. The user will approve t
   // Debug mode (host-decided: a Bug ticket being worked, or the user's "Debug this"):
   // the protocol block, and the debug report in place of the generic one.
   const debugRun = codebaseToolsEnabled && !!options?.debugMode && !options?.ticketLookupOnly;
-  const debugBlock = debugRun ? debugModeBlock(!!options?.planMode) : '';
+  const debugBlock = debugRun
+    ? debugModeBlock(!!options?.planMode, hasRegressionCue(prompt, ...ticketTexts(options?.ticketContext)))
+    : '';
   const researchRun =
     !!options?.ticketContext && !options?.ticketLookupOnly && isResearchWorkItem(options.ticketContext.type) && !options?.implementMandate;
   const autonomousBlock =

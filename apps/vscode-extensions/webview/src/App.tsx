@@ -35,6 +35,8 @@ import Onboarding from './components/onboarding/Onboarding';
 import SearchableDropdown from './components/settings/SearchableDropdown';
 import type { DropdownOption } from './components/settings/SearchableDropdown';
 import { isDesktopHost, VSCodeAPI } from './vscode';
+import { installDiagramExport } from './utils/diagramExport';
+import { ZoomableImage } from './components/ImageViewer';
 import {
   setModelState,
   useChatStore,
@@ -870,6 +872,9 @@ const App: React.FC = () => {
 
   // Clean up the pump on unmount.
   useEffect(() => () => resetStreamBuffer(), [resetStreamBuffer]);
+  // The Confluence publish step asks this webview to draw mermaid diagrams to images.
+  useEffect(() => installDiagramExport(), []);
+
   useEffect(() => {
     if (!confirmingFull) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setConfirmingFull(false);
@@ -3187,7 +3192,7 @@ const App: React.FC = () => {
                 {pendingAttachments.map((att, i) => (
                   <div key={`${att.name}-${i}`} className='attachment-chip' title={att.name}>
                     {att.kind === 'image' ? (
-                      <img src={att.content} alt={att.name} className='attachment-chip-thumb' />
+                      <ZoomableImage src={att.content} alt={att.name} className='attachment-chip-thumb' />
                     ) : (
                       <svg className='attachment-chip-icon' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
                         <path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' />

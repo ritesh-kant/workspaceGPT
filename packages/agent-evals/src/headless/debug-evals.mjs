@@ -14,6 +14,8 @@
  *        model then settles for "probable" it is delivered as such.
  *   d4 — the repro is run with run_command (whose result does not repeat the
  *        command): it is still recorded as evidence and matched when it goes green.
+ *   d5 — the ticket says it WORKED BEFORE: a "confirmed" without a look at git history
+ *        is sent back, and after git_log the report names the introducing commit.
  *   d3 — an edit before any observation is held once, and a probe observes the
  *        hot value (and is removed) before the cause is named.
  *
@@ -23,6 +25,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 import { runAgent, makeWorkspace } from './agent-smoke.mjs';
 import { startMockModel } from './mock-model.mjs';
 import { buildUnits } from './build-units.mjs';
@@ -33,7 +36,7 @@ const argOf = (name, dflt) => {
   const i = argv.indexOf(`--${name}`);
   return i >= 0 ? argv[i + 1] : dflt;
 };
-const ONLY = argOf('scenarios', 'd1,d2,d3,d4').split(',');
+const ONLY = argOf('scenarios', 'd1,d2,d3,d4,d5,d6').split(',');
 
 const outDir = await buildUnits();
 const writeTools = await import(path.join(outDir, 'agentWriteTools.mjs'));
@@ -67,6 +70,7 @@ const TICKET = {
   description: 'The cart total is short by the price of the last item.',
   reproSteps: '1. Add three items priced 1, 2, 3\n2. Open the cart\n3. Total shows 3, expected 6',
 };
+const REGRESSION_TICKET = { ...TICKET, description: 'The cart total was working before the last release; now it is short by the price of the last item.' };
 const PROMPT = 'Debug bug #1520855 — reproduce it, find the root cause and prove it with something you ran, then fix it with the smallest change and add a regression test.';
 
 // ── the host half the worker talks to, mirroring chatService's methods ─
@@ -179,6 +183,43 @@ const SCRIPTS = {
       { finalContent: '## ✅ Done — fixed\n\n### Root cause — probable\nThe loop bound stops one short (`src/cart.js:L3`), E1 then E2 after the fix.\n' },
     ],
   },
+  d5: {
+    main: [
+      { toolCalls: [{ name: 'read_file', args: { path: 'src/cart.js' } }, { name: 'run_checks', args: { path: 'src/cart.test.js', kind: 'test' } }] },
+      {
+        toolCalls: [
+          { name: 'debug_ledger', args: { action: 'hypothesis', text: 'the loop bound stops one item short', predicts: 'total misses the last price' } },
+          { name: 'debug_ledger', args: { action: 'hypothesis', text: 'a price is parsed wrong', predicts: 'NaN in the total' } },
+        ],
+      },
+      { toolCalls: [{ name: 'debug_ledger', args: { action: 'resolve', id: 'H1', status: 'confirmed', evidence: ['E1'] } }] },
+      // The history is looked at before the first fix edit (the gate asks once; this model complies).
+      { toolCalls: [{ name: 'git_log', args: { path: 'src/cart.js' } }] },
+      { toolCalls: [{ name: 'edit_file', args: { path: 'src/cart.js', oldString: FIX_OLD, newString: FIX_NEW } }] },
+      { toolCalls: [{ name: 'run_checks', args: { path: 'src/cart.test.js', kind: 'test' } }] },
+      { toolCalls: [{ name: 'counterfactual_check', args: { path: 'src/cart.test.js' } }] },
+      { finalContent: REPORT('confirmed', 'E1, E2, E3') + '\nIntroduced by `abc1234` (2026-10-01, dev — "tighten cart loop bound").\n' },
+    ],
+  },
+  d6: {
+    main: [
+      { toolCalls: [{ name: 'read_file', args: { path: 'src/cart.js' } }, { name: 'run_checks', args: { path: 'src/cart.test.js', kind: 'test' } }] },
+      {
+        toolCalls: [
+          { name: 'debug_ledger', args: { action: 'hypothesis', text: 'the loop bound stops one item short', predicts: 'total misses the last price' } },
+          { name: 'debug_ledger', args: { action: 'hypothesis', text: 'a price is parsed wrong', predicts: 'NaN in the total' } },
+        ],
+      },
+      { toolCalls: [{ name: 'debug_ledger', args: { action: 'resolve', id: 'H1', status: 'confirmed', evidence: ['E1'] } }] },
+      // Ignores the history: the first edit is held once and says why.
+      { toolCalls: [{ name: 'edit_file', args: { path: 'src/cart.js', oldString: FIX_OLD, newString: FIX_NEW } }] },
+      { toolCalls: [{ name: 'git_log', args: { path: 'src/cart.js' } }] },
+      { toolCalls: [{ name: 'edit_file', args: { path: 'src/cart.js', oldString: FIX_OLD, newString: FIX_NEW } }] },
+      { toolCalls: [{ name: 'run_checks', args: { path: 'src/cart.test.js', kind: 'test' } }] },
+      { toolCalls: [{ name: 'counterfactual_check', args: { path: 'src/cart.test.js' } }] },
+      { finalContent: REPORT('confirmed', 'E1, E2, E3') },
+    ],
+  },
   d3: {
     main: [
       { toolCalls: [{ name: 'read_file', args: { path: 'src/cart.js' } }] },
@@ -241,6 +282,25 @@ const ORACLES = {
       ['the ledger shows the repro red then green', /red before the fix \(E1\); green after \(E2\)/.test(record.answer ?? '')],
     ];
   },
+  d5: ({ record, mockState }) => {
+    const answer = record.answer ?? '';
+    const regressionBlock = mockState.requests.some((r) => r.messages.some((m) => typeof m.content === 'string' && m.content.includes('find the commit that broke it')));
+    return [
+      ['the prompt told the model to start from git history (the ticket says it worked before)', regressionBlock],
+      ['git_log ran before the first edit', orderOf(record, 'git_log') >= 0 && orderOf(record, 'git_log') < orderOf(record, 'edit_file')],
+      ['"confirmed" delivered clean, with the introducing commit named', /### Root cause — confirmed/.test(answer) && !/Harness note:/.test(answer) && /Introduced by `abc1234`/.test(answer)],
+      ['the ledger shows the history was checked', /Regression: reported as working before — git history was checked/.test(answer)],
+    ];
+  },
+  d6: ({ record, mockState }) => {
+    const answer = record.answer ?? '';
+    const held = mockState.requests.some((r) => r.messages.some((m) => typeof m.content === 'string' && /Debug mode — not edited yet:.*worked before.*git_log/s.test(m.content)));
+    return [
+      ['the first edit was held, and the message asked for the history', held],
+      ['after git_log the same edit went through', callsOf(record, 'git_log').length === 1 && callsOf(record, 'edit_file').length === 1],
+      ['no history-related Harness note on the delivered report', !/never checked/.test(answer)],
+    ];
+  },
   d3: ({ ws, record, mockState }) => {
     const cart = fs.readFileSync(path.join(ws, SEEDED.file), 'utf8');
     const heldMessage = mockState.requests.some((r) => r.messages.some((m) => typeof m.content === 'string' && /Debug mode — not edited yet: no observation yet/.test(m.content)));
@@ -261,7 +321,15 @@ for (const id of ONLY) {
   const script = SCRIPTS[id];
   if (!script) { console.error(`no scenario ${id}`); process.exit(2); }
   const ws = makeWorkspace(FILES);
-  fs.mkdirSync(path.join(ws, '.git'), { recursive: true });
+  const regression = id === 'd5' || id === 'd6';
+  if (regression) {
+    // A real history, so git_log has something to return.
+    const g = (...a) => execFileSync('git', a, { cwd: ws, encoding: 'utf8' });
+    g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+    g('add', '.'); g('commit', '-q', '-m', 'tighten cart loop bound');
+  } else {
+    fs.mkdirSync(path.join(ws, '.git'), { recursive: true });
+  }
   const host = hostFor(ws, log);
   const mock = await startMockModel(script);
   log(`\n▶ ${id}`);
@@ -272,7 +340,7 @@ for (const id of ONLY) {
     {
       provider: 'Custom', baseUrl: mock.baseUrl, modelId: 'mock-model', apiKey: 'MOCK', apiKeys: ['MOCK'],
       harnessProfile: 'strong-model',
-      ticketContext: TICKET, autonomous: true, debugMode: true,
+      ticketContext: regression ? REGRESSION_TICKET : TICKET, autonomous: true, debugMode: true,
       toolAvailability: { codebase: true, confluence: false, tickets: false, debug: true },
     },
     host.tools,

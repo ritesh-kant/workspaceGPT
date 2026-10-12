@@ -302,6 +302,9 @@ interface UiFrame {
   .wgpt-md th,.wgpt-md td{border:1px solid var(--vscode-widget-border);padding:4px 10px}
   .wgpt-md blockquote{margin-left:0;padding-left:12px;border-left:3px solid var(--vscode-widget-border);color:var(--vscode-descriptionForeground)}
   .wgpt-md a{color:var(--vscode-textLink-foreground)}
+  .wgpt-mermaid{overflow-x:auto;text-align:center}
+  .wgpt-mermaid svg{max-width:100%;height:auto}
+  .wgpt-mermaid-err{font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:4px}
   body.wgpt-diff-open{--wgpt-dock:min(55vw,900px)}
   body.wgpt-diff-open #root{margin-right:var(--wgpt-dock)}
   .wgpt-diff-open .wgpt-layer{right:calc(var(--wgpt-dock) + 12px)}
@@ -505,6 +508,45 @@ interface UiFrame {
   let diffView: 'diff' | 'preview' = 'diff';
   // html:false — the file is the agent's output, so raw HTML in it is never injected.
   const md = new MarkdownIt({ html: false, linkify: true });
+  // A ```mermaid block becomes a placeholder holding its source; renderDiagrams()
+  // swaps in the SVG. Until then (or if rendering fails) the source stays readable.
+  const defaultFence = md.renderer.rules.fence;
+  md.renderer.rules.fence = (tokens, i, opts, env, self) => {
+    const tok = tokens[i];
+    if (tok.info.trim().toLowerCase() !== 'mermaid') return defaultFence ? defaultFence(tokens, i, opts, env, self) : self.renderToken(tokens, i, opts);
+    return `<div class="wgpt-mermaid" data-state="pending"><pre><code>${md.utils.escapeHtml(tok.content)}</code></pre></div>`;
+  };
+  let mermaidLoad: Promise<{ render(src: string, dark: boolean): Promise<string> }> | undefined;
+  function loadMermaid() {
+    mermaidLoad ??= new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '/__desktop/mermaid.js';
+      s.onload = () => resolve((window as unknown as { __wgptMermaid: { render(src: string, dark: boolean): Promise<string> } }).__wgptMermaid);
+      s.onerror = () => { mermaidLoad = undefined; reject(new Error('mermaid.js failed to load')); };
+      document.head.appendChild(s);
+    });
+    return mermaidLoad;
+  }
+  async function renderDiagrams(root: HTMLElement): Promise<void> {
+    const blocks = [...root.querySelectorAll<HTMLElement>('.wgpt-mermaid[data-state="pending"]')];
+    if (!blocks.length) return;
+    // Light or dark from the editor background the theme gave the page.
+    const rgb = getComputedStyle(document.body).backgroundColor.match(/\d+/g)?.map(Number) ?? [255, 255, 255];
+    const dark = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) < 128;
+    let mermaid;
+    try { mermaid = await loadMermaid(); } catch { return; }
+    for (const block of blocks) {
+      try {
+        const svg = await mermaid.render(block.querySelector('code')?.textContent ?? '', dark);
+        block.innerHTML = svg;
+        block.dataset.state = 'done';
+      } catch {
+        // Invalid diagram: keep the source and say so instead of showing nothing.
+        block.dataset.state = 'error';
+        block.prepend(el('div', 'wgpt-mermaid-err', 'Could not render this diagram — showing its source.'));
+      }
+    }
+  }
   function diffAction(action: string, idx?: number): void {
     if (!diffFile) return;
     send({ t: 'diff-action', file: diffFile, action, idx });
@@ -587,6 +629,7 @@ interface UiFrame {
       if (diffView === 'preview' && frame.preview !== undefined) {
         const doc = el('div', 'wgpt-md');
         doc.innerHTML = md.render(frame.preview);
+        void renderDiagrams(doc);
         doc.addEventListener('click', (e) => {
           const a = (e.target as HTMLElement).closest('a');
           if (!a) return;

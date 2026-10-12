@@ -81,6 +81,9 @@ export interface CommandResultLike {
 }
 
 export class DebugTracker {
+  /** `regression`: the report says this used to work, so git history should name the commit that broke it. */
+  constructor(private readonly regression = false) {}
+  private historyChecked = false;
   readonly hypotheses: Hypothesis[] = [];
   readonly evidence: Evidence[] = [];
   /** Commands seen failing before any fix landed — candidate repros. */
@@ -140,6 +143,15 @@ export class DebugTracker {
       recorded.push(this.addEvidence('probe', `probe ${id}${p.label ? ` (${p.label})` : ''}${p.path ? ` in ${p.path}` : ''} fired ${p.count}×: ${p.samples.join(' | ')}`));
     }
     return recorded;
+  }
+
+  /** git_log / git_blame / git_bisect produced a result: the history was looked at. */
+  noteGitHistory(): void {
+    this.historyChecked = true;
+  }
+
+  get isRegression(): boolean {
+    return this.regression;
   }
 
   /** The result of the host's `counterfactual_check`. */
@@ -207,6 +219,9 @@ export class DebugTracker {
     if (this.hypotheses.length < 2) {
       missing.push(`${this.hypotheses.length} hypothesis recorded — record at least two competing causes with debug_ledger, each with what it predicts`);
     }
+    if (this.regression && !this.historyChecked) {
+      missing.push('the report says this worked before, so look at the history first — git_log / git_blame on the suspect file, or git_bisect with a known-good commit — for the commit that broke it');
+    }
     return missing.length ? missing.join('; and ') : null;
   }
 
@@ -230,6 +245,9 @@ export class DebugTracker {
             : 'the fix was never reverted to show the repro fails without it (counterfactual_check)'
       );
     }
+    if (this.regression && !this.historyChecked) {
+      issues.push('it was reported as something that used to work, but git history (git_log / git_blame / git_bisect) was never checked for the commit that introduced it');
+    }
     if (this.writes === 0 && !this.evidence.some((e) => e.kind === 'repro-fail' || e.kind === 'probe')) {
       issues.push('nothing executed backs the cause — it rests on reading code');
     }
@@ -250,6 +268,7 @@ export class DebugTracker {
       lines.push('');
       for (const e of this.evidence) lines.push(`- **${e.id}** (${e.kind}) ${brief(e.text)}`);
     }
+    if (this.regression) lines.push('', `Regression: reported as working before — git history ${this.historyChecked ? 'was checked' : 'was NOT checked'}.`);
     lines.push('', `Proof: repro red before the fix ${this.reproFailId ? `(${this.reproFailId})` : '— not recorded'}; green after ${this.reproPassId ? `(${this.reproPassId})` : '— not recorded'}; red with the fix reverted ${this.counterfactual === 'red' ? '— yes' : this.counterfactual === 'green' ? '— NO (still passes)' : '— not checked'}.`);
     return lines.join('\n');
   }

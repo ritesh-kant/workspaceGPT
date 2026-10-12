@@ -1871,7 +1871,10 @@ export class ChatService {
       case 'update_confluence_page':
         return this.gatedConfluenceWrite(run, await prepareConfluenceEdit(this.context, args));
       case 'create_confluence_page':
-        return this.gatedConfluenceWrite(run, await prepareConfluenceCreate(this.context, args));
+        return this.gatedConfluenceWrite(
+          run,
+          await prepareConfluenceCreate(this.context, args, { renderDiagrams: (sources) => this.renderDiagrams(sources) })
+        );
       case 'find_confluence_location':
         return this.findConfluenceLocation(args);
       case 'ask_user':
@@ -2351,9 +2354,14 @@ export class ChatService {
         added: diff.added,
         removed: diff.removed,
         note:
-          write.kind === 'confluence-create' && applied.status === 'draft'
+          (write.kind === 'confluence-create' && applied.status === 'draft'
             ? 'Created as a draft — only the user can see it until they publish it from Confluence. Give them the link.'
-            : 'Saved as a new page version — the previous one stays in the page history. Give the user the link.',
+            : 'Saved as a new page version — the previous one stays in the page history. Give the user the link.') +
+          (applied.diagrams
+            ? applied.diagrams.attached
+              ? ` ${applied.diagrams.attached} diagram(s) were attached as images (the Mermaid source is kept in a collapsed section).`
+              : ` Diagram NOT attached as an image: ${applied.diagrams.error} Tell the user.`
+            : ''),
       };
     } catch (e) {
       if (id) this.postWriteOutcome(run, id, 'failed');
@@ -2709,6 +2717,36 @@ export class ChatService {
       roots.find((candidate) => candidate.uri.fsPath === rootPath) ??
       (rootPath ? { name: path.basename(rootPath), uri: vscode.Uri.file(rootPath) } : roots[0]);
     return this.checkpointsFor(root).revertTo(sha);
+  }
+
+  private pendingDiagramRenders = new Map<string, (images: ({ png: string; width: number; height: number } | null)[]) => void>();
+
+  /**
+   * Mermaid → PNG, drawn by the webview (the host has no DOM). Never rejects: no answer in time
+   * (webview closed, renderer failed) is a list of nulls, and the caller leaves the diagram as code.
+   */
+  private renderDiagrams(sources: string[]): Promise<({ png: Uint8Array; width: number; height: number } | null)[]> {
+    const none = sources.map(() => null);
+    return new Promise((resolve) => {
+      const id = randomUUID();
+      const timer = setTimeout(() => {
+        this.pendingDiagramRenders.delete(id);
+        resolve(none);
+      }, 45_000);
+      this.pendingDiagramRenders.set(id, (images) => {
+        clearTimeout(timer);
+        resolve(sources.map((_, i) => (images?.[i]?.png ? { ...images[i]!, png: Buffer.from(images[i]!.png, 'base64') } : null)));
+      });
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.RENDER_DIAGRAMS_REQUEST, id, sources });
+    });
+  }
+
+  /** Webview RENDER_DIAGRAMS_RESPONSE handler. */
+  public resolveDiagramRender(id: string, images: ({ png: string; width: number; height: number } | null)[]): void {
+    const done = this.pendingDiagramRenders.get(id);
+    if (!done) return;
+    this.pendingDiagramRenders.delete(id);
+    done(Array.isArray(images) ? images : []);
   }
 
   /** Webview AGENT_WRITE_DECISION handler — resolves the parked write gate. */
@@ -3542,9 +3580,16 @@ Query: "${query}"`;
               // A research ticket's run that wrote its spike document gets a
               // "Publish to Confluence" action on the card — from facts (the
               // ticket's type, the file the run created), not the answer's wording.
+              // The record keeps only the LAST kind per path, so a doc the run
+              // created and then refined reads as an 'edit', and a re-run of the
+              // spike (create_file refuses an existing file) can only edit — both
+              // lost the button. The spike document's location is fixed by the
+              // prompt, so a touched .md there counts too.
               const spikeDocPath =
                 ticketContext && isResearchWorkItem(ticketContext.type)
-                  ? [...run.turnFilesChanged.values()].find((f) => f.kind === 'create' && /\.md$/i.test(f.path))?.path
+                  ? [...run.turnFilesChanged.values()].find(
+                      (f) => f.kind !== 'delete' && /\.md$/i.test(f.path) && (f.kind === 'create' || /(^|\/)docs\/spikes\//.test(f.path.replace(/\\/g, '/'))),
+                    )?.path
                   : undefined;
               // Honesty gate: an id the answer cites that nothing this session
               // read is flagged on the card instead of linked. The record is

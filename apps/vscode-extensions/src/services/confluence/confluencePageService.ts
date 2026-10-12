@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ConfluenceAuthService, ConfluenceSite } from './confluenceAuthService';
 import { resolveConfluenceWebUrl } from './confluenceWebUrl';
-import { AdfDoc, adfToMarkdown, editPage, EditMode, markdownToAdf } from './confluenceAdf';
+import { AdfDoc, adfToMarkdown, attachDiagrams, editPage, EditMode, markdownToAdf, mermaidSources, UploadedDiagram } from './confluenceAdf';
 
 export interface ConfluencePageDetail {
   id: string;
@@ -64,7 +64,16 @@ export const CONFLUENCE_WRITE_SCOPE = 'write:page:confluence';
 interface ConfluenceApi {
   site: ConfluenceSite;
   call<T = any>(path: string, init?: { method?: string; body?: unknown }): Promise<T>;
+  /** Upload a file to a page (v1 REST: v2 has no attachment upload). Resolves to the media-node reference. */
+  attach(pageId: string, filename: string, bytes: Uint8Array, mime: string): Promise<{ fileId: string; collection: string }>;
 }
+
+/**
+ * Uploading an attachment is a v1-only endpoint. Atlassian's granular scopes do not cover it for OAuth;
+ * the classic one does. It must be enabled on the Atlassian app and the user must reconnect before
+ * uploads work — until then the upload is refused (401/403) and the page keeps the diagram as code.
+ */
+export const CONFLUENCE_ATTACH_SCOPE = 'write:confluence-file';
 
 /** One authenticated Confluence v2 API client for this call — same OAuth session as the docs index. */
 async function confluenceApi(context: vscode.ExtensionContext): Promise<ConfluenceApi> {
@@ -95,6 +104,27 @@ async function confluenceApi(context: vscode.ExtensionContext): Promise<Confluen
       const err = new Error(`Confluence ${init?.method ?? 'GET'} ${path.split('?')[0]} failed (${res.status}): ${body.slice(0, 300)}`);
       (err as any).status = res.status;
       throw err;
+    },
+    async attach(pageId, filename, bytes, mime) {
+      const token = await auth.getValidAccessToken();
+      const form = new FormData();
+      form.append('file', new Blob([bytes], { type: mime }), filename);
+      form.append('minorEdit', 'true');
+      const res = await fetch(`https://api.atlassian.com/ex/confluence/${site.id}/wiki/rest/api/content/${pageId}/child/attachment`, {
+        method: 'POST',
+        // Without this header Confluence refuses a multipart upload as possible CSRF.
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-Atlassian-Token': 'no-check' },
+        body: form,
+      });
+      if (!res.ok) {
+        const err = new Error(`Confluence attachment upload failed (${res.status}): ${(await res.text().catch(() => '')).slice(0, 200)}`);
+        (err as any).status = res.status;
+        throw err;
+      }
+      const data: any = await res.json();
+      const ext = data?.results?.[0]?.extensions ?? data?.extensions;
+      if (!ext?.fileId) throw new Error('Confluence accepted the upload but returned no media file id.');
+      return { fileId: String(ext.fileId), collection: String(ext.collectionName ?? `contentId-${pageId}`) };
     },
   };
 }
@@ -199,7 +229,16 @@ export interface PreparedConfluenceWrite {
   after: string;
   /** Page to open from the card (the page itself, or the parent for a create). */
   url: string;
-  apply: () => Promise<{ applied: true; id: string; title: string; url: string; version?: number; status?: string }>;
+  apply: () => Promise<{
+    applied: true;
+    id: string;
+    title: string;
+    url: string;
+    version?: number;
+    status?: string;
+    /** Mermaid blocks turned into images on the page (create only). */
+    diagrams?: { attached: number; total: number; error?: string };
+  }>;
 }
 
 /**
@@ -333,10 +372,65 @@ async function resolveLocation(
   return { spaceId: String(space.id), spaceKey: space.key };
 }
 
+/** A diagram rendered to a PNG by whoever has a DOM (the webview); null when it could not be. */
+export interface RenderedDiagram {
+  png: Uint8Array;
+  width: number;
+  height: number;
+}
+
+/**
+ * After the page exists: render its mermaid blocks, attach them and swap each block for its image.
+ * Best effort by design — the page was already created with the diagram as a code block, so any
+ * failure here (no scope, no renderer, a rejected update) leaves a valid page and is reported, not thrown.
+ */
+async function attachPageDiagrams(
+  api: ConfluenceApi,
+  pageId: string,
+  title: string,
+  status: string,
+  version: number,
+  doc: AdfDoc,
+  render: (sources: string[]) => Promise<(RenderedDiagram | null)[]>
+): Promise<{ attached: number; total: number; error?: string }> {
+  const sources = mermaidSources(doc);
+  if (!sources.length) return { attached: 0, total: 0 };
+  try {
+    const rendered = await render(sources);
+    const uploaded: (UploadedDiagram | null)[] = [];
+    for (const [i, r] of rendered.entries()) {
+      uploaded.push(r ? { ...(await api.attach(pageId, `diagram-${i + 1}.png`, r.png, 'image/png')), width: r.width, height: r.height } : null);
+    }
+    const attached = uploaded.filter(Boolean).length;
+    if (!attached) return { attached: 0, total: sources.length, error: 'The diagram could not be rendered to an image, so it stays on the page as code.' };
+    await api.call(`/pages/${pageId}`, {
+      method: 'PUT',
+      body: {
+        id: pageId,
+        status,
+        title,
+        body: { representation: 'atlas_doc_format', value: JSON.stringify(attachDiagrams(doc, uploaded)) },
+        version: { number: version + 1, message: 'Diagrams attached by WorkspaceGPT' },
+      },
+    });
+    return { attached, total: sources.length };
+  } catch (e: any) {
+    const denied = e?.status === 401 || e?.status === 403;
+    return {
+      attached: 0,
+      total: sources.length,
+      error: denied
+        ? `Confluence refused the diagram upload (${e.status}) — the connection lacks the attachment permission (${CONFLUENCE_ATTACH_SCOPE}); reconnect Confluence once it is enabled. The diagram stays on the page as code.`
+        : `Could not attach the diagram image (${e?.message ?? e}); it stays on the page as code.`,
+    };
+  }
+}
+
 /** A new page from markdown — a draft unless `publish` is set. */
 export async function prepareConfluenceCreate(
   context: vscode.ExtensionContext,
-  args: { title?: string; markdown?: string; spaceKey?: string; parentId?: string; publish?: boolean }
+  args: { title?: string; markdown?: string; spaceKey?: string; parentId?: string; publish?: boolean },
+  opts?: { renderDiagrams?: (sources: string[]) => Promise<(RenderedDiagram | null)[]> }
 ): Promise<PreparedConfluenceWrite> {
   const title = String(args?.title ?? '').trim();
   if (!title) throw new Error('title is required.');
@@ -380,7 +474,12 @@ export async function prepareConfluenceCreate(
           },
         });
         const url = webUrl(api.site, created?._links) || webUrl(api.site, { webui: created?._links?.editui });
-        return { applied: true, id: String(created?.id ?? ''), title, url, version: created?.version?.number, status };
+        const id = String(created?.id ?? '');
+        const diagrams =
+          id && opts?.renderDiagrams
+            ? await attachPageDiagrams(api, id, title, status, created?.version?.number ?? 1, doc, opts.renderDiagrams)
+            : undefined;
+        return { applied: true, id, title, url, version: created?.version?.number, status, ...(diagrams?.total ? { diagrams } : {}) };
       } catch (e: any) {
         if (e?.status === 403) throw new Error(`Confluence refused to create the page (403) — the user may not have permission to add pages in ${loc.spaceKey}.`);
         throw e;

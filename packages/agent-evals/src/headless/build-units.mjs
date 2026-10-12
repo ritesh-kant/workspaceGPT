@@ -52,6 +52,7 @@ const UNITS = [
   'src/workers/model/contextBudget.ts',
   'src/workers/model/autoVerify.ts',
   'src/workers/model/debugState.ts',
+  'src/utils/regressionCue.ts',
   'src/services/agent/debugProbes.ts',
   'src/services/agent/debugService.ts',
   'src/services/tickets/attachmentText.ts',

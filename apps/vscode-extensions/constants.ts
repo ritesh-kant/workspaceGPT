@@ -84,6 +84,9 @@ export const MESSAGE_TYPES = {
   // every write is human-approved before it touches the workspace.
   AGENT_WRITE_REVIEW: 'agent-write-review',
   AGENT_WRITE_DECISION: 'agent-write-decision',
+  // Host asks the webview (the only place with a DOM) to draw mermaid sources to PNGs; it answers with the images.
+  RENDER_DIAGRAMS_REQUEST: 'render-diagrams-request',
+  RENDER_DIAGRAMS_RESPONSE: 'render-diagrams-response',
   // Host → webview: every parked review was auto-rejected (stop/worker death);
   // cards should collapse their buttons instead of dangling as live no-ops.
   AGENT_WRITE_REVIEWS_CLOSED: 'agent-write-reviews-closed',
@@ -1385,6 +1388,7 @@ export function publishSpikePrompt(path: string, ticketId: string): string {
     `Publish the spike document \`${path}\` for #${ticketId} to Confluence. Read the file first. ` +
     'Find the format our existing spike pages use (open 2–3 recent ones in the space) and follow it; ' +
     'if there is no clear format, ask me for a template page URL. ' +
+    'Keep any ```mermaid block exactly as it is — it is drawn and attached to the page as an image. ' +
     'Ask me where the page should go before creating it, then create it as a draft for me to review.'
   );
 }

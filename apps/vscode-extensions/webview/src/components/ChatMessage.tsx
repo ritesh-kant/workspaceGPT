@@ -3,6 +3,7 @@ import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import CodeBlock from './CodeBlock';
+import { ZoomableImage } from './ImageViewer';
 import AgentTimeline, { formatDuration } from './AgentTimeline';
 import FilesChangedBar from './FilesChangedBar';
 import InlineFileRef from './InlineFileRef';
@@ -246,6 +247,7 @@ const MARKDOWN_COMPONENTS = {
   td: VerdictTd,
   table: ReportTable,
   a: ChatLink,
+  img: ZoomableImage,
 };
 
 /**
@@ -508,7 +510,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             <div className="message-attachments">
               {attachments.map((att, i) =>
                 att.kind === 'image' ? (
-                  <img
+                  <ZoomableImage
                     key={`${att.name}-${i}`}
                     src={att.content}
                     alt={att.name}

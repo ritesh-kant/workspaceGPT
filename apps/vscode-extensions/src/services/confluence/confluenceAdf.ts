@@ -706,6 +706,47 @@ export function markdownToAdf(markdown: string): AdfDoc {
   return { type: 'doc', version: 1, content: markdownToAdfBlocks(markdown) };
 }
 
+// ─────────────────────────── diagrams ───────────────────────────
+
+/** A diagram image already uploaded to the page, as Confluence's media node names it. */
+export interface UploadedDiagram {
+  fileId: string;
+  collection: string;
+  width: number;
+  height: number;
+}
+
+const isMermaid = (n: AdfNode) => n.type === 'codeBlock' && String(n.attrs?.language ?? '').toLowerCase() === 'mermaid';
+const blockText = (n: AdfNode) => (n.content ?? []).map((c) => c.text ?? '').join('');
+
+/** Source of each top-level ```mermaid block, in page order (nested ones are left as code). */
+export function mermaidSources(doc: AdfDoc): string[] {
+  return doc.content.filter(isMermaid).map(blockText);
+}
+
+/**
+ * Swaps each top-level mermaid block for its image (`images[i]` pairs with the
+ * i-th block; null keeps the block as it is), and keeps the source on the page
+ * in a collapsed "Diagram source" section so the diagram stays editable.
+ */
+export function attachDiagrams(doc: AdfDoc, images: (UploadedDiagram | null)[]): AdfDoc {
+  let i = 0;
+  const content = doc.content.flatMap((n): AdfNode[] => {
+    if (!isMermaid(n)) return [n];
+    const img = images[i++];
+    if (!img) return [n];
+    return [
+      {
+        type: 'mediaSingle',
+        attrs: { layout: 'center' },
+        content: [{ type: 'media', attrs: { id: img.fileId, type: 'file', collection: img.collection, width: img.width, height: img.height } }],
+      },
+      { type: 'expand', attrs: { title: 'Diagram source (Mermaid)' }, content: [n] },
+    ];
+  });
+  return { ...doc, content };
+}
+
 // ─────────────────────────── sections & edits ───────────────────────────
 
 interface Section {

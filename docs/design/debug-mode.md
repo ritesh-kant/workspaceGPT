@@ -152,6 +152,24 @@ cause two layers from the symptom, decoy cause nearby. Score: root cause
 matches the seeded location, repro before edit, counterfactual passes, no probe
 in the final diff, and false "confirmed" claims (the number that matters most).
 
+## 9a. "It worked before": regression cue
+
+If the user's message or the ticket's own words say it used to work ("was working
+before the last release", "stopped working", "since the upgrade", "regression"),
+Debug mode adds a **find the commit that broke it** paragraph to the protocol:
+`git_log` the failing path, `git_blame` the suspect lines, take the last-good point
+from the report (or `ask_user`), and `git_bisect` when there is a deterministic
+repro. Detection lives in `src/utils/regressionCue.ts` and only ADDS: the git tools
+are always offered in Debug mode, and a missed phrase costs a hint, never a
+capability. A bare "regression test" does not count (the bug button's own prompt
+says it).
+
+With the cue set, the first fix edit is held once until git history was looked at
+(any `git_log` / `git_blame` / `git_bisect` result), a "confirmed" root cause
+without that gets the usual send-back then a Harness note, the report format asks
+for an "Introduced by `<hash>` (date, author — subject)" line, and the harness
+ledger says whether history was checked. Scenarios d5 and d6 in `debug-evals`.
+
 ## 9. Not verified
 
 No live run with a real model. Scripted runs prove the harness mechanisms fire in
