@@ -668,7 +668,7 @@
 .composer-card:focus-within {
   border-color: var(--vscode-focusBorder);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  transform: translateY(-1px);
+  /* No lift: the window regaining focus re-matches this and the card would hop on every app switch. */
 }
 
 .input-wrapper {

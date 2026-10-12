@@ -43,10 +43,15 @@ fn token_script(token: &str) -> String {
 
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(MAIN) {
+        // Dock clicks and the tray also land here with the window already up; the
+        // zoom nudge then visibly scales the whole window for nothing.
+        let was_away = !w.is_visible().unwrap_or(true) || w.is_minimized().unwrap_or(false);
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
-        refresh_zoom(app);
+        if was_away {
+            refresh_zoom(app);
+        }
     }
 }
 
