@@ -28,6 +28,7 @@ export async function recordRecentFolder(context: vscode.ExtensionContext, folde
 }
 
 const DEFAULT_FOLDER_KEY = 'workspacegpt.defaultFolder';
+const ALWAYS_ASK_FOLDER_KEY = 'workspacegpt.alwaysAskFolder';
 const PENDING_START_KEY = 'workspacegpt.pendingFolderStart';
 /** A start older than this was not followed by the reload it was saved for. */
 const PENDING_START_TTL_MS = 2 * 60 * 1000;
@@ -36,6 +37,15 @@ const PENDING_START_TTL_MS = 2 * 60 * 1000;
 export function getDefaultFolder(context: vscode.ExtensionContext): string | undefined {
   const stored = context.globalState.get<string>(DEFAULT_FOLDER_KEY);
   return stored && isDirectory(stored) ? stored : undefined;
+}
+
+/** Whether every ticket start asks which folder to use; off unless the user turned it on. */
+export function getAlwaysAskFolder(context: vscode.ExtensionContext): boolean {
+  return context.globalState.get<boolean>(ALWAYS_ASK_FOLDER_KEY) === true;
+}
+
+export async function setAlwaysAskFolder(context: vscode.ExtensionContext, value: boolean): Promise<void> {
+  await context.globalState.update(ALWAYS_ASK_FOLDER_KEY, value);
 }
 
 /** Stores `folder` (`~` expanded) as the default folder, or clears it when undefined. */

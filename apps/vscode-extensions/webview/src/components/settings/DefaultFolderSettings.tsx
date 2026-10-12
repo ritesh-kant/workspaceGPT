@@ -22,7 +22,7 @@ import StatusDot from "./StatusDot";
  * or a typed path; the host checks the path is a folder.
  */
 const DefaultFolderSettings: React.FC = () => {
-  const { current, recent, home, defaultFolder } = useWorkspaceFolders();
+  const { current, recent, home, defaultFolder, alwaysAsk } = useWorkspaceFolders();
   const [error, setError] = useState<string | null>(null);
   const [closeSignal, setCloseSignal] = useState(0);
 
@@ -135,6 +135,28 @@ const DefaultFolderSettings: React.FC = () => {
               </>
             )}
           </div>
+        </div>
+        <div className="form-group">
+          <div className="default-folder-row">
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={alwaysAsk}
+                onChange={(e) =>
+                  VSCodeAPI().postMessage({
+                    type: MESSAGE_TYPES.SET_ALWAYS_ASK_FOLDER,
+                    value: e.target.checked,
+                  })
+                }
+              />
+              <span className="slider round"></span>
+            </label>
+            <span>Always ask which folder to use</span>
+          </div>
+          <small className="form-text">
+            Show the folder choice every time you start a ticket, even when
+            the default folder is open.
+          </small>
         </div>
         {error && (
           <div className="workspace-controls-error" role="alert">

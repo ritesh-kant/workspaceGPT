@@ -55,6 +55,8 @@ import { modelDefaultConfig } from './store/modelStore';
 import { RESUME_MESSAGE, RUN_PLAN_MESSAGE } from '../../src/utils/continuationIntent';
 import ComposerPlusMenu from './components/ComposerPlusMenu';
 import { looksLikeBugReport } from './utils/bugReportHint';
+import { matchSlashCommands, parseSlashCommand, slashQuery, type SlashCommand } from './utils/slashCommands';
+import SlashCommandPicker from './components/SlashCommandPicker';
 import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS, isResearchWorkItem, researchWorkItemPrompt, publishSpikePrompt, isBugWorkItem, debugWorkItemPrompt } from './constants';
 import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
@@ -448,6 +450,14 @@ const App: React.FC = () => {
   const [debugOn, setDebugOn] = useState(false);
   // The "Debug this?" suggestion was waved away for the current draft.
   const [debugHintDismissed, setDebugHintDismissed] = useState(false);
+  // Sessions already being worked in Debug mode: a follow-up there needs no "Debug this?".
+  const debugSessionsRef = useRef<Set<string>>(new Set());
+  /** Does this text name one of the listed Bug-type tickets? Those enter Debug mode on their own. */
+  const namesBugTicket = (text: string): boolean =>
+    myWorkItems.some((it) => isBugWorkItem(it.type) && new RegExp(`(^|[^A-Za-z0-9-])${it.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9]|$)`).test(text));
+  // "/" command picker: highlighted row, and whether Escape closed it for this draft.
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
   const setChatModePersisted = (next: ChatMode) => {
     setChatMode(next);
     if (next !== 'plan') setLastPermission(next);
@@ -869,7 +879,10 @@ const App: React.FC = () => {
 
   // A new draft gets a fresh "Debug this?" suggestion.
   useEffect(() => {
-    if (!inputValue.trim()) setDebugHintDismissed(false);
+    if (!inputValue.trim()) {
+      setDebugHintDismissed(false);
+      setSlashDismissed(false);
+    }
   }, [inputValue]);
 
   useEffect(() => {
@@ -1837,6 +1850,10 @@ const App: React.FC = () => {
     stoppedSessionsRef.current.delete(sessionId);
 
     const mentions = activeMentions(inputValue, pickedMentionsRef.current);
+    // From here on this chat is a Debug one: the explicit chip/command, a "Debug bug #id" prompt, or a Bug ticket named.
+    if ((debugOn && assistantMode !== 'chat') || /^Debug bug #/i.test(inputValue) || namesBugTicket(inputValue)) {
+      debugSessionsRef.current.add(sessionId);
+    }
 
     addMessage({
       content: inputValue,
@@ -1947,7 +1964,27 @@ const App: React.FC = () => {
     }, 120);
   };
 
+  // "/" commands (Work mode only): the picker, and "/debug " typed or pasted in full.
+  const slashInWork = assistantMode === 'work';
+  const slashMatches = slashInWork && !slashDismissed && mentionQuery === null ? matchSlashCommands(slashQuery(inputValue) ?? '\u0000') : [];
+  const runSlashCommand = (command: string, rest: string) => {
+    if (command === 'debug') setDebugOn(true);
+    setInputValue(rest);
+    setSlashIndex(0);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(rest.length, rest.length);
+    });
+  };
+  const pickSlashCommand = (c: SlashCommand) => runSlashCommand(c.name, '');
+
   const handleComposerChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const parsed = slashInWork ? parseSlashCommand(e.target.value) : null;
+    if (parsed) {
+      runSlashCommand(parsed.command, parsed.rest);
+      return;
+    }
+    setSlashIndex(0);
     setInputValue(e.target.value);
     syncMentionPicker(e.target.value, e.target.selectionStart ?? e.target.value.length);
   };
@@ -2004,6 +2041,24 @@ const App: React.FC = () => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // The "/" picker owns the same keys the @ picker does while it is open.
+    if (slashMatches.length && !e.nativeEvent.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashIndex((i) => (i + (e.key === 'ArrowDown' ? 1 : -1) + slashMatches.length) % slashMatches.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        pickSlashCommand(slashMatches[Math.min(slashIndex, slashMatches.length - 1)]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashDismissed(true);
+        return;
+      }
+    }
     // While the mention picker is open it owns the navigation keys — Enter
     // must pick a file rather than send the half-typed message.
     if (mentionQuery !== null && !e.nativeEvent.isComposing) {
@@ -2195,6 +2250,7 @@ const App: React.FC = () => {
       currentSessionIdRef.current = sessionId;
     }
     stoppedSessionsRef.current.delete(sessionId);
+    if (isBugWorkItem(item.type)) debugSessionsRef.current.add(sessionId);
     addMessage({ content: promptText, isUser: true });
     setInputValue('');
     setIsLoading(true);
@@ -2572,8 +2628,8 @@ const App: React.FC = () => {
    * folder yet, ask to set one or carry on in the open folder.
    */
   const startTicket = (start: TicketStart) => {
-    const { loaded, current, defaultFolder } = workspaceFolders;
-    if (loaded && !sameFolder(current, defaultFolder)) {
+    const { loaded, current, defaultFolder, alwaysAsk } = workspaceFolders;
+    if (loaded && (alwaysAsk || !sameFolder(current, defaultFolder))) {
       setFolderSwitchStart(start);
       return;
     }
@@ -3097,6 +3153,11 @@ const App: React.FC = () => {
             </div>
           )}
           <div className='input-wrapper'>
+            {/* The text box is its own card; the controls sit on a row beneath it. */}
+            <div className='composer-card'>
+            {slashMatches.length > 0 && (
+              <SlashCommandPicker commands={slashMatches} query={slashQuery(inputValue) ?? ''} activeIndex={Math.min(slashIndex, slashMatches.length - 1)} onSelect={pickSlashCommand} onHoverIndex={setSlashIndex} />
+            )}
             {mentionQuery !== null && (
               <MentionPicker
                 targets={mentionTargets}
@@ -3149,7 +3210,13 @@ const App: React.FC = () => {
             )}
             {attachmentNote && <div className='attachment-note'>{attachmentNote}</div>}
             {/* A suggestion only: it arms the same one-shot Debug as "+ → Debug a bug", and never on its own. */}
-            {isWorkMode && !debugOn && !debugHintDismissed && looksLikeBugReport(inputValue) && (
+            {isWorkMode &&
+              !debugOn &&
+              !debugHintDismissed &&
+              !(currentSessionId && debugSessionsRef.current.has(currentSessionId)) &&
+              !/^Debug bug #/i.test(inputValue) &&
+              !namesBugTicket(inputValue) &&
+              looksLikeBugReport(inputValue) && (
               <div className='debug-hint' role='status'>
                 <span>Looks like a bug report.</span>
                 <button type='button' className='debug-hint-accept' onClick={() => setDebugOn(true)}>
@@ -3186,6 +3253,33 @@ const App: React.FC = () => {
                     : 'Please configure a model in Settings to start chatting...'
               }
             />
+              <div className='input-actions'>
+                {isLoading || isStreaming ? (
+                  <button
+                    onClick={handleStopMessage}
+                    className='stop-button action-btn'
+                    aria-label='Stop generation'
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--vscode-errorForeground, #f48771)', cursor: 'pointer' }}
+                  >
+                    <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                      <rect x='6' y='6' width='12' height='12' rx='2' fill='currentColor' />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={!inputValue.trim() && pendingAttachments.length === 0}
+                    className='send-button action-btn'
+                    aria-label='Send message'
+                  >
+                    <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                      <path d='M22 2L11 13' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                      <path d='M22 2L15 22L11 13L2 9L22 2Z' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
             <div className='input-controls'>
               <div className='input-selectors'>
                 <input
@@ -3271,17 +3365,16 @@ const App: React.FC = () => {
                     </div>
                   </>
                 )}
+              </div>
+              {/* Bottom-right, under the card: model, effort, then the context indicator. */}
+              <div className='input-selectors-right'>
                 {mode === 'local' && (
                   <div className='model-selector-bottom'>
                     <SearchableDropdown
                       value={`model:${selectedModelProvider?.selectedModel ?? ''}`}
                       searchPlaceholder='Search models...'
                       emptyLabel='No matching models'
-                      triggerLabel={
-                        selectedModelProvider?.selectedModel
-                          ? `${selectedModelProvider.provider} (${selectedModelProvider.selectedModel})`
-                          : 'Select Model'
-                      }
+                      triggerLabel={selectedModelProvider?.selectedModel || 'Select Model'}
                       onChange={(value) => {
                         if (value === 'selectModel' || value === 'none') {
                           setActiveView('settings');
@@ -3339,37 +3432,11 @@ const App: React.FC = () => {
                     />
                   </div>
                 )}
-              </div>
-              <div className='input-actions'>
                 <ContextMeter
                   usage={contextUsage}
                   modelId={mode === 'local' ? selectedModelProvider?.selectedModel : 'glm-5.3-flash'}
                   running={isLoading || isStreaming}
                 />
-                {isLoading || isStreaming ? (
-                  <button
-                    onClick={handleStopMessage}
-                    className='stop-button action-btn'
-                    aria-label='Stop generation'
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--vscode-errorForeground, #f48771)', cursor: 'pointer' }}
-                  >
-                    <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-                      <rect x='6' y='6' width='12' height='12' rx='2' fill='currentColor' />
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSendMessage}
-                    disabled={!inputValue.trim() && pendingAttachments.length === 0}
-                    className='send-button action-btn'
-                    aria-label='Send message'
-                  >
-                    <svg width='16' height='16' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-                      <path d='M22 2L11 13' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-                      <path d='M22 2L15 22L11 13L2 9L22 2Z' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-                    </svg>
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -3383,6 +3450,7 @@ const App: React.FC = () => {
             }
             current={workspaceFolders.current}
             defaultFolder={workspaceFolders.defaultFolder}
+            alwaysAsk={workspaceFolders.alwaysAsk}
             recent={workspaceFolders.recent}
             home={workspaceFolders.home}
             resume={folderSwitchStart}

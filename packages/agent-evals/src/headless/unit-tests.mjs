@@ -5401,6 +5401,22 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     }
   });
 
+  await t('slash commands: /debug is offered while the word is being typed and runs only when complete and followed by text', async () => {
+    const sc = await import(path.join(outDir, 'slashCommands.mjs'));
+    assert.equal(sc.slashQuery('/'), '');
+    assert.equal(sc.slashQuery('/debu'), 'debu');
+    assert.equal(sc.slashQuery('/debug the crash'), null, 'once there is a space the word is finished');
+    assert.equal(sc.slashQuery('see /debug'), null);
+    assert.equal(sc.slashQuery('src/app/debug'), null);
+    assert.deepEqual(sc.matchSlashCommands('de').map((c) => c.name), ['debug']);
+    assert.deepEqual(sc.matchSlashCommands('x'), []);
+    assert.deepEqual(sc.parseSlashCommand('/debug the login page throws'), { command: 'debug', rest: 'the login page throws' });
+    assert.deepEqual(sc.parseSlashCommand('/DEBUG '), { command: 'debug', rest: '' });
+    assert.equal(sc.parseSlashCommand('/debug'), null, 'no trailing space yet: the picker handles it');
+    assert.equal(sc.parseSlashCommand('/init something'), null, 'an unknown command is just text');
+    assert.equal(sc.parseSlashCommand('please /debug this'), null);
+  });
+
   await t('withProbeOutput reads real text: CRLF output and quoted values come through unescaped', () => {
     const state = debugService.newDebugRunState();
     state.probes.set('p1', { id: 'p1', path: 'a.ts', line: 2, label: 'name' });

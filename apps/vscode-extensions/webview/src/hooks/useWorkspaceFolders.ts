@@ -9,10 +9,12 @@ export interface WorkspaceFolders {
   home: string;
   /** Settings → Default folder; '' when unset. */
   defaultFolder: string;
+  /** Settings → Always ask: the folder dialog shows on every ticket start. */
+  alwaysAsk: boolean;
   loaded: boolean;
 }
 
-const EMPTY: WorkspaceFolders = { current: '', recent: [], home: '', defaultFolder: '', loaded: false };
+const EMPTY: WorkspaceFolders = { current: '', recent: [], home: '', defaultFolder: '', alwaysAsk: false, loaded: false };
 
 export const folderName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
 
@@ -34,6 +36,7 @@ export function useWorkspaceFolders(): WorkspaceFolders {
         recent: Array.isArray(m.recent) ? m.recent : [],
         home: m.home ?? '',
         defaultFolder: m.defaultFolder ?? '',
+        alwaysAsk: m.alwaysAsk === true,
         loaded: true,
       });
     };

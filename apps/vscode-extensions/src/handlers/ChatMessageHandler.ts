@@ -17,7 +17,7 @@ import { shipAllChanges } from '../services/agent/shipService';
 import { getCiSnapshot, getCiSnapshotViaHost, getFailureLog, getFailureLogViaHost, pushCiFix } from '../services/agent/ciService';
 import { CodeHostConnections } from '../services/codehost/connections';
 import { isPermission } from '../services/agent/permissionPolicy';
-import { ensureWorktree, getDefaultFolder, getRecentFolders, listBranches, openFolder, pickFolder, recordRecentFolder, resolveFolder, savePendingStart, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
+import { ensureWorktree, getAlwaysAskFolder, getDefaultFolder, getRecentFolders, listBranches, openFolder, pickFolder, recordRecentFolder, resolveFolder, savePendingStart, setAlwaysAskFolder, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
 import { isBrowserConnected } from '../services/browser/browserBridge';
 import { openChromeExtensionInstall } from '../services/browser/installChromeExtension';
 import { isControlChromeEnabled, setControlChromeEnabled } from '../services/browser/browserPrefs';
@@ -166,7 +166,23 @@ export class ChatMessageHandler {
           recent: getRecentFolders(this.context),
           home: os.homedir(),
           defaultFolder: getDefaultFolder(this.context) ?? '',
+          alwaysAsk: getAlwaysAskFolder(this.context),
         });
+        return true;
+      case MESSAGE_TYPES.SET_ALWAYS_ASK_FOLDER:
+        await setAlwaysAskFolder(this.context, data.value === true);
+        await this.handleMessage({ type: MESSAGE_TYPES.GET_RECENT_FOLDERS });
+        return true;
+      case MESSAGE_TYPES.PICK_FOLDER:
+        try {
+          const picked = await pickFolder();
+          const folder = picked ? resolveFolder(picked) : undefined;
+          if (folder) await recordRecentFolder(this.context, folder);
+          this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.PICKED_FOLDER, path: folder });
+          if (folder) await this.handleMessage({ type: MESSAGE_TYPES.GET_RECENT_FOLDERS });
+        } catch (error) {
+          this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.PICKED_FOLDER, error: error instanceof Error ? error.message : String(error) });
+        }
         return true;
       case MESSAGE_TYPES.SET_DEFAULT_FOLDER:
         this.analyticsService.trackEvent('default_folder_set', { cleared: typeof data.path !== 'string' });

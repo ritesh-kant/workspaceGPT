@@ -163,6 +163,12 @@ export const MESSAGE_TYPES = {
   // the reloaded page asks for with GET_PENDING_FOLDER_START → PENDING_FOLDER_START {start?}.
   SET_DEFAULT_FOLDER: 'set-default-folder',
   DEFAULT_FOLDER_RESULT: 'default-folder-result',
+  // Always ask: show the folder dialog on every ticket start (off by default).
+  // RECENT_FOLDERS carries {alwaysAsk}; SET_ALWAYS_ASK_FOLDER {value}. PICK_FOLDER
+  // opens the native picker without opening the folder and answers PICKED_FOLDER {path?, error?}.
+  SET_ALWAYS_ASK_FOLDER: 'set-always-ask-folder',
+  PICK_FOLDER: 'pick-folder',
+  PICKED_FOLDER: 'picked-folder',
   GET_PENDING_FOLDER_START: 'get-pending-folder-start',
   PENDING_FOLDER_START: 'pending-folder-start',
 

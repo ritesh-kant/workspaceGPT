@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useEffect, useCallback } from 'react';
-import { effortLabel, effortLevelsFor, useModelActions, useSelectedModelProvider } from '../../store';
+import { useModelActions, useSelectedModelProvider } from '../../store';
 import { COPILOT_PROVIDER, MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { VSCodeAPI } from '../../vscode';
 import { changeProviderHandler, fetchAvailableModels } from './utils';
@@ -38,7 +38,6 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
     updateSelectedModelProvider,
     handleModelChange,
     updateModelProvider,
-    setReasoningEffort,
   } = useModelActions();
 
 
@@ -199,8 +198,6 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
     return () => window.removeEventListener('message', handleMessage);
   }, [selectedModelProvider]);
 
-  const effortLevels = effortLevelsFor(selectedModelProvider);
-
   const summary = apiKeyError
     ? MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === selectedModelProvider.provider)?.requireApiKey
       ? '⚠️ Check API key'
@@ -327,7 +324,7 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
             <small className='form-text error-message'>{apiKeyError}</small>
           )}
 
-        {(!preferCopilot || copilotInUse) && showSelectModelValidator() && (
+        {setupOnly && (!preferCopilot || copilotInUse) && showSelectModelValidator() && (
           <div className='form-group'>
             <label htmlFor='model-select'>{copilotInUse ? 'GitHub Copilot model' : 'Select Model'}</label>
             <SearchableDropdown
@@ -363,31 +360,8 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
               placeholder='Same as above'
             />
             <small className='form-text'>
-              Autonomous ticket runs and Agent-mode turns use this model; ordinary chat keeps the one above.
+              Autonomous ticket runs and Agent-mode turns use this model; ordinary chat uses the model picked in the composer.
               A stronger model here is what moves ticket-run quality most.
-            </small>
-          </div>
-        )}
-
-        {!setupOnly && showSelectModelValidator() && effortLevels.length > 0 && (
-          <div className='form-group'>
-            <label htmlFor='effort-select'>Effort</label>
-            <select
-              id='effort-select'
-              className='select-larger'
-              value={selectedModelProvider.reasoningEffort ?? ''}
-              onChange={(e) => setReasoningEffort(e.target.value || undefined)}
-            >
-              <option value=''>Default</option>
-              {effortLevels.map((level) => (
-                <option key={level} value={level}>
-                  {effortLabel(level)}
-                </option>
-              ))}
-            </select>
-            <small className='form-text'>
-              How long the model thinks before it answers. Higher is slower and uses more tokens. A model that
-              doesn't take an effort answers at its default.
             </small>
           </div>
         )}

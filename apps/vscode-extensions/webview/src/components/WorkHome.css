@@ -151,7 +151,8 @@
 .work-home-ticket-detail > button { margin-right: 15px; }
 /* The desktop owns the viewport. Keep the overview and composer in one frame. */
 .chat-container--work-home { overflow: hidden; --wgpt-gutter: max(28px, calc((100% - 1124px) / 2)); }
-.chat-container--work-home > .input-container { flex-shrink: 0; margin: 8px var(--wgpt-gutter) 14px; padding: 6px 10px; }
+.chat-container--work-home > .input-container { flex-shrink: 0; margin: 8px var(--wgpt-gutter) 14px; }
+.chat-container--work-home > .input-container .composer-card { padding: 6px 10px; }
 .chat-container--work-home > .workspace-controls { flex-shrink: 0; margin-left: var(--wgpt-gutter); margin-right: var(--wgpt-gutter); }
 .chat-container--work-home > .composer-status-bars { flex-shrink: 0; padding-left: var(--wgpt-gutter); padding-right: var(--wgpt-gutter); }
 @media (max-height: 650px) {

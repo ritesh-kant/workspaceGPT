@@ -68,6 +68,7 @@ const UNITS = [
   'webview/src/utils/filePathDisplay.ts',
   'webview/src/utils/ticketRefs.ts',
   'webview/src/utils/bugReportHint.ts',
+  'webview/src/utils/slashCommands.ts',
   // Lives here, not in the extension: see the file for why it is one bundle.
   '../../packages/agent-evals/src/headless/syncSourcesUnit.ts',
 ];

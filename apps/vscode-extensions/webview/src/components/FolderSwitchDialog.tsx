@@ -11,6 +11,8 @@ interface FolderSwitchDialogProps {
   current: string;
   /** Settings → Default folder; '' when unset. */
   defaultFolder: string;
+  /** Settings → Always ask: offer every folder, not only the default. */
+  alwaysAsk: boolean;
   /** Folders this app has opened, offered when no default is set yet. */
   recent: string[];
   home: string;
@@ -33,6 +35,7 @@ const FolderSwitchDialog: React.FC<FolderSwitchDialogProps> = ({
   subject,
   current,
   defaultFolder,
+  alwaysAsk,
   recent,
   home,
   resume,
@@ -43,18 +46,25 @@ const FolderSwitchDialog: React.FC<FolderSwitchDialogProps> = ({
   // Fixed at open: saving a default re-sends the folders, and the dialog must
   // not turn into the other question halfway through.
   const [askToSet] = useState(() => !defaultFolder);
-  const [choices] = useState(() =>
-    askToSet ? [...new Set([current, ...recent].filter(Boolean))] : [defaultFolder, current].filter(Boolean)
+  const [openList] = useState(() => askToSet || alwaysAsk);
+  const [choices, setChoices] = useState(() =>
+    openList ? [...new Set([current, defaultFolder, ...recent].filter(Boolean))] : [defaultFolder, current].filter(Boolean)
   );
-  const [selected, setSelected] = useState(() => (askToSet ? current || choices[0] || '' : defaultFolder));
-  const [remember, setRemember] = useState(true);
-  const [phase, setPhase] = useState<'idle' | 'saving' | 'opening'>('idle');
+  const [selected, setSelected] = useState(() => (openList ? current || defaultFolder || choices[0] || '' : defaultFolder));
+  const [remember, setRemember] = useState(false);
+  const [phase, setPhase] = useState<'idle' | 'saving' | 'opening' | 'picking'>('idle');
   const [error, setError] = useState<string | null>(null);
 
   const tilde = (p: string) => (home && p.startsWith(home) ? `~${p.slice(home.length)}` : p);
   const parentOf = (p: string) => tilde(p.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '')) || '/';
   const selectedIsOpen = sameFolder(selected, current);
   const selectedName = selected ? folderName(selected) : '';
+
+  const pickAnother = () => {
+    setError(null);
+    setPhase('picking');
+    VSCodeAPI().postMessage({ type: MESSAGE_TYPES.PICK_FOLDER });
+  };
 
   const start = () => {
     if (selectedIsOpen) {
@@ -83,6 +93,15 @@ const FolderSwitchDialog: React.FC<FolderSwitchDialogProps> = ({
         else {
           setPhase('idle');
           setError(m.error || 'Could not use that folder.');
+        }
+        return;
+      }
+      if (m?.type === MESSAGE_TYPES.PICKED_FOLDER && phase === 'picking') {
+        setPhase('idle');
+        if (m.error) setError(m.error);
+        else if (m.path) {
+          setChoices((c) => (c.some((p) => sameFolder(p, m.path)) ? c : [...c, m.path]));
+          setSelected(m.path);
         }
         return;
       }
@@ -128,7 +147,7 @@ const FolderSwitchDialog: React.FC<FolderSwitchDialogProps> = ({
     >
       <div className='folder-switch-dialog'>
         <header className='folder-switch-head'>
-          <h3 id='folder-switch-title'>{askToSet ? 'Where should this ticket run?' : 'Switch to your default folder?'}</h3>
+          <h3 id='folder-switch-title'>{openList ? 'Where should this ticket run?' : 'Switch to your default folder?'}</h3>
           <p className='folder-switch-subject' title={subject}>
             {subject}
           </p>
@@ -163,8 +182,16 @@ const FolderSwitchDialog: React.FC<FolderSwitchDialogProps> = ({
               </label>
             );
           })}
-          {choices.length === 0 && (
-            <p className='folder-switch-note'>No folders yet. Open one, or set it in Settings → Default folder.</p>
+          {choices.length === 0 && <p className='folder-switch-note'>No folders yet. Choose one below.</p>}
+          {openList && (
+            <button type='button' className='folder-choice folder-choice--add' onClick={pickAnother} disabled={working}>
+              <span className='folder-choice-icon'>
+                <FolderIcon />
+              </span>
+              <span className='folder-choice-text'>
+                <span className='folder-choice-name'>{phase === 'picking' ? 'Choosing…' : 'Choose another folder…'}</span>
+              </span>
+            </button>
           )}
         </div>
 
@@ -178,9 +205,6 @@ const FolderSwitchDialog: React.FC<FolderSwitchDialogProps> = ({
           </label>
         )}
 
-        {!selectedIsOpen && selected && !blockedByRun && (
-          <p className='folder-switch-note'>Opens {selectedName} in this window, and the ticket continues there.</p>
-        )}
         {blockedByRun && (
           <p className='folder-switch-note'>A chat is still running. Switching folders waits until it finishes.</p>
         )}
