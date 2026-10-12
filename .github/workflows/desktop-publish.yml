@@ -122,7 +122,10 @@ jobs:
           node ../apps/desktop/scripts/updater-manifest.mjs --version $v --base-url http://127.0.0.1:8799 --out latest.json "windows-x86_64=$setup"
           $server = Start-Process -PassThru -WindowStyle Hidden python -ArgumentList '-m','http.server','8799','--bind','127.0.0.1'
           Pop-Location
-          Start-Sleep 3
+          # Wait for the server to accept connections instead of guessing a delay.
+          for ($i = 0; $i -lt 30; $i++) {
+            try { Invoke-WebRequest -Uri 'http://127.0.0.1:8799/latest.json' -UseBasicParsing | Out-Null; break } catch { Start-Sleep 1 }
+          }
           try {
             $env:WGPT_MANIFEST_URL = 'http://127.0.0.1:8799/latest.json'
             ./apps/desktop/install.ps1
