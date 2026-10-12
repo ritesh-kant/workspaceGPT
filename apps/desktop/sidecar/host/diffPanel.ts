@@ -47,6 +47,8 @@ export interface DiffFrame {
   /** Keep/revert only exist for agent diffs, which have a recorded original. */
   reviewable: boolean;
   hunks: DiffHunkView[];
+  /** The file as it is now, for markdown files: the page offers a rendered preview. */
+  preview?: string;
   added: number;
   removed: number;
 }
@@ -107,6 +109,7 @@ export function createDiffPanel(surface: ViewSurface, workspaceFolders: () => st
       title: d.title,
       reviewable: d.left.scheme === AGENT_ORIGINAL_SCHEME,
       hunks: views,
+      preview: /\.(md|markdown)$/i.test(fsPath) ? current : undefined,
       added,
       removed,
     };

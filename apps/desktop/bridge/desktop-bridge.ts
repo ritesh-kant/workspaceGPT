@@ -24,6 +24,7 @@
  * shell page (never sent to any server), which keeps it in sessionStorage.
  */
 
+import MarkdownIt from 'markdown-it';
 import { MESSAGE_TYPES } from '../../vscode-extensions/constants';
 
 interface DesktopConfig {
@@ -49,6 +50,7 @@ interface DiffFrame {
   reviewable: boolean;
   added: number;
   removed: number;
+  preview?: string;
   hunks: { curLine: number; origLine: number; before: string[]; removed: string[]; added: string[]; after: string[]; truncated: boolean }[];
 }
 
@@ -269,7 +271,7 @@ interface UiFrame {
   .wgpt-tool{background:transparent;border:0;border-radius:4px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--vscode-icon-foreground);padding:0}
   .wgpt-tool:hover{background:var(--vscode-toolbar-hoverBackground)}
   .wgpt-tool img{width:16px;height:16px}
-  .wgpt-diff{position:fixed;inset:0;z-index:2147483640;display:flex;flex-direction:column;background:var(--vscode-editor-background,var(--vscode-sideBar-background));color:var(--vscode-foreground);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size,13px)}
+  .wgpt-diff{position:fixed;inset:0 0 0 auto;width:var(--wgpt-dock);box-sizing:border-box;border-left:1px solid var(--vscode-widget-border);z-index:2147483640;display:flex;flex-direction:column;background:var(--vscode-editor-background,var(--vscode-sideBar-background));color:var(--vscode-foreground);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size,13px)}
   .wgpt-diff-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--wgpt-d-border,var(--vscode-widget-border))}
   .wgpt-diff-title{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 200px}
   .wgpt-diff-title small{font-weight:400;color:var(--vscode-descriptionForeground);margin-left:8px}
@@ -286,7 +288,25 @@ interface UiFrame {
   .wgpt-line .s{flex:0 0 16px;user-select:none;opacity:.7}
   .wgpt-line.add{background:rgba(46,160,67,.16)}
   .wgpt-line.del{background:rgba(248,81,73,.16)}
-  .wgpt-diff-open .wgpt-layer{top:56px}
+  .wgpt-btn.icon{display:inline-flex;align-items:center;justify-content:center;padding:6px 8px}
+  .wgpt-btn.icon svg{display:block}
+  .wgpt-seg{display:inline-flex}
+  .wgpt-seg .wgpt-btn:first-child{border-top-right-radius:0;border-bottom-right-radius:0}
+  .wgpt-seg .wgpt-btn:last-child{border-top-left-radius:0;border-bottom-left-radius:0}
+  .wgpt-md{max-width:820px;margin:0 auto;line-height:1.6;overflow-wrap:anywhere}
+  .wgpt-md h1,.wgpt-md h2{border-bottom:1px solid var(--vscode-widget-border);padding-bottom:.3em}
+  .wgpt-md code{font-family:var(--vscode-editor-font-family,monospace);background:var(--vscode-textCodeBlock-background);border-radius:4px;padding:.1em .35em}
+  .wgpt-md pre{background:var(--vscode-textCodeBlock-background);border-radius:8px;padding:10px 12px;overflow-x:auto}
+  .wgpt-md pre code{background:none;padding:0}
+  .wgpt-md table{border-collapse:collapse}
+  .wgpt-md th,.wgpt-md td{border:1px solid var(--vscode-widget-border);padding:4px 10px}
+  .wgpt-md blockquote{margin-left:0;padding-left:12px;border-left:3px solid var(--vscode-widget-border);color:var(--vscode-descriptionForeground)}
+  .wgpt-md a{color:var(--vscode-textLink-foreground)}
+  body.wgpt-diff-open{--wgpt-dock:min(55vw,900px)}
+  body.wgpt-diff-open #root{margin-right:var(--wgpt-dock)}
+  .wgpt-diff-open .wgpt-layer{right:calc(var(--wgpt-dock) + 12px)}
+  .wgpt-diff-open .wgpt-toolbar{right:calc(var(--wgpt-dock) + 8px)}
+  @media (max-width:760px){body.wgpt-diff-open{--wgpt-dock:100vw}body.wgpt-diff-open #root{margin-right:0}.wgpt-diff-open .wgpt-layer{right:12px;top:56px}.wgpt-diff-open .wgpt-toolbar{right:8px}}
   .wgpt-diff-empty{padding:40px 14px;text-align:center;color:var(--vscode-descriptionForeground)}
   .wgpt-banner{position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:6px 12px;font-family:var(--vscode-font-family);font-size:12px;text-align:center;color:#fff}
   `;
@@ -326,6 +346,20 @@ interface UiFrame {
     });
   }
 
+  const ICONS: Record<string, string> = {
+    diff: '<path d="M5 2.5v5M2.5 5h5" /><path d="M8.5 11h5" />',
+    preview: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8Z" /><circle cx="8" cy="8" r="2" />',
+    open: '<path d="M9 2.5h4.5V7M13.5 2.5 7 9M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" />',
+    close: '<path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />',
+  };
+  /** A header button drawn as an icon; the label stays as its tooltip and accessible name. */
+  const iconBtn = (icon: string, label: string, primary = false) => {
+    const b = el('button', `wgpt-btn icon${primary ? ' primary' : ''}`) as HTMLButtonElement;
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[icon]}</svg>`;
+    return b;
+  };
   const el = (tag: string, cls?: string, text?: string) => {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -467,6 +501,10 @@ interface UiFrame {
 
   let diffEl: HTMLElement | undefined;
   let diffFile: string | undefined;
+  /** Markdown files can be read rendered; the choice survives the redraw after a keep/revert. */
+  let diffView: 'diff' | 'preview' = 'diff';
+  // html:false — the file is the agent's output, so raw HTML in it is never injected.
+  const md = new MarkdownIt({ html: false, linkify: true });
   function diffAction(action: string, idx?: number): void {
     if (!diffFile) return;
     send({ t: 'diff-action', file: diffFile, action, idx });
@@ -476,6 +514,7 @@ interface UiFrame {
     diffEl?.remove();
     diffEl = undefined;
     diffFile = undefined;
+    diffView = 'diff';
     document.body.classList.remove('wgpt-diff-open');
     document.removeEventListener('keydown', diffKeys, true);
   }
@@ -491,6 +530,8 @@ interface UiFrame {
       ensureDom();
       const keepScroll = diffFile === frame.file ? diffEl?.querySelector('.wgpt-diff-body')?.scrollTop ?? 0 : 0;
       diffEl?.remove();
+      if (diffFile !== frame.file) diffView = !frame.reviewable && !frame.hunks.length && frame.preview !== undefined ? 'preview' : 'diff';
+      if (frame.preview === undefined) diffView = 'diff';
       diffFile = frame.file;
       diffEl = el('div', 'wgpt-diff');
       diffEl.setAttribute('role', 'dialog');
@@ -500,6 +541,19 @@ interface UiFrame {
       const title = el('div', 'wgpt-diff-title', frame.label);
       title.title = frame.file;
       head.appendChild(title);
+      if (frame.preview !== undefined) {
+        const seg = el('div', 'wgpt-seg');
+        const tab = (label: string, view: 'diff' | 'preview') => {
+          const b = iconBtn(view, label, diffView === view);
+          b.onclick = () => {
+            diffView = view;
+            showDiff(frame);
+          };
+          return b;
+        };
+        seg.append(tab('Diff', 'diff'), tab('Preview', 'preview'));
+        head.appendChild(seg);
+      }
       if (frame.hunks.length) {
         const stat = el('div', 'wgpt-diff-stat');
         stat.append(el('span', 'add', `+${frame.added}`), document.createTextNode(' '), el('span', 'del', `−${frame.removed}`));
@@ -521,14 +575,26 @@ interface UiFrame {
         return b;
       };
       if (frame.reviewable && frame.hunks.length) head.append(button('Revert all', 'revertAll'), button('Keep all', 'keepAll', true));
-      head.appendChild(button('Open in editor', 'openInEditor'));
-      const close = el('button', 'wgpt-btn', 'Close') as HTMLButtonElement;
+      const openBtn = iconBtn('open', 'Open in editor');
+      openBtn.onclick = () => diffAction('openInEditor');
+      head.appendChild(openBtn);
+      const close = iconBtn('close', 'Close');
       close.onclick = closeDiff;
       head.appendChild(close);
       diffEl.appendChild(head);
 
       const body = el('div', 'wgpt-diff-body');
-      if (!frame.hunks.length) {
+      if (diffView === 'preview' && frame.preview !== undefined) {
+        const doc = el('div', 'wgpt-md');
+        doc.innerHTML = md.render(frame.preview);
+        doc.addEventListener('click', (e) => {
+          const a = (e.target as HTMLElement).closest('a');
+          if (!a) return;
+          e.preventDefault();
+          if (/^https?:/i.test(a.href)) window.open(a.href, '_blank', 'noopener');
+        });
+        body.appendChild(doc);
+      } else if (!frame.hunks.length) {
         body.appendChild(el('div', 'wgpt-diff-empty', frame.reviewable ? 'No changes left to review in this file.' : 'The two versions are identical.'));
       }
       const line = (cls: string, n: number | '', sign: string, text: string) => {
@@ -536,7 +602,7 @@ interface UiFrame {
         row.append(el('span', 'n', String(n)), el('span', 's', sign), el('span', 't', text));
         return row;
       };
-      frame.hunks.forEach((h, idx) => {
+      if (!(diffView === 'preview' && frame.preview !== undefined)) frame.hunks.forEach((h, idx) => {
         const box = el('div', 'wgpt-hunk');
         const hh = el('div', 'wgpt-hunk-head');
         const addedCount = h.added.length;

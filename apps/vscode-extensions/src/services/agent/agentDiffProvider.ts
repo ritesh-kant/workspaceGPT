@@ -70,6 +70,12 @@ export async function openAgentDiff(
 ): Promise<void> {
   const fileUri = vscode.Uri.file(absPath);
   if (!originals.has(absPath)) {
+    // No baseline to diff against (e.g. restarted since). The desktop has no
+    // editor of its own: its panel shows a markdown file as a rendered preview.
+    if (vscode.env.appName === 'WorkspaceGPT Desktop' && /\.(md|markdown)$/i.test(absPath)) {
+      await vscode.commands.executeCommand('vscode.diff', fileUri, fileUri, `${path.basename(absPath)}`);
+      return;
+    }
     const doc = await vscode.workspace.openTextDocument(fileUri);
     await vscode.window.showTextDocument(doc, { preview: false });
     return;
