@@ -7,6 +7,9 @@ interface Props {
   filesDisabled: boolean;
   /** Connectors steer Desktop Work-mode runs; elsewhere the menu has only the add rows. */
   showConnectors: boolean;
+  /** Work mode only: arm Debug for the next message. Omitted elsewhere, so the row is not shown. */
+  debugOn?: boolean;
+  onToggleDebug?: () => void;
 }
 
 const Icon: React.FC<{ d: string }> = ({ d }) => (
@@ -20,7 +23,7 @@ const Icon: React.FC<{ d: string }> = ({ d }) => (
  * Settings on the Connectors page where Control Chrome is switched on and its
  * Chrome extension installed.
  */
-const ComposerPlusMenu: React.FC<Props> = ({ onAddFiles, onAddFolder, filesDisabled, showConnectors }) => {
+const ComposerPlusMenu: React.FC<Props> = ({ onAddFiles, onAddFolder, filesDisabled, showConnectors, debugOn, onToggleDebug }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const openSettings = useUiStore((s) => s.openSettings);
@@ -71,6 +74,20 @@ const ComposerPlusMenu: React.FC<Props> = ({ onAddFiles, onAddFolder, filesDisab
             <Icon d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' />
             Add folder
           </button>
+          {onToggleDebug && (
+            <button
+              type='button'
+              role='menuitemcheckbox'
+              aria-checked={!!debugOn}
+              className='plus-menu-row'
+              title='Work the next message as a bug: reproduce it, observe it with logs, and prove the root cause before fixing.'
+              onClick={() => pick(onToggleDebug)}
+            >
+              <Icon d='M8 2l1.5 1.5M16 2l-1.5 1.5M9 7a3 3 0 0 1 6 0M12 22a6 6 0 0 1-6-6v-4a6 6 0 0 1 12 0v4a6 6 0 0 1-6 6zM12 10v12M3 13h3M18 13h3M4 7l2.5 2M20 7l-2.5 2M4 20l2.5-2M20 20l-2.5-2' />
+              Debug a bug
+              {debugOn && <span className='plus-menu-chevron'>✓</span>}
+            </button>
+          )}
           {showConnectors && (
             <button type='button' role='menuitem' className='plus-menu-row' onClick={() => pick(() => openSettings('connectors'))}>
               <Icon d='M4 4h6v6H4zM14 14h6v6h-6zM14 4h6v6h-6zM4 14h6v6H4z' />

@@ -125,6 +125,21 @@ function createDependencyFilter() {
       if (next === 'docs' || next === 'types') {
         return true;
       }
+      // Node resolves the package's "main" (dist/ort-web.node.js, a self-contained
+      // bundle); the other dist/ variants are browser builds (~11 MB) and lib/ is
+      // the un-bundled source behind it.
+      if (next === 'lib' || (next === 'dist' && segments[ortWebIdx + 2] && segments[ortWebIdx + 2] !== 'ort-web.node.js')) {
+        return true;
+      }
+    }
+
+    // transformers.js loads src/transformers.js; dist/ (browser bundles) and types/ are unused.
+    const xenovaIdx = segments.lastIndexOf('transformers');
+    if (xenovaIdx !== -1 && segments[xenovaIdx - 1] === '@xenova') {
+      const next = segments[xenovaIdx + 1];
+      if (next === 'dist' || next === 'types') {
+        return true;
+      }
     }
 
     if (targetPlatform) {
@@ -278,8 +293,9 @@ async function copyModels() {
     return;
   }
 
-  // Copy models directory
-  await copyRecursive(srcModelsDir, outModelsDir);
+  // Copy models directory. A jina copy left in models/ by an older
+  // download-models run would otherwise still ship (154 MB, never loaded).
+  await copyRecursive(srcModelsDir, outModelsDir, (src) => src.split(path.sep).includes('jinaai'));
   console.log('✅ Models copied successfully');
 }
 

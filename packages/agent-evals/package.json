@@ -16,6 +16,7 @@
     "bench:codebase-rank": "node src/retrieval/codebase-rank-eval.mjs",
     "bench:full": "pnpm bench:agent && pnpm bench:chat && pnpm bench:retrieval && pnpm bench:codebase-rank",
     "bench:chat": "node src/chat/chat-response-bench.mjs",
+    "debug-evals": "node src/headless/debug-evals.mjs",
     "ticket-evals": "node src/headless/ticket-evals.mjs",
     "ticket-evals:live": "node src/headless/ticket-evals.mjs --live"
   }

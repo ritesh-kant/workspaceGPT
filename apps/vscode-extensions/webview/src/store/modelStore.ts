@@ -26,6 +26,8 @@ interface ModelState {
     handleProviderChange: (providerId: string) => void; // Assuming we need to specify which provider to update
     /** Settings → Model → Effort and the composer's effort picker; undefined = the provider decides. */
     setReasoningEffort: (effort?: string) => void;
+    /** Pin or unpin a model of the selected provider in the composer's model picker. */
+    togglePinnedModel: (modelId: string) => void;
     resetStore: () => void;
   };
 }
@@ -140,6 +142,20 @@ export const useModelStore = create<ModelState>()(
             ),
             selectedModelProvider: { ...state.selectedModelProvider, reasoningEffort: effort },
           }));
+        },
+        togglePinnedModel: (modelId) => {
+          set((state) => {
+            const current = state.selectedModelProvider.pinnedModels ?? [];
+            const pinnedModels = current.includes(modelId)
+              ? current.filter((id) => id !== modelId)
+              : [...current, modelId];
+            return {
+              modelProviders: state.modelProviders.map((config) =>
+                config.provider === state.selectedModelProvider.provider ? { ...config, pinnedModels } : config
+              ),
+              selectedModelProvider: { ...state.selectedModelProvider, pinnedModels },
+            };
+          });
         },
         resetStore: () => {
           const vscode = VSCodeAPI();

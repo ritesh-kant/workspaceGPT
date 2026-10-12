@@ -47,6 +47,27 @@ export interface TicketDetail {
   comments?: TicketComment[];
   /** Screenshots/diagrams embedded in the description, base64-encoded for vision models. */
   images?: TicketImage[];
+  /** A bug's own reproduction steps (ADO `Microsoft.VSTS.TCM.ReproSteps`) — plain text. Jira keeps these in the description. */
+  reproSteps?: string;
+  /** Where it happened (ADO `Microsoft.VSTS.TCM.SystemInfo`) — plain text. */
+  systemInfo?: string;
+  /** Linked items: duplicates, related, children, and the commits / PRs / builds attached to it. */
+  relations?: TicketRelation[];
+  /** Text attachments (logs, stack traces), condensed to head + tail. */
+  attachments?: TicketTextAttachment[];
+}
+
+export interface TicketRelation {
+  /** Human name of the link: "Parent", "Related", "Duplicate", "Pull Request", "Fixed in Commit", "blocks", … */
+  rel: string;
+  id: string;
+  title?: string;
+  url?: string;
+}
+
+export interface TicketTextAttachment {
+  name: string;
+  text: string;
 }
 
 /** One row in "your work" — a ticket assigned to the signed-in user. */

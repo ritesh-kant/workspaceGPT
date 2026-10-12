@@ -3434,6 +3434,7 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
       'find_confluence_location', 'update_confluence_page', 'create_confluence_page',
       'save_memory', 'search_tickets', 'get_ticket', 'list_prs', 'get_pr', 'get_repo_issue', 'browser_list_tabs', 'browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_read_page',
       'browser_read_tree', 'browser_screenshot', 'browser_act', 'browser_eval', 'browser_console', 'browser_network',
+      'debug_ledger', 'add_probe', 'remove_probes', 'probe_output', 'counterfactual_check', 'git_bisect',
     ];
     assert.deepEqual(Object.keys(TOOL_REQUIREMENTS).sort(), expected.sort());
     assert.equal(TOOL_REQUIREMENTS.search_web, undefined, 'search_web is deliberately unscoped');
@@ -3727,6 +3728,14 @@ console.log('\nturnRouting (capability from facts — regression for ADO #153477
     const ado = route('can you fix it', { pick: 'Azure DevOps' });
     assert.deepEqual(ado.classification.sources, ['ADO']);
     assert.equal(ado.useCodebaseTools, true);
+  });
+
+  await t('a multi-select pick pre-fetches exactly the ticked sources; Codebase adds none', () => {
+    assert.deepEqual(route('x', { pick: 'Confluence,Azure DevOps' }).classification.sources, ['CONFLUENCE', 'ADO']);
+    assert.deepEqual(route('x', { pick: 'Confluence,Codebase' }).classification.sources, ['CONFLUENCE']);
+    const partial = route('x', { pick: 'Confluence,Azure DevOps', sources: ['ADO', 'CODEBASE'] });
+    assert.deepEqual(partial.classification.sources, ['ADO']);
+    assert.equal(partial.unhonoredSource, 'CONFLUENCE');
   });
 
   await t('a pick for a source that is not connected is reported, and routing falls back to Auto', () => {
@@ -5253,6 +5262,378 @@ console.log('\npermissionPolicy (docs/design/permission-modes.md)');
     assert.equal(resolvePermission(undefined, false), 'manual');
     assert.equal(resolvePermission('root', true), 'auto', 'an unknown value falls back, it does not widen');
     assert.equal(isPermission('plan'), false, 'plan is a mode, not a permission level');
+  });
+}
+
+
+console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence ledger, the proof checks, intake)');
+{
+  const probes = await import(path.join(outDir, 'debugProbes.mjs'));
+  const dbg = await import(path.join(outDir, 'debugState.mjs'));
+  const debugService = await import(path.join(outDir, 'debugService.mjs'));
+  const attach = await import(path.join(outDir, 'attachmentText.mjs'));
+  const ado = await import(path.join(outDir, 'adoWorkItemService.mjs'));
+  const { isBugWorkItem, debugWorkItemPrompt } = await import(path.join(outDir, 'constants.mjs'));
+  const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
+  const { scopeToolDefs, withoutWriteTools } = await import(path.join(outDir, 'toolScope.mjs'));
+  const { decide } = permissionPolicy;
+  const { DebugTracker } = dbg;
+
+  await t('isBugWorkItem reads the type, never prose; the bug prompt asks for the fix so the host reads an implement mandate', () => {
+    assert.ok(isBugWorkItem('Bug') && isBugWorkItem(' defect ') && isBugWorkItem('Production Bug'));
+    assert.ok(!isBugWorkItem('Spike') && !isBugWorkItem('User Story') && !isBugWorkItem(undefined));
+    const prompt = debugWorkItemPrompt('1234567');
+    assert.ok(IMPLEMENT_MANDATE_RE.test(prompt) || hasWriteIntent(prompt), 'the host must read the button prompt as a mandate to fix');
+  });
+
+  await t('probeFamily and checkProbeExpr: supported languages, observe-only expressions, no credentials', () => {
+    assert.equal(probes.probeFamily('src/a.ts'), 'js');
+    assert.equal(probes.probeFamily('x/y.py'), 'py');
+    assert.equal(probes.probeFamily('README.md'), null);
+    for (const ok of ['order.items.length', 'a === b', 'typeof user', 'items.map(x => x.id)', 'JSON.stringify(state)']) assert.equal(probes.checkProbeExpr(ok), null, ok);
+    for (const bad of ['x = 1', 'i++', 'await load()', 'user.password', 'req.headers.authorization', 'a; b', 'foo(', '', 'x // y']) {
+      assert.ok(probes.checkProbeExpr(bad), `should refuse: ${bad}`);
+    }
+  });
+
+  await t('checkInsertionPoint: statement starts are fine; continuations, object literals, else/case and JSX are refused', () => {
+    const js = ['function f(a) {', '  const x = {', '    k: 1,', '    j: 2,', '  };', '  if (a) {', '    run(a);', '  } else {', '    stop();', '  }', '  return x +', '    1;', '}'];
+    assert.equal(probes.checkInsertionPoint('js', js, 1), null, 'first statement in a function');
+    assert.equal(probes.checkInsertionPoint('js', js, 6), null, 'inside an if block');
+    assert.ok(probes.checkInsertionPoint('js', js, 3), 'inside an object literal');
+    assert.ok(probes.checkInsertionPoint('js', js, 7), 'before the else that continues the if');
+    assert.ok(probes.checkInsertionPoint('js', js, 11), 'continuation of `return x +`');
+    assert.ok(probes.checkInsertionPoint('js', js, 99), 'outside the file');
+    assert.ok(probes.checkInsertionPoint('js', ['<div>', '  <b />'], 1), 'JSX');
+    const py = ['def f(a):', '    if a:', '        run(a)', '    else:', '        stop()'];
+    assert.equal(probes.checkInsertionPoint('py', py, 2), null, 'first line of a python block');
+    assert.ok(probes.checkInsertionPoint('py', py, 3), 'before else:');
+  });
+
+  await t('a JS probe is valid code: it prints the tagged value, and a throwing expression cannot throw out of it', () => {
+    const line = probes.probeLineFor('js', 'p1', 'order total', 'order.total');
+    const seen = [];
+    const orig = console.error;
+    console.error = (...a) => seen.push(a.join(' '));
+    try {
+      new Function('order', line)({ total: 42 });
+      new Function('order', probes.probeLineFor('js', 'p2', 'boom', 'order.a.b.c'))({});
+    } finally {
+      console.error = orig;
+    }
+    assert.equal(seen[0], 'WGPT-PROBE:p1 order total 42');
+    assert.match(seen[1], /^WGPT-PROBE:p2 boom <probe threw: /);
+  });
+
+  await t('a python probe is valid code (when python3 is on PATH)', () => {
+    let out;
+    try {
+      out = execFileSync('python3', ['-c', `x = {'a': 3}\n${probes.probeLineFor('py', 'p1', 'a value', "x['a']")}`], { encoding: 'utf8' });
+    } catch {
+      return; // no python here — the JS probe above already pins the shape
+    }
+    assert.equal(out.trim(), 'WGPT-PROBE:p1 a value 3');
+  });
+
+  await t('insertProbeLine keeps indent and line endings; removeProbeLines puts the file back byte for byte', () => {
+    for (const eol of ['\n', '\r\n']) {
+      const original = ['function f() {', '  const a = 1;', '  return a;', '}', ''].join(eol);
+      const probe = probes.probeLineFor('js', 'p3', 'a', 'a');
+      const withProbe = probes.insertProbeLine(original, 3, probe);
+      assert.ok(withProbe.includes(`${eol}  ${probe}${eol}  return a;`), 'indented like the target line');
+      assert.deepEqual(probes.probeIdsIn(withProbe), ['p3']);
+      const back = probes.removeProbeLines(withProbe);
+      assert.equal(back.content, original);
+      assert.equal(back.removed, 1);
+      assert.equal(probes.removeProbeLines(withProbe, ['p9']).removed, 0, 'only the named ids');
+    }
+  });
+
+  await t('extractProbeLines: grouped by id, repeats collapsed, a hot loop keeps the first and last values with the count', () => {
+    const out = ['noise', 'WGPT-PROBE:p1 total 5', 'WGPT-PROBE:p2 x a'];
+    for (let i = 0; i < 40; i++) out.push(`WGPT-PROBE:p2 x ${i}`);
+    out.push('console.error', '    at Object.<anonymous>');
+    const got = probes.extractProbeLines(out.join('\n'));
+    assert.deepEqual(got.p1, { count: 1, samples: ['total 5'] });
+    assert.equal(got.p2.count, 41);
+    assert.equal(got.p2.samples[0], 'x a');
+    assert.equal(got.p2.samples.at(-1), 'x 39');
+    assert.ok(got.p2.samples.some((x) => x.includes('more distinct values')));
+  });
+
+  await t('prepareProbeInsert refuses unsafe spots and credentials, writes one tagged line, and prepareProbeRemoval undoes it', async () => {
+    const dir = tempWorkspace({ 'src/calc.ts': 'export function total(items: number[]) {\n  const sum = items.reduce((a, b) => a + b, 0);\n  return sum;\n}\n', 'notes.md': '# hi\n' });
+    const roots = rootsFor(dir);
+    await rejects(writeTools.prepareProbeInsert({ path: 'notes.md', line: 1, expr: 'x', id: 'p1' }, roots), /No probe syntax/);
+    await rejects(writeTools.prepareProbeInsert({ path: 'src/calc.ts', line: 2, expr: 'api.token', id: 'p1' }, roots), /credential/);
+    await rejects(writeTools.prepareProbeInsert({ path: 'src/calc.ts', line: 4, expr: 'sum', id: 'p1' }, roots), /continues the previous statement/);
+    const w = await writeTools.prepareProbeInsert({ path: 'src/calc.ts', line: 3, expr: 'sum', label: 'sum so far', id: 'p1' }, roots);
+    assert.equal(w.kind, 'edit');
+    assert.equal(w.after.split('\n').length, w.before.split('\n').length + 1);
+    assert.ok(w.after.includes("console.error('WGPT-PROBE:p1', 'sum so far'"));
+    await writeTools.applyWrite(w);
+    const removal = await writeTools.prepareProbeRemoval('src/calc.ts', ['p1'], roots);
+    assert.equal(removal.after, w.before);
+    assert.equal(await writeTools.prepareProbeRemoval('notes.md', undefined, roots), null);
+  });
+
+  await t('withProbeOutput attaches only this run\'s probes, with their label and place; other results pass through untouched', () => {
+    const state = debugService.newDebugRunState();
+    const plain = { exitCode: 0, output: 'ok' };
+    assert.strictEqual(debugService.withProbeOutput(state, plain), plain, 'no probes inserted: untouched');
+    state.probes.set('p1', { id: 'p1', path: 'src/calc.ts', line: 3, label: 'sum' });
+    const result = debugService.withProbeOutput(state, { exitCode: 1, output: 'start\nWGPT-PROBE:p1 sum 7\nWGPT-PROBE:p9 stray 1\nfailed' });
+    assert.deepEqual(Object.keys(result.probes), ['p1'], 'a stray marker is not evidence');
+    assert.equal(result.probes.p1.label, 'sum');
+    assert.equal(result.probes.p1.path, 'src/calc.ts:3');
+    assert.deepEqual(result.probes.p1.samples, ['sum 7']);
+    assert.equal(debugService.probeOutputReport(state, 'p1').probes[0].values[0], 'sum 7');
+    assert.throws(() => debugService.probeOutputReport(state, 'p5'), /No probe p5/);
+  });
+
+  await t('looksLikeBugReport: free-text fault descriptions get the suggestion; questions, commands and short drafts do not', async () => {
+    const { looksLikeBugReport } = await import(path.join(outDir, 'bugReportHint.mjs'));
+    for (const yes of ['the login page throws on empty password', 'Cart total is wrong value after removing an item', 'app crashes when I open settings', 'TypeError: x is undefined at cart.ts:12', "export doesn't work on Safari", 'this is a regression from last week']) {
+      assert.ok(looksLikeBugReport(yes), yes);
+    }
+    for (const no of ['', 'hi', 'explain how the cart works', 'add a dark mode toggle to settings', '/clear everything now please', 'refactor the auth module for clarity', 'x'.repeat(2500) + ' crash']) {
+      assert.ok(!looksLikeBugReport(no), no.slice(0, 40));
+    }
+  });
+
+  await t('withProbeOutput reads real text: CRLF output and quoted values come through unescaped', () => {
+    const state = debugService.newDebugRunState();
+    state.probes.set('p1', { id: 'p1', path: 'a.ts', line: 2, label: 'name' });
+    const r = debugService.withProbeOutput(state, { exitCode: 1, output: 'x\r\nWGPT-PROBE:p1 name "Ada \\"L\\""\r\nnext', nested: { tail: 'WGPT-PROBE:p1 name second' } });
+    assert.deepEqual(r.probes.p1.samples, ['name "Ada \\"L\\""', 'name second']);
+    assert.equal(r.probes.p1.count, 2);
+  });
+
+  await t('the bug button prompt names the ticket in a way both detectors find (ADO digits, Jira key)', () => {
+    assert.equal(detectTicketId(debugWorkItemPrompt('1520855')), '1520855');
+    assert.equal(detectJiraKey(debugWorkItemPrompt('PROJ-123')), 'PROJ-123');
+  });
+
+  await t('DebugTracker records repro red → green from tool results; a test file written first does not count as the fix', () => {
+    const d = new DebugTracker();
+    d.noteWrite('src/__tests__/calc.test.ts');
+    assert.equal(d.writeCount, 0, 'writing the regression test first is the intended flow');
+    const red = d.noteCommand({ command: 'pnpm exec jest calc', exitCode: 1, output: 'Expected 6, received 5' });
+    assert.equal(red[0].id, 'E1');
+    assert.equal(red[0].kind, 'repro-fail');
+    assert.deepEqual(d.noteCommand({ command: 'pnpm exec jest calc', exitCode: 1, cached: true }), [], 'a replayed result is not a new observation');
+    d.noteWrite('src/calc.ts');
+    const green = d.noteCommand({ command: 'pnpm exec jest calc', exitCode: 0 });
+    assert.equal(green[0].kind, 'repro-pass');
+    assert.deepEqual(d.noteCommand({ command: 'pnpm exec eslint x', exitCode: 0 }), [], 'only a command that failed before counts as the repro');
+  });
+
+  await t('the hypothesis ledger: a hypothesis must predict something, and is settled only against evidence the run recorded', () => {
+    const d = new DebugTracker();
+    assert.ok(d.addHypothesis('off by one', '').error);
+    const h1 = d.addHypothesis('loop bound is off by one', 'last element never summed').hypothesis;
+    assert.equal(h1.id, 'H1');
+    assert.match(d.resolve('H1', 'confirmed', ['E1']).error, /never recorded/);
+    assert.match(d.resolve('H1', 'confirmed', []).error, /at least one recorded evidence/);
+    assert.match(d.resolve('H7', 'confirmed', ['E1']).error, /No hypothesis H7/);
+    d.noteCommand({ command: 't', exitCode: 1, output: 'boom' });
+    assert.equal(d.resolve('H1', 'confirmed', ['E1'], 'sum is short by the last item').hypothesis.status, 'confirmed');
+    assert.ok(d.resolve('H1', 'maybe', ['E1']).error);
+    d.noteCommand({ command: 'x', exitCode: 0, probes: { p1: { count: 2, samples: ['a 1', 'a 2'], label: 'a', path: 'f.ts:3' } } });
+    assert.equal(d.evidence.at(-1).kind, 'probe');
+    assert.match(d.evidence.at(-1).text, /probe p1 \(a\) in f\.ts:3 fired 2×/);
+  });
+
+  await t('editReadiness: the first fix is held for an observation and a second hypothesis; once both exist it is clear', () => {
+    const d = new DebugTracker();
+    assert.match(d.editReadiness(), /no observation yet.*ask_user/s);
+    assert.match(d.editReadiness(), /0 hypothesis recorded/);
+    d.addHypothesis('a', 'x');
+    d.noteCommand({ command: 't', exitCode: 2, output: 'fail' });
+    assert.match(d.editReadiness(), /1 hypothesis recorded/);
+    d.addHypothesis('b', 'y');
+    assert.equal(d.editReadiness(), null);
+  });
+
+  await t('claimedRootCauseStatus reads the model\'s own heading', () => {
+    const c = dbg.claimedRootCauseStatus;
+    assert.equal(c('## ✅ Done — x\n### Root cause — confirmed\nbody'), 'confirmed');
+    assert.equal(c('### Root cause — probable\nbody'), 'probable');
+    assert.equal(c('### Root cause — not found\nbody'), 'not found');
+    assert.equal(c('### Root cause\nbody'), null);
+    assert.equal(c('no heading at all'), null);
+    assert.equal(c('## ⚠️ Root cause not found — x\n### Root cause — confirmed\nbody'), 'confirmed', 'the section is the claim, the banner only summarises');
+  });
+
+  await t('claimIssues: "confirmed" needs cited evidence, a settled hypothesis, red→green and the fix reverted; "probable" is never challenged', () => {
+    const d = new DebugTracker();
+    const confirmed = '## ✅ Done — fixed\n### Root cause — confirmed\nThe loop stops one short (src/calc.ts:L2). Evidence: E1, E3.';
+    assert.deepEqual(d.claimIssues('### Root cause — probable\nlikely the loop'), []);
+    assert.deepEqual(d.claimIssues('no root cause heading'), []);
+    assert.ok(d.claimIssues(confirmed).length >= 2, 'nothing recorded at all');
+    d.addHypothesis('loop bound', 'last item missing');
+    d.noteCommand({ command: 'jest calc', exitCode: 1, output: 'short' }); // E1
+    d.resolve('H1', 'confirmed', ['E1']);
+    d.noteWrite('src/calc.ts');
+    d.noteCommand({ command: 'jest calc', exitCode: 0 }); // E2 repro-pass
+    d.noteCounterfactual({ revertedExitCode: 0, command: 'jest calc', files: ['src/calc.ts'] }); // E3: still passes without the fix
+    assert.ok(d.claimIssues(confirmed).some((x) => /still passes with the fix reverted/.test(x)));
+    d.noteCounterfactual({ revertedExitCode: 1, command: 'jest calc', files: ['src/calc.ts'] }); // E4 red
+    assert.deepEqual(d.claimIssues(confirmed), [], 'proven');
+    assert.ok(d.claimIssues('### Root cause — confirmed\nno ids here').some((x) => /cites no recorded evidence/.test(x)));
+    d.noteWrite('src/other.ts');
+    assert.ok(d.claimIssues(confirmed).some((x) => /never reverted/.test(x)), 'a later edit voids the earlier counterfactual');
+  });
+
+  await t('ledgerMarkdown spells out what was and was not established', () => {
+    const d = new DebugTracker();
+    assert.equal(d.ledgerMarkdown(), '');
+    d.addHypothesis('a | b', 'x');
+    d.noteCommand({ command: 't', exitCode: 1, output: 'fail' });
+    const md = d.ledgerMarkdown();
+    assert.match(md, /### Evidence ledger \(recorded by the harness\)/);
+    assert.match(md, /a \\\| b/, 'pipes inside a cell are escaped');
+    assert.match(md, /red before the fix \(E1\); green after — not recorded; red with the fix reverted — not checked/);
+  });
+
+  await t('permission: a probe never waits on a card at any level (but is not a write in Plan: the tool is withheld)', () => {
+    for (const level of ['manual', 'auto', 'full']) assert.equal(decide(level, { kind: 'probe' }), 'auto', level);
+    assert.equal(decide('manual', { kind: 'file-write' }), 'card', 'an ordinary edit still does');
+  });
+
+  await t('tool scope: the debug tools exist only on a debug run, and Plan drops the ones that change the tree', () => {
+    const mk = (...names) => names.map((name) => ({ type: 'function', function: { name } }));
+    const names = (defs) => defs.map((d) => d.function.name);
+    const defs = mk('read_file', 'debug_ledger', 'add_probe', 'probe_output', 'remove_probes', 'counterfactual_check', 'git_bisect');
+    const base = { codebase: true, confluence: false, tickets: false };
+    assert.deepEqual(names(scopeToolDefs(defs, base)), ['read_file'], 'a normal run is not charged for six more schemas');
+    assert.deepEqual(names(scopeToolDefs(defs, { ...base, debug: true })), names(defs));
+    assert.deepEqual(names(withoutWriteTools(scopeToolDefs(defs, { ...base, debug: true }))), ['read_file', 'debug_ledger', 'probe_output']);
+  });
+
+  await t('text attachments: only log-like names, head+tail kept so a trace at the end survives', () => {
+    assert.ok(attach.isTextAttachmentName('crash.log') && attach.isTextAttachmentName('trace.TXT') && attach.isTextAttachmentName('c.json'));
+    assert.ok(!attach.isTextAttachmentName('shot.png') && !attach.isTextAttachmentName('dump.zip') && !attach.isTextAttachmentName('net.har'));
+    const long = 'HEAD\n' + 'x'.repeat(10000) + '\nTypeError: boom at calc.ts:12';
+    const kept = attach.condenseAttachmentText(long);
+    assert.ok(kept.startsWith('HEAD') && kept.endsWith('calc.ts:12') && kept.length < 2600 && /characters omitted/.test(kept));
+    assert.equal(attach.condenseAttachmentText('short\r\nlog'), 'short\nlog');
+  });
+
+  await t('ADO relationsOf: names the link, keeps ids, skips attachments/self, shortens commit shas', () => {
+    const rels = ado.relationsOf({
+      relations: [
+        { rel: 'System.LinkTypes.Hierarchy-Reverse', url: 'https://dev.azure.com/o/_apis/wit/workItems/100' },
+        { rel: 'System.LinkTypes.Duplicate-Forward', url: 'https://dev.azure.com/o/_apis/wit/workItems/55' },
+        { rel: 'System.LinkTypes.Related', url: 'https://dev.azure.com/o/_apis/wit/workItems/7' },
+        { rel: 'AttachedFile', url: 'https://dev.azure.com/o/_apis/wit/attachments/abc', attributes: { name: 'a.log' } },
+        { rel: 'ArtifactLink', url: 'vstfs:///Git/Commit/p%2Fr%2F' + 'a'.repeat(40), attributes: { name: 'Fixed in Commit' } },
+        { rel: 'ArtifactLink', url: 'vstfs:///Git/PullRequestId/p%2Fr%2F812', attributes: { name: 'Pull Request' } },
+        { rel: 'System.LinkTypes.Related', url: 'https://dev.azure.com/o/_apis/wit/workItems/9' },
+      ],
+    }, '9');
+    assert.deepEqual(rels, [
+      { rel: 'Parent', id: '100' },
+      { rel: 'Duplicate', id: '55' },
+      { rel: 'Related', id: '7' },
+      { rel: 'Fixed in Commit', id: 'aaaaaaaa' },
+      { rel: 'Pull Request', id: '812' },
+    ]);
+  });
+
+  const bugTicket = { id: '1520855', title: 'Cart total wrong', type: 'Bug', state: 'Active', url: 'https://x/1520855', description: 'The total is short.',
+    reproSteps: '1. Add 3 items\n2. Open the cart', systemInfo: 'Chrome 126, macOS', relations: [{ rel: 'Duplicate', id: '55', title: 'Cart sum off' }],
+    attachments: [{ name: 'console.log', text: 'TypeError: x is undefined at cart.ts:12' }],
+    comments: Array.from({ length: 6 }, (_, i) => ({ author: `u${i}`, text: `comment ${i}` })) };
+  const debugOpts = { codebaseToolsEnabled: true, ticketContext: bugTicket, implementMandate: true, debugMode: true };
+
+  await t('prompt: a Bug in Debug mode gets the protocol, the debug report, repro steps, links, attachments and a longer thread', () => {
+    const prompt = createStructuredPrompt([], debugWorkItemPrompt('1520855'), '', undefined, null, debugOpts);
+    assert.ok(prompt.includes('## DEBUG MODE — PROVE THE ROOT CAUSE, THEN FIX IT'));
+    assert.ok(prompt.includes('## DEBUG REPORT FORMAT') && !prompt.includes('## FINAL REPORT FORMAT'));
+    assert.ok(prompt.includes('**Reproduction steps (from the ticket):**') && prompt.includes('1. Add 3 items'));
+    assert.ok(prompt.includes('**System info / environment:**') && prompt.includes('Chrome 126'));
+    assert.ok(prompt.includes('Duplicate #55 — Cart sum off') && prompt.includes('get_ticket'));
+    assert.ok(prompt.includes('console.log') && prompt.includes('TypeError: x is undefined'));
+    assert.ok(prompt.includes('comment 5'), 'a bug shows more of its thread');
+    for (const tool of ['debug_ledger', 'add_probe', 'remove_probes', 'counterfactual_check', 'git_bisect']) assert.ok(prompt.includes(tool), tool);
+  });
+
+  await t('prompt: without Debug mode a Bug ticket is exactly as before (generic report, short thread); repro steps still show', () => {
+    const prompt = createStructuredPrompt([], 'Work on ticket 1520855', '', undefined, null, { ...debugOpts, debugMode: false });
+    assert.ok(!prompt.includes('DEBUG MODE') && !prompt.includes('DEBUG REPORT FORMAT'));
+    assert.ok(prompt.includes('## FINAL REPORT FORMAT'));
+    assert.ok(!prompt.includes('comment 5'));
+    assert.ok(prompt.includes('1. Add 3 items'), 'the repro steps were never a Debug-only fact');
+  });
+
+  await t('prompt: Debug + Plan investigates read-only; Debug on a lookup-only ticket does nothing; autonomous swaps the report format', () => {
+    const plan = createStructuredPrompt([], 'plan the fix', '', undefined, null, { ...debugOpts, planMode: true });
+    assert.ok(plan.includes('## DEBUG MODE — INVESTIGATE, DO NOT MODIFY') && !plan.includes('add_probe` puts one tagged log line'));
+    const lookup = createStructuredPrompt([], 'what is ticket 1520855', '', undefined, null, { ...debugOpts, ticketLookupOnly: true });
+    assert.ok(!lookup.includes('DEBUG MODE'));
+    const auto = createStructuredPrompt([], 'go', '', undefined, null, { ...debugOpts, autonomous: true });
+    assert.ok(auto.includes('Finish with the DEBUG REPORT FORMAT') && !auto.includes('Finish with the FINAL REPORT FORMAT'));
+    const noTicket = createStructuredPrompt([], 'debug this crash', '', undefined, null, { codebaseToolsEnabled: true, debugMode: true });
+    assert.ok(noTicket.includes('## DEBUG REPORT FORMAT'), 'a manual Debug with no ticket still gets the report format');
+  });
+
+  await t('prompt: the Debug block and report format keep the probe marker in one place', () => {
+    const prompt = createStructuredPrompt([], 'x', '', undefined, null, debugOpts);
+    assert.ok(prompt.includes(`${probes.PROBE_MARKER}:<id>`));
+  });
+
+  await t('git_bisect finds the commit that introduced a failure, restores HEAD, and refuses a dirty tree', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-bisect-'));
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+    const commit = (value, msg) => { fs.writeFileSync(path.join(dir, 'state.txt'), value); git('add', '.'); git('commit', '-q', '-m', msg); return git('rev-parse', 'HEAD'); };
+    const good = commit('good 1', 'c1 good');
+    commit('good 2', 'c2 good again');
+    const culprit = commit('bad 1', 'c3 introduce the bug');
+    commit('bad 2', 'c4 unrelated');
+    const roots = rootsFor(dir);
+    const approved = [];
+    const result = await debugService.runGitBisect({ good, command: 'grep -q good state.txt' }, roots, async () => { approved.push(1); });
+    assert.equal(result.found, true);
+    assert.equal(result.firstBadCommit, culprit.slice(0, 12));
+    assert.match(result.commit, /c3 introduce the bug/);
+    assert.equal(approved.length, 1, 'approval was asked before anything ran');
+    assert.equal(git('rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'HEAD is back where the user was');
+    assert.equal(fs.readFileSync(path.join(dir, 'state.txt'), 'utf8'), 'bad 2');
+    await rejects(debugService.runGitBisect({ good: '--all', command: 'true' }, roots, async () => {}), /plain commit/);
+    fs.writeFileSync(path.join(dir, 'state.txt'), 'dirty');
+    await rejects(debugService.runGitBisect({ good, command: 'true' }, roots, async () => assert.fail('must not ask')), /clean working tree/);
+  });
+
+  await t('counterfactual_check puts the fix out, runs the test, and ALWAYS puts it back (red without the fix)', async () => {
+    const dir = tempWorkspace({
+      'package.json': JSON.stringify({ name: 'cf', scripts: { test: 'node --test' } }),
+      'calc.js': 'exports.total = (xs) => xs.reduce((a, b) => a + b, 0);\n', // the FIX is in place
+      'calc.test.js': "const t = require('node:test'); const assert = require('node:assert'); const { total } = require('./calc');\nt('sums all items', () => assert.equal(total([1, 2, 3]), 6));\n",
+    });
+    const roots = rootsFor(dir);
+    const fixPath = path.join(dir, 'calc.js');
+    const fixed = fs.readFileSync(fixPath, 'utf8');
+    // The pre-fix content the write gate would have recorded: it dropped the last item.
+    const originalBuggy = 'exports.total = (xs) => xs.slice(0, -1).reduce((a, b) => a + b, 0);\n';
+    const originals = new Map([[fixPath, originalBuggy]]);
+    const originalOf = (p) => originals.get(p);
+    const result = await debugService.runCounterfactual({ path: 'calc.test.js', kind: 'test' }, roots, ['calc.js', 'calc.test.js'], undefined, originalOf);
+    assert.equal(result.unavailable, undefined, JSON.stringify(result).slice(0, 300));
+    assert.notEqual(result.revertedExitCode, 0, 'the test fails once the fix is taken out');
+    assert.deepEqual(result.files, ['calc.js']);
+    assert.equal(result.restored, true);
+    assert.equal(fs.readFileSync(fixPath, 'utf8'), fixed, 'the fix is back, byte for byte');
+    const tracker = new DebugTracker();
+    tracker.noteCounterfactual(result);
+    assert.equal(tracker.counterfactualState, 'red');
+    const only = await debugService.runCounterfactual({ path: 'calc.test.js' }, roots, ['calc.test.js'], undefined, originalOf);
+    assert.match(only.unavailable, /no file was changed besides the test/);
+    const unknown = await debugService.runCounterfactual({ path: 'calc.test.js' }, roots, ['calc.js', 'ghost.js'], undefined, originalOf);
+    assert.ok(unknown.unavailable, 'a file with no recorded original makes it unavailable, and nothing is left reverted');
+    assert.equal(fs.readFileSync(fixPath, 'utf8'), fixed);
   });
 }
 

@@ -7,6 +7,15 @@ import {
   resolveAgainstRoots,
 } from '../codebase/codebaseTools';
 import { stripLineNumbers } from '../codebase/lineNumbers';
+import {
+  checkInsertionPoint,
+  checkProbeExpr,
+  insertProbeLine,
+  probeFamily,
+  probeLineFor,
+  removeProbeLines,
+  sanitizeLabel,
+} from './debugProbes';
 
 /**
  * Agent WRITE tools (edit_file / create_file / delete_file) — the first tools
@@ -536,4 +545,77 @@ export async function applyWrite(w: PreparedWrite): Promise<void> {
       throw new Error(`Could not save ${w.displayPath}; the edit remains in the editor but was not written to disk.`);
     }
   }
+}
+
+// ── Debug mode (docs/design/debug-mode.md §5) ──
+
+export interface ProbeInsertArgs {
+  path: string;
+  /** 1-based line the probe goes BEFORE. */
+  line: number;
+  expr: string;
+  label?: string;
+  /** Host-assigned probe id, e.g. "p3". */
+  id: string;
+}
+
+/**
+ * One tagged log line inserted before a statement. Same guards as any agent
+ * write (workspace boundary, secret files, size); the insertion point and the
+ * expression are checked so a probe can neither break the file's syntax nor
+ * change what the code does.
+ */
+export async function prepareProbeInsert(args: ProbeInsertArgs, roots: NamedRoot[]): Promise<PreparedWrite> {
+  const { uri, displayPath } = await assertWritable(roots, args.path);
+  const family = probeFamily(displayPath);
+  if (!family) {
+    throw new Error(`No probe syntax for ${path.basename(displayPath)} — probes cover JS/TS, Python, Go, Ruby, Java/Kotlin, C#, Rust and PHP. Observe it with run_command instead.`);
+  }
+  const exprIssue = checkProbeExpr(args.expr);
+  if (exprIssue) throw new Error(exprIssue);
+  if (!Number.isInteger(args.line) || args.line < 1) throw new Error('line must be a 1-based line number.');
+  let before: string;
+  try {
+    before = await documentText(uri);
+  } catch {
+    throw new Error(`File not found: ${args.path}.`);
+  }
+  if (Buffer.byteLength(before, 'utf8') > MAX_WRITE_BYTES) throw new Error(`File exceeds the ${MAX_WRITE_BYTES / 1024}KB agent-edit limit.`);
+  const lineIssue = checkInsertionPoint(family, before.split(/\r?\n/), args.line - 1);
+  if (lineIssue) throw new Error(lineIssue);
+  const after = insertProbeLine(before, args.line, probeLineFor(family, args.id, sanitizeLabel(args.label ?? args.expr), args.expr));
+  return { kind: 'edit', displayPath, uri, before, after, summary: `Probe ${args.id} before ${displayPath}:${args.line}` };
+}
+
+/** `path` without the probe lines for `ids` (all when omitted); null when none are there. */
+export async function prepareProbeRemoval(relPath: string, ids: readonly string[] | undefined, roots: NamedRoot[]): Promise<PreparedWrite | null> {
+  const { uri, displayPath } = await assertWritable(roots, relPath);
+  let before: string;
+  try {
+    before = await documentText(uri);
+  } catch {
+    return null; // the file is gone, and its probes with it
+  }
+  const { content: after, removed } = removeProbeLines(before, ids);
+  if (!removed) return null;
+  return { kind: 'edit', displayPath, uri, before, after, summary: `Remove ${removed} probe${removed === 1 ? '' : 's'} from ${displayPath}` };
+}
+
+/**
+ * A write that puts `relPath` back to `content` (null: the file did not exist,
+ * so it is deleted) — what `counterfactual_check` uses to take the fix out and
+ * put it back. Null when the file already reads that way.
+ */
+export async function prepareRestore(relPath: string, content: string | null, roots: NamedRoot[]): Promise<PreparedWrite | null> {
+  const { uri, displayPath } = await assertWritable(roots, relPath);
+  let current: string | null;
+  try {
+    current = await documentText(uri);
+  } catch {
+    current = null;
+  }
+  if (current === content) return null;
+  if (content === null) return { kind: 'delete', displayPath, uri, before: current ?? '', after: '', summary: `Delete ${displayPath}` };
+  if (current === null) return { kind: 'create', displayPath, uri, before: '', after: content, summary: `Create ${displayPath}` };
+  return { kind: 'edit', displayPath, uri, before: current, after: content, summary: `Restore ${displayPath}` };
 }

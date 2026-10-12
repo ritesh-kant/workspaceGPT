@@ -30,6 +30,8 @@ export interface ToolAvailability {
   codeHost?: boolean;
   /** User memory is switched on (Settings → Memory): offers `save_memory`. */
   memory?: boolean;
+  /** This is a Debug-mode run (a Bug ticket being worked, or the user chose Debug): offers the probe, ledger and counterfactual tools. */
+  debug?: boolean;
 }
 
 /**
@@ -68,6 +70,12 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   get_repo_issue: 'codeHost',
   search_tickets: 'tickets',
   get_ticket: 'tickets',
+  debug_ledger: 'debug',
+  add_probe: 'debug',
+  remove_probes: 'debug',
+  probe_output: 'debug',
+  counterfactual_check: 'debug',
+  git_bisect: 'debug',
   browser_list_tabs: 'browser',
   browser_open_tab: 'browser',
   browser_close_tab: 'browser',
@@ -115,6 +123,11 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'delete_file',
   'update_confluence_page',
   'create_confluence_page',
+  // Debug tools that change the workspace (a probe is a file edit; counterfactual and bisect rewrite or check out files).
+  'add_probe',
+  'remove_probes',
+  'counterfactual_check',
+  'git_bisect',
 ]);
 
 /**

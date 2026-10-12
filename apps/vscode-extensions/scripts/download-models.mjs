@@ -12,10 +12,12 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Keep in sync with MODEL.DEFAULT_* in constants.ts
+// Keep in sync with MODEL.DEFAULT_TEXT_* in constants.ts. The code-embedding
+// model (MODEL.DEFAULT_CODE_EMBEDDING_MODEL, jina-embeddings-v2-base-code) is
+// deliberately not bundled: nothing loads it (the codebase search path is
+// dormant) and its onnx is 154 MB, ~3/4 of every installer.
 const MODELS = [
   'Xenova/all-MiniLM-L6-v2',
-  'jinaai/jina-embeddings-v2-base-code',
 ];
 const MODELS_DIR = path.join(__dirname, '..', 'models');
 const TRANSFORMERS_CACHE = path.join(

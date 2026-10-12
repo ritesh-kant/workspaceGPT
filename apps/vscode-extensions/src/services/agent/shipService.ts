@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { execFile } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 import { NamedRoot, resolveAgainstRoots } from '../codebase/codebaseTools';
 import { getActiveTicketProvider } from '../tickets/registry';
 import { CodeHostConnections } from '../codehost/connections';
@@ -15,6 +16,7 @@ import {
   slugify,
   suggestShipSubject,
 } from './shipHelpers';
+import { PROBE_MARKER } from './debugProbes';
 
 /**
  * "Create PR" after an agent turn: branch, commit ONLY the files the agent
@@ -71,6 +73,28 @@ function git(cwd: string, args: string[]): Promise<string> {
 }
 
 /**
+ * A Debug-mode log probe must never be committed. The run removes its probes
+ * itself; this is the backstop for one that survived (a crash, a hand edit).
+ * Unreadable or huge files are skipped, never a reason to fail the ship.
+ */
+async function assertNoProbes(gitCwd: string, relFromTop: string[]): Promise<void> {
+  const left: string[] = [];
+  for (const rel of relFromTop) {
+    try {
+      const abs = path.join(gitCwd, rel);
+      const stat = await fs.promises.stat(abs);
+      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
+      if ((await fs.promises.readFile(abs, 'utf8')).includes(`${PROBE_MARKER}:`)) left.push(rel);
+    } catch {
+      /* deleted or unreadable — nothing to find */
+    }
+  }
+  if (left.length) {
+    throw new Error(`${left.join(', ')} still contains a Debug-mode probe line (${PROBE_MARKER}:…). Remove it before shipping.`);
+  }
+}
+
+/**
  * The plain current branch name, or '' on a detached HEAD.
  *
  * Deliberately NOT `rev-parse --abbrev-ref HEAD`: that returns the
@@ -121,6 +145,7 @@ export async function shipChanges(
   });
   const gitCwd = repoTop;
   const filesFromTop = relFiles.map((f) => path.relative(gitCwd, path.join(cwd, f)));
+  await assertNoProbes(gitCwd, filesFromTop);
   const baseBranch = await currentBranch(gitCwd);
   if (!baseBranch) throw new Error('HEAD is detached — check out a branch first.');
   // PRs target the default branch. Only from the default branch itself do we
@@ -256,6 +281,7 @@ export async function shipAllChanges(
   if (!dirty) throw new Error('Nothing to ship — the working tree is clean.');
 
   const { paths, hasNewFiles } = parsePorcelain(dirty);
+  await assertNoProbes(gitCwd, paths);
   const inferredType = inferConventionalType(paths, hasNewFiles);
   const answer = await askTitle(`${inferredType}: ${suggestShipSubject(paths, hasNewFiles)}`, paths);
   if (answer === undefined) return null; // cancelled

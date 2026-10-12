@@ -65,6 +65,9 @@ function HomeDialog({ title, children, onClose }: { title: string; children: Rea
   </div>, document.body);
 }
 
+/** `.work-home` padding top + bottom (20 + 8) with no modifier class: the constant the height measure subtracts. */
+const BASE_VERTICAL_PADDING = 28;
+
 /** Desktop overview: bounded rows sized to the available space, rather than a scrolling feed. */
 export default function WorkHome(props: Props) {
   const { config } = useSettingsStore();
@@ -134,7 +137,13 @@ export default function WorkHome(props: Props) {
   useEffect(() => {
     const element = container.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) => setSize({ height: entry.contentRect.height, width: entry.contentRect.width }));
+    // Height is the border box less the BASE vertical padding, not the content box: `work-home--short`
+    // changes this element's own padding-top, so a content-box height that decides `short` re-decides it
+    // every frame when the window sits within that padding of the threshold (a permanent flicker).
+    const observer = new ResizeObserver(([entry]) => {
+      const outer = entry.borderBoxSize?.[0]?.blockSize ?? entry.target.getBoundingClientRect().height;
+      setSize({ height: outer - BASE_VERTICAL_PADDING, width: entry.contentRect.width });
+    });
     observer.observe(element);
     return () => observer.disconnect();
   }, []);

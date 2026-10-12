@@ -116,6 +116,16 @@ const desktopPackages = [
 ];
 for (const [name, dir] of desktopPackages) copy(dir, path.join(modules, name));
 
+// typescript-language-server runs lib/tsserver.js. Not needed for that: the tsc CLI
+// (_tsc.js), the translated diagnostics (tsserver is only given --locale when asked),
+// and the public .d.ts files — ~11 MB of the 22.
+const tsLib = path.join(modules, 'typescript/lib');
+for (const f of ['_tsc.js', 'tsc.js', 'typescript.d.ts', 'tsserverlibrary.d.ts']) fs.rmSync(path.join(tsLib, f), { force: true });
+for (const e of fs.readdirSync(tsLib, { withFileTypes: true })) {
+  if (e.isDirectory()) fs.rmSync(path.join(tsLib, e.name), { recursive: true, force: true });
+}
+fs.rmSync(path.join(modules, 'typescript/bin'), { recursive: true, force: true });
+
 // node-pty (the integrated terminal) ships prebuilds for every platform; keep this target's.
 // Prebuilds exist for darwin and win32 only — a linux target has none and would need a source build.
 copy(pkgDir(root, 'node-pty'), path.join(modules, 'node-pty'));

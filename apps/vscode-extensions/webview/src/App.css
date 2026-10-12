@@ -643,6 +643,7 @@
   transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   overflow: visible;
+  position: relative;
 }
 
 .input-container:focus-within {
@@ -904,16 +905,22 @@ input[type='radio'] {
   color: var(--vscode-errorForeground, #f14c4c);
 }
 
-/* The inline confirmation shown above the composer's controls before Full access turns on. */
+/* The confirmation shown as a popover floating above the composer before Full access turns on,
+   so it never pushes the input or the chat around. */
 .permission-confirm {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 8px;
-  margin: 0 8px 6px;
-  padding: 6px 8px;
-  font-size: 0.75rem;
-  line-height: 1.35;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
   border: 1px solid var(--vscode-errorForeground, #f14c4c);
   border-radius: 6px;
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
@@ -4296,3 +4303,104 @@ button:disabled {
 }
 .ci-menu-fix:disabled { opacity: 0.5; cursor: default; }
 .ci-menu-hint { color: var(--vscode-descriptionForeground); font-size: 0.68rem; }
+
+/* Multi-select rows (context picker): a drawn tick box before the label, with
+   the subtitle indented under the label rather than under the box. */
+.searchable-dropdown-item.multi .item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.searchable-dropdown-item.multi .item-subtitle {
+  padding-left: 22px;
+}
+.searchable-dropdown-item.multi .item-check {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--vscode-checkbox-border, var(--vscode-foreground));
+  border-radius: 3px;
+  background: var(--vscode-checkbox-background, transparent);
+  opacity: 0.7;
+}
+.searchable-dropdown-item.multi.selected .item-check {
+  opacity: 1;
+  border-color: var(--vscode-focusBorder, var(--vscode-checkbox-border));
+  background: var(--vscode-focusBorder, var(--vscode-button-background));
+  position: relative;
+}
+.searchable-dropdown-item.multi.selected .item-check::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3px;
+  height: 7px;
+  border: solid var(--vscode-button-foreground, #fff);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+/* Selected rows are marked by the box; drop the row fill so Auto isn't a heavy block. */
+.context-selector-bottom .searchable-dropdown-item.multi.selected:not(.highlighted) {
+  background: transparent;
+}
+
+/* Pin button on a row (model picker): shown on hover/keyboard focus, always when pinned. */
+.searchable-dropdown-item.has-pin {
+  position: relative;
+  padding-right: 30px;
+}
+.searchable-dropdown-item .item-pin {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  padding: 3px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+}
+.searchable-dropdown-item:hover .item-pin,
+.searchable-dropdown-item.highlighted .item-pin,
+.searchable-dropdown-item .item-pin.pinned,
+.searchable-dropdown-item .item-pin:focus-visible {
+  opacity: 0.75;
+}
+.searchable-dropdown-item .item-pin:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+/* "Debug this?" suggestion above the composer: quiet, one line, dismissible. */
+.debug-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.72rem;
+  color: var(--vscode-descriptionForeground);
+}
+.debug-hint-accept {
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--vscode-textLink-foreground) !important;
+  font-size: inherit;
+  cursor: pointer;
+}
+.debug-hint-accept:hover {
+  text-decoration: underline;
+}
+.debug-hint-dismiss {
+  margin-left: auto;
+  padding: 0 0.25rem !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--vscode-descriptionForeground) !important;
+  cursor: pointer;
+}

@@ -27,6 +27,8 @@ const extDir = path.resolve(root, '../vscode-extensions');
 const outSidecar = path.join(root, 'dist/sidecar');
 const outBridge = path.join(root, 'dist/bridge');
 const watch = process.argv.includes('--watch');
+// stage-runtime.mjs builds with NODE_ENV=production; dev builds stay readable.
+const production = process.env.NODE_ENV === 'production';
 const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 
 // The analytics shim wraps the real posthog-node; point it at the real file
@@ -42,7 +44,8 @@ const sidecar = {
   target: 'node22',
   format: 'cjs',
   outfile: path.join(outSidecar, 'main.js'),
-  sourcemap: true,
+  sourcemap: !production,
+  minify: production,
   keepNames: true,
   logLevel: 'warning',
   alias: {
@@ -79,6 +82,7 @@ const bridge = {
   target: ['safari15', 'chrome100'],
   format: 'iife',
   outfile: path.join(outBridge, 'bridge.js'),
+  minify: production,
   logLevel: 'warning',
 };
 

@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { ATTACHMENT_LIMITS, STORAGE_KEYS } from '../../../constants';
 import { AdoAuthService } from './adoAuthService';
-import { MyTicketsResult, TicketComment, TicketDetail, TicketImage, TicketSummary } from '../tickets/types';
+import { MyTicketsResult, TicketComment, TicketDetail, TicketImage, TicketRelation, TicketSummary, TicketTextAttachment } from '../tickets/types';
+import { MAX_TEXT_ATTACHMENTS, MAX_TEXT_ATTACHMENT_BYTES, condenseAttachmentText, isTextAttachmentName } from '../tickets/attachmentText';
 import { sniffImageMime } from '../tickets/imageSniff';
 
 /**
@@ -169,6 +170,67 @@ async function fetchTicketImages(ctx: AdoRequestContext, urls: string[]): Promis
   return images;
 }
 
+
+/** ADO link types → the name a person would use. */
+const ADO_LINK_NAMES: Record<string, string> = {
+  'System.LinkTypes.Related': 'Related',
+  'System.LinkTypes.Duplicate-Forward': 'Duplicate',
+  'System.LinkTypes.Duplicate-Reverse': 'Duplicate',
+  'System.LinkTypes.Hierarchy-Forward': 'Child',
+  'System.LinkTypes.Hierarchy-Reverse': 'Parent',
+  'System.LinkTypes.Dependency-Forward': 'Successor',
+  'System.LinkTypes.Dependency-Reverse': 'Predecessor',
+};
+
+/**
+ * What a ticket is linked to — for a bug, a duplicate or an earlier bug with
+ * the same signature, and the commits / PRs / branches already attached to it.
+ * Work-item links name an id; artifact links (vstfs:///…) name a commit, PR or
+ * build by the last segment of their url.
+ */
+export function relationsOf(item: any, selfId: string): TicketRelation[] {
+  const out: TicketRelation[] = [];
+  for (const r of item?.relations ?? []) {
+    const rel = String(r?.rel ?? '');
+    const url = String(r?.url ?? '');
+    if (rel === 'AttachedFile' || rel === 'Hyperlink' || !url) continue;
+    if (rel === 'ArtifactLink') {
+      const last = decodeURIComponent(url.split('/').pop() ?? '').split('/').pop() ?? '';
+      if (last) out.push({ rel: String(r?.attributes?.name ?? 'Linked artifact'), id: last.length === 40 ? last.slice(0, 8) : last });
+      continue;
+    }
+    const name = ADO_LINK_NAMES[rel];
+    const id = url.split('/').pop() ?? '';
+    if (name && /^\d+$/.test(id) && id !== selfId) out.push({ rel: name, id });
+  }
+  return out;
+}
+
+/** Plain-text attachments (logs, traces). A bad or oversized one is skipped; it never fails the ticket read. */
+async function fetchTextAttachments(ctx: AdoRequestContext, item: any): Promise<TicketTextAttachment[]> {
+  const out: TicketTextAttachment[] = [];
+  for (const r of item?.relations ?? []) {
+    if (out.length >= MAX_TEXT_ATTACHMENTS) break;
+    if (r?.rel !== 'AttachedFile') continue;
+    const name = String(r?.attributes?.name ?? '');
+    const size = Number(r?.attributes?.resourceSize ?? 0);
+    if (!isTextAttachmentName(name) || (size && size > MAX_TEXT_ATTACHMENT_BYTES)) continue;
+    try {
+      const u = new URL(String(r.url));
+      // Only ADO's own hosts: this request carries the org's auth header.
+      if (u.hostname !== 'dev.azure.com' && !u.hostname.endsWith('.visualstudio.com')) continue;
+      const resp = await fetch(u.toString(), { headers: { Authorization: ctx.authHeader } });
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      if (text.includes('\u0000')) continue; // binary dressed as text
+      out.push({ name, text: condenseAttachmentText(text) });
+    } catch {
+      // network failure — skip this attachment only
+    }
+  }
+  return out;
+}
+
 /** Comments are supplementary — never fail the whole read because they 404'd. */
 async function fetchComments(ctx: AdoRequestContext, id: string): Promise<TicketComment[]> {
   try {
@@ -222,6 +284,11 @@ export async function fetchWorkItem(
   const rawDescription = f['System.Description'];
   const imageUrls = rawDescription ? extractImageUrls(rawDescription, ctx) : [];
   const images = imageUrls.length ? await fetchTicketImages(ctx, imageUrls) : [];
+  // A bug's own repro steps and environment live in fields that were never read.
+  const reproHtml = f['Microsoft.VSTS.TCM.ReproSteps'];
+  const systemInfoHtml = f['Microsoft.VSTS.TCM.SystemInfo'];
+  const relations = relationsOf(item, id);
+  const attachments = await fetchTextAttachments(ctx, item);
 
   return {
     id: item.id != null ? String(item.id) : id,
@@ -244,6 +311,10 @@ export async function fetchWorkItem(
       : undefined,
     parentId: parentId || undefined,
     images: images.length ? images : undefined,
+    reproSteps: reproHtml ? htmlToText(reproHtml).trim() || undefined : undefined,
+    systemInfo: systemInfoHtml ? htmlToText(systemInfoHtml).trim() || undefined : undefined,
+    relations: relations.length ? relations : undefined,
+    attachments: attachments.length ? attachments : undefined,
     ...(args?.includeComments ? { comments: await fetchComments(ctx, id) } : {}),
   };
 }

@@ -54,7 +54,8 @@ import { modelDefaultConfig } from './store/modelStore';
 // parses it with — see continuationIntent's header for why it must be bare.
 import { RESUME_MESSAGE, RUN_PLAN_MESSAGE } from '../../src/utils/continuationIntent';
 import ComposerPlusMenu from './components/ComposerPlusMenu';
-import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS, isResearchWorkItem, researchWorkItemPrompt, publishSpikePrompt } from './constants';
+import { looksLikeBugReport } from './utils/bugReportHint';
+import { MESSAGE_TYPES, STORAGE_KEYS, ATTACHMENT_LIMITS, isResearchWorkItem, researchWorkItemPrompt, publishSpikePrompt, isBugWorkItem, debugWorkItemPrompt } from './constants';
 import type { ChatAttachment, MentionTarget } from './constants';
 import { settingsDefaultConfig } from './store/settingsStore';
 
@@ -277,6 +278,9 @@ function buildSuggestions(
   if (first && isResearchWorkItem(first.type)) {
     // A spike is researched, not fixed (#1537001).
     suggestions.push({ label: `Research spike #${first.id}`, prompt: researchWorkItemPrompt(first.id), touchesCode: true });
+  } else if (first && isBugWorkItem(first.type)) {
+    // A bug is debugged: reproduce it, prove the cause, then fix it.
+    suggestions.push({ label: `Debug bug #${first.id}`, prompt: debugWorkItemPrompt(first.id), touchesCode: true });
   } else if (first) {
     suggestions.push({
       label: `Fix #${first.id}`,
@@ -439,6 +443,11 @@ const App: React.FC = () => {
     return saved === 'manual' ? 'manual' : 'auto';
   });
   const [confirmingFull, setConfirmingFull] = useState(false);
+  // "Debug" for the NEXT message: work it as a bug (reproduce, observe, prove the
+  // cause — docs/design/debug-mode.md). One-shot, so it never silently sticks.
+  const [debugOn, setDebugOn] = useState(false);
+  // The "Debug this?" suggestion was waved away for the current draft.
+  const [debugHintDismissed, setDebugHintDismissed] = useState(false);
   const setChatModePersisted = (next: ChatMode) => {
     setChatMode(next);
     if (next !== 'plan') setLastPermission(next);
@@ -539,7 +548,7 @@ const App: React.FC = () => {
    * the same store Settings uses, so the menu updates while a run is in flight.
    */
   const contextOptions: DropdownOption[] = [
-    { value: 'Auto', label: 'Context: Auto' },
+    { value: 'Auto', label: 'Auto', subtitle: 'Chooses sources per question' },
     // Each source's row is its registry status (settings/knowledgeSources.tsx),
     // the same judgement the Knowledge page and the greeting show. A source
     // that can't be picked yet says why, and a click on it opens the Settings
@@ -606,7 +615,7 @@ const App: React.FC = () => {
 
   const selectedModelProvider = useSelectedModelProvider();
 
-  const { handleModelChange, setReasoningEffort } = useModelActions();
+  const { handleModelChange, setReasoningEffort, togglePinnedModel } = useModelActions();
   const effortLevels = effortLevelsFor(selectedModelProvider);
 
   const [activeModels, setActiveModels] = useState<
@@ -851,6 +860,17 @@ const App: React.FC = () => {
 
   // Clean up the pump on unmount.
   useEffect(() => () => resetStreamBuffer(), [resetStreamBuffer]);
+  useEffect(() => {
+    if (!confirmingFull) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setConfirmingFull(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirmingFull]);
+
+  // A new draft gets a fresh "Debug this?" suggestion.
+  useEffect(() => {
+    if (!inputValue.trim()) setDebugHintDismissed(false);
+  }, [inputValue]);
 
   useEffect(() => {
     lastStepAtRef.current = Date.now();
@@ -1852,9 +1872,11 @@ const App: React.FC = () => {
       contextSelection: contextSelection,
       assistantMode,
       ...modeFlags(),
+      ...(debugOn && assistantMode !== 'chat' ? { debug: true } : {}),
       ...(pendingAttachments.length > 0 ? { attachments: pendingAttachments } : {}),
       ...(mentions.length > 0 ? { mentions } : {}),
     });
+    setDebugOn(false);
   };
 
   // ── Composer attachments ──────────────────────────────────────────────
@@ -2113,6 +2135,11 @@ const App: React.FC = () => {
       inputRef.current?.focus();
       return;
     }
+    if (isBugWorkItem(item.type)) {
+      setInputValue(debugWorkItemPrompt(item.id));
+      inputRef.current?.focus();
+      return;
+    }
     setInputValue(
       `Work on ticket ${item.id} (${item.title}) — read the ticket and any design doc behind it, ` +
         'find the code it affects, then implement the fix. Show me the diffs as you go. ' +
@@ -2151,6 +2178,8 @@ const App: React.FC = () => {
     }
     const promptText = isResearchWorkItem(item.type)
       ? researchWorkItemPrompt(item.id)
+      : isBugWorkItem(item.type)
+      ? debugWorkItemPrompt(item.id)
       : `Work on ticket ${item.id} (${item.title}) autonomously — read the ticket and any design doc behind it, ` +
         'find the code it affects, implement the fix, verify with diagnostics and the relevant tests, ' +
         'and report the result against each acceptance criterion. ' +
@@ -2181,6 +2210,7 @@ const App: React.FC = () => {
       contextSelection: contextSelection,
       assistantMode,
       permission,
+      ...(isBugWorkItem(item.type) ? { debug: true } : {}),
     });
   };
 
@@ -3036,6 +3066,27 @@ const App: React.FC = () => {
           }}
           onDrop={handleComposerDrop}
         >
+          {confirmingFull && (
+            <div className='permission-confirm' role='alertdialog' aria-label='Turn on Full access'>
+              <span className='permission-confirm-text'>
+                Full access runs commands and changes Confluence pages without asking. File edits are still checkpointed so you can
+                revert them.
+              </span>
+              <button
+                type='button'
+                className='permission-confirm-on'
+                onClick={() => {
+                  setConfirmingFull(false);
+                  setChatModePersisted('full');
+                }}
+              >
+                Turn on
+              </button>
+              <button type='button' className='permission-confirm-cancel' onClick={() => setConfirmingFull(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
           {pendingQuestion && (
             <div className='composer-question' role='region' aria-label='Question from the agent'>
               <AgentQuestionCard
@@ -3056,8 +3107,22 @@ const App: React.FC = () => {
                 onHoverIndex={setMentionIndex}
               />
             )}
-            {pendingAttachments.length > 0 && (
+            {(pendingAttachments.length > 0 || (debugOn && isWorkMode)) && (
               <div className='composer-attachments'>
+                {debugOn && isWorkMode && (
+                  <div className='attachment-chip' title='The next message is worked as a bug: reproduce, observe, prove the root cause, then fix.'>
+                    <span className='attachment-chip-name'>Debug</span>
+                    <button
+                      type='button'
+                      className='attachment-chip-remove'
+                      onClick={() => setDebugOn(false)}
+                      aria-label='Turn Debug off'
+                      title='Turn Debug off'
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
                 {pendingAttachments.map((att, i) => (
                   <div key={`${att.name}-${i}`} className='attachment-chip' title={att.name}>
                     {att.kind === 'image' ? (
@@ -3083,6 +3148,18 @@ const App: React.FC = () => {
               </div>
             )}
             {attachmentNote && <div className='attachment-note'>{attachmentNote}</div>}
+            {/* A suggestion only: it arms the same one-shot Debug as "+ → Debug a bug", and never on its own. */}
+            {isWorkMode && !debugOn && !debugHintDismissed && looksLikeBugReport(inputValue) && (
+              <div className='debug-hint' role='status'>
+                <span>Looks like a bug report.</span>
+                <button type='button' className='debug-hint-accept' onClick={() => setDebugOn(true)}>
+                  Debug this?
+                </button>
+                <button type='button' className='debug-hint-dismiss' onClick={() => setDebugHintDismissed(true)} aria-label='Dismiss' title='Dismiss'>
+                  ×
+                </button>
+              </div>
+            )}
             <textarea
               ref={inputRef}
               rows={1}
@@ -3109,27 +3186,6 @@ const App: React.FC = () => {
                     : 'Please configure a model in Settings to start chatting...'
               }
             />
-            {confirmingFull && (
-              <div className='permission-confirm' role='alertdialog' aria-label='Turn on Full access'>
-                <span className='permission-confirm-text'>
-                  Full access runs commands and changes Confluence pages without asking. File edits are still checkpointed so you can
-                  revert them.
-                </span>
-                <button
-                  type='button'
-                  className='permission-confirm-on'
-                  onClick={() => {
-                    setConfirmingFull(false);
-                    setChatModePersisted('full');
-                  }}
-                >
-                  Turn on
-                </button>
-                <button type='button' className='permission-confirm-cancel' onClick={() => setConfirmingFull(false)}>
-                  Cancel
-                </button>
-              </div>
-            )}
             <div className='input-controls'>
               <div className='input-selectors'>
                 <input
@@ -3145,6 +3201,8 @@ const App: React.FC = () => {
                   onAddFolder={startFolderMention}
                   filesDisabled={pendingAttachments.length >= ATTACHMENT_LIMITS.MAX_FILES}
                   showConnectors={isWorkMode && isDesktopHost()}
+                  debugOn={debugOn}
+                  onToggleDebug={isWorkMode ? () => setDebugOn((on) => !on) : undefined}
                 />
                 <button
                   type='button'
@@ -3197,13 +3255,16 @@ const App: React.FC = () => {
                       data-tooltip={
                         contextSelection === 'Auto'
                           ? 'Where answers are grounded. Auto picks between your docs, tickets and code per question.'
-                          : `Answers are grounded in ${contextSelection} only.`
+                          : `Answers are grounded in ${contextSelection.split(',').join(' + ')} only.`
                       }
                     >
                       <SearchableDropdown
                         value={contextSelection}
                         onChange={setContextSelection}
                         searchable={false}
+                        multiple
+                        exclusiveValue='Auto'
+                        triggerLabel={contextSelection === 'Auto' ? 'Context: Auto' : undefined}
                         options={contextOptions}
                         footer={{ label: 'Manage knowledge', onClick: () => openSettings('knowledge') }}
                       />
@@ -3213,28 +3274,49 @@ const App: React.FC = () => {
                 {mode === 'local' && (
                   <div className='model-selector-bottom'>
                     <SearchableDropdown
-                      value={selectedModelProvider?.provider ?? ''}
-                      searchable={false}
+                      value={`model:${selectedModelProvider?.selectedModel ?? ''}`}
+                      searchPlaceholder='Search models...'
+                      emptyLabel='No matching models'
+                      triggerLabel={
+                        selectedModelProvider?.selectedModel
+                          ? `${selectedModelProvider.provider} (${selectedModelProvider.selectedModel})`
+                          : 'Select Model'
+                      }
                       onChange={(value) => {
-                        if (value === 'selectModel') {
+                        if (value === 'selectModel' || value === 'none') {
                           setActiveView('settings');
                           return;
                         }
-                        const providerConfig = activeModels.find(
-                          (model) => model.provider === value
-                        );
-                        handleModelChange(
-                          providerConfig?.model!,
-                          providerConfig?.provider!
-                        );
+                        // Another connected provider: switch to it on the model it last used.
+                        if (value.startsWith('provider:')) {
+                          const providerConfig = activeModels.find((m) => m.provider === value.slice('provider:'.length));
+                          if (providerConfig?.model) handleModelChange(providerConfig.model, providerConfig.provider);
+                          return;
+                        }
+                        handleModelChange(value.slice('model:'.length), selectedModelProvider.provider);
                       }}
                       options={[
-                        ...(activeModels?.length
-                          ? activeModels.map((model) => ({
-                              value: model.provider,
-                              label: `${model.provider} (${model.model})`,
-                            }))
-                          : [{ value: 'none', label: 'Select Model' }]),
+                        // The selected provider's whole model list, pinned ones first.
+                        ...[...(selectedModelProvider?.availableModels ?? [])]
+                          .sort(
+                            (a, b) =>
+                              Number(selectedModelProvider.pinnedModels?.includes(b.id) ?? false) -
+                              Number(selectedModelProvider.pinnedModels?.includes(a.id) ?? false)
+                          )
+                          .map((model) => ({
+                            value: `model:${model.id}`,
+                            label: model.id,
+                            pinned: selectedModelProvider.pinnedModels?.includes(model.id) ?? false,
+                            onPin: () => togglePinnedModel(model.id),
+                          })),
+                        ...activeModels
+                          .filter((m) => m.provider !== selectedModelProvider?.provider)
+                          .map((m) => ({
+                            value: `provider:${m.provider}`,
+                            label: `${m.provider} (${m.model})`,
+                            subtitle: 'Switch provider',
+                          })),
+                        ...(activeModels.length ? [] : [{ value: 'none', label: 'Select Model' }]),
                         { value: 'selectModel', label: 'Edit...' },
                       ]}
                     />

@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { ATTACHMENT_LIMITS } from '../../../constants';
 import { JiraAuthService, jiraApiBase } from './jiraAuthService';
-import { TicketComment, TicketDetail, TicketImage } from '../tickets/types';
+import { TicketComment, TicketDetail, TicketImage, TicketRelation, TicketTextAttachment } from '../tickets/types';
+import { MAX_TEXT_ATTACHMENTS, MAX_TEXT_ATTACHMENT_BYTES, condenseAttachmentText, isTextAttachmentName } from '../tickets/attachmentText';
 import { adfToText, markdownToAdf, mediaIdsFromAdf } from './adf';
 import { sniffImageMime } from '../tickets/imageSniff';
 
@@ -106,6 +107,37 @@ async function fetchAttachmentImages(ctx: JiraRequestContext, ids: string[]): Pr
   return images;
 }
 
+/** Linked issues, named the way Jira words each end of the link ("is blocked by", "duplicates"). */
+export function jiraRelationsOf(links: any[] | undefined): TicketRelation[] {
+  const out: TicketRelation[] = [];
+  for (const l of links ?? []) {
+    const other = l?.outwardIssue ?? l?.inwardIssue;
+    if (!other?.key) continue;
+    out.push({ rel: String((l.outwardIssue ? l.type?.outward : l.type?.inward) ?? l.type?.name ?? 'Related'), id: String(other.key), title: other.fields?.summary });
+  }
+  return out;
+}
+
+/** Text attachments (logs, traces), same bounds as ADO's. One that fails is skipped; it never fails the issue read. */
+async function fetchTextAttachments(ctx: JiraRequestContext, attachments: any[] | undefined): Promise<TicketTextAttachment[]> {
+  const out: TicketTextAttachment[] = [];
+  for (const a of attachments ?? []) {
+    if (out.length >= MAX_TEXT_ATTACHMENTS) break;
+    const name = String(a?.filename ?? '');
+    if (!a?.id || !isTextAttachmentName(name) || Number(a?.size ?? 0) > MAX_TEXT_ATTACHMENT_BYTES) continue;
+    try {
+      const resp = await fetch(`${ctx.apiBase}/rest/api/3/attachment/content/${encodeURIComponent(String(a.id))}`, { headers: { Authorization: ctx.authHeader } });
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      if (text.includes('\u0000')) continue; // binary dressed as text
+      out.push({ name, text: condenseAttachmentText(text) });
+    } catch {
+      // network failure — skip this attachment only
+    }
+  }
+  return out;
+}
+
 /** Comments are supplementary — never fail the whole read because they errored. */
 async function fetchComments(ctx: JiraRequestContext, key: string): Promise<TicketComment[]> {
   try {
@@ -122,7 +154,7 @@ async function fetchComments(ctx: JiraRequestContext, key: string): Promise<Tick
   }
 }
 
-const ISSUE_FIELDS = 'summary,issuetype,status,assignee,description,labels,priority,created,updated,parent,project';
+const ISSUE_FIELDS = 'summary,issuetype,status,assignee,description,labels,priority,created,updated,parent,project,issuelinks,attachment';
 
 /**
  * Read one issue by key, straight from Jira. Comments are opt-in for the same
@@ -142,6 +174,8 @@ export async function fetchJiraIssue(
   const description = f.description ? adfToText(f.description) : undefined;
   const mediaIds = f.description ? mediaIdsFromAdf(f.description) : [];
   const images = mediaIds.length ? await fetchAttachmentImages(ctx, mediaIds) : [];
+  const relations = jiraRelationsOf(f.issuelinks);
+  const attachments = await fetchTextAttachments(ctx, f.attachment);
 
   return {
     id: item.key ?? key,
@@ -162,6 +196,8 @@ export async function fetchJiraIssue(
     // carries whatever the team put there.
     parentId: f.parent?.key,
     images: images.length ? images : undefined,
+    relations: relations.length ? relations : undefined,
+    attachments: attachments.length ? attachments : undefined,
     ...(args?.includeComments ? { comments: await fetchComments(ctx, key) } : {}),
   };
 }

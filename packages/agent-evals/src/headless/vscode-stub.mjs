@@ -8,6 +8,7 @@
  */
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
+import { dirname as require_path_dirname } from 'path';
 
 export const Uri = {
   file(p) {
@@ -84,8 +85,33 @@ export const workspace = {
       return new Uint8Array(await fsp.readFile(uri.fsPath));
     },
   },
-  async applyEdit() {
-    throw new Error('vscode-stub: applyEdit is not supported headlessly — apply PreparedWrite via fs in the harness.');
+  // Enough of WorkspaceEdit for agentWriteTools.applyWrite: create(+insert), delete,
+  // and a whole-file replace. Positions are (line, character) over the file's text.
+  async applyEdit(edit) {
+    const offsetOf = (text, pos) => {
+      const lines = text.split('\n');
+      let off = 0;
+      for (let i = 0; i < pos.line; i++) off += (lines[i] ?? '').length + 1;
+      return off + pos.character;
+    };
+    for (const op of edit.ops) {
+      const p = op.uri.fsPath;
+      if (op.kind === 'create') {
+        if (fs.existsSync(p) && !op.opts?.ignoreIfExists) return false;
+        fs.mkdirSync(require_path_dirname(p), { recursive: true });
+        fs.writeFileSync(p, '');
+      } else if (op.kind === 'delete') {
+        fs.rmSync(p, { force: true });
+      } else if (op.kind === 'insert') {
+        const cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+        const at = offsetOf(cur, op.pos);
+        fs.writeFileSync(p, cur.slice(0, at) + op.text + cur.slice(at));
+      } else if (op.kind === 'replace') {
+        const cur = fs.readFileSync(p, 'utf8');
+        fs.writeFileSync(p, cur.slice(0, offsetOf(cur, op.range.start)) + op.text + cur.slice(offsetOf(cur, op.range.end)));
+      }
+    }
+    return true;
   },
   workspaceFolders: [],
   getConfiguration: () => ({ get: () => undefined }),

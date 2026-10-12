@@ -1322,6 +1322,33 @@ export function isResearchWorkItem(type?: string): boolean {
 }
 
 /**
+ * Is this work item a BUG — a defect to find the cause of and fix?
+ *
+ * Read off the work-item TYPE like isResearchWorkItem, never off the user's
+ * phrasing. A bug being worked runs in Debug mode (docs/design/debug-mode.md):
+ * reproduce, observe, prove the root cause, then fix. Lives here so the
+ * webview's work-item buttons read the same list as the host and the prompt.
+ */
+const BUG_WORK_ITEM_TYPES = new Set(['bug', 'defect', 'production bug', 'production defect', 'incident']);
+
+export function isBugWorkItem(type?: string): boolean {
+  return BUG_WORK_ITEM_TYPES.has(String(type ?? '').trim().toLowerCase());
+}
+
+/**
+ * The prompt the My Work buttons send for a bug. It is the user's message, so
+ * it asks for the fix outright (the host reads it for an implement mandate):
+ * Debug mode ends in a verified fix, or an honest "not found", never a forced
+ * edit. The ticket block already carries the title.
+ */
+export function debugWorkItemPrompt(id: string): string {
+  return (
+    `Debug bug #${id} — reproduce it, find the root cause and prove it with something you ran, then fix it with the smallest change and add a regression test. ` +
+    'If it cannot be reproduced here or a fact only I can give is missing, ask me instead of guessing.'
+  );
+}
+
+/**
  * The prompt the My Work buttons send for a research item.
  *
  * The host reads the user's message for an implement mandate

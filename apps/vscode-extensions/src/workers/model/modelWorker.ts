@@ -62,6 +62,7 @@ import {
   LimitKind,
   pruneStaleHarnessMessages,
 } from './resumeHygiene';
+import { DebugTracker, claimedRootCauseStatus, isTestPath } from './debugState';
 import { AutoVerifyTracker, CheckResultLike, CheckKindName, PendingCheck, AUTO_CHECKABLE_FILE_RE } from './autoVerify';
 import { stripLineNumbers } from '../../services/codebase/lineNumbers';
 import { logPromptCall } from './promptTokenDebug';
@@ -188,6 +189,12 @@ interface WorkerData {
    */
   turnAction?: 'publish-spike';
   /**
+   * Debug mode: a Bug ticket is being worked, or the user chose "Debug this".
+   * Decided by the host from the ticket's type / the button — never from the
+   * prompt text. Adds the debug prompt block and the evidence discipline.
+   */
+  debugMode?: boolean;
+  /**
    * Id of the Confluence page the user linked in this message, when the host
    * pre-fetched it (a fetched URL, not a reading of the prompt). An edit
    * request on this turn is about that page, so no code scouting.
@@ -230,6 +237,7 @@ const {
   harnessProfile,
   reasoningEffort,
   turnAction,
+  debugMode,
   linkedConfluencePageId,
 } = workerData as WorkerData;
 
@@ -1129,6 +1137,103 @@ const TOOL_DEFS = [
       },
     },
   },
+  // ── Debug mode (offered only when toolAvailability.debug; docs/design/debug-mode.md) ──
+  {
+    type: 'function',
+    function: {
+      name: 'debug_ledger',
+      description:
+        'Your hypothesis ledger for this bug. action "hypothesis": record a possible cause with `text` and `predicts` (what you would OBSERVE if it is true). Record at least two competing causes before editing. ' +
+        'action "resolve": settle one (`id`, `status` confirmed|refuted, `evidence` = ids like E1 that this run RECORDED — a failing run, a probe\'s values, the fix reverted). Evidence you did not record is refused. action "show": the ledger and evidence so far. ' +
+        'Evidence ids appear automatically in run_command / run_checks / probe results; you never invent them.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['hypothesis', 'resolve', 'show'] },
+          text: { type: 'string', description: 'hypothesis: what you think is wrong, in one sentence.' },
+          predicts: { type: 'string', description: 'hypothesis: the observation that would confirm it (a value, an error, a call order).' },
+          id: { type: 'string', description: 'resolve: the hypothesis id, e.g. H1.' },
+          status: { type: 'string', enum: ['confirmed', 'refuted'] },
+          evidence: { type: 'array', items: { type: 'string' }, description: 'resolve: recorded evidence ids, e.g. ["E1","E3"].' },
+          note: { type: 'string', description: 'resolve: one line on what the evidence showed.' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_probe',
+      description:
+        'Insert ONE temporary log line before a statement so the next run_command / run_checks shows a value at runtime — use it when reading the code cannot settle which hypothesis is true. ' +
+        'The host writes the line in the file\'s own language and tags it; the values it prints come back in the result of the next command you run (as evidence ids). Tie it to a hypothesis. ' +
+        '`line` must be the FIRST line of a statement (not inside an expression, object literal or JSX). `expr` is one side-effect-free expression (no assignment, await, ++); never probe secrets or tokens. ' +
+        'Probes are removed for you at the end of the run, or earlier with remove_probes. At most 12.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace-relative file path.' },
+          line: { type: 'number', description: '1-based line to insert BEFORE (read_file numbering).' },
+          expr: { type: 'string', description: 'The expression to print, e.g. "order.items.length" or "typeof user".' },
+          label: { type: 'string', description: 'Short plain-words name for the value, e.g. "items before filter".' },
+          hypothesis: { type: 'string', description: 'The hypothesis id this tests, e.g. H2.' },
+        },
+        required: ['path', 'line', 'expr'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'probe_output',
+      description: 'The values the probes printed so far in this run (all probes, or one `id` like p1), with how many times each fired. The same values already come back in the result of the command that produced them; this re-reads them, e.g. after a background job.',
+      parameters: { type: 'object', properties: { id: { type: 'string', description: 'A probe id, e.g. p1. Omit for all.' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_probes',
+      description: 'Remove probes you inserted (all of them, or the listed `ids`). Do this before the counterfactual_check and before your final report; anything left is removed for you when the run ends.',
+      parameters: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' }, description: 'Probe ids to remove, e.g. ["p1"]. Omit for all.' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'counterfactual_check',
+      description:
+        'Prove the fix is what makes the repro pass: temporarily put the files you changed back to their original content (except `keep`, normally the regression test), run the test for `path`, then restore your fix and confirm it is restored. ' +
+        'A confirmed root cause needs this to come back FAILING (red) — if the test still passes without your fix, the test does not exercise the cause. Run it after the repro passes with your fix, with probes removed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'The test file (or file under test) whose test run is the repro — same as run_checks path.' },
+          kind: { type: 'string', enum: ['test'], description: 'Always "test".' },
+          keep: { type: 'array', items: { type: 'string' }, description: 'Changed files to leave in place — the regression test you wrote. Defaults to `path`.' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'git_bisect',
+      description:
+        'Find the commit that introduced a regression: `git bisect run` of `command` between a known-good commit and a bad one, in this repo, then restore HEAD. Needs a CLEAN working tree (do it before you edit or add probes) and a deterministic command that fails on bad and passes on good. The user approves it. Read-only in effect: HEAD is restored afterwards.',
+      parameters: {
+        type: 'object',
+        properties: {
+          good: { type: 'string', description: 'A commit, tag or branch where the bug does NOT occur.' },
+          bad: { type: 'string', description: 'A commit where it does. Default HEAD.' },
+          command: { type: 'string', description: 'The repro command: exit 0 = good, non-zero = bad. e.g. "pnpm exec jest src/foo.test.ts".' },
+        },
+        required: ['good', 'command'],
+      },
+    },
+  },
 ];
 
 // Ollama is the only provider running against a local, typically small-context
@@ -1203,6 +1308,11 @@ const MAX_TOOL_ITERATIONS = SAFETY_ITERATION_CEILING;
 // zero-write run is a finished run — unless the user's own instruction for
 // this run asks for the implementation too (#1536998 asked for both).
 const TICKET_RESEARCH_RUN = !!ticketContext && isResearchWorkItem(ticketContext.type);
+// Debug mode's record of what the run has established (hypotheses, evidence, the
+// proof state). Null outside Debug mode, so nothing below costs a normal run anything.
+const debugTracker = debugMode && !chatOnly ? new DebugTracker() : null;
+let debugEditGateUsed = false;
+let debugClaimNudgesUsed = 0;
 const TICKET_IMPLEMENT_MANDATE = !!executeMandate || IMPLEMENT_MANDATE_RE.test(prompt) || hasWriteIntent(prompt);
 const TICKET_IMPLEMENT_RUN =
   !!ticketContext && !ticketLookupOnly && (!TICKET_RESEARCH_RUN || TICKET_IMPLEMENT_MANDATE);
@@ -1383,6 +1493,8 @@ const BARRIER_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file', '
 BARRIER_TOOL_NAMES.add('ask_user');
 // Browser actions change what later reads see, and depend on order ("click, then type").
 for (const name of ['browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_act', 'browser_eval']) BARRIER_TOOL_NAMES.add(name);
+// Debug mode: a probe edits a file, and the counterfactual and bisect rewrite or check out the tree.
+for (const name of ['add_probe', 'remove_probes', 'counterfactual_check', 'git_bisect']) BARRIER_TOOL_NAMES.add(name);
 
 /** File-mutating subset whose success must be verified by diagnostics before the run may end. */
 const FILE_WRITE_TOOL_NAMES = new Set(['edit_file', 'create_file', 'delete_file']);
@@ -1626,6 +1738,7 @@ async function generateResponse(): Promise<void> {
         autonomous,
         fullAccess,
         planMode,
+        debugMode,
       }
     );
 
@@ -2676,13 +2789,24 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       out +=
         '\n\n---\n⚠️ **Harness note:** zero file edits were actually applied in this run — the working tree is unchanged, so any "implemented fix" above is a proposal only. Reply "go ahead" to have it applied.';
     }
+    // Debug mode: a "confirmed" the run's record does not support is delivered
+    // with that said; and the harness's own ledger rides along so the reader sees
+    // what was actually established, in the harness's words rather than the model's.
+    if (out && debugTracker && !planMode) {
+      const unbacked = debugTracker.claimIssues(out);
+      if (unbacked.length) out += `\n\n---\n⚠️ **Harness note:** this report says the root cause is confirmed, but the run did not establish it: ${unbacked.join('; ')}. Treat it as probable.`;
+      const ledger = debugTracker.ledgerMarkdown();
+      if (ledger) out += `\n\n${ledger}`;
+    }
     // Self-diagnosing zero-write ticket runs: every failure so far had to be
     // diagnosed from answer prose because the [agent-metrics] console line
     // never made it into the bug report. Stamp the numbers that matter onto
     // the answer itself (plan mode excluded — zero writes is its contract).
     // Only for a run whose job WAS to change the tree: a spike, a lookup or a
     // publish turn applies zero edits by contract, so the stamp there is noise.
-    if (out && TICKET_IMPLEMENT_RUN && !planMode && writesApplied === 0) {
+    // A Debug run that honestly ends on "probable" / "not found" changed nothing by design.
+    const debugHonest = !!debugTracker && ['probable', 'not found'].includes(claimedRootCauseStatus(out) ?? '');
+    if (out && TICKET_IMPLEMENT_RUN && !planMode && writesApplied === 0 && !debugHonest) {
       const pct = Math.min(100, Math.round((toolCharsUsed / MAX_TOTAL_TOOL_CHARS) * 100));
       const nudgesFired = [
         planInsteadOfExecuteNudgeUsed ? 'plan' : '',
@@ -3190,6 +3314,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
     for (let n = 0; n < jobs.length; n++) {
       const job = jobs[n];
+      // Debug mode: the loop's own test run can be the repro going green.
+      if (job.args.kind === 'test' && results[n] && !(results[n] as { error?: unknown }).error) debugTracker?.noteCommand(results[n] as Parameters<DebugTracker['noteCommand']>[0]);
       const verdict = autoVerify.noteOutcome(job.args.kind, results[n] as CheckResultLike);
       if (verdict === 'failed') failures.push(`${job.args.kind} for ${job.covers.map((c) => c.path).join(', ')}`);
       if (verdict === 'unavailable') brokenRunners.push(job.args.kind);
@@ -3632,10 +3758,36 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // "Assumptions" section described the fix it never applied), but the
       // invariant survives rephrasing: implement mandate + zero writes + no
       // "## Blocked" / "## No change needed" section = the run is not done.
+      // Debug mode: a root cause called "confirmed" must be backed by what the run
+      // recorded — a cited evidence id, a hypothesis settled against it, the repro
+      // red → green, and red again with the fix out. Sent back twice at most, then
+      // delivered with a stamp (finalizeDeliverable); only ever adds a turn or a label.
+      if (debugTracker && !planMode && !budgetExhausted && debugClaimNudgesUsed < 2) {
+        const issues = debugTracker.claimIssues(outcome.content);
+        if (issues.length) {
+          debugClaimNudgesUsed++;
+          messages.push({ role: 'assistant', content: outcome.content });
+          messages.push({
+            role: 'user',
+            content:
+              `STOP: your report calls the root cause **confirmed**, but this run's own record does not back that: ${issues.join('; ')}. ` +
+              'Either do what is missing NOW (the repro with run_checks, a probe, remove_probes then counterfactual_check, debug_ledger to settle the hypothesis against recorded evidence ids) and report again, ' +
+              'or change the heading to **probable** — naming the ONE check that would settle it — or **not found** with what was ruled out. Do not keep "confirmed" without the proof.',
+          });
+          continue;
+        }
+      }
+      // A Debug run may honestly END on "probable" or "not found" with nothing edited
+      // (DEBUG REPORT FORMAT) — the demand below to apply a fix would push it to
+      // make an edit it cannot justify. Only a "confirmed" cause with no edit is
+      // still an unfinished fix.
+      const debugHonestEnding =
+        !!debugTracker && (() => { const st = claimedRootCauseStatus(outcome.content); return st === 'probable' || st === 'not found'; })();
       if (
         !planMode &&
         !budgetExhausted &&
         !ticketCompletionNudgeUsed &&
+        !debugHonestEnding &&
         ticketContext &&
         IMPLEMENT_MANDATE_RE.test(prompt) &&
         writesApplied === 0 &&
@@ -3895,6 +4047,38 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           }
         }
       }
+      // `debug_ledger` also runs inside the worker: the ledger is this run's own
+      // record, and resolving a hypothesis is checked against the evidence the
+      // loop recorded from real tool results (debugState.ts).
+      if (tc.name === 'debug_ledger' && debugTracker) {
+        const a = (parsedArgs ?? {}) as { action?: unknown; text?: unknown; predicts?: unknown; id?: unknown; status?: unknown; evidence?: unknown; note?: unknown };
+        if (a.action === 'hypothesis') {
+          const r = debugTracker.addHypothesis(String(a.text ?? ''), String(a.predicts ?? ''));
+          return r.error ? { error: r.error } : { recorded: r.hypothesis, hypotheses: debugTracker.hypotheses.length, next: debugTracker.hypotheses.length < 2 ? 'Record a competing hypothesis too.' : 'Test the cheapest one: run the repro, or add_probe where reading cannot decide.' };
+        }
+        if (a.action === 'resolve') {
+          const ev = Array.isArray(a.evidence) ? a.evidence.map(String) : [];
+          const r = debugTracker.resolve(String(a.id ?? ''), String(a.status ?? ''), ev, a.note ? String(a.note) : undefined);
+          return r.error ? { error: r.error } : { resolved: r.hypothesis };
+        }
+        return { hypotheses: debugTracker.hypotheses, evidence: debugTracker.evidence.map((e) => ({ id: e.id, kind: e.kind, text: e.text.split('\n')[0] })) };
+      }
+      // Debug mode's soft edit gate: the first FIX edit is sent back once if the run
+      // has observed nothing yet or has only one idea. A nudge, never a refusal — the
+      // same edit repeated goes through, and test files are never held up.
+      if (debugTracker && !planMode && !debugEditGateUsed && (tc.name === 'edit_file' || tc.name === 'delete_file' || tc.name === 'create_file')) {
+        const target = normPath((parsedArgs as { path?: unknown } | null)?.path);
+        if (target && !isTestPath(target)) {
+          const missing = debugTracker.editReadiness();
+          if (missing) {
+            debugEditGateUsed = true;
+            return {
+              error:
+                `Debug mode — not edited yet: ${missing}. A fix written before the cause was observed is a guess. Do that first, then make this edit (if you judge it right as it is, send the same call again and it will go through).`,
+            };
+          }
+        }
+      }
       // `explore` runs INSIDE the worker — there is no host-side tool of that
       // name (chatService's dispatch would throw "Unknown tool"). Its whole
       // purpose is that its reads never reach `messages`: only the returned
@@ -4002,9 +4186,30 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       const rawResult = results[idx];
       // A write's `checks` is bookkeeping for autoVerify, not for the model.
       const writeChecks = FILE_WRITE_TOOL_NAMES.has(tc.name) ? (rawResult as { checks?: Record<string, string> } | null)?.checks : undefined;
-      const modelResult = writeChecks
+      let modelResult = writeChecks
         ? { ...(rawResult as Record<string, unknown>), checks: undefined, verify: describeWriteChecks(tc.args, writeChecks) }
         : rawResult;
+      // Debug mode: what this result establishes is recorded, and its ids handed
+      // back so the model can cite them — it never has to (or gets to) invent one.
+      if (debugTracker && rawResult && typeof rawResult === 'object' && !(rawResult as { error?: unknown }).error) {
+        let recorded: { id: string; kind: string }[] = [];
+        if (tc.name === 'run_command' || tc.name === 'run_checks' || tc.name === 'check_command') {
+          // run_command's result does not repeat the command (run_checks' does); the repro is
+          // matched by command text, so take it from the call.
+          let ran = '';
+          try {
+            ran = String((JSON.parse(tc.args || '{}') as { command?: unknown }).command ?? '');
+          } catch {
+            /* unparseable args — the result's own command, if any, stands */
+          }
+          const withCommand = tc.name === 'run_command' && ran && !(rawResult as { command?: unknown }).command ? { ...(rawResult as object), command: ran } : rawResult;
+          recorded = debugTracker.noteCommand(withCommand as Parameters<DebugTracker['noteCommand']>[0]);
+        } else if (tc.name === 'counterfactual_check') {
+          const ev = debugTracker.noteCounterfactual(rawResult as Parameters<DebugTracker['noteCounterfactual']>[0]);
+          if (ev) recorded = [ev];
+        }
+        if (recorded.length) modelResult = { ...(modelResult as Record<string, unknown>), evidence: recorded.map((e) => ({ id: e.id, kind: e.kind })) };
+      }
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
@@ -4053,6 +4258,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           commandRunSinceWrite = false;
         }
         if (argPath) lastWriteOutcome.set(argPath, !failed);
+        if (!failed) debugTracker?.noteWrite(argPath);
         // The file changed, so any check that ran against its old content is
         // void — re-arming it is what turns a failing check into a
         // fix-then-re-verify cycle instead of a one-shot complaint.

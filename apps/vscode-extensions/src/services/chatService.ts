@@ -13,6 +13,7 @@ import {
   ChatAttachment,
   COPILOT_PROVIDER,
   isResearchWorkItem,
+  isBugWorkItem,
 } from '../../constants';
 import { getCopilotContextWindow } from './copilotBridge';
 import { markUserTurn } from './copilotDirect';
@@ -60,8 +61,12 @@ import {
   prepareCreateFile,
   prepareDeleteFile,
   prepareEditFile,
+  prepareProbeInsert,
+  prepareProbeRemoval,
   PreparedWrite,
 } from './agent/agentWriteTools';
+import { bisectSummary, DebugRunState, newDebugRunState, probeOutputReport, runCounterfactual, runGitBisect, withProbeOutput } from './agent/debugService';
+import { MAX_PROBES_PER_RUN } from './agent/debugProbes';
 import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { decide, resolvePermission, type Permission } from './agent/permissionPolicy';
 import { normalizeQuestions } from './agent/askUser';
@@ -430,6 +435,10 @@ interface SessionRun {
    * back to it in a new window.
    */
   lastTicketId: string | null;
+  /** Debug mode's probes and what they printed this turn (see agent/debugService.ts). */
+  debug: DebugRunState;
+  /** The previous turn ran in Debug mode — a resume or an approved plan keeps it. */
+  lastDebugMode: boolean;
   /** The one-click action that started the current turn, if a button did (see sendMessage). */
   turnAction?: 'publish-spike';
   /** The Confluence page linked in the current turn's message, once pre-fetched (see sendMessage). */
@@ -783,6 +792,8 @@ export class ChatService {
         lastAnswerStallShaped: false,
         lastTicketId: null,
         ticketCache: new Map(),
+        debug: newDebugRunState(),
+        lastDebugMode: false,
       };
       this.runs.set(sessionId, run);
     }
@@ -844,6 +855,7 @@ export class ChatService {
           run.reject = null;
         }
       }
+      void this.cleanupProbes(run);
     }
   }
 
@@ -981,7 +993,9 @@ export class ChatService {
      */
     turnAction?: 'publish-spike',
     /** The composer's permission dial. Absent from older senders: `autonomous` then means 'auto'. */
-    permission?: Permission
+    permission?: Permission,
+    /** The "Debug this" action (or a Bug's ▶): work this as a bug — reproduce, observe, prove the cause. A fact from the button, never read from the prompt. */
+    debug = false
   ): Promise<void> {
     const run = this.runFor(sessionId);
     if (run.worker) {
@@ -1040,6 +1054,7 @@ export class ChatService {
       run.turnFirstCheckpointSha = null;
       run.writeSeq = 0;
       run.checkRuns.clear();
+      run.debug = newDebugRunState();
       // A promise left here would be against the previous turn's tree.
       run.checkInFlight.clear();
       run.missingExecutables.clear();
@@ -1611,7 +1626,8 @@ export class ChatService {
           planMode,
           toolAvailability,
           getActiveTicketProvider(this.context)?.label,
-          !isWorkMode
+          !isWorkMode,
+          debug
         );
 
       let modelResponse: string;
@@ -1819,11 +1835,21 @@ export class ChatService {
       case 'git_blame':
         return gitBlame(args, roots);
       case 'run_command':
-        return this.gatedCommand(run, args, roots, stepId);
+        return withProbeOutput(run.debug, await this.gatedCommand(run, args, roots, stepId));
       case 'check_command':
-        return checkBackgroundCommand(args);
+        return withProbeOutput(run.debug, await checkBackgroundCommand(args));
       case 'run_checks':
-        return this.runChecks(run, args, roots, stepId);
+        return withProbeOutput(run.debug, await this.runChecks(run, args, roots, stepId));
+      case 'add_probe':
+        return this.addProbe(run, args, roots);
+      case 'remove_probes':
+        return this.removeProbes(run, Array.isArray(args?.ids) ? args.ids.map(String) : undefined, roots);
+      case 'probe_output':
+        return probeOutputReport(run.debug, args?.id ? String(args.id) : undefined);
+      case 'counterfactual_check':
+        return this.counterfactualCheck(run, args, roots, stepId);
+      case 'git_bisect':
+        return this.gitBisect(run, args, roots);
       case 'search_docs':
         return this.searchKnowledge('CONFLUENCE', args);
       case 'search_tickets':
@@ -1892,7 +1918,7 @@ export class ChatService {
       case 'browser_eval':
         return browserRequest('page.eval', { tabId: args?.tabId, expression: args?.expression }, 30_000);
       case 'browser_console':
-        return browserRequest('page.console', { tabId: args?.tabId, onlyErrors: args?.onlyErrors, pattern: args?.pattern, limit: args?.limit });
+        return withProbeOutput(run.debug, await browserRequest('page.console', { tabId: args?.tabId, onlyErrors: args?.onlyErrors, pattern: args?.pattern, limit: args?.limit }));
       case 'browser_network':
         return browserRequest('page.network', { tabId: args?.tabId, urlPattern: args?.urlPattern, requestId: args?.requestId, limit: args?.limit });
       default:
@@ -1969,6 +1995,119 @@ export class ChatService {
       truncated: false,
       timedOut: false,
     };
+  }
+
+  // ── Debug mode (docs/design/debug-mode.md §5-6) ──
+
+  /** add_probe: one tagged log line before a statement, written through the checkpointed write path. */
+  private async addProbe(run: SessionRun, args: any, roots: NamedRoot[]): Promise<unknown> {
+    if (run.debug.probes.size >= MAX_PROBES_PER_RUN) {
+      throw new Error(`At most ${MAX_PROBES_PER_RUN} probes at once — remove_probes the ones you are done with first.`);
+    }
+    const id = `p${run.debug.probeSeq + 1}`;
+    const line = Number(args?.line);
+    const write = await prepareProbeInsert({ path: String(args?.path ?? ''), line, expr: String(args?.expr ?? ''), label: args?.label ? String(args.label) : undefined, id }, roots);
+    await this.gatedWrite(run, write, roots, { probe: true });
+    run.debug.probeSeq++;
+    run.debug.probeRoots = roots;
+    const label = String(args?.label ?? args?.expr ?? 'value').slice(0, 40);
+    run.debug.probes.set(id, { id, path: write.displayPath, line, label, hypothesis: args?.hypothesis ? String(args.hypothesis) : undefined });
+    return {
+      probe: true,
+      id,
+      path: write.displayPath,
+      line,
+      note: `Probe ${id} is in. Run the repro now (run_command / run_checks): what it prints comes back in that result under "probes". Line numbers below ${line} in ${write.displayPath} have shifted by one.`,
+      probesInserted: run.debug.probes.size,
+    };
+  }
+
+  /** remove_probes: delete the probe lines for `ids` (all when omitted), file by file. */
+  private async removeProbes(run: SessionRun, ids: string[] | undefined, roots: NamedRoot[]): Promise<{ removed: number; remaining: number }> {
+    const wanted = ids?.length ? ids : [...run.debug.probes.keys()];
+    const byPath = new Map<string, string[]>();
+    for (const id of wanted) {
+      const rec = run.debug.probes.get(id);
+      if (rec) byPath.set(rec.path, [...(byPath.get(rec.path) ?? []), id]);
+    }
+    let removed = 0;
+    for (const [relPath, pathIds] of byPath) {
+      const write = await prepareProbeRemoval(relPath, pathIds, roots);
+      if (write) {
+        await this.gatedWrite(run, write, roots, { probe: true });
+        removed += pathIds.length;
+      }
+      for (const id of pathIds) run.debug.probes.delete(id);
+    }
+    return { removed, remaining: run.debug.probes.size };
+  }
+
+  /**
+   * End of a run (done, failed or stopped): whatever probes are still in the
+   * workspace come out, and the user is told. The worker is already gone, so
+   * nothing here can race a command that is still printing them.
+   */
+  private async cleanupProbes(run: SessionRun): Promise<void> {
+    if (!run.debug.probes.size || !run.debug.probeRoots) return;
+    const roots = run.debug.probeRoots;
+    try {
+      const { removed } = await this.removeProbes(run, undefined, roots);
+      if (removed) {
+        this.post(run, {
+          type: MESSAGE_TYPES.AGENT_STEP,
+          step: { kind: 'notice', title: `Removed ${removed} leftover debug probe${removed === 1 ? '' : 's'} from your files.`, status: 'done' },
+        });
+      }
+    } catch (e) {
+      console.warn('WorkspaceGPT: could not remove leftover debug probes:', e);
+      this.post(run, {
+        type: MESSAGE_TYPES.AGENT_STEP,
+        step: { kind: 'notice', title: 'Some debug probe lines (WGPT-PROBE) may still be in your files — search for WGPT-PROBE and delete them.', status: 'error' },
+      });
+    }
+  }
+
+  /** counterfactual_check: take the fix out, run the repro, put the fix back. */
+  private async counterfactualCheck(run: SessionRun, args: any, roots: NamedRoot[], stepId?: string): Promise<unknown> {
+    if (run.planMode) throw new Error('Plan mode: nothing is changed this turn, so there is no fix to check.');
+    if (run.debug.probes.size) throw new Error('Remove the probes first (remove_probes) — a probe line left in would be part of what you are reverting.');
+    this.postStatus(run, 'Checking the repro without the fix…');
+    const result = await runCounterfactual(
+      { path: String(args?.path ?? ''), keep: Array.isArray(args?.keep) ? args.keep.map(String) : undefined },
+      roots,
+      [...run.turnFilesChanged.keys()],
+      this.streamOutputTo(run, stepId)
+    );
+    // The tree went out and came back: a replayed result must not stand in for either state.
+    run.writeSeq++;
+    return result;
+  }
+
+  /** git_bisect: card (unless Full access), then `git bisect run`, then HEAD back where it was. */
+  private async gitBisect(run: SessionRun, args: any, roots: NamedRoot[]): Promise<unknown> {
+    if (run.planMode) throw new Error('Plan mode: git_bisect checks out other commits, so it is not available this turn. Say in the plan that you would bisect.');
+    const bisect = { good: String(args?.good ?? ''), bad: args?.bad ? String(args.bad) : undefined, command: String(args?.command ?? '') };
+    return runGitBisect(bisect, roots, async () => {
+      if (run.permission === 'full') return;
+      const summary = bisectSummary(bisect);
+      const { id, decision } = run.writeGate.await({ kind: 'command', summary });
+      this.post(run, {
+        type: MESSAGE_TYPES.AGENT_WRITE_REVIEW,
+        id,
+        kind: 'command',
+        path: '.',
+        summary,
+        command: summary,
+        diff: { added: 0, removed: 0, text: '' },
+      });
+      const result = await decision;
+      if (!result.approved) {
+        await this.audit('command', summary, 'rejected', 'skipped');
+        throw new Error(`The user rejected the bisect.${result.feedback ? ` Feedback: ${result.feedback}` : ''} Find the introducing commit with git_log / git_blame instead.`);
+      }
+      this.postWriteOutcome(run, id, 'applied');
+      await this.audit('command', summary, 'approved', 'applied');
+    });
   }
 
   /**
@@ -2352,7 +2491,7 @@ export class ChatService {
    * parked on this promise), checkpoint, then apply. A rejection surfaces to
    * the model as a tool error carrying the user's feedback.
    */
-  private async gatedWrite(run: SessionRun, write: PreparedWrite, roots: NamedRoot[]): Promise<unknown> {
+  private async gatedWrite(run: SessionRun, write: PreparedWrite, roots: NamedRoot[], opts?: { probe?: boolean }): Promise<unknown> {
     // The worker offers no write tools in plan mode; this is the host's own
     // guarantee, for a write that arrives anyway.
     if (run.planMode) throw new Error(`Plan mode: no ${write.kind} this turn — describe the change in your plan instead.`);
@@ -2361,7 +2500,8 @@ export class ChatService {
     // a parked gate would hang the run. The change is still checkpointed below
     // (revertible per turn), recorded in the files-changed bar with a Review
     // diff, and audited with decision 'auto'.
-    const writeDecision = decide(run.permission, { kind: 'file-write' });
+    // A Debug-mode probe never waits on a card: it is tracked and removed by marker.
+    const writeDecision = decide(run.permission, opts?.probe ? { kind: 'probe' } : { kind: 'file-write' });
     const decisionKind: 'auto' | 'auto-full' | 'approved' =
       writeDecision === 'card' ? 'approved' : run.permission === 'full' ? 'auto-full' : 'auto';
     let reviewId: string | null = null;
@@ -2435,6 +2575,13 @@ export class ChatService {
       }
     }
     await this.audit(write.kind, write.summary, decisionKind, 'applied');
+    // A probe is not a change to ship: it stays out of the files-changed bar and
+    // the write counters, and is never reformatted. writeSeq still moves, so a
+    // replayed check result cannot hide the probe's output.
+    if (opts?.probe) {
+      run.writeSeq++;
+      return { probe: true, path: write.displayPath, summary: write.summary };
+    }
     if (write.kind !== 'delete') await this.formatIfConfigured(write.uri);
     run.writeSeq++;
     run.sessionWritesApplied++;
@@ -2677,6 +2824,18 @@ export class ChatService {
         const file = String(args?.path ?? '').split('/').pop();
         return { kind: 'command', title: `Ran ${args?.kind ?? 'test'}s${file ? ` for ${file}` : ''}` };
       }
+      case 'debug_ledger':
+        return { kind: 'check', title: args?.action === 'resolve' ? `Settled hypothesis ${args?.id ?? ''}`.trim() : args?.action === 'hypothesis' ? 'Recorded a hypothesis' : 'Read the hypothesis ledger' };
+      case 'add_probe':
+        return { kind: 'edit', title: 'Added a debug probe', path: args?.path };
+      case 'remove_probes':
+        return { kind: 'edit', title: 'Removed debug probes' };
+      case 'probe_output':
+        return { kind: 'read', title: 'Read probe output' };
+      case 'counterfactual_check':
+        return { kind: 'command', title: 'Checked the repro without the fix', detail: args?.path ?? '' };
+      case 'git_bisect':
+        return { kind: 'command', title: 'Bisected for the introducing commit', detail: args?.command ?? '' };
       case 'browser_list_tabs':
         return { kind: 'read', title: 'Listed browser tabs' };
       case 'browser_read_page':
@@ -2788,6 +2947,16 @@ export class ChatService {
         return { summary: plural(result?.tree ? String(result.tree).split('\n').length : 0, 'element') };
       case 'browser_act':
         return result?.detail ? { summary: String(result.detail) } : result?.waited !== undefined ? { summary: `waited ${result.waited}s` } : {};
+      case 'add_probe':
+        return result?.id ? { summary: `${result.id} at line ${result.line}` } : {};
+      case 'remove_probes':
+        return { summary: plural(result?.removed ?? 0, 'probe') };
+      case 'counterfactual_check':
+        return result?.unavailable
+          ? { summary: 'not possible' }
+          : { summary: result?.revertedExitCode === 0 ? 'still passes without the fix' : `fails without the fix (exit ${result?.revertedExitCode ?? '?'})`, meta: { output: typeof result?.output === 'string' ? result.output.slice(0, 4000) : '' } };
+      case 'git_bisect':
+        return { summary: result?.found ? `first bad: ${result.firstBadCommit}` : 'no commit isolated' };
       case 'browser_console':
         return { summary: plural(result?.entries?.length ?? 0, 'message') };
       case 'browser_network':
@@ -2857,6 +3026,16 @@ export class ChatService {
         return 'Saving to memory...';
       case 'search_web':
         return `Searching the web for "${args?.query ?? ''}"...`;
+      case 'add_probe':
+        return `Adding a debug probe to ${args?.path ?? 'a file'}...`;
+      case 'remove_probes':
+        return 'Removing debug probes...';
+      case 'probe_output':
+        return 'Reading probe output...';
+      case 'counterfactual_check':
+        return 'Checking the repro without the fix...';
+      case 'git_bisect':
+        return 'Bisecting for the commit that introduced it (awaiting your review)...';
       case 'browser_list_tabs':
         return 'Listing your browser tabs...';
       case 'browser_read_page':
@@ -3131,7 +3310,9 @@ Query: "${query}"`;
     /** Display label of whichever tracker is active ('Azure DevOps', 'Jira') — see tickets/registry.ts. */
     ticketTrackerLabel?: string,
     /** Chat mode: plain conversation, so the worker prompt drops retrieval/tool framing. */
-    chatOnly = false
+    chatOnly = false,
+    /** The user chose "Debug this" for this turn (see sendMessage). */
+    debugRequested = false
   ): Promise<string> {
     try {
       run.lastAnswerStallShaped = false;
@@ -3185,7 +3366,19 @@ Query: "${query}"`;
       // the acceptance criteria the model was just told to implement against.
       const ticketImplementIntent =
         executeMandate || IMPLEMENT_MANDATE_RE.test(message) || hasWriteIntent(message);
-      const ticketLookupOnly = !!ticketContext && !autonomous && !planMode && !ticketImplementIntent;
+      // Debug mode (docs/design/debug-mode.md §2): the user chose it, or this turn
+      // works a Bug-type ticket (a fact the tracker gave us, never a keyword in the
+      // prompt). A bug that was only asked ABOUT stays a lookup.
+      // A resume or an approved plan continues the SAME work: a follow-up that does not
+      // name the ticket again must not drop the debug tools mid-investigation.
+      const debugMode =
+        !chatOnly &&
+        !!codebaseRoots?.length &&
+        (debugRequested ||
+          (!!ticketContext && isBugWorkItem(ticketContext.type) && (ticketImplementIntent || autonomous || planMode)) ||
+          (run.lastDebugMode && (!!resumeTranscript?.length || executeMandate)));
+      run.lastDebugMode = debugMode;
+      const ticketLookupOnly = !!ticketContext && !autonomous && !planMode && !ticketImplementIntent && !debugRequested;
 
       const modelWorker = new Worker(workerPath, {
         workerData: {
@@ -3210,7 +3403,8 @@ Query: "${query}"`;
           currentUserName: currentUserName || undefined,
           currentSprint: currentSprint || undefined,
           codebaseTools: codebaseRoots ? { enabled: true } : undefined,
-          toolAvailability,
+          toolAvailability: debugMode && toolAvailability ? { ...toolAvailability, debug: true } : toolAvailability,
+          debugMode,
           ticketTrackerLabel,
           chatOnly,
           // Text attachments are inlined into the prompt template; images are
@@ -3328,6 +3522,8 @@ Query: "${query}"`;
           run.worker = null;
           run.reject = null;
           modelWorker.terminate();
+          // Debug mode: any probe the run left behind comes out of the user's files.
+          void this.cleanupProbes(run);
 
           if (!error || streamedContent.trim().length > 0) {
             if (error) {

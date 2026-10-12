@@ -29,7 +29,7 @@ export interface TurnRoutingInput {
   availableSources: DataSource[];
   /** The rule-based classification of the message. */
   classification: QueryClassification;
-  /** The context picker's label: 'Auto', 'Confluence', 'Azure DevOps', 'Codebase'. */
+  /** The context picker's value: 'Auto', or one or more of 'Confluence', 'Azure DevOps', 'Codebase' joined by commas. */
   contextSelection: string;
 }
 
@@ -69,13 +69,19 @@ export function decideTurnRouting(input: TurnRoutingInput): TurnRouting {
   let unhonoredSource: DataSource | null = null;
 
   if (contextSelection !== 'Auto') {
-    const explicitSource = explicitSourceFor(contextSelection);
-    if (explicitSource && availableSources.includes(explicitSource)) {
-      classification = { ...classification, sources: [explicitSource], confidence: 'high' };
-    } else if (!explicitSource) {
+    // The picker is multi-select: a comma-joined list of labels. A lone label
+    // is the same list of one, so older stored picks behave as before.
+    const picks = contextSelection.split(',').map((label) => label.trim()).filter(Boolean);
+    const explicit = picks.map(explicitSourceFor);
+    if (explicit.some((source) => !source)) {
       classification = { ...classification, sources: availableSources, confidence: 'high' };
     } else {
-      unhonoredSource = explicitSource;
+      const wanted = explicit as DataSource[];
+      const honored = wanted.filter((source) => availableSources.includes(source));
+      unhonoredSource = wanted.find((source) => !availableSources.includes(source)) ?? null;
+      if (honored.length) {
+        classification = { ...classification, sources: honored, confidence: 'high' };
+      }
     }
   }
 

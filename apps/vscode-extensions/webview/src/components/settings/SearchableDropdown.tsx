@@ -21,6 +21,9 @@ export interface DropdownOption {
    * unpickable but becomes clickable and keyboard-reachable.
    */
   disabledAction?: () => void;
+  /** Draws a pin button on the row; clicking it calls this instead of picking the row. */
+  onPin?: () => void;
+  pinned?: boolean;
 }
 
 interface SearchableDropdownProps {
@@ -45,6 +48,13 @@ interface SearchableDropdownProps {
   emptyLabel?: string;
   /** A quiet row under the list that runs a command rather than picking a value. */
   footer?: { label: string; onClick: () => void };
+  /**
+   * Multi-select: `value` is a comma-joined list, a pick toggles its row and
+   * the menu stays open. `exclusiveValue` (e.g. 'Auto') is the "no narrowing"
+   * row — picking it clears the rest, and picking anything else drops it.
+   */
+  multiple?: boolean;
+  exclusiveValue?: string;
 }
 
 /**
@@ -66,6 +76,8 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   clearLabel = '-- Clear selection --',
   emptyLabel = 'No matches found...',
   footer,
+  multiple = false,
+  exclusiveValue,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,6 +97,8 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const picked = multiple ? value.split(',').filter(Boolean) : [value];
+  const isPicked = (v: string) => picked.includes(v);
   const selected = options.find((o) => o.value === value);
   const filtered = showSearch
     ? options.filter(
@@ -102,7 +116,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   // Opening onto an inert row would make the first Enter do nothing.
   // With no search text, open on the current value so the keyboard highlight
   // and the selected row are the same row, not two competing ones.
-  const selectedNavIndex = searchQuery ? -1 : navOptions.findIndex((o) => o.value === value && !inert(o));
+  const selectedNavIndex = searchQuery ? -1 : navOptions.findIndex((o) => isPicked(o.value) && !inert(o));
   const firstEnabledIndex =
     selectedNavIndex >= 0 ? selectedNavIndex : Math.max(0, navOptions.findIndex((o) => !inert(o)));
 
@@ -119,6 +133,17 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   }, [isOpen, showSearch]);
 
   const choose = (v: string) => {
+    if (multiple) {
+      // Toggle in place; the menu stays open so several can be ticked in a row.
+      const next =
+        v === exclusiveValue
+          ? [v]
+          : isPicked(v)
+            ? picked.filter((p) => p !== v)
+            : [...picked.filter((p) => p !== exclusiveValue), v];
+      onChange((next.length ? next : [exclusiveValue ?? '']).join(','));
+      return;
+    }
     onChange(v);
     setIsOpen(false);
     setSearchQuery('');
@@ -197,7 +222,15 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
         aria-disabled={disabled}
       >
         <span className="trigger-text">
-          {triggerLabel ?? (selected ? selected.label : placeholder)}
+          {triggerLabel ??
+            (multiple
+              ? options
+                  .filter((o) => isPicked(o.value))
+                  .map((o) => o.label)
+                  .join(' + ') || placeholder
+              : selected
+                ? selected.label
+                : placeholder)}
         </span>
         <span className="trigger-arrow">{isOpen ? '▲' : '▼'}</span>
       </div>
@@ -238,17 +271,36 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
                 <li
                   key={o.value}
                   onClick={() => chooseOption(o)}
-                  className={`searchable-dropdown-item${o.value === value ? ' selected' : ''}${
+                  className={`searchable-dropdown-item${isPicked(o.value) ? ' selected' : ''}${multiple ? ' multi' : ''}${o.onPin ? ' has-pin' : ''}${
                     highlightedIndex === navIndex ? ' highlighted' : ''
                   }${o.tone === 'danger' ? ' danger' : ''}${o.disabled ? ' disabled' : ''}${o.disabled && o.disabledAction ? ' actionable' : ''}${
                     typeof o.progress === 'number' ? ' has-progress' : ''
                   }`}
                   role="option"
-                  aria-selected={o.value === value}
+                  aria-selected={isPicked(o.value)}
                   aria-disabled={o.disabled}
                 >
-                  <div className="item-title">{o.label}</div>
+                  <div className="item-title">
+                    {multiple && <span className="item-check" aria-hidden="true" />}
+                    {o.label}
+                  </div>
                   {o.subtitle && <div className="item-subtitle">{o.subtitle}</div>}
+                  {o.onPin && (
+                    <button
+                      type="button"
+                      className={`item-pin${o.pinned ? ' pinned' : ''}`}
+                      title={o.pinned ? 'Unpin' : 'Pin to top'}
+                      aria-label={o.pinned ? `Unpin ${o.label}` : `Pin ${o.label}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        o.onPin?.();
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill={o.pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M9.5 1.5l5 5-2 .8-2.6 2.6.3 3.3-1 1L6 10.3 2.5 13.8 2 13.3l3.5-3.5-3.7-3.7 1-1 3.3.3 2.6-2.6z" />
+                      </svg>
+                    </button>
+                  )}
                   {typeof o.progress === 'number' && (
                     <div
                       className="item-progress"

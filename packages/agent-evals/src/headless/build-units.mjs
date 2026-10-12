@@ -51,6 +51,11 @@ const UNITS = [
   'src/workers/model/writePressure.ts',
   'src/workers/model/contextBudget.ts',
   'src/workers/model/autoVerify.ts',
+  'src/workers/model/debugState.ts',
+  'src/services/agent/debugProbes.ts',
+  'src/services/agent/debugService.ts',
+  'src/services/tickets/attachmentText.ts',
+  'src/services/ado/adoWorkItemService.ts',
   'src/services/agent/verifyTools.ts',
   'src/services/agent/agentHunkLens.ts',
   'src/services/agent/shipHelpers.ts',
@@ -62,6 +67,7 @@ const UNITS = [
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',
   'webview/src/utils/ticketRefs.ts',
+  'webview/src/utils/bugReportHint.ts',
   // Lives here, not in the extension: see the file for why it is one bundle.
   '../../packages/agent-evals/src/headless/syncSourcesUnit.ts',
 ];

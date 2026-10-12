@@ -210,6 +210,8 @@ export interface ModelConfig {
   agentModel?: string;
   /** Settings → Model → Effort; sent only to models that declare the level. Unset = the provider decides. */
   reasoningEffort?: string;
+  /** Model ids the user pinned in the composer's model picker; listed first. */
+  pinnedModels?: string[];
   provider: string;
   /** Primary key, kept in sync with apiKeys[0] for backward compat. */
   apiKey?: string;

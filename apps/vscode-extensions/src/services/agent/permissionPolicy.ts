@@ -33,6 +33,8 @@ export function resolvePermission(permission: unknown, autonomous: boolean): Per
 
 export type PermissionAction =
   | { kind: 'file-write' }
+  /** A Debug-mode log probe: one tagged line, tracked and always removed again (docs/design/debug-mode.md §5). */
+  | { kind: 'probe' }
   | { kind: 'command'; command: string }
   | { kind: 'confluence-write' };
 
@@ -47,6 +49,9 @@ export type PermissionDecision = 'auto' | 'card' | 'refuse';
 export function decide(permission: Permission, action: PermissionAction): PermissionDecision {
   if (permission === 'full') return 'auto';
   switch (action.kind) {
+    // A card per log line would make Debug mode unusable, and a probe is removed by marker before the run ends.
+    case 'probe':
+      return 'auto';
     case 'file-write':
       return permission === 'auto' ? 'auto' : 'card';
     case 'command':
