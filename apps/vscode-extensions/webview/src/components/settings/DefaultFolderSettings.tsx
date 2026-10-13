@@ -29,6 +29,12 @@ const DefaultFolderSettings: React.FC = () => {
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const m = event.data;
+      if (m?.type === MESSAGE_TYPES.PICKED_FOLDER) {
+        // The native "Browse…" dialog answered: use the pick, or show why not.
+        if (m.path) choose(m.path);
+        else if (m.error) setError(m.error);
+        return;
+      }
       if (m?.type !== MESSAGE_TYPES.DEFAULT_FOLDER_RESULT) return;
       if (m.ok) setCloseSignal((n) => n + 1);
       else setError(m.error || "That did not work.");
@@ -111,7 +117,14 @@ const DefaultFolderSettings: React.FC = () => {
               }
               searchPlaceholder="Search folders, or type a path"
               rows={rows}
-              emptyLabel="No folders yet. Type a path."
+              emptyLabel="No folders yet. Type a path or use Browse…"
+              footer={{
+                label: "Browse…",
+                onClick: () => {
+                  setError(null);
+                  VSCodeAPI().postMessage({ type: MESSAGE_TYPES.PICK_FOLDER });
+                },
+              }}
               onOpen={() => {
                 setError(null);
                 VSCodeAPI().postMessage({
