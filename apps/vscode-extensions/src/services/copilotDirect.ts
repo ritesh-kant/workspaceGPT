@@ -119,6 +119,7 @@ export async function listDirectCopilotModels(): Promise<DirectCopilotModel[]> {
         m.capabilities?.supports?.tool_calls &&
         m.model_picker_enabled !== false &&
         (!m.supported_endpoints || m.supported_endpoints.includes('/chat/completions')) &&
+        !chatUnsupported.has(m.id) &&
         (m.capabilities?.limits?.max_prompt_tokens ?? 0) >= MIN_INPUT_TOKENS
     )
     .map((m: any) => ({ id: m.id, maxInputTokens: m.capabilities.limits.max_prompt_tokens }));
@@ -142,6 +143,13 @@ let pendingUserTurns = 0;
 export function markUserTurn(): void {
   if (usesDirectCopilot()) pendingUserTurns++;
 }
+
+/**
+ * Models Copilot has refused on /chat/completions (`unsupported_api_for_model`,
+ * e.g. a /responses-only model). Its model list doesn't always say so up front,
+ * so the refusal is the fact; the model is then left out of the picker.
+ */
+const chatUnsupported = new Set<string>();
 
 /** Bridge route: forward an OpenAI request to Copilot and stream its answer back unchanged. */
 export async function forwardToCopilot(path: string, raw: string, res: http.ServerResponse): Promise<void> {
@@ -171,6 +179,22 @@ export async function forwardToCopilot(path: string, raw: string, res: http.Serv
     signal: abort.signal,
   });
   if (upstream.status === 401) session = undefined;
+  if (upstream.status === 400 && body?.model) {
+    const text = await upstream.text();
+    if (text.includes('unsupported_api_for_model') || text.includes('is not accessible via the /chat/completions')) {
+      chatUnsupported.add(body.model);
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return void res.end(
+        JSON.stringify({
+          error: {
+            message: `GitHub Copilot does not serve "${body.model}" through the chat API WorkspaceGPT uses. Pick another model in Settings → Model.`,
+          },
+        })
+      );
+    }
+    res.writeHead(400, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
+    return void res.end(text);
+  }
   res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
   if (!upstream.body) return void res.end();
   for await (const chunk of upstream.body as any) res.write(chunk);

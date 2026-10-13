@@ -11,7 +11,7 @@ import { getActiveTicketProvider } from '../tickets/registry';
 import { CodeHostConnections } from '../codehost/connections';
 import { ghEnv } from '../codehost/ghCli';
 import type { CodeHost, RepoRef } from '../codehost/types';
-import { HomeActivity, HomeMention, HomePullRequest, HomeSection, adoReviewState, adfText, hasJiraMention } from './types';
+import { HomeActivity, HomeMention, HomePullRequest, HomeSection, adoReviewState, adfText, hasAdoMention, hasJiraMention } from './types';
 
 const LOOKBACK_DAYS = 30;
 const ISSUE_LIMIT = 30;
@@ -184,7 +184,7 @@ async function adoMentions(ctx: Awaited<ReturnType<typeof adoContext>>): Promise
     try {
       const comments = await request(`${ctx.base}/_apis/wit/workItems/${item.id}/comments?api-version=7.1-preview.4&$top=${COMMENT_LIMIT}&$expand=renderedText&order=desc`, ctx.auth);
       if (comments.continuationToken) partial = true;
-      return (comments.comments ?? []).filter((c: any) => !c.isDeleted && recent(c.modifiedDate ?? c.createdDate) && (c.mentions ?? []).some((m: any) => String(m.targetId).toLowerCase() === String(ctx.identity.id).toLowerCase() && m.artifactType === 'person')).map((c: any) => ({
+      return (comments.comments ?? []).filter((c: any) => !c.isDeleted && recent(c.modifiedDate ?? c.createdDate) && hasAdoMention(c, ctx.identity.id)).map((c: any) => ({
         id: `ado:${ctx.scope}:${item.id}:comment:${c.id ?? c.commentId}`, title: item.fields?.['System.Title'] ?? `#${item.id}`,
         url: `${ctx.base}/_workitems/edit/${item.id}?discussionCommentId=${c.id ?? c.commentId}`, source: 'ado' as const,
         author: c.createdBy?.displayName ?? 'Someone', excerpt: htmlToText(c.renderedText ?? c.text ?? '').slice(0, 280),

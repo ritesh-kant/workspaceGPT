@@ -53,6 +53,13 @@ export function hasJiraMention(node: any, accountId: string): boolean {
   return Array.isArray(node.content) && node.content.some((child: any) => hasJiraMention(child, accountId));
 }
 
+/** ADO comment HTML tags a mention as data-vss-mention="version:2.0,<id>"; the API's `mentions` array is not always populated. */
+export function hasAdoMention(comment: any, id: string): boolean {
+  const target = String(id).toLowerCase();
+  if ((comment.mentions ?? []).some((m: any) => String(m.targetId).toLowerCase() === target && m.artifactType === 'person')) return true;
+  return [comment.renderedText, comment.text].some((html) => typeof html === 'string' && html.toLowerCase().split('data-vss-mention=').slice(1).some((part) => part.slice(0, 120).includes(target)));
+}
+
 export function adfText(node: any): string {
   if (!node) return '';
   if (node.type === 'text') return String(node.text ?? '');
