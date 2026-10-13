@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../historyService';
 
-export type ImportSource = 'claude-code' | 'cursor';
+export type ImportSource = 'claude-code' | 'cursor' | 'copilot';
 
 /** One conversation from another tool, already reduced to plain turns. */
 export interface ImportedChat {

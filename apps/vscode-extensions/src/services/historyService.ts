@@ -138,7 +138,7 @@ export interface SessionMeta {
 
 /** One finished import run, kept so Settings can show what was brought in and when. */
 export interface ImportLogEntry {
-  source: 'claude-code' | 'cursor';
+  source: 'claude-code' | 'cursor' | 'copilot';
   at: number;
   imported: number;
   failed: number;

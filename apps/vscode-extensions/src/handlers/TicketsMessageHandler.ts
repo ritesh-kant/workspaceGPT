@@ -50,7 +50,11 @@ export class TicketsMessageHandler {
     const provider = getActiveTicketProvider(this.context);
     const scope = this.trackerScope();
     const post = (payload: any) => {
-      if (generation !== this.generation || scope !== this.trackerScope()) return;
+      if (generation !== this.generation) return;
+      if (scope !== this.trackerScope()) {
+        console.warn(`[my-work] dropped ${provider?.kind} reply: tracker scope changed in flight (${scope} -> ${this.trackerScope()})`);
+        return;
+      }
       this.webviewView.webview.postMessage({ tracker: provider?.kind, ...payload });
     };
     // Switched off (or never connected): the cache belongs to a tracker that is

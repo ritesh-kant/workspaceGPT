@@ -34,8 +34,17 @@ async function getRequestContext(context: vscode.ExtensionContext): Promise<Jira
   return { authHeader, apiBase: jiraApiBase(site.id), siteUrl: site.url };
 }
 
+const JIRA_REQUEST_TIMEOUT_MS = 15_000;
+
 async function jiraGet(ctx: JiraRequestContext, url: string, what: string): Promise<any> {
-  const response = await fetch(url, { headers: { Authorization: ctx.authHeader, Accept: 'application/json' } });
+  // Without a bound, one stalled call leaves "Your work" on its loading state forever.
+  const response = await fetch(url, {
+    headers: { Authorization: ctx.authHeader, Accept: 'application/json' },
+    signal: AbortSignal.timeout(JIRA_REQUEST_TIMEOUT_MS),
+  }).catch((error) => {
+    if (error?.name === 'TimeoutError') throw new Error(`Could not ${what}: Jira did not respond within ${JIRA_REQUEST_TIMEOUT_MS / 1000}s`);
+    throw error;
+  });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     throw new Error(`Could not ${what} (${response.status}): ${body.slice(0, 200)}`);

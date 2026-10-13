@@ -3,7 +3,7 @@ import { VSCodeAPI } from "../../vscode";
 import { MESSAGE_TYPES } from "../../constants";
 import SectionShell from "./SectionShell";
 
-type Source = "claude-code" | "cursor";
+type Source = "claude-code" | "cursor" | "copilot";
 
 interface Detection {
   source: Source;
@@ -32,6 +32,7 @@ interface LogEntry {
 const LABELS: Record<Source, string> = {
   "claude-code": "Claude Code",
   cursor: "Cursor",
+  copilot: "GitHub Copilot",
 };
 
 function plural(n: number): string {

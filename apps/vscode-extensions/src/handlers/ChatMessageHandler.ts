@@ -819,7 +819,7 @@ export class ChatMessageHandler {
   }
 
   private async handleImportRun(data: any): Promise<void> {
-    if (data?.source !== 'claude-code' && data?.source !== 'cursor') return;
+    if (data?.source !== 'claude-code' && data?.source !== 'cursor' && data?.source !== 'copilot') return;
     const source = data.source as ImportSource;
     const result = await new ImportService(this.historyService).run(source, (done, total) =>
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.IMPORT_PROGRESS, source, done, total })

@@ -609,6 +609,7 @@ const App: React.FC = () => {
   const [myWorkRefreshing, setMyWorkRefreshing] = useState(false);
   /** Bounded auto-retries, so a lost hydration race self-heals. */
   const myWorkRetriesRef = useRef(0);
+  const myWorkMismatchRetriesRef = useRef(0);
   // Remote mode is gated on GitHub sign-in (RemoteAuthMessageHandler /
   // RemoteAccountSettings.tsx), not a client-side API key — inference and
   // embeddings for remote mode run on the WorkspaceGPT server.
@@ -1440,7 +1441,22 @@ const App: React.FC = () => {
           const currentConfig = useSettingsStore.getState().config;
           const activeTracker = currentConfig.ado?.isAdoEnabled && currentConfig.ado?.isAuthenticated ? 'ado'
             : currentConfig.jira?.isJiraEnabled && currentConfig.jira?.isAuthenticated ? 'jira' : undefined;
-          if (message.tracker && message.tracker !== activeTracker) break;
+          if (message.tracker && message.tracker !== activeTracker) {
+            // The host and this store disagree about the active tracker (settings
+            // still syncing). Dropping silently left "Loading" on screen for good,
+            // so ask again a few times, then surface it.
+            console.warn(`[my-work] dropped ${message.tracker} reply; webview tracker is ${activeTracker ?? 'none'}`);
+            if (myWorkMismatchRetriesRef.current < 3) {
+              myWorkMismatchRetriesRef.current += 1;
+              setTimeout(() => vscode.postMessage({ type: MESSAGE_TYPES.GET_MY_WORK_ITEMS, forceRefresh: true }), 1500);
+            } else {
+              setMyWorkLoaded(true);
+              setMyWorkError('Settings are out of sync with the host. Toggle the Knowledge source off and on, or reload.');
+              setMyWorkRefreshing(false);
+            }
+            break;
+          }
+          myWorkMismatchRetriesRef.current = 0;
           // Two responses arrive per request when a cache exists (cache, then
           // fresh); each simply replaces the list. Only the fresh one ends the
           // refreshing state.
@@ -2163,6 +2179,7 @@ const App: React.FC = () => {
       return;
     }
     myWorkRetriesRef.current = 0;
+    myWorkMismatchRetriesRef.current = 0;
     setMyWorkItems([]);
     setMyWorkLoaded(false);
     setMyWorkError(undefined);
@@ -2173,6 +2190,7 @@ const App: React.FC = () => {
 
   const handleRefreshMyWork = () => {
     myWorkRetriesRef.current = 0;
+    myWorkMismatchRetriesRef.current = 0;
     setMyWorkRefreshing(true);
     setMyWorkError(undefined);
     vscode.postMessage({ type: MESSAGE_TYPES.GET_MY_WORK_ITEMS, forceRefresh: true });

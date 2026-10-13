@@ -499,6 +499,27 @@ html[data-wgpt-desktop="sessions"] .ws-header:hover .ws-toggle,
 html[data-wgpt-desktop="sessions"] .ws-group.current .ws-toggle { color: var(--wgpt-d-fg); }
 html[data-wgpt-desktop="sessions"] .ws-new { border-radius: 6px; color: var(--wgpt-d-muted); }
 html[data-wgpt-desktop="sessions"] .ws-new:hover { color: var(--wgpt-d-fg); }
+/* Type: workspace names are the headers, chats are the quieter rows beneath. */
+html[data-wgpt-desktop="sessions"] .ws-toggle {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+html[data-wgpt-desktop="sessions"] .ws-chevron { opacity: 0.55; }
+html[data-wgpt-desktop="sessions"] .ws-rows .row {
+  min-height: 30px;
+  padding: 3px 8px;
+  gap: 8px;
+  color: var(--wgpt-d-fg);
+}
+html[data-wgpt-desktop="sessions"] .ws-rows .title {
+  font-size: 14px;
+  line-height: 1.3;
+}
+html[data-wgpt-desktop="sessions"] .ws-rows .dot { width: 8px; }
+html[data-wgpt-desktop="sessions"] .ws-rows .meta { font-size: 10.5px; opacity: 0.8; }
+html[data-wgpt-desktop="sessions"] .ws-empty { font-size: 11.5px; }
+html[data-wgpt-desktop="sessions"] .show-more { font-size: 11.5px; }
 html[data-wgpt-desktop="sessions"] .search {
   height: 30px;
   border-radius: 8px;

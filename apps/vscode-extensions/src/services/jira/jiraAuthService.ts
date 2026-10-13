@@ -246,6 +246,7 @@ export class JiraAuthService {
       const response = await fetch(JIRA_OAUTH.TOKEN_PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(15_000),
         body: JSON.stringify({
           grant_type: 'refresh_token',
           refresh_token: tokens.refreshToken,

@@ -5,6 +5,7 @@ import {
   listClaudeCodeTranscripts,
   parseClaudeCodeSession,
 } from './claudeCode';
+import { copilotHasChat, listCopilotSessions, readCopilotChat } from './copilot';
 import { cursorAvailable, listCursorChatIds, readCursorChat } from './cursor';
 import { importedSessionId, type ImportDetection, type ImportedChat, type ImportResult, type ImportSource } from './types';
 
@@ -16,7 +17,7 @@ export class ImportService {
   constructor(private readonly history: HistoryService) {}
 
   public async detect(): Promise<ImportDetection[]> {
-    return Promise.all([this.detectClaudeCode(), this.detectCursor()]);
+    return Promise.all([this.detectClaudeCode(), this.detectCursor(), this.detectCopilot()]);
   }
 
   private async countImported(source: ImportSource, sourceIds: string[]): Promise<number> {
@@ -44,10 +45,28 @@ export class ImportService {
     }
   }
 
+  private async detectCopilot(): Promise<ImportDetection> {
+    const sessions = (await listCopilotSessions()).filter((s) => s.size > 0);
+    let found = 0;
+    let imported = 0;
+    // One at a time: a chat file can be tens of MB, and only those not yet
+    // imported are opened, to tell a conversation from an empty panel.
+    for (const session of sessions) {
+      if (await this.history.hasSession(importedSessionId('copilot', session.sourceId))) {
+        found++;
+        imported++;
+      } else if (await copilotHasChat(session)) {
+        found++;
+      }
+    }
+    return { source: 'copilot', available: sessions.length > 0, found, imported };
+  }
+
   public async run(source: ImportSource, onProgress?: (done: number, total: number) => void): Promise<ImportResult> {
     const result: ImportResult = { source, imported: 0, skipped: 0, failed: 0 };
     try {
       if (source === 'claude-code') await this.runClaudeCode(result, onProgress);
+      else if (source === 'copilot') await this.runCopilot(result, onProgress);
       else await this.runCursor(result, onProgress);
     } catch (e) {
       result.error = source === 'cursor' ? cursorError(e) : e instanceof Error ? e.message : String(e);
@@ -79,6 +98,19 @@ export class ImportService {
         result.failed++;
       }
       onProgress?.(i + 1, files.length);
+    }
+  }
+
+  private async runCopilot(result: ImportResult, onProgress?: (done: number, total: number) => void) {
+    const sessions = (await listCopilotSessions()).filter((s) => s.size > 0);
+    for (const [i, session] of sessions.entries()) {
+      try {
+        if (await this.history.hasSession(importedSessionId('copilot', session.sourceId))) result.skipped++;
+        else await this.save(result, 'copilot', await readCopilotChat(session));
+      } catch {
+        result.failed++;
+      }
+      onProgress?.(i + 1, sessions.length);
     }
   }
 
