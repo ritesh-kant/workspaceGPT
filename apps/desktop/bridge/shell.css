@@ -301,9 +301,13 @@ button { font: inherit; color: inherit; }
 
 .app.settings-open .scrim,
 .app.settings-open #expandSide { display: none !important; }
-/* The nav column carries the "Settings" heading; the header keeps only its
-   actions (and stays the window's drag strip). */
-.app.settings-open .title { visibility: hidden; }
+/* The nav column carries the "Settings" heading, so the header has nothing
+   left to show: no title, actions or terminal button, and no terminal. */
+.app.settings-open .bar { display: none; }
+.app.settings-open .term { display: none; }
+/* macOS: the transparent title bar still needs a strip to drag the window by. */
+.overlay-titlebar .app.settings-open .bar { display: flex; border-bottom-color: transparent; }
+.overlay-titlebar .app.settings-open .bar > * { visibility: hidden; }
 
 /* ── Narrow windows: the sidebar floats over the chat ────────────────── */
 
@@ -382,5 +386,5 @@ button { font: inherit; color: inherit; }
 .term-view[hidden] { display: none; }
 .term-empty { padding: 16px; color: var(--wgpt-d-muted); }
 #termBtn.active { background: var(--wgpt-d-hover); color: var(--wgpt-d-fg); }
-.app.term-max .main { display: none; }
+.app.term-max:not(.settings-open) .main { display: none; }
 .app.term-max .term { width: auto; flex: 1; margin: 8px; }
