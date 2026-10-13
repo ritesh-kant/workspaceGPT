@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useModelActions, useSelectedModelProvider } from '../../store';
 import { COPILOT_PROVIDER, MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { VSCodeAPI } from '../../vscode';
@@ -28,6 +28,7 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [copilot, setCopilot] = useState<CopilotStatus | null>(null);
   const [copilotConnecting, setCopilotConnecting] = useState(false);
+  const copilotCancelledRef = useRef(false);
   // While Copilot is in use the API-key providers fold away behind a link, so
   // the model pickers sit right under the card they belong to.
   const [showKeyProviders, setShowKeyProviders] = useState(false);
@@ -189,7 +190,8 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
             ...selectedModelProvider,
             availableModels: message.models ?? [],
           });
-          setApiKeyError(message.message);
+          // The host reports a user-initiated Copilot cancel as an error; don't show it.
+          if (!(copilotCancelledRef.current && message.provider === COPILOT_PROVIDER)) setApiKeyError(message.message);
           break;
       }
     };
@@ -384,10 +386,17 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
    */
   function renderSubscriptions(status: CopilotStatus) {
     const connect = () => {
+      copilotCancelledRef.current = false;
       setShowKeyProviders(false);
       setCopilotConnecting(true);
       setApiKeyError(null);
       changeProviderHandler(COPILOT_PROVIDER, true);
+    };
+    const cancelConnect = () => {
+      copilotCancelledRef.current = true;
+      setCopilotConnecting(false);
+      setApiKeyError(null);
+      VSCodeAPI().postMessage({ type: MESSAGE_TYPES.COPILOT_CANCEL_SIGN_IN });
     };
     const statusText = copilotConnecting
       ? status.unofficial
@@ -425,6 +434,11 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
               {!copilotConnecting && !status.connected && (
                 <button type='button' className='source-action' onClick={connect}>
                   Connect
+                </button>
+              )}
+              {copilotConnecting && (
+                <button type='button' className='source-action source-action--quiet' onClick={cancelConnect}>
+                  Cancel
                 </button>
               )}
               {!copilotConnecting && status.connected && !copilotInUse && (

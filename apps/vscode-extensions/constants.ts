@@ -344,6 +344,7 @@ export const MESSAGE_TYPES = {
   COPILOT_STATUS: 'copilot-status',
   COPILOT_STATUS_RESPONSE: 'copilot-status-response',
   COPILOT_SIGN_OUT: 'copilot-sign-out',
+  COPILOT_CANCEL_SIGN_IN: 'copilot-cancel-sign-in',
 
   GET_WORKSPACE_PATH: 'get-workspace-path',
   WORKSPACE_PATH: 'workspace-path',

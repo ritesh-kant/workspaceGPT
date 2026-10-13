@@ -11,7 +11,8 @@ const STORAGE_DIRECTORIES = [
   'jira',
   // Retained only to purge indexes created by the retired codebase pipeline.
   'codebase',
-  'chats',
+  // `chats` is deliberately absent: a reset clears connections, keys and
+  // indexes, but the conversations are the user's own work.
   'checkpoints',
   'agent-resume',
 ];

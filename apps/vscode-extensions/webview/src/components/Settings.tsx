@@ -242,8 +242,9 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
     <div className='mode-confirm-overlay' role='dialog' aria-modal='true'>
       <div className='mode-confirm-dialog'>
         <p>
-          Reset WorkspaceGPT? This clears your connections, API keys, indexed
-          sources, and chat history on this machine. It cannot be undone.
+          Reset WorkspaceGPT? This clears your connections, API keys, and
+          indexed sources on this machine. Your chat history is kept. It
+          cannot be undone.
         </p>
         <div className='mode-confirm-actions'>
           <button

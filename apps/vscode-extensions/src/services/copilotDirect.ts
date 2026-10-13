@@ -74,6 +74,11 @@ export async function hasDirectCopilotSignIn(): Promise<boolean> {
   return !!(await secrets?.get(STORAGE_KEYS.COPILOT_GITHUB_TOKEN));
 }
 
+/** Stop a sign-in that is waiting on GitHub; a no-op when none is. */
+export function cancelDirectCopilotSignIn(): void {
+  cancelSignIn?.();
+}
+
 /** Forget the GitHub sign-in; the next Connect asks again. */
 export async function signOutDirectCopilot(): Promise<void> {
   session = undefined;
@@ -251,7 +256,23 @@ async function copilotSession(): Promise<{ token: string; api: string }> {
 }
 
 /** GitHub device login, behind a dialog that states plainly what this is. */
+let cancelSignIn: (() => void) | undefined;
+
 async function signIn(): Promise<void> {
+  let cancelled = false;
+  let wake: () => void = () => undefined;
+  cancelSignIn = () => {
+    cancelled = true;
+    wake();
+  };
+  try {
+    await runSignIn(() => cancelled, (w) => (wake = w));
+  } finally {
+    cancelSignIn = undefined;
+  }
+}
+
+async function runSignIn(isCancelled: () => boolean, setWake: (wake: () => void) => void): Promise<void> {
   const codeRes = await fetch(DEVICE_CODE_URL, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
@@ -272,7 +293,7 @@ async function signIn(): Promise<void> {
     },
     proceed
   );
-  if (choice !== proceed) throw new Error('GitHub Copilot sign-in cancelled.');
+  if (choice !== proceed || isCancelled()) throw new Error('GitHub Copilot sign-in cancelled.');
   await vscode.env.clipboard.writeText(code.user_code).then(undefined, () => undefined);
   await vscode.env.openExternal(vscode.Uri.parse(code.verification_uri));
   // The dialog that showed the code closes on click, and GitHub's page asks
@@ -290,7 +311,14 @@ async function signIn(): Promise<void> {
   let interval = (code.interval ?? 5) * 1000;
   const deadline = Date.now() + (code.expires_in ?? 900) * 1000;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, interval));
+    await new Promise<void>((r) => {
+      const t = setTimeout(r, interval);
+      setWake(() => {
+        clearTimeout(t);
+        r();
+      });
+    });
+    if (isCancelled()) throw new Error('GitHub Copilot sign-in cancelled.');
     const tokenRes = await fetch(ACCESS_TOKEN_URL, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },

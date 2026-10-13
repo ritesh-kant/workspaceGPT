@@ -42,7 +42,14 @@ function systemOpen(target: string): Promise<boolean> {
 function windowsShellOpen(url: string): Promise<boolean> {
   return new Promise((resolve) => {
     try {
-      const child = spawn('explorer.exe', [`"${new URL(url).href}"`], { stdio: 'ignore', windowsVerbatimArguments: true });
+      // Web links (OAuth sign-in URLs carry %-escapes and many `&`) go to the
+      // default browser by URL handler, with no shell command line to re-parse
+      // them; a browser cold-started this way stays in the job, which only
+      // costs a window closing when the app quits.
+      const href = new URL(url).href;
+      const child = /^https?:/i.test(href)
+        ? spawn('rundll32.exe', ['url.dll,FileProtocolHandler', href], { stdio: 'ignore' })
+        : spawn('explorer.exe', [`"${href}"`], { stdio: 'ignore', windowsVerbatimArguments: true });
       child.on('error', (err) => {
         console.error('[desktop] explorer.exe failed:', err.message);
         resolve(false);

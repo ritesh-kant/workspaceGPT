@@ -4,7 +4,7 @@ import * as os from 'os';
 import { COPILOT_PROVIDER, MESSAGE_TYPES, MODEL_PROVIDERS } from '../../constants';
 import { ChatService } from '../services/chatService';
 import { ensureCopilotBridge, getCopilotStatus, listCopilotModels } from '../services/copilotBridge';
-import { ensureDirectCopilotReady, signOutDirectCopilot, usesDirectCopilot } from '../services/copilotDirect';
+import { cancelDirectCopilotSignIn, ensureDirectCopilotReady, signOutDirectCopilot, usesDirectCopilot } from '../services/copilotDirect';
 import { HistoryService } from '../services/historyService';
 import { openFolderIn } from '../services/openFolderIn';
 import { AnalyticsService } from '../services/analyticsService';
@@ -256,6 +256,9 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.COPILOT_STATUS:
         await this.postCopilotStatus();
+        return true;
+      case MESSAGE_TYPES.COPILOT_CANCEL_SIGN_IN:
+        cancelDirectCopilotSignIn();
         return true;
       case MESSAGE_TYPES.COPILOT_SIGN_OUT:
         await signOutDirectCopilot();
