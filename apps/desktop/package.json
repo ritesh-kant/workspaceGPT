@@ -4,7 +4,7 @@
   "private": true,
   "description": "WorkspaceGPT Desktop — Tauri shell + Node sidecar running the VS Code extension host through a vscode compat module",
   "scripts": {
-    "build": "node sidecar/esbuild.config.mjs",
+    "build": "node sidecar/esbuild.config.mjs && node scripts/build-native.mjs",
     "check-types": "tsc --noEmit -p tsconfig.json",
     "usage-check": "node sidecar/usage-check.mjs",
     "dev:headless": "node scripts/dev-headless.mjs",

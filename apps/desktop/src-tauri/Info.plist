@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into the app's Info.plist by Tauri. Dictation (sidecar/host/dictation.ts) runs
+	     under this app, so macOS shows these as the reason when it asks. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>WorkspaceGPT uses the microphone to turn your voice into chat input.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>WorkspaceGPT uses speech recognition on this Mac to turn your voice into chat input. Your voice is not sent anywhere.</string>
+</dict>
+</plist>

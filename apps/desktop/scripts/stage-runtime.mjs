@@ -16,6 +16,7 @@
  *                                    @napi-rs/keyring + this target's binary, typescript,
  *                                    typescript-language-server
  *   runtime/bridge/                  the shell page and view bridge
+ *   runtime/bin/wgpt-dictate         (macOS) the dictation helper, native/wgpt-dictate.swift
  *   runtime/extension/               what the extension host reads by path: package.json,
  *                                    resources/, webview/dist/, dist/mcp-server.js
  *   runtime/manifest.json            versions, for diagnostics and the release checks
@@ -139,6 +140,14 @@ if (platform !== 'win32') for (const p of fs.existsSync(ptyPrebuilds) ? fs.readd
 }
 
 copy(path.join(root, 'dist/bridge'), path.join(out, 'bridge'));
+
+// The dictation helper (native/wgpt-dictate.swift), beside the sidecar where host/dictation.ts looks.
+if (platform === 'darwin') {
+  run('node', ['scripts/build-native.mjs', '--target', target, '--require'], root);
+  fs.mkdirSync(path.join(out, 'bin'), { recursive: true });
+  fs.copyFileSync(path.join(root, 'dist/bin/wgpt-dictate'), path.join(out, 'bin/wgpt-dictate'));
+  fs.chmodSync(path.join(out, 'bin/wgpt-dictate'), 0o755);
+}
 
 const extOut = path.join(out, 'extension');
 fs.mkdirSync(path.join(extOut, 'dist'), { recursive: true });

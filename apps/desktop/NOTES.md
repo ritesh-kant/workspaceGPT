@@ -904,3 +904,56 @@ Chrome extension (apps/chrome-extension/src/lib/browserControl.ts, browserAction
     - pinch-zoom offsets are not handled;
     - if the user moves the agent's tab group into their own window,
       opening a tab switches their view.
+
+## Dictation (macOS, built 2026-10-13, uncommitted)
+
+A mic button in the composer (desktop only) that types what you say, using
+macOS's own speech recognition, on the machine.
+
+- **Parts:** `native/wgpt-dictate.swift` (one process per dictation: `SFSpeechRecognizer`
+  + `AVAudioEngine`, JSON lines on stdout, `stop`/`cancel` on stdin) →
+  `sidecar/host/dictation.ts` (spawns it, relays events as `dictation` frames,
+  `capability` says whether to draw the mic) → `bridge/desktop-bridge.ts`
+  (`__wgptBridge.dictation`, `wgpt-dictation` events) → `useDictation` in the
+  webview (writes partials at the caret; typing, sending or Esc ends it).
+  `scripts/build-native.mjs` compiles the helper (part of `build`, required by
+  `stage-runtime`, which puts it in `runtime/bin/`).
+- **Privacy:** recognition is forced on-device. A language with no on-device
+  model is an error ("on-device-unavailable"), never a silent fall back to
+  Apple's servers. The page's `navigator.language` can be a region speech
+  lacks (en-DE); the helper picks the same language, preferring a locale that
+  has an on-device model.
+- **Permissions:** the two usage strings are in `src-tauri/Info.plist`. The
+  helper is a child of the sidecar, so macOS should attribute the prompts to the
+  app (as it does for a Terminal child); `swiftc` output is ad-hoc signed by the
+  stage step like every other Mach-O.
+- **Verified:** helper builds (arm64, macOS 12 floor); bad-locale error path;
+  locale fallback gets past the locale step; sidecar relay, crash and cancel
+  paths against a fake helper; composer behaviour (insert at caret, partials,
+  final, typing cancels, Esc restores, error note) in the webview preview with
+  a mocked bridge.
+- **Not verified:** a real recognition (the Speech Recognition prompt never
+  appeared when the helper ran from the agent's shell, so authorization stayed
+  "not determined"); the permission prompt and its wording from the packaged
+  app; that the bundler merges `src-tauri/Info.plist` into a release `.app`
+  (tauri-codegen 2.6.3's source does embed it in dev builds); live use of the
+  mic. Check first in a packaged build: the ad-hoc signature changes with every
+  release, so macOS may ask for both permissions again after each update.
+- **Transcript never shrinks (fixed 2026-10-13):** a first user run showed words
+  detected and then cleared. The recognizer's transcript is not monotonic (it
+  can start over after a pause; its last result can be short or empty), and the
+  composer replaces the dictated span with each result, so the helper now keeps
+  what it has heard (`Transcript` in `wgpt-dictate.swift`: empty results are
+  ignored, a restart is appended). Unit-tested in isolation; the cause itself
+  was inferred, not observed — `WGPT_DICTATE_DEBUG=1` prints every recognizer
+  result to stderr (the dev terminal) if it still happens.
+- **Quick check without a mic** (needs the permission granted once):
+  `say -o /tmp/clip.aiff "open ticket one five three four"` then
+  `apps/desktop/dist/bin/wgpt-dictate --file /tmp/clip.aiff`.
+- **Shortcut:** ⌘⇧D (Ctrl+Shift+D elsewhere) taps dictation on and off
+  (`useDictation`); verified with synthetic key events in the preview, not on a
+  real keyboard. No menu item uses it. Hold-to-talk was left out: the helper
+  starts on press, so the first word would clip.
+- **Next:** macOS 26+ `SpeechAnalyzer`; contextual strings (ticket keys,
+  identifiers) to bias recognition; Windows (no native equivalent: local
+  Parakeet/Whisper).

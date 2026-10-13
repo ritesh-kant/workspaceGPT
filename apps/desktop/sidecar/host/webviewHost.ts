@@ -17,6 +17,7 @@ import * as path from 'node:path';
 import { EventEmitter, Uri } from '../vscode-compat/types';
 import type { DesktopUi, InputBoxRequest, QuickPickRequest, ShowMessageRequest } from '../vscode-compat/runtime';
 import type { DiffAction, DiffFrame } from './diffPanel';
+import type { DictationEvent, DictationRequest } from './dictation';
 
 export const WS_CLOSE_SUPERSEDED = 4001;
 
@@ -28,13 +29,15 @@ export type HostToPage =
   | { t: 'ui'; id: number; kind: 'inputbox'; req: InputBoxRequest }
   | { t: 'ui-cancel'; id: number }
   | { t: 'toolbar'; items: unknown[] }
+  | { t: 'dictation'; event: DictationEvent }
   | DiffFrame;
 export type PageToHost =
   | { t: 'msg'; d: unknown }
   | { t: 'ui-result'; id: number; value: unknown }
   | { t: 'command'; id: string }
   | { t: 'page-log'; level: 'error' | 'info'; text: string }
-  | { t: 'diff-action'; file: string; action: DiffAction; idx?: number };
+  | { t: 'diff-action'; file: string; action: DiffAction; idx?: number }
+  | ({ t: 'dictation' } & DictationRequest);
 
 const MAX_QUEUED = 2000;
 /** How long a question asked with no page connected waits for one. */
@@ -58,6 +61,8 @@ export class ViewSurface {
   readonly commandRequested = new EventEmitter<string>();
   /** A button on the diff review panel (host/diffPanel.ts). */
   readonly diffActionRequested = new EventEmitter<{ file: string; action: DiffAction; idx?: number }>();
+  /** The composer's mic button: start, stop or cancel dictation (host/dictation.ts). */
+  readonly dictationRequested = new EventEmitter<DictationRequest>();
   private uiSeq = 0;
   private pendingUi = new Map<number, (value: unknown) => void>();
   /** The `ui` frame behind each pending question, for a page that takes over. */
@@ -226,6 +231,8 @@ export class ViewSurface {
       this.commandRequested.fire(frame.id);
     } else if (frame.t === 'diff-action' && typeof frame.file === 'string' && typeof frame.action === 'string') {
       this.diffActionRequested.fire({ file: frame.file, action: frame.action, idx: frame.idx });
+    } else if (frame.t === 'dictation' && typeof frame.op === 'string') {
+      this.dictationRequested.fire({ op: frame.op, locale: frame.locale });
     } else if (frame.t === 'page-log' && typeof frame.text === 'string') {
       (frame.level === 'error' ? console.warn : console.log)(`[page ${this.viewType}] ${frame.text.slice(0, 2000)}`);
     }

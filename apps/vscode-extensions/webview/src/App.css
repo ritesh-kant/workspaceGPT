@@ -1003,6 +1003,18 @@ input[type='radio'] {
   flex-shrink: 0;
 }
 
+/* Dictation (desktop): the mic pulses in the error colour while it is listening. */
+.mic-button--listening {
+  color: var(--vscode-errorForeground, #f48771);
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic-button--listening { animation: none; }
+}
+
 .send-button:hover:not(:disabled) {
   background-color: var(--vscode-toolbar-hoverBackground) !important;
   color: var(--vscode-textLink-foreground);

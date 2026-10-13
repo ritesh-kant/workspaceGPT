@@ -174,6 +174,7 @@ interface UiFrame {
         else deliver(frame.d);
       } else if (frame.t === 'ui') showUi(frame as UiFrame);
       else if (frame.t === 'diff') showDiff(frame as DiffFrame);
+      else if (frame.t === 'dictation') onDictation(frame.event);
       else if (frame.t === 'toolbar') {
         const hooks = shell();
         if (hooks) hooks.toolbar(viewType, frame.items ?? []);
@@ -208,10 +209,23 @@ interface UiFrame {
     reportToHost(`unhandled rejection: ${r?.stack ?? r?.message ?? String(r)}`);
   });
 
+  // Dictation (host/dictation.ts): the composer asks through __wgptBridge.dictation
+  // and hears back as 'wgpt-dictation' events. Whether the host can dictate at
+  // all arrives once per connection, maybe before the composer exists, so it is kept.
+  let dictationAvailable = false;
+  function onDictation(event: { type?: string; available?: boolean } | undefined): void {
+    if (event?.type === 'capability') dictationAvailable = !!event.available;
+    window.dispatchEvent(new CustomEvent('wgpt-dictation', { detail: event }));
+  }
+
   // What the shell calls into: its header buttons run the same title actions.
   w.__wgptBridge = {
     viewType,
     command: (id: string) => send({ t: 'command', id }),
+    dictation: {
+      available: () => dictationAvailable,
+      request: (op: 'start' | 'stop' | 'cancel', locale?: string) => send({ t: 'dictation', op, locale }),
+    },
   };
 
   // ── acquireVsCodeApi ─────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ import Onboarding from './components/onboarding/Onboarding';
 import SearchableDropdown from './components/settings/SearchableDropdown';
 import type { DropdownOption } from './components/settings/SearchableDropdown';
 import { isDesktopHost, VSCodeAPI } from './vscode';
+import { DICTATION_SHORTCUT, useDictation } from './hooks/useDictation';
 import { installDiagramExport } from './utils/diagramExport';
 import { ZoomableImage } from './components/ImageViewer';
 import {
@@ -714,6 +715,7 @@ const App: React.FC = () => {
   // view — the pinned action bar above the composer takes over then.
   const [reviewActionsOffscreen, setReviewActionsOffscreen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const dictation = useDictation(inputRef, inputValue, setInputValue);
   // Files staged in the composer, sent with the next message.
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   // Transient note when a picked/pasted file was rejected (type/size/count).
@@ -3242,6 +3244,11 @@ const App: React.FC = () => {
               </div>
             )}
             {attachmentNote && <div className='attachment-note'>{attachmentNote}</div>}
+            {dictation.error && (
+              <div className='attachment-note' role='status' onClick={dictation.dismissError} title='Dismiss'>
+                {dictation.error}
+              </div>
+            )}
             {/* A suggestion only: it arms the same one-shot Debug as "+ → Debug a bug", and never on its own. */}
             {isWorkMode &&
               !debugOn &&
@@ -3287,6 +3294,22 @@ const App: React.FC = () => {
               }
             />
               <div className='input-actions'>
+                {dictation.available && (
+                  <button
+                    type='button'
+                    onClick={dictation.toggle}
+                    className={`send-button action-btn mic-button${dictation.state === 'listening' ? ' mic-button--listening' : ''}`}
+                    aria-pressed={dictation.state !== 'idle'}
+                    aria-label={dictation.state === 'idle' ? 'Dictate' : 'Stop dictating'}
+                    aria-keyshortcuts={DICTATION_SHORTCUT}
+                    title={dictation.state === 'idle' ? `Dictate (${DICTATION_SHORTCUT})` : dictation.state === 'listening' ? `Stop dictating (${DICTATION_SHORTCUT}; Esc cancels)` : 'Cancel'}
+                  >
+                    <svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
+                      <rect x='9' y='2' width='6' height='12' rx='3' />
+                      <path d='M5 11a7 7 0 0 0 14 0M12 18v4' />
+                    </svg>
+                  </button>
+                )}
                 {isLoading || isStreaming ? (
                   <button
                     onClick={handleStopMessage}

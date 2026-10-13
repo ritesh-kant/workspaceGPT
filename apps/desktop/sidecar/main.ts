@@ -43,6 +43,7 @@ import { acquireProfileLock, PROFILE_IN_USE_PREFIX, ProfileInUseError } from './
 import { createExtensionContext } from './host/extensionContext';
 import { createViewSurface, type ViewSurface } from './host/webviewHost';
 import { watchForAttention } from './host/notifier';
+import { createDictation } from './host/dictation';
 import { registerBrowserHost } from './host/browserHost';
 import { startBrowserBridge } from 'workspacegpt-extension-browser';
 import { attachChromeChat } from 'workspacegpt-extension-chromechat';
@@ -399,6 +400,9 @@ async function main(): Promise<void> {
   surface.diffActionRequested.event(({ file, action, idx }) => {
     diffPanel.act(file, action, idx).catch((err) => console.error(`[desktop] diff ${action} failed:`, err));
   });
+
+  // The composer's mic button → the system's speech recognition (macOS builds).
+  createDictation(surface);
 
   surface.commandRequested.event((id) => {
     if (!titleActions.some((a) => a.command === id)) {
