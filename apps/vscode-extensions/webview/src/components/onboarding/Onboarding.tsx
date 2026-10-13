@@ -66,6 +66,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
   const [setupChoice, setSetupChoice] = useState<SetupChoice>('remote');
   const chosenMode: WorkspaceMode = setupChoice === 'remote' ? 'remote' : 'local';
   const [confluenceConnecting, setConfluenceConnecting] = useState(false);
+  const confluenceCancelledRef = useRef(false);
   const [confluenceStatus, setConfluenceStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [remoteSignedIn, setRemoteSignedIn] = useState(false);
 
@@ -88,7 +89,10 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
         setConfluenceStatus({ ok: true, text: `Connected to ${message.site?.name || 'Confluence'}` });
       } else if (message.type === MESSAGE_TYPES.CONFLUENCE_OAUTH_ERROR) {
         setConfluenceConnecting(false);
-        setConfluenceStatus({ ok: false, text: message.message || 'Authentication failed' });
+        // The host echoes an error after a user-initiated cancel; don't show it.
+        if (!confluenceCancelledRef.current) {
+          setConfluenceStatus({ ok: false, text: message.message || 'Authentication failed' });
+        }
       } else if (
         message.type === MESSAGE_TYPES.REMOTE_SESSION_STATUS ||
         message.type === MESSAGE_TYPES.REMOTE_SIGN_IN_SUCCESS
@@ -126,7 +130,15 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
     trackOnboarding('onboarding_step_viewed', { step, mode: chosenMode });
   }, [step]);
 
+  const cancelConfluence = () => {
+    confluenceCancelledRef.current = true;
+    setConfluenceConnecting(false);
+    setConfluenceStatus(null);
+    handleConfluenceActions.cancelOAuth(vscode);
+  };
+
   const connectConfluence = () => {
+    confluenceCancelledRef.current = false;
     setConfluenceStatus(null);
     setConfluenceConnecting(true);
     trackOnboarding('onboarding_confluence_connect_clicked', { mode: chosenMode });
@@ -237,6 +249,9 @@ const Onboarding: React.FC<OnboardingProps> = ({ onFinish }) => {
                     <button type='button' className='secondary-button' onClick={connectConfluence} disabled={confluenceConnecting}>
                       {confluenceConnecting ? 'Connecting…' : 'Connect Confluence'}
                     </button>
+                  )}
+                  {confluenceConnecting && !config.confluence?.isAuthenticated && (
+                    <button type='button' className='secondary-button' onClick={cancelConfluence} style={{ marginLeft: 8 }}>Cancel</button>
                   )}
                 </div>
               </div>

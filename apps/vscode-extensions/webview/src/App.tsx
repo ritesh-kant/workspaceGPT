@@ -415,6 +415,12 @@ const App: React.FC = () => {
 
   const { activeView, setActiveView, openSettings, settingsHydrated, setSettingsHydrated } = useUiStore();
 
+  // The desktop shell hides its sessions sidebar for onboarding and Settings.
+  // It can read this frame's DOM to notice, but a message does not depend on that.
+  useEffect(() => {
+    if (isDesktopHost()) window.parent?.postMessage({ type: 'wgpt:screen', view: activeView }, '*');
+  }, [activeView]);
+
   const mode = config.mode;
   // Composer dial, persisted per webview (docs/design/permission-modes.md).
   // - plan: planMode=true — the turn's deliverable IS a plan (no write tools);

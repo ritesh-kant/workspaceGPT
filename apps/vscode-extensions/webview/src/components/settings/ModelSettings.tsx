@@ -319,7 +319,9 @@ const ModelSettings: React.FC<{ setupOnly?: boolean; preferCopilot?: boolean }> 
           )}
 
         {/* Providers without a key field (Ollama) have nowhere else to show why no models loaded. */}
+        {/* Copilot-first setup hides the provider list, so the default provider's (Ollama) fetch error isn't the user's to see. */}
         {apiKeyError &&
+          (!preferCopilot || copilotInUse || showKeyProviders) &&
           !MODEL_PROVIDERS.find((p) => p.MODEL_PROVIDER === selectedModelProvider.provider)?.requireApiKey && (
             <small className='form-text error-message'>{apiKeyError}</small>
           )}

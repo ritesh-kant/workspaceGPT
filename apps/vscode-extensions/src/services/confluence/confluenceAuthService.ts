@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as http from 'http';
 import { randomUUID } from 'crypto';
 import { ATLASSIAN_OAUTH, STORAGE_KEYS } from '../../../constants';
+import { claimAtlassianCallbackSlot } from '../atlassianCallbackSlot';
 
 export interface OAuthTokens {
   accessToken: string;
@@ -104,6 +105,8 @@ export class ConfluenceAuthService {
    * Returns the authorization code.
    */
   private waitForAuthCode(state: string): Promise<string> {
+    // Free the shared callback port from any flow still holding it.
+    claimAtlassianCallbackSlot(() => void this.cancelOAuthFlow());
     return new Promise((resolve, reject) => {
       // Set a timeout (5 minutes)
       this.timeout = setTimeout(() => {

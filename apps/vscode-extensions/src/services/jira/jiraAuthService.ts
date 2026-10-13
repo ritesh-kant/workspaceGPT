@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
 import { JIRA_OAUTH, STORAGE_KEYS } from '../../../constants';
+import { claimAtlassianCallbackSlot } from '../atlassianCallbackSlot';
 
 /**
  * Jira Cloud auth — OAuth 2.0 (3LO), mirroring confluenceAuthService.ts's
@@ -129,6 +130,8 @@ export class JiraAuthService {
    * Returns the authorization code.
    */
   private waitForAuthCode(state: string): Promise<string> {
+    // Free the shared callback port from any flow still holding it.
+    claimAtlassianCallbackSlot(() => void this.cancelOAuthFlow());
     return new Promise((resolve, reject) => {
       this.timeout = setTimeout(() => {
         this.clearPendingReject();
