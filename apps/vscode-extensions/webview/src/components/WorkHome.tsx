@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MESSAGE_TYPES } from '../constants';
 import { VSCodeAPI } from '../vscode';
@@ -91,7 +91,7 @@ export default function WorkHome(props: Props) {
   const [updatedAt, setUpdatedAt] = useState('');
   const container = useRef<HTMLDivElement>(null);
   const overview = useRef<HTMLDivElement>(null);
-  const [showTip, setShowTip] = useState(false);
+  const [sideFit, setSideFit] = useState(2);
   const [size, setSize] = useState({ height: 360, width: 900 });
   const [dialog, setDialog] = useState<Tab | 'connect' | 'github' | WorkItemSummary | null>(null);
   const hostConnected = useCodeHostConnected();
@@ -178,17 +178,21 @@ export default function WorkHome(props: Props) {
   const narrow = size.width < 650 || size.height < 400 || (hasActivityError && size.height < 540);
   useEffect(() => { if (narrow && layout === 'board' && filter === 'all') setFilter('tickets'); }, [narrow, layout, filter]);
   const ticketLimit = Math.max(1, Math.min(3, Math.floor((size.height - (narrow ? 185 : 145)) / 74)));
-  const prLimit = size.height < 600 ? 1 : 2;
+  const prLimit = sideFit >= 1 ? 2 : 1;
+  const mentionLimit = sideFit >= 2 ? 2 : 1;
   const inboxLimit = Math.max(1, Math.min(5, Math.floor((size.height - 185) / 72)));
   const pageSize = Math.max(1, Math.min(7, Math.floor((window.innerHeight - 230) / 80)));
-  useEffect(() => {
-    const element = overview.current;
-    if (!element) return;
-    const bottom = Math.max(element.getBoundingClientRect().top, ...Array.from(element.children)
-      .filter((child) => !child.classList.contains('work-home-tip'))
-      .map((child) => child.getBoundingClientRect().bottom));
-    setShowTip(!narrow && element.getBoundingClientRect().bottom - bottom >= 80);
-  }, [size.height, size.width, layout, filter, prTab, activity, ticketItems.length, homeMentions.length, pending.length, props.error, narrow]);
+  // Pull requests and mentions show two rows each when they fit. When they would spill out of the board, mentions
+  // drop to one row first, then pull requests. Start from two again whenever the space or the content changes;
+  // the check below steps down before paint.
+  useLayoutEffect(() => { setSideFit(2); }, [size.height, size.width, layout, filter, prTab, activity, homeMentions.length, props.error, narrow]);
+  useLayoutEffect(() => {
+    const board = overview.current;
+    if (sideFit < 1 || !board) return;
+    const limit = board.getBoundingClientRect().bottom;
+    const overflows = Array.from(board.querySelectorAll('.work-home-prs, .work-home-mentions')).some((section) => section.getBoundingClientRect().bottom > limit + 1);
+    if (overflows) setSideFit(sideFit - 1);
+  });
   const badge = (id: string, revision: string) => seen[id] !== revision && <span className='work-home-new' title='New activity since you last viewed this item' aria-label='New activity' />;
   const start = (item: WorkItemSummary) => { mark(ticketId(item), ticketRevision(item)); setDialog(null); props.onStart(item); };
   const startOrResume = (item: WorkItemSummary) => {
@@ -250,10 +254,10 @@ export default function WorkHome(props: Props) {
   const mentionsSection = <section className='work-home-mentions'>
     {sectionHead('Mentions', tracker || confluence ? unreadMentions : undefined, 'mentions')}
     {!tracker && !confluence ? <>{skeleton(1)}<p className='work-home-empty'>Know when someone tags you in a page or ticket.</p><button className='work-home-link' type='button' onClick={() => setDialog('connect')}>Connect Knowledge →</button></> : <>
-      {homeMentions.slice(0, 1).map(mentionRow)}
+      {homeMentions.slice(0, mentionLimit).map(mentionRow)}
       {!homeMentions.length && <p className='work-home-empty' role='status'>{pending.some((p) => p.endsWith('Mentions')) ? 'Looking for recent mentions…' : activity.trackerMentions.error || activity.confluenceMentions.error ? 'Mentions could not be refreshed.' : 'You’re caught up on recent mentions.'}</p>}
       {(activity.trackerMentions.error || activity.confluenceMentions.error) && <div className='work-home-note' title={[activity.trackerMentions.error, activity.confluenceMentions.error].filter(Boolean).join(' ')}>Some mentions could not be refreshed. <button className='work-home-link' type='button' onClick={() => openList('mentions')}>Details</button></div>}
-      {homeMentions.length > 1 && <button className='work-home-link work-home-more' type='button' onClick={() => openList('mentions')}>{homeMentions.length - 1} more mentions →</button>}
+      {homeMentions.length > mentionLimit && <button className='work-home-link work-home-more' type='button' onClick={() => openList('mentions')}>{homeMentions.length - mentionLimit} more mentions →</button>}
       {!homeMentions.length && allMentions.length > 0 && <button className='work-home-link' type='button' onClick={() => openList('mentions')}>View read mentions →</button>}
     </>}
   </section>;
@@ -276,21 +280,22 @@ export default function WorkHome(props: Props) {
       : refreshing ? { tone: 'waiting', label: 'Connected · refreshing' } : { tone: 'connected', label: 'Connected' };
   const confluenceStatus = sourceStatus(confluence, activity.confluenceMentions.error, pending.includes('confluenceMentions'));
   const trackerStatus = sourceStatus(!!tracker, props.error || activity.trackerMentions.error, props.isRefreshing || pending.includes('trackerMentions'));
-  const tip = <aside className='work-home-tip'><span>Tip</span>{!tracker ? 'Connect Jira or Azure DevOps to start work directly from your assigned tickets.' : confluence ? 'Ask WorkspaceGPT to explain a ticket using its linked Confluence design pages.' : 'Start work reads the ticket, finds the affected code, and runs relevant checks.'}</aside>;
+  // The Knowledge strip is for action: it appears when a source is missing or its refresh failed, not as a status line.
+  const sourcesNeedAttention = !confluence || !tracker || confluenceStatus.tone === 'error' || trackerStatus.tone === 'error' || !!(feedError || activityErrors);
 
   return <div className={`work-home work-home--${layout}${narrow ? ' work-home--narrow' : ''}${short ? ' work-home--short' : ''}${size.height < 320 ? ' work-home--tiny' : ''}`} ref={container}>
-    <div className='work-home-heading'><h1><span className='work-home-mark' aria-hidden='true'>✦</span>Your work</h1><div className='work-home-heading-actions'>{props.defaultFolderName && <button className='work-home-link work-home-folder' type='button' onClick={props.onOpenDefaultFolder} title='Choose the folder ticket work starts in'>{props.defaultFolderName}</button>}<button className='work-home-refresh' type='button' aria-label='Refresh your work' disabled={props.isRefreshing || pending.length > 0} onClick={() => { props.onRefresh(); refreshActivity(); }}>↻</button><div className='work-home-switch' role='group' aria-label='Homepage layout'>{(['board', 'inbox'] as const).map((value) => <button type='button' key={value} aria-pressed={layout === value} className={layout === value ? 'is-active' : ''} onClick={() => { setLayout(value); try { localStorage.setItem('workspacegpt.homeLayout', value); } catch { /* Session-only preference. */ } }}>{value === 'board' ? 'Board' : 'Inbox'}</button>)}</div></div></div>
+    <div className='work-home-heading'><h1><span className='work-home-mark' aria-hidden='true'>✦</span>Your work</h1><div className='work-home-heading-actions'>{props.defaultFolderName && <button className='work-home-link work-home-folder' type='button' onClick={props.onOpenDefaultFolder} title='Choose the folder ticket work starts in'>{props.defaultFolderName}</button>}<button className='work-home-refresh' type='button' aria-label='Refresh your work' title={refreshLabel ? `Refresh · ${refreshLabel}` : 'Refresh'} disabled={props.isRefreshing || pending.length > 0} onClick={() => { props.onRefresh(); refreshActivity(); }}>↻</button><div className='work-home-switch' role='group' aria-label='Homepage layout'>{(['board', 'inbox'] as const).map((value) => <button type='button' key={value} aria-pressed={layout === value} className={layout === value ? 'is-active' : ''} onClick={() => { setLayout(value); try { localStorage.setItem('workspacegpt.homeLayout', value); } catch { /* Session-only preference. */ } }}>{value === 'board' ? 'Board' : 'Inbox'}</button>)}</div></div></div>
     <p className='work-home-intro'>{tracker || confluence ? 'Pick up a ticket. Move a review forward.' : 'Connect your Knowledge to bring your work here.'}</p>
     {(layout === 'inbox' || narrow) && <div className='work-home-filters' role='group' aria-label='Work categories'>{(['all', 'tickets', 'prs', 'mentions'] as const).filter((tab) => !narrow || layout === 'inbox' || tab !== 'all').map((tab) => <button type='button' key={tab} aria-pressed={filter === tab} className={filter === tab ? 'is-active' : ''} onClick={() => setFilter(tab)}>{tab === 'all' ? 'Overview' : tab === 'tickets' ? tracker ? `Tickets · ${ticketItems.length}` : 'Tickets' : tab === 'prs' ? tracker ? `PRs · ${activity.pullRequests.items.length}` : 'PRs' : tracker || confluence ? `Mentions · ${unreadMentions}` : 'Mentions'}</button>)}</div>}
-    {layout === 'board' ? <div className='work-home-board' ref={overview}>{(!narrow || filter === 'tickets' || filter === 'all') && ticketSection}{(!narrow || filter === 'prs') && prSection}{(!narrow || filter === 'mentions') && mentionsSection}{showTip && tip}</div> : <div className='work-home-inbox' ref={overview}>{entries.length ? entries.slice(0, inboxLimit).map(renderEntry) : !tracker && !confluence ? <div className='work-home-inbox-setup'>{skeleton(2)}<p className='work-home-empty'>Your tickets, PR reviews, and mentions will appear here.</p><button className='work-home-link' type='button' onClick={() => setDialog('connect')}>Choose your Knowledge sources →</button></div> : <p className='work-home-empty' role='status'>{pending.length ? 'Loading recent work…' : 'No items in this view.'}</p>}{entries.length > inboxLimit && <button className='work-home-link work-home-more' type='button' onClick={() => openList(filter === 'all' ? 'tickets' : filter)}>View {filter === 'all' ? 'all tickets' : `all ${entries.length} items`} →</button>}{showTip && tip}</div>}
-    <footer className='work-home-footer'>
+    {layout === 'board' ? <div className='work-home-board' ref={overview}>{(!narrow || filter === 'tickets' || filter === 'all') && ticketSection}{(!narrow || filter === 'prs') && prSection}{(!narrow || filter === 'mentions') && mentionsSection}</div> : <div className='work-home-inbox' ref={overview}>{entries.length ? entries.slice(0, inboxLimit).map(renderEntry) : !tracker && !confluence ? <div className='work-home-inbox-setup'>{skeleton(2)}<p className='work-home-empty'>Your tickets, PR reviews, and mentions will appear here.</p><button className='work-home-link' type='button' onClick={() => setDialog('connect')}>Choose your Knowledge sources →</button></div> : <p className='work-home-empty' role='status'>{pending.length ? 'Loading recent work…' : 'No items in this view.'}</p>}{entries.length > inboxLimit && <button className='work-home-link work-home-more' type='button' onClick={() => openList(filter === 'all' ? 'tickets' : filter)}>View {filter === 'all' ? 'all tickets' : `all ${entries.length} items`} →</button>}</div>}
+    {sourcesNeedAttention && <footer className='work-home-footer'>
       <div className='work-home-sources'>
         <button className='work-home-link' type='button' onClick={() => props.onOpenSettings('knowledge')}>Knowledge</button>
         <button type='button' title={`Confluence: ${confluenceStatus.label}`} aria-label={`Confluence: ${confluenceStatus.label}`} onClick={() => connect('confluence')}><span className={`work-home-connection work-home-connection--${confluenceStatus.tone}`} aria-hidden='true' />Confluence</button>
         <button type='button' title={`${tracker ? sourceNames[tracker] : 'Ticket tracker'}: ${trackerStatus.label}`} aria-label={`${tracker ? sourceNames[tracker] : 'Jira or Azure DevOps'}: ${trackerStatus.label}`} onClick={() => tracker ? props.onOpenSettings(tracker) : setDialog('connect')}><span className={`work-home-connection work-home-connection--${trackerStatus.tone}`} aria-hidden='true' />{tracker ? sourceNames[tracker] : 'Jira or Azure DevOps'}</button>
       </div>
       <span className='work-home-refresh-status' title={feedError || activityErrors}>{refreshLabel}</span>
-    </footer>
+    </footer>}
     {dialog && <HomeDialog title={dialog === 'connect' ? 'Connect Knowledge' : dialog === 'github' ? 'GitHub pull requests' : typeof dialog === 'object' ? dialog.title : dialog === 'tickets' ? 'Assigned to you' : dialog === 'prs' ? 'Pull requests' : 'Mentions'} onClose={closeDialog}>
       {dialog === 'connect' ? <div className='work-home-connect'><p>Choose one ticket tracker. Confluence can be connected alongside it.</p><div className='work-home-connect-options'>{!tracker ? <><button type='button' onClick={() => connect('jira')}>Connect Jira</button><span>or</span><button type='button' onClick={() => connect('ado')}>Connect Azure DevOps</button></> : <button type='button' onClick={() => props.onOpenSettings(tracker)}>{sourceNames[tracker]} settings</button>}</div><button type='button' onClick={() => connect('confluence')}>{confluence ? 'Manage' : 'Connect'} Confluence</button></div>
       : dialog === 'github' ? <div className='work-home-connect'><p>Jira tracks your tickets. Your PRs come from GitHub.</p><p>Install GitHub CLI and sign in with <code>gh auth login</code> using your work account, then refresh. WorkspaceGPT reuses that sign-in to read PRs.</p><button type='button' onClick={() => { closeDialog(); refreshActivity(); }}>Refresh GitHub PRs</button></div>

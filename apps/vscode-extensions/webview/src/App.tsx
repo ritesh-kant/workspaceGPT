@@ -2743,6 +2743,10 @@ const App: React.FC = () => {
   // has nothing to offer and is left out.
   const isWorkMode = assistantMode === 'work';
   const showWorkHome = isDesktopHost() && isWorkMode && showTips && messages.length === 0;
+  // On the empty Work home the composer carries the tip, as a prompt to try.
+  const askPlaceholder = !showWorkHome || !isTrackerConnected ? 'Ask WorkspaceGPT...'
+    : isConfluenceConnected ? 'Ask WorkspaceGPT to explain a ticket from its linked Confluence pages...'
+    : 'Ask WorkspaceGPT to find the code a ticket affects...';
   // Chat and Work keep separate histories. The Sessions panel (shown when the
   // chat is opened in an editor tab) lists them from the host, which has no
   // other way to know which mode is on screen.
@@ -3275,10 +3279,10 @@ const App: React.FC = () => {
               placeholder={
                 mode === 'remote'
                   ? remoteSignedIn
-                    ? 'Ask WorkspaceGPT...'
+                    ? askPlaceholder
                     : 'Sign up with WorkspaceGPT in Settings to start chatting...'
                   : selectedModelProvider?.selectedModel
-                    ? 'Ask WorkspaceGPT...'
+                    ? askPlaceholder
                     : 'Please configure a model in Settings to start chatting...'
               }
             />
