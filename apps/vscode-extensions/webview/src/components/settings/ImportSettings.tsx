@@ -97,11 +97,18 @@ const ImportSettings: React.FC = () => {
     <>
       <SectionShell storageKey="import" title="Import" defaultOpen>
         <div className="settings-form">
-          {sources === null && (
-            <span className="import-detail">
-              Looking for chats on this machine…
-            </span>
-          )}
+          {sources === null &&
+            (Object.keys(LABELS) as Source[]).map((source) => (
+              <div className="import-row" key={source}>
+                <div className="import-text">
+                  <span className="import-name">{LABELS[source]}</span>
+                  <span className="import-detail">Scanning...</span>
+                </div>
+                <button type="button" className="secondary-button" disabled>
+                  Import
+                </button>
+              </div>
+            ))}
           {sources?.map((d) => {
             const busy = running?.source === d.source;
             const nothingNew =
