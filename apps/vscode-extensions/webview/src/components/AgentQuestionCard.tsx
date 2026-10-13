@@ -139,7 +139,15 @@ const AgentQuestionCard: React.FC<AgentQuestionCardProps> = ({ review, onDecided
                     aria-label='Type something else'
                     value={other[activeIndex]}
                     onFocus={() => !picked[activeIndex].includes(OTHER) && choose(activeIndex, OTHER)}
-                    onChange={(e) => setOther(other.map((t, i) => (i === activeIndex ? e.target.value : t)))}
+                    onChange={(e) => {
+                      setOther(other.map((t, i) => (i === activeIndex ? e.target.value : t)));
+                      // The input keeps focus when Enter moves to the next question, so
+                      // onFocus never fires for it: typing is what selects "Other".
+                      if (!picked[activeIndex].includes(OTHER)) {
+                        const q = activeQuestion;
+                        setPicked(picked.map((p, i) => (i === activeIndex ? (q.multiSelect ? [...p, OTHER] : [OTHER]) : p)));
+                      }
+                    }}
                     onKeyDown={(e) => e.key === 'Enter' && advance()}
                   />
                   <span className='agent-question-option-number' aria-hidden='true'>{activeQuestion.options.length + 1}</span>
