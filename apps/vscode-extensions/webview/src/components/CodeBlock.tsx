@@ -112,7 +112,7 @@ const MermaidBlock: React.FC<CodeBlockProps> = (props) => {
   // Zoom shows the in-theme SVG; Copy puts the light-theme PNG (what the Confluence page gets) on the clipboard.
   const getPng = async () => {
     const r = await renderDiagramPng(source, 0);
-    if (!r) return null;
+    if ('error' in r) return null;
     const bytes = Uint8Array.from(atob(r.png), (c) => c.charCodeAt(0));
     return new Blob([bytes], { type: 'image/png' });
   };

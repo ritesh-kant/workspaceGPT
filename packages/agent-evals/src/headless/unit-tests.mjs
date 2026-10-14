@@ -1285,7 +1285,7 @@ console.log('\nspike runs (research tickets — #1537001 edited code under an im
       implementMandate: true,
     });
     assert.ok(prompt.includes('NO ONE IS WATCHING') && prompt.includes('## FINAL REPORT FORMAT'));
-    assert.ok(!prompt.includes('SPIKE'));
+    assert.ok(!prompt.includes('## SPIKE'), 'the spike sections are headings; the response-style hint may still name them');
   });
 
   await t('SPIKE_TERMINAL_RE: a complete or needs-input spike is finished; partial is not', () => {
@@ -1355,7 +1355,7 @@ console.log('\nprompt efficiency (lean context without weaker grounding)');
     assert.ok(prompt.includes('## Ticket #12345: Read-only ticket'));
     assert.ok(prompt.includes('A'.repeat(1_000)));
     assert.ok(!prompt.includes('Must not appear in a lookup prompt.'));
-    assert.ok(!prompt.includes('FINAL REPORT FORMAT'));
+    assert.ok(!prompt.includes('## FINAL REPORT FORMAT'));
   });
 
   await t('model history preserves recent complete messages and marks omitted context', () => {
@@ -5226,6 +5226,117 @@ console.log('\nask_user (a question the run waits on, as a card)');
     assert.notStrictEqual(forTurnAction(defs, undefined), defs, 'must not hand back the shared array');
   });
 }
+
+console.log('\nspike coverage reflection (built from what the run actually did)');
+{
+  const { researchCoverageReflection } = await import(path.join(outDir, 'answerGates.mjs'));
+
+  await t('searched Confluence but opened nothing, and no web lookup: both gaps are named with the counts', () => {
+    const r = researchCoverageReflection({ read_file: 7, search_docs: 1, get_ticket: 2 });
+    assert.match(r, /1 Confluence search\(es\) and 0 Confluence page\(s\) opened/);
+    assert.match(r, /search snippet is not a reading/);
+    assert.match(r, /no web lookup/);
+  });
+
+  await t('a run that opened pages and searched the web gets no gap — only the re-check', () => {
+    const r = researchCoverageReflection({ search_docs: 2, get_confluence_page: 3, search_web: 2 });
+    assert.ok(!/not a reading|no web lookup|did not look in Confluence/.test(r));
+    assert.match(r, /unchanged/);
+  });
+
+  await t('no Confluence activity at all is its own gap', () => {
+    assert.match(researchCoverageReflection({ read_file: 3, search_web: 1 }), /did not look in Confluence at all/);
+  });
+}
+
+console.log('\nremembered choices (the host keeps what the user decided, in their words)');
+{
+  const { normalizeQuestions, answersByQuestion } = await import(path.join(outDir, 'askUser.mjs'));
+  const { rememberChoice, listMemories, userMemoryBlock, setMemoryEnabled } = await import(path.join(outDir, 'userMemory.mjs'));
+  const store = () => {
+    const m = new Map();
+    return { get: (k) => m.get(k), update: async (k, v) => void m.set(k, v) };
+  };
+
+  await t('a question carries its remember topic only when the model set one', () => {
+    const got = normalizeQuestions({ questions: [
+      { question: 'Where do spikes go?', options: ['A', 'B'], remember: ' spike report location ' },
+      { question: 'Roll back?', options: ['A', 'B'] },
+      { question: 'x?', options: ['A', 'B'], remember: true },
+    ] });
+    assert.equal(got[0].remember, 'spike report location');
+    assert.ok(!('remember' in got[1]) && !('remember' in got[2]));
+  });
+
+  await t('answers are split back per question, by header or full question, multi-line answers kept', () => {
+    const qs = normalizeQuestions({ questions: [
+      { question: 'Which template?', header: 'Template', options: ['A', 'B'] },
+      { question: 'Where should it go?', options: ['A', 'B'] },
+      { question: 'Skipped one?', options: ['A', 'B'] },
+    ] });
+    const fb = 'Template: use https://x/pages/1\nWhere should it go?: under SDR\nnot the folder';
+    assert.deepEqual(answersByQuestion(qs, fb), ['use https://x/pages/1', 'under SDR\nnot the folder', '']);
+  });
+
+  await t('a choice is stored per topic, replaces its own earlier answer, and shows in the prompt block', async () => {
+    const s = store();
+    await rememberChoice(s, 'spike report page', 'Spike pages go under SDR (page 1)');
+    await rememberChoice(s, 'runbook page', 'Runbooks go under Ops (page 2)');
+    await rememberChoice(s, 'spike report page', 'Spike pages go under Spikes (page 3)');
+    const all = listMemories(s);
+    assert.equal(all.length, 2);
+    assert.ok(all.find((e) => e.name === 'choice-spike-report-page').text.includes('page 3'));
+    const block = userMemoryBlock(s);
+    assert.ok(block.includes('choice-runbook-page') && block.includes('default'));
+  });
+
+  await t('a Confluence folder is a valid parent: its URL, or a bare id that is not a page, resolves through /folders', async () => {
+    const { resolveLocation, folderIdFromUrl } = await import(path.join(outDir, 'confluencePageService.mjs'));
+    assert.equal(folderIdFromUrl('https://x.atlassian.net/wiki/spaces/D2C/folder/6646628561/2026+SDR'), '6646628561');
+    assert.equal(folderIdFromUrl('https://x.atlassian.net/wiki/spaces/D2C/pages/12/T'), null);
+    const calls = [];
+    const api = {
+      site: { url: 'https://x.atlassian.net' },
+      call: async (p) => {
+        calls.push(p);
+        if (p === '/folders/6646628561') return { id: '6646628561', title: '2026 SDR', spaceId: '9', _links: { webui: '/spaces/D2C/folder/6646628561' } };
+        if (p === '/pages/55') return { id: '55', title: 'A page', spaceId: '9', _links: { webui: '/spaces/D2C/pages/55' } };
+        if (p === '/spaces/9') return { key: 'D2C' };
+        const e = new Error('nf'); e.status = 404; throw e;
+      },
+    };
+    const byUrl = await resolveLocation(api, { parentId: 'https://x.atlassian.net/wiki/spaces/D2C/folder/6646628561/2026+SDR' });
+    assert.deepEqual([byUrl.parentKind, byUrl.parentTitle, byUrl.spaceKey, byUrl.parentId], ['folder', '2026 SDR', 'D2C', '6646628561']);
+    assert.ok(!calls.includes('/pages/6646628561'), 'a folder URL is not looked up as a page first');
+    const bare = await resolveLocation(api, { parentId: '6646628561' });
+    assert.equal(bare.parentKind, 'folder');
+    const page = await resolveLocation(api, { parentId: '55' });
+    assert.equal(page.parentKind, 'page');
+    await assert.rejects(() => resolveLocation(api, { parentId: '404' }), /page or folder 404 not found/);
+  });
+
+  await t('a diagram that could not be drawn is reported with the reason, once per distinct reason', async () => {
+    const { diagramFailureReasons } = await import(path.join(outDir, 'confluencePageService.mjs'));
+    const png = { png: new Uint8Array(1), width: 1, height: 1 };
+    assert.equal(diagramFailureReasons([png]), '');
+    assert.equal(diagramFailureReasons([null]), '');
+    assert.equal(
+      diagramFailureReasons([{ error: 'svg load: this webview could not load the drawing as an image' }, png, { error: 'svg load: this webview could not load the drawing as an image' }, { error: 'png export (canvas tainted?): SecurityError' }]),
+      'svg load: this webview could not load the drawing as an image; png export (canvas tainted?): SecurityError'
+    );
+  });
+
+  await t('nothing is stored when memory is off, the topic is empty, or the text looks like a secret', async () => {
+    const s = store();
+    await rememberChoice(s, '', 'x');
+    await rememberChoice(s, 'token', 'api_key = sk-abcdefghijklmnopqrstuvwxyz');
+    assert.equal(listMemories(s).length, 0);
+    await setMemoryEnabled(s, false);
+    await rememberChoice(s, 'spike report page', 'under SDR');
+    assert.equal(listMemories(s).length, 0);
+  });
+}
+
 
 // ═══ permissionPolicy (Manual / Auto / Full access) ═══
 console.log('\npermissionPolicy (docs/design/permission-modes.md)');

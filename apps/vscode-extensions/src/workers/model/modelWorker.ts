@@ -17,6 +17,7 @@ import {
   PREMATURE_AMBIGUITY_RE,
   TICKET_TERMINAL_RE,
   isUnbackedCompletionClaim,
+  researchCoverageReflection,
   REPORT_SHAPED_RE,
   stripReportPreamble,
   IMPLEMENT_MANDATE_RE,
@@ -661,7 +662,7 @@ const TOOL_DEFS = [
     function: {
       name: 'find_confluence_location',
       description:
-        'Suggest where a NEW Confluence page should go: parents of the most similar existing pages, the connected space, and the list of spaces. Call this before create_confluence_page unless the user already named the space or parent page — then call ask_user with the suggestions as its options (recommended first) and use the answer. Never pick a location silently.',
+        'Suggest where a NEW Confluence page should go: parents of the most similar existing pages, the connected space, and the list of spaces. Call this before create_confluence_page unless the user already named the space or parent page, or a remembered choice ("choice-…" in what you know about this user) already covers this kind of page — then call ask_user with the suggestions as its options (recommended first) and use the answer. Never pick a location silently.',
       parameters: {
         type: 'object',
         properties: {
@@ -726,6 +727,11 @@ const TOOL_DEFS = [
                   },
                 },
                 multiSelect: { type: 'boolean', description: 'true when several options can be picked together.' },
+                remember: {
+                  type: 'string',
+                  description:
+                    'Set ONLY when the answer is a standing choice that applies next time too — where a kind of page or file goes, which template or format to follow, a naming or process convention. A short topic key naming the KIND of thing (e.g. "spike report location", "pr title format"). The host stores the user\'s answer under it and shows it to you in future chats. Leave unset for decisions about this task, and for where a Confluence page goes or what it follows (create_confluence_page records that itself).',
+                },
               },
               required: ['question', 'options'],
             },
@@ -741,15 +747,17 @@ const TOOL_DEFS = [
       name: 'create_confluence_page',
       description:
         "Create a new Confluence page from markdown, in the space/parent the user chose (see find_confluence_location). Created as a DRAFT only the user can see unless they asked to publish. The user reviews the full page and its location before it is created. Same markdown rules as update_confluence_page; no ⟦keep⟧ tokens in a new page. A ```mermaid block is drawn and attached to the page as an image, so pass it through unchanged. " +
-        "FORMAT: when the page is a kind the org already writes (a spike, SDR, RFC, runbook, postmortem…), first open 2–3 recent pages of that kind in the target space with get_confluence_page (search_docs / find_confluence_location surface them) and follow their title pattern and section order, carrying your content into their sections. If there are none, or they disagree, ask for a template or example page URL with ask_user — never invent a house style.",
+        "FORMAT: when the page is a kind the org already writes (a spike, SDR, RFC, runbook, postmortem…), first open 2–3 recent pages of that kind in the target space with get_confluence_page (search_docs / find_confluence_location surface them) and follow their title pattern and section order, carrying your content into their sections. If there are none, or they disagree, ask for a template or example page URL with ask_user — never invent a house style. A remembered choice for this kind of page (space, parent, page to follow) is the user's own earlier decision: use it rather than asking again. Always pass pageKind (and basedOn when you followed a page) so the next one starts from this choice.",
       parameters: {
         type: 'object',
         properties: {
           title: { type: 'string', description: 'Page title — must be unique within the space.' },
           markdown: { type: 'string', description: 'The page body.' },
           spaceKey: { type: 'string', description: 'Space key, e.g. "D2C". Not needed when parentId is given.' },
-          parentId: { type: 'string', description: 'Parent page id or URL — the page is created under it.' },
+          parentId: { type: 'string', description: 'Parent page or folder — id or URL (a /folder/<id> URL works). The page is created under it.' },
           publish: { type: 'boolean', description: 'true only if the user asked for it to be published immediately. Default: draft.' },
+          pageKind: { type: 'string', description: 'What kind of page this is (e.g. "spike report", "sdr", "runbook"). The host remembers where this kind went and which page you followed, so next time it is the default.' },
+          basedOn: { type: 'string', description: 'URL or id of the existing page whose format you followed, if any.' },
         },
         required: ['title', 'markdown'],
       },
@@ -2631,6 +2639,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   };
   let toolCharsUsed = 0;
   let toolCallsExecuted = 0;
+  /** Successful tool calls by name — what a spike's coverage reflection is built from. */
+  const toolNameCounts: Record<string, number> = {};
   /**
    * Investigation calls (read_file + the discovery tools) made before the
    * first write. Feeds the third convergence trigger — see
@@ -2865,6 +2875,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // reflection round before its answer is accepted: re-check coverage, verify
   // gaps with tools, or return the same answer.
   let completenessReflectionUsed = false;
+  let researchCoverageReflectionUsed = false;
   let incompleteAnswerNudgesUsed = 0;
   // Answer-shape failure signatures live in answerGates.ts (shared with the
   // eval harness, which pins the live transcripts that motivated each one).
@@ -3865,6 +3876,25 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         });
         continue;
       }
+      // A spike's one coverage reflection: built from the run's own tool counts
+      // (not phrasing), so it runs in BOTH harness profiles — the phrase gates
+      // below are off for a strong model, which is exactly who skipped the
+      // Confluence pages and the web on #1581816. A nudge: the model may return
+      // its report unchanged.
+      if (
+        TICKET_RESEARCH_RUN &&
+        turnAction !== 'publish-spike' &&
+        !researchCoverageReflectionUsed &&
+        !slowModelMode &&
+        !budgetExhausted &&
+        toolCallsExecuted > 0 &&
+        outcome.content.trim()
+      ) {
+        researchCoverageReflectionUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({ role: 'user', content: researchCoverageReflection(toolNameCounts) });
+        continue;
+      }
       // One-shot completeness reflection before accepting a tool-grounded
       // answer (see completenessReflectionUsed above). The nudged turn passes
       // back through every gate here, so a reflection that surfaces new work
@@ -4283,6 +4313,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         }
         autoVerify.noteCheckRan(argPath, kind);
       }
+      if (!failed) toolNameCounts[tc.name] = (toolNameCounts[tc.name] ?? 0) + 1;
       if ((tc.name === 'run_command' || tc.name === 'run_checks') && !failed) commandRunSinceWrite = true;
       if (writesApplied === 0 && (tc.name === 'read_file' || DISCOVERY_TOOL_NAMES.has(tc.name))) {
         investigationCallsWithoutWrite++;

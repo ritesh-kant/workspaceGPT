@@ -17,6 +17,8 @@ export interface AskQuestion {
   header?: string;
   options: AskOption[];
   multiSelect?: boolean;
+  /** Short topic key when the answer is a standing choice (where/which/how this user wants such things), absent for a one-off task decision. */
+  remember?: string;
 }
 
 const MAX_QUESTIONS = 4;
@@ -51,6 +53,7 @@ function normalizeQuestion(raw: unknown): AskQuestion | null {
     ...(header ? { header } : {}),
     options,
     ...(q.multiSelect === true ? { multiSelect: true } : {}),
+    ...(text(q.remember, 40) ? { remember: text(q.remember, 40) } : {}),
   };
 }
 
@@ -62,4 +65,32 @@ export function normalizeQuestions(args: unknown): AskQuestion[] {
     .map(normalizeQuestion)
     .filter((q): q is AskQuestion => !!q)
     .slice(0, MAX_QUESTIONS);
+}
+
+/**
+ * Split the card's answer text back into one answer per question. The card
+ * writes `<header or question>: <answer>` per question; an answer may itself
+ * span lines, so each answer runs to the next question's label. A question the
+ * text does not mention gets ''.
+ */
+export function answersByQuestion(questions: AskQuestion[], feedback: string): string[] {
+  const labels = questions.map((q) => `${q.header || q.question}: `);
+  const starts: number[] = [];
+  let cursor = 0;
+  for (const label of labels) {
+    let at = -1;
+    for (let i = cursor; i <= feedback.length - label.length; i++) {
+      if ((i === 0 || feedback[i - 1] === '\n') && feedback.startsWith(label, i)) {
+        at = i;
+        break;
+      }
+    }
+    starts.push(at);
+    if (at >= 0) cursor = at + label.length;
+  }
+  return labels.map((label, i) => {
+    if (starts[i] < 0) return '';
+    const next = starts.slice(i + 1).find((n) => n >= 0);
+    return feedback.slice(starts[i] + label.length, next ?? feedback.length).trim();
+  });
 }

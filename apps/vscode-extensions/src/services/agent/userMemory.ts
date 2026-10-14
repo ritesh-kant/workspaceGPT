@@ -85,6 +85,25 @@ export async function saveMemory(store: MemoryStore, args: SaveMemoryArgs): Prom
 }
 
 /**
+ * A choice the user made that will apply again — where a kind of page goes,
+ * which template to follow, how they want something named. Written by the HOST
+ * from what the user answered or what actually succeeded, so it never depends
+ * on the model deciding to save. Same store, cap, secret screen and Settings →
+ * Memory list as `save_memory`; upserts by topic, so a changed answer replaces
+ * the old one. Off when memory is off.
+ */
+export async function rememberChoice(store: MemoryStore, topic: string, text: string): Promise<void> {
+  if (!memoryEnabled(store)) return;
+  const name = `choice-${slug(topic)}`;
+  if (name === 'choice-' || !text.trim()) return;
+  try {
+    await saveMemory(store, { name, kind: 'context', text });
+  } catch {
+    /* remembering is a convenience — never fail the run that just succeeded */
+  }
+}
+
+/**
  * The prompt block. Deterministic ordering (by name) rather than recency, so a
  * save only changes the prompt when the content changed. Absent when empty AND
  * still carries the save instruction, so the first memory can ever be written.
@@ -100,6 +119,7 @@ export function userMemoryBlock(store: MemoryStore): string {
   return (
     '**About this user (remembered from earlier chats — apply silently; never recite it):**\n' +
     (body || '- (nothing yet)\n') +
+    'A remembered choice ("choice-…") that fits what you are about to do is the default: use it and say so in one line; when you must still confirm, offer it as the recommended option of `ask_user` instead of asking open-ended. Ask afresh only when nothing remembered fits or the user says it changed. ' +
     'Call `save_memory` when the user states or corrects a lasting preference, working style or team convention — one short fact, same `name` to update, `forget:true` to remove. ' +
     'Never save one-off task details, anything derivable from the code, Confluence/Jira/Azure DevOps content, or secrets.\n'
   );

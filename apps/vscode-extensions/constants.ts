@@ -1387,9 +1387,10 @@ export function researchWorkItemPrompt(id: string): string {
 export function publishSpikePrompt(path: string, ticketId: string): string {
   return (
     `Publish the spike document \`${path}\` for #${ticketId} to Confluence. Read the file first. ` +
-    'Find the format our existing spike pages use (open 2–3 recent ones in the space) and follow it; ' +
-    'if there is no clear format, ask me for a template page URL. ' +
+    'Use the format and location you remember from my earlier spike pages; otherwise find the format our existing spike pages use (open 2–3 recent ones in the space) and follow it, ' +
+    'and if there is no clear format, ask me for a template page URL. ' +
     'Keep any ```mermaid block exactly as it is — it is drawn and attached to the page as an image. ' +
-    'Ask me where the page should go before creating it, then create it as a draft for me to review.'
+    'If you do not remember where such a page goes, ask me where before creating it. Create it as a draft for me to review. ' +
+    'Finish with a short note — the draft\'s link, where it landed, which page you followed, and anything I should check in Confluence (for example a diagram that did not become an image); no criteria table.'
   );
 }

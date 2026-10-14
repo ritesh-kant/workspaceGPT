@@ -69,7 +69,7 @@ import { bisectSummary, DebugRunState, newDebugRunState, probeOutputReport, runC
 import { MAX_PROBES_PER_RUN } from './agent/debugProbes';
 import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { decide, resolvePermission, type Permission } from './agent/permissionPolicy';
-import { normalizeQuestions } from './agent/askUser';
+import { answersByQuestion, normalizeQuestions } from './agent/askUser';
 import { recordOriginalContent } from './agent/agentDiffProvider';
 import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs, derivableChecks } from './agent/verifyTools';
 import { shipChanges, ShipInput } from './agent/shipService';
@@ -90,6 +90,7 @@ import {
   prepareConfluenceCreate,
   suggestConfluenceLocation,
   PreparedConfluenceWrite,
+  type DiagramRender,
 } from './confluence/confluencePageService';
 import { detectJiraKey, detectTicketId } from 'src/utils/ticketDetection';
 import { detectConfluenceUrls } from 'src/utils/confluenceUrlDetection';
@@ -119,7 +120,7 @@ import { browserRequest, isBrowserConnected, isPanelSession } from './browser/br
 import { BROWSER_CHANGE_TOOL_NAMES } from '../workers/model/toolScope';
 import { isControlChromeEnabled } from './browser/browserPrefs';
 import { loadWorkspaceRules } from './agent/rulesFiles';
-import { memoryEnabled, saveMemory, userMemoryBlock } from './agent/userMemory';
+import { memoryEnabled, rememberChoice, saveMemory, userMemoryBlock } from './agent/userMemory';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
 import { addCreditTally, creditTallyForCall, CreditTally, emptyCreditTally } from '../utils/creditTally';
@@ -2348,6 +2349,8 @@ export class ChatService {
       const applied = await write.apply();
       if (id) this.postWriteOutcome(run, id, 'applied');
       await this.audit(write.kind, `${write.summary} → ${applied.url}`, decisionKind, 'applied');
+      // What actually worked (the parent that accepted the page), not what was asked for.
+      if (write.remember) await rememberChoice(this.context.globalState, write.remember.topic, write.remember.text);
       const diff = buildReviewDiff(write.before, write.after);
       return {
         ...applied,
@@ -2405,6 +2408,12 @@ export class ChatService {
       };
     }
     this.postWriteOutcome(run, id, 'applied');
+    // A standing choice (the model named its topic) is kept by the host, in the
+    // user's own words, so the next chat starts from it instead of asking again.
+    const answers = answersByQuestion(questions, result.feedback ?? '');
+    for (const [i, q] of questions.entries()) {
+      if (q.remember && answers[i]) await rememberChoice(this.context.globalState, q.remember, `${q.question.slice(0, 90)} → ${answers[i]}`);
+    }
     return { answers: result.feedback ?? '' };
   }
 
@@ -2719,30 +2728,36 @@ export class ChatService {
     return this.checkpointsFor(root).revertTo(sha);
   }
 
-  private pendingDiagramRenders = new Map<string, (images: ({ png: string; width: number; height: number } | null)[]) => void>();
+  private pendingDiagramRenders = new Map<string, (images: ({ png: string; width: number; height: number } | { error: string } | null)[]) => void>();
 
   /**
-   * Mermaid → PNG, drawn by the webview (the host has no DOM). Never rejects: no answer in time
-   * (webview closed, renderer failed) is a list of nulls, and the caller leaves the diagram as code.
+   * Mermaid → PNG, drawn by the webview (the host has no DOM). Never rejects: a diagram that could
+   * not be drawn comes back as `{ error }` saying why (no answer in time included), and the caller
+   * leaves it as code and reports the reason.
    */
-  private renderDiagrams(sources: string[]): Promise<({ png: Uint8Array; width: number; height: number } | null)[]> {
-    const none = sources.map(() => null);
+  private renderDiagrams(sources: string[]): Promise<DiagramRender[]> {
     return new Promise((resolve) => {
       const id = randomUUID();
       const timer = setTimeout(() => {
         this.pendingDiagramRenders.delete(id);
-        resolve(none);
+        resolve(sources.map(() => ({ error: 'the chat view did not answer within 45 s (it must be open to draw diagrams)' })));
       }, 45_000);
       this.pendingDiagramRenders.set(id, (images) => {
         clearTimeout(timer);
-        resolve(sources.map((_, i) => (images?.[i]?.png ? { ...images[i]!, png: Buffer.from(images[i]!.png, 'base64') } : null)));
+        resolve(
+          sources.map((_, i): DiagramRender => {
+            const r = images?.[i];
+            if (r && 'png' in r && r.png) return { ...r, png: Buffer.from(r.png, 'base64') };
+            return { error: r && 'error' in r && r.error ? r.error : 'the chat view returned no image' };
+          })
+        );
       });
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.RENDER_DIAGRAMS_REQUEST, id, sources });
     });
   }
 
   /** Webview RENDER_DIAGRAMS_RESPONSE handler. */
-  public resolveDiagramRender(id: string, images: ({ png: string; width: number; height: number } | null)[]): void {
+  public resolveDiagramRender(id: string, images: ({ png: string; width: number; height: number } | { error: string } | null)[]): void {
     const done = this.pendingDiagramRenders.get(id);
     if (!done) return;
     this.pendingDiagramRenders.delete(id);

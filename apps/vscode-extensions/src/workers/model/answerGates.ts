@@ -528,3 +528,38 @@ export function endsOnQuestion(answer: string): boolean {
   if (last.startsWith('|') || last.startsWith('```')) return false;
   return /\?[\s*_`"'”’)\]]*$/.test(last);
 }
+
+/**
+ * The one reflection round a spike gets before its report is accepted, built
+ * from what the run's tools actually did (counts by tool name) rather than
+ * from words in the ticket or the answer. It names the sources the research
+ * prompt requires and that this run never opened — a Confluence search whose
+ * snippets were never read (#1581816: 5 hits, no page opened), no web lookup —
+ * and asks for them, or for a plain statement of why not. A nudge: the model
+ * may answer unchanged, so a spike that truly needs neither is not blocked.
+ */
+export function researchCoverageReflection(counts: Readonly<Record<string, number>>): string {
+  const n = (name: string) => counts[name] ?? 0;
+  const searched = n('search_docs');
+  const opened = n('get_confluence_page');
+  const web = n('search_web');
+  const facts =
+    `This run used: ${n('read_file')} file read(s), ${searched} Confluence search(es) and ${opened} Confluence page(s) opened, ` +
+    `${n('get_ticket') + n('search_tickets')} ticket lookup(s), ${web} web search(es).`;
+  const gaps: string[] = [];
+  if (searched > 0 && opened === 0) {
+    gaps.push('You searched Confluence but opened no page — a search snippet is not a reading. Open the pages the report relies on (a design doc or ADR the ticket or a hit points at, prior spikes on the subject) with get_confluence_page.');
+  } else if (searched === 0 && opened === 0) {
+    gaps.push('You did not look in Confluence at all — search for earlier pages on this subject (prior spikes, SDRs, designs) and open the relevant ones.');
+  }
+  if (web === 0) {
+    gaps.push('You made no web lookup. If the ticket names or links an external product, vendor, library or API, look up its current documentation with search_web now; if it names none, say so in one line under References.');
+  }
+  return (
+    'Before this spike report is accepted: ' +
+    facts +
+    (gaps.length
+      ? ' ' + gaps.join(' ') + ' Fold what you find into the report and the spike document (update it), cite each page under References, and give the final report again. If a source could not be retrieved, say so under References instead of answering around it.'
+      : ' Re-read the ticket and check every question it raises is answered with evidence you read. If something is missing, verify it with tools NOW; otherwise return your report again unchanged.')
+  );
+}

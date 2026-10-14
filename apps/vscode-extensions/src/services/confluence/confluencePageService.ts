@@ -42,6 +42,11 @@ export function pageIdFromUrl(urlOrId: string): string | null {
   return null;
 }
 
+/** The id in a Confluence folder URL (.../spaces/KEY/folder/<id>/Title), or null. */
+export function folderIdFromUrl(url: string): string | null {
+  return String(url || '').match(/\/folder\/(\d+)/)?.[1] ?? null;
+}
+
 /**
  * Strip storage-format tags to plain text, preserving digits (dates, versions,
  * ticket numbers). A page read directly for the model/user to reason over
@@ -229,6 +234,8 @@ export interface PreparedConfluenceWrite {
   after: string;
   /** Page to open from the card (the page itself, or the parent for a create). */
   url: string;
+  /** A choice worth remembering once this write has been applied (see rememberChoice). */
+  remember?: { topic: string; text: string };
   apply: () => Promise<{
     applied: true;
     id: string;
@@ -347,17 +354,46 @@ export async function prepareConfluenceEdit(
   };
 }
 
-/** Resolve where a new page goes: under `parentId`, or at the top of `spaceKey`. */
-async function resolveLocation(
+/**
+ * A parent for a new page. Confluence pages sit under pages OR folders and
+ * the two have separate endpoints, so a bare id is tried as a page first and
+ * then as a folder; a folder URL goes straight to the folder.
+ */
+async function readParent(api: ConfluenceApi, id: string, folder: boolean): Promise<{ data: any; kind: 'page' | 'folder' }> {
+  if (!folder) {
+    try {
+      return { data: await api.call(`/pages/${id}`), kind: 'page' };
+    } catch (e: any) {
+      if (e?.status !== 404) throw e;
+    }
+  }
+  try {
+    return { data: await api.call(`/folders/${id}`), kind: 'folder' };
+  } catch (e: any) {
+    if (e?.status === 404) throw new Error(`Confluence page or folder ${id} not found (or you don't have access to it).`);
+    throw e;
+  }
+}
+
+/** Resolve where a new page goes: under `parentId` (a page or a folder), or at the top of `spaceKey`. */
+export async function resolveLocation(
   api: ConfluenceApi,
   args: { spaceKey?: string; parentId?: string }
-): Promise<{ spaceId: string; spaceKey: string; parentId?: string; parentTitle?: string; parentUrl?: string }> {
-  const parentId = args.parentId ? pageIdFromUrl(String(args.parentId)) : null;
-  if (args.parentId && !parentId) throw new Error(`parentId "${args.parentId}" is not a Confluence page id or URL.`);
+): Promise<{ spaceId: string; spaceKey: string; parentId?: string; parentKind?: 'page' | 'folder'; parentTitle?: string; parentUrl?: string }> {
+  const folderId = args.parentId ? folderIdFromUrl(String(args.parentId)) : null;
+  const parentId = folderId ?? (args.parentId ? pageIdFromUrl(String(args.parentId)) : null);
+  if (args.parentId && !parentId) throw new Error(`parentId "${args.parentId}" is not a Confluence page or folder id or URL.`);
   if (parentId) {
-    const { data } = await readPage(api, parentId);
+    const { data, kind } = await readParent(api, parentId, !!folderId);
     const space: any = await api.call(`/spaces/${data.spaceId}`);
-    return { spaceId: String(data.spaceId), spaceKey: space?.key ?? '', parentId, parentTitle: data.title, parentUrl: webUrl(api.site, data._links) };
+    return {
+      spaceId: String(data.spaceId),
+      spaceKey: space?.key ?? '',
+      parentId,
+      parentKind: kind,
+      parentTitle: data.title,
+      parentUrl: webUrl(api.site, data._links) || (folderId ? String(args.parentId) : undefined),
+    };
   }
   const key = String(args.spaceKey ?? '').trim();
   if (!key) {
@@ -372,11 +408,23 @@ async function resolveLocation(
   return { spaceId: String(space.id), spaceKey: space.key };
 }
 
-/** A diagram rendered to a PNG by whoever has a DOM (the webview); null when it could not be. */
+/** A diagram rendered to a PNG by whoever has a DOM (the webview). */
 export interface RenderedDiagram {
   png: Uint8Array;
   width: number;
   height: number;
+}
+
+/** What the renderer hands back per diagram: the image, or why there is none (null = no answer at all). */
+export type DiagramRender = RenderedDiagram | { error: string } | null;
+
+const hasImage = (r: DiagramRender): r is RenderedDiagram => !!r && 'png' in r;
+
+/** The distinct reasons no image was made, for the report ("" when there were none to give). */
+export function diagramFailureReasons(rendered: DiagramRender[]): string {
+  const reasons = new Set<string>();
+  for (const r of rendered) if (r && 'error' in r && r.error) reasons.add(r.error);
+  return [...reasons].join('; ');
 }
 
 /**
@@ -391,7 +439,7 @@ async function attachPageDiagrams(
   status: string,
   version: number,
   doc: AdfDoc,
-  render: (sources: string[]) => Promise<(RenderedDiagram | null)[]>
+  render: (sources: string[]) => Promise<DiagramRender[]>
 ): Promise<{ attached: number; total: number; error?: string }> {
   const sources = mermaidSources(doc);
   if (!sources.length) return { attached: 0, total: 0 };
@@ -399,10 +447,13 @@ async function attachPageDiagrams(
     const rendered = await render(sources);
     const uploaded: (UploadedDiagram | null)[] = [];
     for (const [i, r] of rendered.entries()) {
-      uploaded.push(r ? { ...(await api.attach(pageId, `diagram-${i + 1}.png`, r.png, 'image/png')), width: r.width, height: r.height } : null);
+      uploaded.push(hasImage(r) ? { ...(await api.attach(pageId, `diagram-${i + 1}.png`, r.png, 'image/png')), width: r.width, height: r.height } : null);
     }
     const attached = uploaded.filter(Boolean).length;
-    if (!attached) return { attached: 0, total: sources.length, error: 'The diagram could not be rendered to an image, so it stays on the page as code.' };
+    if (!attached) {
+      const reason = diagramFailureReasons(rendered);
+      return { attached: 0, total: sources.length, error: `The diagram could not be rendered to an image${reason ? ` (${reason})` : ''}, so it stays on the page as code.` };
+    }
     await api.call(`/pages/${pageId}`, {
       method: 'PUT',
       body: {
@@ -429,8 +480,8 @@ async function attachPageDiagrams(
 /** A new page from markdown — a draft unless `publish` is set. */
 export async function prepareConfluenceCreate(
   context: vscode.ExtensionContext,
-  args: { title?: string; markdown?: string; spaceKey?: string; parentId?: string; publish?: boolean },
-  opts?: { renderDiagrams?: (sources: string[]) => Promise<(RenderedDiagram | null)[]> }
+  args: { title?: string; markdown?: string; spaceKey?: string; parentId?: string; publish?: boolean; pageKind?: string; basedOn?: string },
+  opts?: { renderDiagrams?: (sources: string[]) => Promise<DiagramRender[]> }
 ): Promise<PreparedConfluenceWrite> {
   const title = String(args?.title ?? '').trim();
   if (!title) throw new Error('title is required.');
@@ -453,8 +504,21 @@ export async function prepareConfluenceCreate(
   const doc = markdownToAdf(args.markdown);
   const status = args.publish ? 'current' : 'draft';
   const location = [loc.spaceKey, loc.parentTitle, title].filter(Boolean).join(' › ');
+  const pageKind = String(args?.pageKind ?? '').trim().slice(0, 30);
+  const basedOnId = args?.basedOn ? pageIdFromUrl(String(args.basedOn)) : null;
 
   return {
+    ...(pageKind
+      ? {
+          remember: {
+            topic: `${pageKind} page`,
+            text:
+              `New "${pageKind}" Confluence pages go in space ${loc.spaceKey}` +
+              (loc.parentId ? ` under "${loc.parentTitle ?? ''}" (${loc.parentKind ?? 'page'} ${loc.parentId})` : ' at the top level') +
+              (basedOnId ? `; follow the format of page ${basedOnId}` : ''),
+          },
+        }
+      : {}),
     kind: 'confluence-create',
     location: status === 'draft' ? `${location} (draft)` : location,
     summary: `Create Confluence page "${title}" in ${loc.spaceKey}${loc.parentTitle ? ` under "${loc.parentTitle}"` : ''}${status === 'draft' ? ' as a draft' : ''}`,
@@ -482,6 +546,9 @@ export async function prepareConfluenceCreate(
         return { applied: true, id, title, url, version: created?.version?.number, status, ...(diagrams?.total ? { diagrams } : {}) };
       } catch (e: any) {
         if (e?.status === 403) throw new Error(`Confluence refused to create the page (403) — the user may not have permission to add pages in ${loc.spaceKey}.`);
+        if (loc.parentKind === 'folder' && (e?.status === 400 || e?.status === 404)) {
+          throw new Error(`Confluence would not create the page under the folder "${loc.parentTitle ?? loc.parentId}" (${e?.message ?? e?.status}). Ask the user for a parent PAGE or a space instead.`);
+        }
         throw e;
       }
     },
@@ -515,7 +582,7 @@ export async function suggestConfluenceLocation(
   const allSpaces = await auth.fetchSpaces(api.site.id).catch(() => []);
   const byId = new Map(allSpaces.map((s) => [String(s.id), s]));
 
-  const parents = new Map<string, { spaceId: string; siblings: string[] }>();
+  const parents = new Map<string, { spaceId: string; siblings: string[]; folder: boolean }>();
   await Promise.all(
     similar.slice(0, 8).map(async (hit) => {
       const id = pageIdFromUrl(String(hit.url ?? ''));
@@ -523,7 +590,7 @@ export async function suggestConfluenceLocation(
       try {
         const page: any = await api.call(`/pages/${id}`);
         if (!page?.parentId) return;
-        const entry = parents.get(String(page.parentId)) ?? { spaceId: String(page.spaceId), siblings: [] };
+        const entry = parents.get(String(page.parentId)) ?? { spaceId: String(page.spaceId), siblings: [], folder: page.parentType === 'folder' };
         entry.siblings.push(page.title ?? hit.title ?? id);
         parents.set(String(page.parentId), entry);
       } catch {
@@ -534,9 +601,9 @@ export async function suggestConfluenceLocation(
 
   const ranked = [...parents.entries()].sort((a, b) => b[1].siblings.length - a[1].siblings.length).slice(0, 4);
   const suggestions: LocationSuggestion[] = [];
-  for (const [parentId, { spaceId, siblings }] of ranked) {
+  for (const [parentId, { spaceId, siblings, folder }] of ranked) {
     try {
-      const parent: any = await api.call(`/pages/${parentId}`);
+      const { data: parent } = await readParent(api, parentId, folder);
       const space = byId.get(spaceId);
       suggestions.push({
         spaceKey: space?.key ?? '',
