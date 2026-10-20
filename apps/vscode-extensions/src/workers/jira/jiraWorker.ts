@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { WORKER_STATUS } from '../../../constants';
+import type { LocalSyncedFile } from '../../utils/syncedFilePrune';
 import { adfToText } from '../../services/jira/adf';
 
 /**
@@ -31,6 +32,8 @@ interface WorkerData {
   isIncremental?: boolean;
   lastSyncTime?: string;
   lookbackMonths?: number;
+  /** The md files already on disk with their issue keys, so deleted/moved issues can be pruned. */
+  localItems?: LocalSyncedFile[];
 }
 
 interface IssueFields {
@@ -59,7 +62,7 @@ interface JiraComment {
   body: unknown; // ADF
 }
 
-const { siteUrl, apiBase, projectKey, resume, lastProcessedId, processedItems, isIncremental, lastSyncTime, lookbackMonths } =
+const { siteUrl, apiBase, projectKey, resume, lastProcessedId, processedItems, isIncremental, lastSyncTime, lookbackMonths, localItems } =
   workerData as WorkerData;
 
 // Mutable for the same reason adoWorker.ts's is: a sync can run well past a
@@ -170,9 +173,9 @@ const ISSUE_FIELDS = [
   'comment',
 ];
 
-function buildJql(): string {
+function buildJql(incremental: boolean = !!isIncremental): string {
   let jql = `project = "${projectKey}" AND updated >= -${lookbackDays}d`;
-  if (isIncremental && lastSyncTime) {
+  if (incremental && lastSyncTime) {
     const dateOnly = lastSyncTime.split('T')[0];
     jql += ` AND updated >= "${dateOnly}"`;
   }
@@ -203,6 +206,57 @@ async function fetchAllIssues(): Promise<Issue[]> {
   }
 
   return issues;
+}
+
+/**
+ * Local files whose issue is gone: deleted, moved to another project (its old
+ * key now resolves to a new one), or no longer visible. Anything still in the
+ * lookback window is live; the rest are checked by key, so issues that merely
+ * aged out of the window are kept as before. Pruning must never fail a sync,
+ * so any error just removes nothing this run.
+ */
+async function findGoneFiles(): Promise<string[]> {
+  const local = localItems ?? [];
+  if (local.length === 0) return [];
+  try {
+    const inWindow = new Set<string>();
+    let nextPageToken: string | undefined;
+    for (;;) {
+      const result = await jiraPost(`${apiBase}/rest/api/3/search/jql`, {
+        jql: buildJql(false),
+        maxResults: 1000,
+        fields: ['key'],
+        ...(nextPageToken ? { nextPageToken } : {}),
+      });
+      for (const issue of (result.issues ?? []) as Array<{ key?: string }>) {
+        if (issue.key) inWindow.add(issue.key);
+      }
+      if (result.isLast !== false || !result.nextPageToken) break;
+      nextPageToken = result.nextPageToken;
+    }
+
+    const candidates = local.filter((l) => !inWindow.has(l.id));
+    const gone: string[] = [];
+    for (let i = 0; i < candidates.length; i += 100) {
+      const batch = candidates.slice(i, i + 100);
+      // Missing keys come back in `issueErrors`, not as a failed request.
+      const result = await jiraPost(`${apiBase}/rest/api/3/issue/bulkfetch`, {
+        issueIdsOrKeys: batch.map((c) => c.id),
+        fields: ['project'],
+      });
+      const live = new Set(
+        ((result.issues ?? []) as Array<{ key: string; fields?: { project?: { key?: string } } }>)
+          .filter((issue) => issue.fields?.project?.key === projectKey)
+          .map((issue) => issue.key),
+      );
+      gone.push(...batch.filter((c) => !live.has(c.id)).map((c) => c.file));
+    }
+    console.log(`🧹 Jira: ${candidates.length} local issues outside the sync window checked, ${gone.length} no longer exist here`);
+    return gone;
+  } catch (error) {
+    console.warn('Jira: could not check for deleted issues:', error instanceof Error ? error.message : String(error));
+    return [];
+  }
 }
 
 async function fetchComments(key: string): Promise<JiraComment[]> {
@@ -268,7 +322,7 @@ async function fetchAndProcessJiraItems() {
     console.log(`📋 Found ${totalItems} issues to sync`);
 
     if (totalItems === 0) {
-      parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED, itemsCount: 0 });
+      parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED, itemsCount: 0, removed: await findGoneFiles() });
       return;
     }
 
@@ -317,7 +371,7 @@ async function fetchAndProcessJiraItems() {
       });
     }
 
-    parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED, itemsCount: processedCount });
+    parentPort?.postMessage({ type: WORKER_STATUS.COMPLETED, itemsCount: processedCount, removed: await findGoneFiles() });
   } catch (error) {
     parentPort?.postMessage({
       type: WORKER_STATUS.ERROR,

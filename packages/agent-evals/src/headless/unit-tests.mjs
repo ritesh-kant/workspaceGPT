@@ -42,6 +42,7 @@ const ticketRefs = await import(path.join(outDir, 'ticketRefs.mjs'));
 const { formatModelHistory, MODEL_HISTORY_MAX_CHARS } = await import(path.join(outDir, 'chatHistory.mjs'));
 const referenceIndex = await import(path.join(outDir, 'referenceIndex.mjs'));
 const permissionPolicy = await import(path.join(outDir, 'permissionPolicy.mjs'));
+const syncedFilePrune = await import(path.join(outDir, 'syncedFilePrune.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -5851,6 +5852,65 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     assert.ok(unknown.unavailable, 'a file with no recorded original makes it unavailable, and nothing is left reverted');
     assert.equal(fs.readFileSync(fixPath, 'utf8'), fixed);
   });
+}
+
+// ═══ syncedFilePrune (incremental sync forgets nothing upstream deleted) ═══
+console.log('\nsyncedFilePrune');
+{
+  const { listSyncedFiles, idFromFilename, confluencePageIdOf, goneConfluenceFiles, deleteSyncedFiles } = syncedFilePrune;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-prune-'));
+  // Same shape ConfluenceService writes, indentation included.
+  const conf = (id) => `---\n        url: https://x.atlassian.net/wiki/spaces/ENG/pages/${id}/Title\n        fileName: t\n        ---\n        body`;
+  fs.writeFileSync(path.join(dir, 'Kept.md'), conf('11'));
+  fs.writeFileSync(path.join(dir, 'Deleted.md'), conf('22'));
+  fs.writeFileSync(path.join(dir, 'Old title.md'), conf('33'));
+  fs.writeFileSync(path.join(dir, 'New title.md'), conf('33'));
+  fs.writeFileSync(path.join(dir, 'Legacy.md'), '---\nurl: https://x/wiki/pages/viewpage.action?pageId=44\n---\nbody');
+  fs.writeFileSync(path.join(dir, 'No url.md'), 'just text');
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'ignored');
+
+  await t('Confluence page ids come from the frontmatter url, including the legacy pageId= form', () => {
+    const local = listSyncedFiles(dir, confluencePageIdOf);
+    const byFile = Object.fromEntries(local.map((l) => [l.file, l.id]));
+    assert.deepEqual(byFile, { 'Kept.md': '11', 'Deleted.md': '22', 'Old title.md': '33', 'New title.md': '33', 'Legacy.md': '44' });
+  });
+
+  await t('a deleted page and a renamed page\'s old file are gone; live pages and unidentifiable files stay', () => {
+    const local = listSyncedFiles(dir, confluencePageIdOf);
+    const live = [{ id: '11', filename: 'Kept' }, { id: '33', filename: 'New title' }, { id: '44', filename: 'Legacy' }];
+    assert.deepEqual(goneConfluenceFiles(local, live).sort(), ['Deleted.md', 'Old title.md']);
+  });
+
+  await t('an empty live listing removes nothing (API hiccup, not every page deleted)', () => {
+    assert.deepEqual(goneConfluenceFiles(listSyncedFiles(dir, confluencePageIdOf), []), []);
+  });
+
+  await t('ADO/Jira ids come from the file name', () => {
+    const ado = idFromFilename('ADO-');
+    const jira = idFromFilename('JIRA-');
+    assert.equal(ado('ADO-123.md'), '123');
+    assert.equal(jira('JIRA-ABC-7.md'), 'ABC-7');
+    assert.equal(ado('JIRA-ABC-7.md'), undefined);
+    assert.equal(ado('ADO-.md'), undefined);
+  });
+
+  await t('deleteSyncedFiles only removes bare .md names inside the folder', () => {
+    const outside = path.join(path.dirname(dir), `outside-${path.basename(dir)}.md`);
+    fs.writeFileSync(outside, 'x');
+    const n = deleteSyncedFiles(dir, ['Deleted.md', 'Old title.md', 'missing.md', '../' + path.basename(outside), 'notes.txt', 42]);
+    assert.equal(n, 2);
+    assert.ok(!fs.existsSync(path.join(dir, 'Deleted.md')));
+    assert.ok(fs.existsSync(path.join(dir, 'Kept.md')));
+    assert.ok(fs.existsSync(path.join(dir, 'notes.txt')));
+    assert.ok(fs.existsSync(outside), 'a path escaping the folder is ignored');
+    assert.equal(deleteSyncedFiles(dir, undefined), 0, 'an older worker that reports nothing removes nothing');
+    fs.rmSync(outside);
+  });
+
+  await t('a missing md folder lists nothing', () => {
+    assert.deepEqual(listSyncedFiles(path.join(dir, 'nope'), confluencePageIdOf), []);
+  });
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 // ── summary ──

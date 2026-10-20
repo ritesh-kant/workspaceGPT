@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { WORKER_STATUS } from '../../../constants';
+import type { LocalSyncedFile } from '../../utils/syncedFilePrune';
 
 interface WorkerData {
   orgName: string;
@@ -11,6 +12,8 @@ interface WorkerData {
   isIncremental?: boolean;
   lastSyncTime?: string;
   lookbackMonths?: number;
+  /** The md files already on disk with their work item ids, so deleted/moved items can be pruned. */
+  localItems?: LocalSyncedFile[];
 }
 
 interface WorkItem {
@@ -53,6 +56,7 @@ const {
   isIncremental,
   lastSyncTime,
   lookbackMonths,
+  localItems,
 } = workerData as WorkerData;
 
 // Mutable: the sync can run well past a Bearer token's ~60-90min TTL (MSAL/Azure
@@ -155,10 +159,10 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-async function fetchWorkItemIds(): Promise<number[]> {
+async function fetchWorkItemIds(incremental: boolean = !!isIncremental): Promise<number[]> {
   let wiqlQuery = `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${projectName}' AND [System.ChangedDate] >= @today - ${lookbackDays}`;
 
-  if (isIncremental && lastSyncTime) {
+  if (incremental && lastSyncTime) {
     const dateOnly = lastSyncTime.split('T')[0];
     wiqlQuery += ` AND [System.ChangedDate] >= '${dateOnly}'`;
   }
@@ -191,6 +195,41 @@ async function fetchWorkItemDetails(ids: number[]): Promise<WorkItemDetail[]> {
   const url = `${baseUrl}/wit/workitemsbatch?api-version=7.1`;
   const result = await adoPost(url, { ids, fields });
   return result.value as WorkItemDetail[];
+}
+
+/**
+ * Local files whose work item is gone: deleted, moved to another project, or no
+ * longer visible. Anything still in the lookback window is live; the rest are
+ * checked by id, so items that merely aged out of the window are kept as before.
+ * Pruning must never fail a sync, so any error just removes nothing this run.
+ */
+async function findGoneFiles(): Promise<string[]> {
+  const local = (localItems ?? []).filter((l) => /^\d+$/.test(l.id));
+  if (local.length === 0) return [];
+  try {
+    const inWindow = new Set((await fetchWorkItemIds(false)).map(String));
+    const candidates = local.filter((l) => !inWindow.has(l.id));
+    const gone: string[] = [];
+    for (let i = 0; i < candidates.length; i += 200) {
+      const batch = candidates.slice(i, i + 200);
+      const result = await adoPost(`${baseUrl}/wit/workitemsbatch?api-version=7.1`, {
+        ids: batch.map((c) => Number(c.id)),
+        fields: ['System.Id', 'System.TeamProject'],
+        errorPolicy: 'omit', // a deleted or inaccessible id comes back as null instead of failing the batch
+      });
+      const live = new Set(
+        ((result.value ?? []) as Array<{ id: number; fields?: Record<string, string> } | null>)
+          .filter((w) => w && String(w.fields?.['System.TeamProject'] ?? '').toLowerCase() === projectName.toLowerCase())
+          .map((w) => String(w!.id)),
+      );
+      gone.push(...batch.filter((c) => !live.has(c.id)).map((c) => c.file));
+    }
+    console.log(`🧹 ADO: ${candidates.length} local items outside the sync window checked, ${gone.length} no longer exist here`);
+    return gone;
+  } catch (error) {
+    console.warn('ADO: could not check for deleted work items:', error instanceof Error ? error.message : String(error));
+    return [];
+  }
 }
 
 async function fetchComments(workItemId: number): Promise<Comment[]> {
@@ -282,6 +321,7 @@ async function fetchAndProcessAdoItems() {
       parentPort?.postMessage({
         type: WORKER_STATUS.COMPLETED,
         itemsCount: 0,
+        removed: await findGoneFiles(),
       });
       return;
     }
@@ -351,6 +391,7 @@ async function fetchAndProcessAdoItems() {
     parentPort?.postMessage({
       type: WORKER_STATUS.COMPLETED,
       itemsCount: processedCount,
+      removed: await findGoneFiles(),
     });
   } catch (error) {
     parentPort?.postMessage({

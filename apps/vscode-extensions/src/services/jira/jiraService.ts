@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import { MESSAGE_TYPES, WORKER_STATUS, STORAGE_KEYS } from '../../../constants';
 import { postToWebview } from 'src/utils/webviewBroadcast';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
+import { deleteSyncedFiles, idFromFilename, listSyncedFiles } from 'src/utils/syncedFilePrune';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 /**
@@ -136,6 +137,10 @@ export class JiraService {
         await this.saveSyncProgress(this.syncProgress);
       }
 
+      // What is already on disk, so the worker can report deleted/moved issues.
+      const mdDir = path.join(this.context.globalStorageUri.fsPath, 'jira', 'mds');
+      const localItems = listSyncedFiles(mdDir, idFromFilename('JIRA-'));
+
       const workerPath = path.join(__dirname, 'workers', 'jira', 'jiraWorker.js');
 
       this.worker = new Worker(workerPath, {
@@ -150,6 +155,7 @@ export class JiraService {
           isIncremental,
           lastSyncTime: lastSyncTimeStr,
           lookbackMonths: config.lookbackMonths,
+          localItems,
         },
       });
 
@@ -192,6 +198,11 @@ export class JiraService {
 
           case WORKER_STATUS.COMPLETED: {
             console.log(`Jira sync complete. Processed ${message.itemsCount} items.`);
+            // Before onComplete: the index build that follows reads the md folder.
+            const prunedItems = deleteSyncedFiles(mdDir, message.removed);
+            if (prunedItems > 0) {
+              console.log(`Removed ${prunedItems} synced issues that were deleted or moved in Jira.`);
+            }
             const lastSyncTime = new Date().toISOString();
             this.post({
               type: MESSAGE_TYPES.SYNC_JIRA_COMPLETE,

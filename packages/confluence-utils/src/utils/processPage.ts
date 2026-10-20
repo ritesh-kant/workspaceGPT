@@ -1,6 +1,11 @@
 import { ConfluencePage, ProcessedPage } from '../types';
 import { extractTextFromXML } from './xmlParser';
 
+/** The synced markdown's file name (without `.md`) for a page title. */
+export function pageFilename(title: string): string {
+    return title.replace(/[/\\:*?"<>|]/g, '_');
+}
+
 export function processPage(confluenceBaseUrl: string, page: ConfluencePage): ProcessedPage {
     const pageContent = page.body?.storage?.value ?? '';
     
@@ -12,7 +17,7 @@ export function processPage(confluenceBaseUrl: string, page: ConfluencePage): Pr
 
     return {
         pageUrl: confluenceBaseUrl + webui,
-        filename: page.title.replace(/[/\\:*?"<>|]/g, '_'),
+        filename: pageFilename(page.title),
         text: extractTextFromXML(pageContent)
     };
 }

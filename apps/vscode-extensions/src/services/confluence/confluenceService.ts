@@ -8,6 +8,7 @@ import { postToWebview } from 'src/utils/webviewBroadcast';
 import { ConfluencePageFetcher } from '@workspace-gpt/confluence-utils';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
+import { confluencePageIdOf, deleteSyncedFiles, listSyncedFiles } from 'src/utils/syncedFilePrune';
 
 interface ProcessedPage {
   filename: string;
@@ -164,6 +165,10 @@ export class ConfluenceService {
         await this.saveSyncProgress(this.syncProgress);
       }
 
+      // What is already on disk, so the worker can report deleted/renamed pages.
+      const mdDir = path.join(this.context.globalStorageUri.fsPath, 'confluence', 'mds');
+      const localPages = listSyncedFiles(mdDir, confluencePageIdOf);
+
       // Create a new worker
       const workerPath = path.join(
         __dirname,
@@ -183,6 +188,7 @@ export class ConfluenceService {
           processedPages: this.syncProgress?.processedPages || 0,
           isIncremental: isIncremental,
           lastSyncTime: lastSyncTimeStr,
+          localPages,
         },
       });
 
@@ -230,6 +236,11 @@ export class ConfluenceService {
             console.log(
               `Sync complete. Processed ${message.pages.length} pages.`
             );
+            // Before onComplete: the index build that follows reads the md folder.
+            const prunedPages = deleteSyncedFiles(mdDir, message.removed);
+            if (prunedPages > 0) {
+              console.log(`Removed ${prunedPages} synced pages that were deleted or renamed in Confluence.`);
+            }
             // Notify the webview that sync is complete
             const lastSyncTime = new Date().toISOString();
             this.post({

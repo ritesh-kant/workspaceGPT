@@ -6,8 +6,10 @@ import { WORKER_STATUS } from '../../../constants';
 import {
   ConfluencePageFetcher,
   processPage,
+  pageFilename,
   sleep,
 } from '@workspace-gpt/confluence-utils';
+import { goneConfluenceFiles, type LocalSyncedFile } from '../../utils/syncedFilePrune';
 
 interface WorkerData {
   spaceKey: string;
@@ -20,6 +22,8 @@ interface WorkerData {
   processedPages?: number;
   isIncremental?: boolean;
   lastSyncTime?: string;
+  /** The md files already on disk with their page ids, so deleted/renamed pages can be pruned. */
+  localPages?: LocalSyncedFile[];
 }
 
 // Receive data from main thread
@@ -34,6 +38,7 @@ const {
   processedPages,
   isIncremental,
   lastSyncTime,
+  localPages,
 } = workerData as WorkerData;
 
 async function fetchAndProcessPages() {
@@ -67,12 +72,33 @@ async function fetchAndProcessPages() {
     parentPort?.postMessage({
       type: WORKER_STATUS.COMPLETED,
       pages: allPages,
+      removed: await findGoneFiles(extractor),
     });
   } catch (error) {
     parentPort?.postMessage({
       type: WORKER_STATUS.ERROR,
       message: `Error in worker: ${error instanceof Error ? error.message : String(error)}`,
     });
+  }
+}
+
+/**
+ * Local files whose page is gone from the space or was renamed. Pruning must
+ * never fail a sync, so any listing error just removes nothing this run.
+ */
+async function findGoneFiles(extractor: ConfluencePageFetcher): Promise<string[]> {
+  if (!localPages?.length) return [];
+  try {
+    const live = await extractor.fetchAllPageRefs();
+    const gone = goneConfluenceFiles(
+      localPages,
+      live.map((p) => ({ id: p.id, filename: pageFilename(p.title) })),
+    );
+    console.log(`🧹 Confluence: ${live.length} live pages, ${gone.length} local files no longer have one`);
+    return gone;
+  } catch (error) {
+    console.warn('Confluence: could not list pages to prune deleted ones:', error instanceof Error ? error.message : String(error));
+    return [];
   }
 }
 

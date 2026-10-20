@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import { MESSAGE_TYPES, WORKER_STATUS, STORAGE_KEYS } from '../../../constants';
 import { postToWebview } from 'src/utils/webviewBroadcast';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
+import { deleteSyncedFiles, idFromFilename, listSyncedFiles } from 'src/utils/syncedFilePrune';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
 
 interface ProcessedAdoItem {
@@ -169,6 +170,10 @@ export class AdoService {
         await this.saveSyncProgress(this.syncProgress);
       }
 
+      // What is already on disk, so the worker can report deleted/moved work items.
+      const mdDir = path.join(this.context.globalStorageUri.fsPath, 'ado', 'mds');
+      const localItems = listSyncedFiles(mdDir, idFromFilename('ADO-'));
+
       const workerPath = path.join(
         __dirname,
         'workers',
@@ -187,6 +192,7 @@ export class AdoService {
           isIncremental: isIncremental,
           lastSyncTime: lastSyncTimeStr,
           lookbackMonths: config.lookbackMonths,
+          localItems,
         },
       });
 
@@ -232,6 +238,11 @@ export class AdoService {
 
           case WORKER_STATUS.COMPLETED:
             console.log(`ADO Sync complete. Processed ${message.itemsCount} items.`);
+            // Before onComplete: the index build that follows reads the md folder.
+            const prunedItems = deleteSyncedFiles(mdDir, message.removed);
+            if (prunedItems > 0) {
+              console.log(`Removed ${prunedItems} synced work items that were deleted or moved in ADO.`);
+            }
             const lastSyncTime = new Date().toISOString();
             this.post({
               type: MESSAGE_TYPES.SYNC_ADO_COMPLETE,

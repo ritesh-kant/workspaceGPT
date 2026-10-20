@@ -125,6 +125,45 @@ export class ConfluencePageFetcher {
         }
     }
 
+    /**
+     * Every page in the space as {id, title}, without bodies. An incremental
+     * sync only sees pages modified since the last run, so this listing is the
+     * only way a deleted, moved or renamed page gets noticed. Same endpoint and
+     * default statuses as fetchPages, so it lists exactly what a full sync saves.
+     */
+    async fetchAllPageRefs(limit: number = 250): Promise<Array<{ id: string; title: string }>> {
+        const spaceResponse = await axios.get(
+            `${this.confluenceBaseUrl}/wiki/api/v2/spaces`,
+            this.getRequestConfig({ params: { keys: this.spaceKey } })
+        );
+        const spaceId = spaceResponse.data.results?.[0]?.id;
+        if (!spaceId) {
+            throw new Error(`Could not find space ID for space key: ${this.spaceKey}`);
+        }
+
+        const refs: Array<{ id: string; title: string }> = [];
+        let cursor: string | null = null;
+        do {
+            const params: any = { limit };
+            if (cursor) {
+                params.cursor = cursor;
+            }
+            const response = await axios.get<ConfluencePageResponse>(
+                `${this.confluenceBaseUrl}/wiki/api/v2/spaces/${spaceId}/pages`,
+                this.getRequestConfig({ params })
+            );
+            for (const page of response.data.results ?? []) {
+                refs.push({ id: String(page.id), title: page.title });
+            }
+            const next = response.data._links?.next;
+            cursor = next ? new URL(`https://api.atlassian.com${next}`).searchParams.get('cursor') : null;
+            if (cursor) {
+                await sleep(250);
+            }
+        } while (cursor);
+        return refs;
+    }
+
     async getTotalPages(): Promise<number> {
         try {
             // Note: /rest/api/search (v1) is still active for search queries according to Atlassian docs, 
