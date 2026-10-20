@@ -3540,6 +3540,19 @@ console.log('\nconfluenceAdf (page read/edit — edits touch one section, everyt
     assert.deepEqual(rel.content[0].content, [text('see src')], 'ADF rejects relative hrefs — keep the text, drop the link');
   });
 
+  await t('<br> becomes a hardBreak and known :shortcode:s become emoji nodes, in table cells too; unknown shortcodes and code stay text', () => {
+    const doc = adf.markdownToAdf('| Option | Trade-offs |\n| --- | --- |\n| B | :plus: No contract change. <br> :minus: New lookup, `a<br>b` and :smile: |');
+    const cell = doc.content[0].content[1].content[1].content[0].content;
+    assert.deepEqual(cell.map((n) => n.type), ['emoji', 'text', 'hardBreak', 'emoji', 'text', 'text', 'text']);
+    assert.deepEqual(cell[0].attrs, { shortName: ':plus:', id: 'atlassian-plus', text: '➕' });
+    assert.equal(cell[3].attrs.text, '➖');
+    assert.equal(cell[1].text, ' No contract change.', 'the spaces around <br> are consumed, not left as text');
+    assert.equal(cell[4].text, ' New lookup, ');
+    assert.equal(cell[5].text, 'a<br>b');
+    assert.equal(cell[5].marks[0].type, 'code');
+    assert.equal(cell[6].text, ' and :smile:');
+  });
+
   await t('a new page from markdown carries no keep tokens and builds tasks, tables with headers and panels', () => {
     const doc = adf.markdownToAdf('# Plan\n\n- [x] agree TTL\n- [ ] load test\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n:::panel info\nHeads up.\n:::');
     assert.deepEqual(doc.content.map((n) => n.type), ['heading', 'taskList', 'table', 'panel']);

@@ -72,8 +72,17 @@ function toCheck(i: RollupItem): CiCheck {
   return { name, state: PASS.has(verdict) ? 'pass' : 'pending', url };
 }
 
+/** Whether `branch` has been pushed: it tracks an upstream, or origin has a ref of that name. */
+async function isOnRemote(cwd: string, branch: string): Promise<boolean> {
+  const upstream = await run('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd, 10_000).catch(() => '');
+  if (upstream.trim()) return true;
+  return run('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`], cwd, 10_000).then(() => true, () => false);
+}
+
 /** Status of the PR for the branch checked out in `cwd`. Never throws. */
 export async function getCiSnapshot(cwd: string): Promise<CiSnapshot> {
+  const branch = (await run('git', ['branch', '--show-current'], cwd, 10_000).catch(() => '')).trim();
+  if (branch && !(await isOnRemote(cwd, branch))) return { state: 'none', checks: [] };
   let raw: string;
   try {
     raw = await run('gh', ['pr', 'view', '--json', 'number,url,state,headRefName,headRefOid,statusCheckRollup'], cwd);
@@ -119,6 +128,9 @@ export async function getCiSnapshot(cwd: string): Promise<CiSnapshot> {
 export async function getCiSnapshotViaHost(cwd: string, target: { host: CodeHost; repo: RepoRef }): Promise<CiSnapshot | null> {
   const branch = (await run('git', ['branch', '--show-current'], cwd, 10_000).catch(() => '')).trim();
   if (!branch) return null;
+  // A branch that was never pushed has no PR to look up, and asking would only
+  // surface the host's error as if it were this branch's CI.
+  if (!(await isOnRemote(cwd, branch))) return { state: 'none', checks: [] };
   const { host, repo } = target;
   try {
     const found: PrRef | null = await host.findPr(repo, branch);

@@ -141,6 +141,7 @@ const DESKTOP_INSTALL = {
   },
 } as const;
 const DESKTOP_RELEASES_URL = "https://github.com/ritesh-kant/workspaceGPT/releases?q=desktop-v&expanded=true";
+const CHROME_STORE_URL = "https://chromewebstore.google.com/detail/workspacegpt/gagogpeepmgaljpabdlpbcknjnbcaole";
 
 export default function Home() {
   const [showVSCodeOpenedMessage, setShowVSCodeOpenedMessage] = useState(false);
@@ -712,6 +713,8 @@ export default function Home() {
                   <p className="text-xs text-faint mt-auto leading-relaxed">
                     Off until you turn it on in the Chrome extension. Chrome shows its &ldquo;debugging this browser&rdquo;
                     bar while the agent acts; click Cancel to stop it.{" "}
+                    <a href={CHROME_STORE_URL} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">Get the Chrome extension</a>
+                    {" · "}
                     <Link href="/docs#browser" className="text-brand hover:underline">Set it up</Link>
                   </p>
                 </div>
@@ -914,6 +917,33 @@ export default function Home() {
                   >
                     Install in your editor
                   </button>
+                </div>
+              </div>
+
+              {/* Chrome extension */}
+              <div className="md:col-span-2 bg-surface border border-line rounded-xl p-8 hover:border-line-strong transition-colors duration-500 flex flex-col sm:flex-row sm:items-center gap-6">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-4">
+                    <span className="text-brand"><Icon name="globe" size={22} /></span>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-brand/10 text-brand border-brand/20">Chrome &middot; Chromium &middot; Brave &middot; Edge &middot; Arc</span>
+                  </div>
+                  <h3 className="text-2xl font-semibold mb-3 tracking-tight text-white">Chrome extension</h3>
+                  <p className="text-muted leading-relaxed">
+                    The companion to WorkspaceGPT Desktop. It lets the agent open your app in your own Chrome, click
+                    through it and read the console and network, using your real signed-in profile. It connects to
+                    Desktop by itself, so install Desktop first.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:items-end shrink-0">
+                  <a
+                    href={CHROME_STORE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-brand hover:bg-[#3df5c2] text-black font-medium px-5 py-2.5 rounded-lg transition-colors text-sm text-center"
+                  >
+                    Add to Chrome
+                  </a>
+                  <Link href="/docs#browser" className="text-xs text-brand hover:underline">Set it up</Link>
                 </div>
               </div>
             </div>

@@ -37,9 +37,15 @@ const TOKEN_HELP: Record<'gitlab' | 'bitbucket', React.ReactNode> = {
  * instance. The credential stays on the host side — this panel only ever sees
  * who is connected.
  */
+// Last status the host sent. The panel remounts when you switch back to it and
+// the host check (gh auth) takes a moment, so without this it first paints the
+// empty "Not connected" form and then jumps to the connected screen.
+let lastStatus: any = null;
+
 const CodeHostSettings: React.FC = () => {
   const vscode = VSCodeAPI();
-  const [connections, setConnections] = useState<Connection[]>([]);
+  const [loaded, setLoaded] = useState(!!lastStatus);
+  const [connections, setConnections] = useState<Connection[]>(lastStatus?.connections ?? []);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [notice, setNotice] = useState<{ error?: string; warning?: string }>({});
@@ -47,9 +53,9 @@ const CodeHostSettings: React.FC = () => {
   const [host, setHost] = useState(DEFAULT_HOST.github);
   const [username, setUsername] = useState('');
   const [token, setToken] = useState('');
-  const [detected, setDetected] = useState<string | null>(null);
-  const [ghAccounts, setGhAccounts] = useState<string[]>([]);
-  const [ghAccount, setGhAccount] = useState<string | undefined>();
+  const [detected, setDetected] = useState<string | null>(lastStatus?.detected?.host ?? null);
+  const [ghAccounts, setGhAccounts] = useState<string[]>(lastStatus?.ghAccounts ?? []);
+  const [ghAccount, setGhAccount] = useState<string | undefined>(lastStatus?.ghAccount);
   const [ghCode, setGhCode] = useState<{ code: string; url: string } | null>(null);
 
   useEffect(() => {
@@ -59,6 +65,8 @@ const CodeHostSettings: React.FC = () => {
         return;
       }
       if (event.data?.type !== MESSAGE_TYPES.CODEHOST_STATUS) return;
+      lastStatus = event.data;
+      setLoaded(true);
       setGhCode(null);
       setDetected(event.data.detected?.host ?? null);
       setGhAccounts(event.data.ghAccounts ?? []);
@@ -103,7 +111,7 @@ const CodeHostSettings: React.FC = () => {
     vscode.postMessage({ type: MESSAGE_TYPES.CODEHOST_CONNECT_OAUTH });
   };
 
-  const showForm = adding || (connections.length === 0 && !detected);
+  const showForm = loaded && (adding || (connections.length === 0 && !detected));
   const summary = !connections.length && detected ? (
     <>
       <StatusDot tone='ok' />
@@ -114,8 +122,10 @@ const CodeHostSettings: React.FC = () => {
       <StatusDot tone={notice.warning ? 'warn' : 'ok'} />
       {connections.map((c) => `${c.login}@${c.host}`).join(', ')}
     </>
-  ) : (
+  ) : loaded ? (
     'Not connected'
+  ) : (
+    'Checking…'
   );
 
   return (
@@ -231,9 +241,11 @@ const CodeHostSettings: React.FC = () => {
             )}
           </div>
         ) : (
-          <button type='button' className='secondary-button connection-button' onClick={() => setAdding(true)}>
-            Add another host
-          </button>
+          loaded && (
+            <button type='button' className='secondary-button connection-button' onClick={() => setAdding(true)}>
+              Add another host
+            </button>
+          )
         )}
 
         {notice.warning && <p className='description-text'>{notice.warning}</p>}

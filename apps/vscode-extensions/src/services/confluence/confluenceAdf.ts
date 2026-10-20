@@ -56,6 +56,17 @@ export type KeepMap = Map<number, AdfNode>;
 
 const KEEP_RE = /⟦keep (\d+)(?::[^⟧\n]*)?⟧/g;
 
+/** Atlassian's own emoji, by the `:shortcode:` the editor shows. Anything else stays text. */
+const EMOJI: Record<string, { id: string; text: string }> = {
+  plus: { id: 'atlassian-plus', text: '➕' },
+  minus: { id: 'atlassian-minus', text: '➖' },
+  check_mark: { id: 'atlassian-check_mark', text: '✅' },
+  cross_mark: { id: 'atlassian-cross_mark', text: '❌' },
+  warning: { id: 'atlassian-warning', text: '⚠️' },
+};
+/** A line break the page view shows as `<br>` (html is off, so it is text), or a known `:shortcode:`. */
+const INLINE_MARKUP_RE = new RegExp(`\\s*<br\\s*/?>\\s*|:(${Object.keys(EMOJI).join('|')}):`, 'gi');
+
 // ─────────────────────────── ADF → markdown ───────────────────────────
 
 const INLINE_KEEP = new Set(['mention', 'emoji', 'date', 'status', 'inlineCard', 'inlineExtension', 'mediaInline', 'placeholder']);
@@ -413,11 +424,11 @@ class Builder {
       // Keep tokens inside text become the original inline nodes again.
       let last = 0;
       for (const m of text.matchAll(KEEP_RE)) {
-        if (m.index! > last) this.pushText(out, text.slice(last, m.index), [...marks, ...extra]);
+        if (m.index! > last) this.pushMarkup(out, text.slice(last, m.index), [...marks, ...extra]);
         out.push(this.restore(m[1]));
         last = m.index! + m[0].length;
       }
-      if (last < text.length) this.pushText(out, text.slice(last), [...marks, ...extra]);
+      if (last < text.length) this.pushMarkup(out, text.slice(last), [...marks, ...extra]);
     };
     const pop = (type: string) => {
       const i = marks.map((m) => m.type).lastIndexOf(type);
@@ -447,6 +458,18 @@ class Builder {
       }
     }
     return out;
+  }
+
+  /** Text, with `<br>` becoming a hardBreak and known `:shortcode:`s becoming emoji nodes. */
+  private pushMarkup(out: AdfNode[], text: string, marks: AdfMark[]): void {
+    let last = 0;
+    for (const m of text.matchAll(INLINE_MARKUP_RE)) {
+      this.pushText(out, text.slice(last, m.index), marks);
+      const emoji = m[1] ? EMOJI[m[1].toLowerCase()] : undefined;
+      out.push(emoji ? { type: 'emoji', attrs: { shortName: `:${m[1].toLowerCase()}:`, ...emoji } } : { type: 'hardBreak' });
+      last = m.index! + m[0].length;
+    }
+    this.pushText(out, text.slice(last), marks);
   }
 
   private pushText(out: AdfNode[], text: string, marks: AdfMark[]): void {
