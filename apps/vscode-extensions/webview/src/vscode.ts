@@ -14,6 +14,16 @@ declare global {
 
 let vscodeApi: any;
 let collapseWatchStarted = false;
+const beforePostHooks: Array<() => void> = [];
+
+/**
+ * Run `hook` before every webview → host message. A store that coalesces its
+ * host writes (settingsStore) flushes here, so a message the host answers by
+ * reading globalState never overtakes a write the user already made.
+ */
+export function onBeforePostMessage(hook: () => void): void {
+  beforePostHooks.push(hook);
+}
 
 /**
  * True when this bundle runs inside the desktop app rather than a VS Code
@@ -28,7 +38,14 @@ export function isDesktopHost(): boolean {
 
 export function VSCodeAPI() {
   if (!vscodeApi) {
-    vscodeApi = window.acquireVsCodeApi();
+    const api = window.acquireVsCodeApi();
+    vscodeApi = {
+      ...api,
+      postMessage: (message: any) => {
+        for (const hook of beforePostHooks) hook();
+        api.postMessage(message);
+      },
+    };
     applySidebarMinWidth();
     startSidebarCollapseWatch(vscodeApi);
   }

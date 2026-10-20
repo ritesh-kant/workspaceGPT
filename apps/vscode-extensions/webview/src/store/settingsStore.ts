@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { VSCodeAPI } from '../vscode';
+import { VSCodeAPI, onBeforePostMessage } from '../vscode';
 import { WorkspaceMode } from '../constants';
 import { selectTracker } from '../../../src/services/tickets/trackerSelection';
 
@@ -158,6 +158,35 @@ interface SettingsState {
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
 import { ConfluenceConfig, AdoConfig, JiraConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig, WebSearchConfig } from '../types';
 
+// Every store change persists the whole settings blob, and a Confluence/ADO
+// sync updates progress many times a second — one host save per change ran
+// ~160 saves/s on startup, each fanning out into setContext calls, and the
+// desktop webview never hydrated under that flood. vscode.setState stays
+// immediate; the host save is trailing-throttled to the latest value, and is
+// flushed before any other outgoing message and when the page goes away.
+const SETTINGS_SAVE_INTERVAL_MS = 300;
+let pendingSettings: string | null = null;
+let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushSettingsSave(): void {
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
+  }
+  if (pendingSettings === null) return;
+  const value = pendingSettings;
+  pendingSettings = null;
+  VSCodeAPI().postMessage({
+    type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
+    key: STORAGE_KEYS.SETTINGS,
+    state: JSON.parse(value),
+  });
+}
+
+onBeforePostMessage(flushSettingsSave);
+window.addEventListener('pagehide', flushSettingsSave);
+window.addEventListener('beforeunload', flushSettingsSave);
+
 const vscodeStorage = {
   getItem: () => {
     const vscode = VSCodeAPI();
@@ -175,11 +204,10 @@ const vscodeStorage = {
       ...currentState,
       [STORAGE_KEYS.SETTINGS]: JSON.parse(value),
     });
-    vscode.postMessage({
-      type: MESSAGE_TYPES.UPDATE_GLOBAL_STATE,
-      key: STORAGE_KEYS.SETTINGS,
-      state: JSON.parse(value),
-    });
+    pendingSettings = value;
+    if (!settingsSaveTimer) {
+      settingsSaveTimer = setTimeout(flushSettingsSave, SETTINGS_SAVE_INTERVAL_MS);
+    }
   },
   removeItem: () => {
     const vscode = VSCodeAPI();

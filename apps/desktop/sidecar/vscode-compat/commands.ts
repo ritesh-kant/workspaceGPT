@@ -45,6 +45,8 @@ export const BUILTIN_COMMANDS: Record<string, BuiltinCommand> = {
     kind: 'implemented',
     why: 'context keys are stored and drive the desktop title-bar actions',
     run: (key: string, value: unknown) => {
+      // Unchanged keys can't change a `when` clause; don't re-render the title bar.
+      if (contextKeys.has(key) && Object.is(contextKeys.get(key), value)) return;
       contextKeys.set(key, value);
       contextKeysChanged.fire(key);
     },
