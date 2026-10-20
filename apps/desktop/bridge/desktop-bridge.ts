@@ -143,6 +143,9 @@ interface UiFrame {
   const outbox: string[] = [];
   let retry = 0;
   let stopped = false;
+  // A drop that heals within a moment (sidecar restart, a late first connect) isn't worth a banner.
+  const BANNER_GRACE_MS = 3000;
+  let disconnectBanner: ReturnType<typeof setTimeout> | undefined;
 
   function send(frame: unknown): void {
     const data = JSON.stringify(frame);
@@ -159,6 +162,8 @@ interface UiFrame {
     socket.onopen = () => {
       open = true;
       retry = 0;
+      clearTimeout(disconnectBanner);
+      disconnectBanner = undefined;
       banner(null);
       for (const data of outbox.splice(0)) socket!.send(data);
     };
@@ -191,7 +196,7 @@ interface UiFrame {
       if (stopped) return;
       // 1006 on the very first attempt with a bad token looks the same as a
       // down server; the message says both.
-      banner('Disconnected from WorkspaceGPT — reconnecting…', 'warning');
+      disconnectBanner ??= setTimeout(() => banner('Disconnected from WorkspaceGPT — reconnecting…', 'warning'), BANNER_GRACE_MS);
       const delay = Math.min(5000, 250 * 2 ** retry++);
       setTimeout(connect, delay);
     };
