@@ -539,7 +539,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean; browser?: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; userMemory?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; fullAccess?: boolean; planMode?: boolean; chatOnly?: boolean; debugMode?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean; browser?: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; userMemory?: string; projectMemory?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; fullAccess?: boolean; planMode?: boolean; chatOnly?: boolean; debugMode?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -890,7 +890,7 @@ This run has Full access. Where anything above says a command shows the user an 
 ${personalityPrompt}
 ${howToWorkBlock}${planModeBlock}${autonomousBlock}${fullAccessBlock}${debugBlock}${options?.autonomous && !options?.ticketContext ? (debugRun ? DEBUG_REPORT_FORMAT : FINAL_REPORT_FORMAT) : debugRun && !options?.ticketContext ? DEBUG_REPORT_FORMAT : ''}${contextInstruction}
 
-${workspaceBlock}${options?.userMemory ?? ''}${todayBlock}${adoContextBlock}
+${workspaceBlock}${options?.userMemory ?? ''}${options?.projectMemory ?? ''}${todayBlock}${adoContextBlock}
 ${ticketBlock}${contextBlock}${sourcesMarkdown}
 
 **Chat History:**

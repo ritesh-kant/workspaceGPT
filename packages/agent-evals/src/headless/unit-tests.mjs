@@ -3432,7 +3432,7 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
       'list_directory', 'find_files', 'run_command', 'check_command', 'run_checks', 'get_diagnostics', 'git_status', 'git_diff',
       'git_log', 'git_blame', 'edit_file', 'create_file', 'delete_file', 'search_docs', 'get_confluence_page',
       'find_confluence_location', 'update_confluence_page', 'create_confluence_page',
-      'save_memory', 'search_tickets', 'get_ticket', 'list_prs', 'get_pr', 'get_repo_issue', 'browser_list_tabs', 'browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_read_page',
+      'save_memory', 'read_memory', 'search_tickets', 'get_ticket', 'list_prs', 'get_pr', 'get_repo_issue', 'browser_list_tabs', 'browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_read_page',
       'browser_read_tree', 'browser_screenshot', 'browser_act', 'browser_eval', 'browser_console', 'browser_network',
       'debug_ledger', 'add_probe', 'remove_probes', 'probe_output', 'counterfactual_check', 'git_bisect',
     ];
@@ -5259,6 +5259,138 @@ console.log('\nspike coverage reflection (built from what the run actually did)'
 
   await t('no Confluence activity at all is its own gap', () => {
     assert.match(researchCoverageReflection({ read_file: 3, search_web: 1 }), /did not look in Confluence at all/);
+  });
+}
+
+console.log('\nproject memory (file-backed, per repository, outside the workspace)');
+{
+  const pm = await import(path.join(outDir, 'projectMemory.mjs'));
+  const storage = () => fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-pm-'));
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'pipe' }).toString();
+
+  await t('upsert writes a topic file with frontmatter and an index line, and replaces by name', async () => {
+    const dir = path.join(storage(), 'memory', 'repo-x');
+    let r = await pm.saveProjectMemory(dir, { name: 'Release Branching', kind: 'decision', text: 'Release from release/* only.\nHotfixes cherry-pick back.', description: 'How releases branch', source: { type: 'confluence', id: '123', version: 7 } });
+    assert.equal(r.ok, true, r.message);
+    const file = fs.readFileSync(path.join(dir, 'release-branching.md'), 'utf8');
+    assert.match(file, /^---\nname: release-branching\ndescription: "How releases branch"\nkind: decision\nupdated: \S+\nsource: \{"type":"confluence","id":"123","version":"7"\}\n---\n\nRelease from release\/\* only\.\nHotfixes cherry-pick back\.\n$/);
+    r = await pm.saveProjectMemory(dir, { name: 'release-branching', text: 'Release from main with tags.', description: 'Releases: tags on main' });
+    assert.equal(r.ok, true);
+    const all = await pm.listProjectMemories(dir);
+    assert.equal(all.length, 1);
+    assert.equal(all[0].body, 'Release from main with tags.');
+    assert.equal(all[0].kind, 'convention', 'an unknown or missing kind falls back to convention');
+    assert.equal(all[0].source, undefined, 'an upsert replaces the whole topic');
+    assert.equal(fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8'), '- [release-branching](release-branching.md) (convention): Releases: tags on main\n');
+    assert.ok(!fs.readdirSync(dir).some((f) => f.endsWith('.tmp')), 'no temp files left behind');
+  });
+
+  await t('a description with a colon or quotes round-trips through the frontmatter', async () => {
+    const dir = path.join(storage(), 'memory', 'repo-q');
+    await pm.saveProjectMemory(dir, { name: 'ci', text: 'body', description: 'CI: run "pnpm check" first' });
+    assert.equal((await pm.listProjectMemories(dir))[0].description, 'CI: run "pnpm check" first');
+  });
+
+  await t('forget removes the topic and its index line; read_memory returns one topic or the index', async () => {
+    const dir = path.join(storage(), 'memory', 'repo-f');
+    await pm.saveProjectMemory(dir, { name: 'a', text: 'alpha', description: 'A' });
+    await pm.saveProjectMemory(dir, { name: 'b', text: 'beta', description: 'B' });
+    const read = await pm.readProjectMemory(dir, 'b');
+    assert.equal(read.ok, true);
+    assert.match(read.content, /\n\nbeta\n$/);
+    assert.match((await pm.readProjectMemory(dir, '')).content, /\[a\]\(a\.md\)[\s\S]*\[b\]\(b\.md\)/);
+    const r = await pm.saveProjectMemory(dir, { name: 'a', forget: true });
+    assert.match(r.message, /Forgot/);
+    assert.ok(!fs.existsSync(path.join(dir, 'a.md')));
+    assert.equal(fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8'), '- [b](b.md) (convention): B\n');
+    assert.match((await pm.saveProjectMemory(dir, { name: 'a', forget: true })).message, /Nothing saved/);
+    const missing = await pm.readProjectMemory(dir, 'zzz');
+    assert.equal(missing.ok, false);
+    assert.match(missing.message, /Saved topics: b\./);
+    await pm.clearProjectMemories(dir);
+    assert.ok(!fs.existsSync(dir));
+    assert.deepEqual(await pm.listProjectMemories(dir), []);
+  });
+
+  await t('the store refuses a new topic once full, but still updates an existing one', async () => {
+    const dir = path.join(storage(), 'memory', 'repo-c');
+    for (let i = 0; i < pm.MAX_PROJECT_ENTRIES; i++) {
+      const r = await pm.saveProjectMemory(dir, { name: `topic-${i}`, text: `fact ${i}` });
+      assert.equal(r.ok, true, r.message);
+    }
+    const over = await pm.saveProjectMemory(dir, { name: 'one-more', text: 'x' });
+    assert.equal(over.ok, false);
+    assert.match(over.message, /full/);
+    assert.equal((await pm.saveProjectMemory(dir, { name: 'topic-3', text: 'changed' })).ok, true);
+    assert.equal((await pm.listProjectMemories(dir)).length, pm.MAX_PROJECT_ENTRIES);
+    const long = await pm.saveProjectMemory(dir, { name: 'topic-4', text: 'y'.repeat(pm.MAX_BODY_CHARS + 500), description: 'z'.repeat(400) });
+    assert.equal(long.ok, true);
+    const t4 = (await pm.listProjectMemories(dir)).find((e) => e.name === 'topic-4');
+    assert.equal(t4.body.length, pm.MAX_BODY_CHARS);
+    assert.equal(t4.description.length, pm.MAX_DESCRIPTION_CHARS);
+  });
+
+  await t('the prompt block is capped at whole lines and says how many it left out', async () => {
+    const dir = path.join(storage(), 'memory', 'repo-b');
+    fs.mkdirSync(dir, { recursive: true });
+    const lines = Array.from({ length: 300 }, (_, i) => `- [t${i}](t${i}.md) (convention): ${'d'.repeat(60)}`);
+    fs.writeFileSync(path.join(dir, 'MEMORY.md'), lines.join('\n') + '\n');
+    const block = await pm.projectMemoryBlock(dir);
+    const shown = block.split('\n').filter((l) => /^- \[t\d+\]/.test(l)).length;
+    assert.ok(shown > 0 && shown <= pm.MAX_INDEX_LINES);
+    const listed = block.split('\n').filter((l) => /^- \[t\d+\]/.test(l)).join('\n');
+    assert.ok(Buffer.byteLength(listed) <= pm.MAX_INDEX_BYTES);
+    assert.match(block, new RegExp(`\\+${300 - shown} more topics`));
+    assert.match(block, /`read_memory`/);
+    const empty = await pm.projectMemoryBlock(path.join(storage(), 'memory', 'none'));
+    assert.match(empty, /nothing yet/);
+    assert.match(empty, /scope:"project"/, 'an empty store still says how to write the first topic');
+  });
+
+  await t('a credential is refused in the text, the description or the name', async () => {
+    const dir = path.join(storage(), 'memory', 'repo-s');
+    for (const args of [
+      { name: 'deploy', text: 'use token: abcdef123456 for prod' },
+      { name: 'deploy', text: 'fine', description: 'key sk-abcdefghijklmnopqrstuvwx' },
+      { name: 'AKIAABCDEFGHIJKLMNOP', text: 'fine' },
+    ]) {
+      const r = await pm.saveProjectMemory(dir, args);
+      assert.equal(r.ok, false);
+      assert.match(r.message, /credential/);
+    }
+    assert.deepEqual(await pm.listProjectMemories(dir), []);
+  });
+
+  await t('worktrees and subfolders of one clone share a repoKey; another clone and a non-git folder do not', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-pmkey-'));
+    const main = path.join(root, 'My Repo');
+    fs.mkdirSync(path.join(main, 'packages', 'a'), { recursive: true });
+    git(main, 'init', '-q');
+    git(main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    const wt = path.join(root, 'wt-feature');
+    git(main, 'worktree', 'add', '-q', '-b', 'feature', wt);
+    const other = path.join(root, 'other');
+    fs.mkdirSync(other);
+    git(other, 'init', '-q');
+    const plain = path.join(root, 'plain');
+    fs.mkdirSync(plain);
+
+    const key = pm.repoKeyFor(main);
+    assert.match(key, /^my-repo-[0-9a-f]{12}$/, 'named after the main checkout, whichever worktree computed it');
+    assert.equal(pm.repoKeyFor(wt), key, 'a worktree shares the main clone\'s store');
+    assert.equal(pm.repoKeyFor(path.join(main, 'packages', 'a')), key, 'a subfolder shares it too');
+    assert.notEqual(pm.repoKeyFor(other), key);
+    assert.notEqual(pm.repoKeyFor(plain), key);
+    assert.equal(pm.repoKeyFor(plain), pm.repoKeyFor(plain), 'stable');
+    const sdir = storage();
+    assert.equal(pm.projectMemoryDir(sdir, wt), path.join(sdir, 'memory', key));
+    assert.ok(!pm.projectMemoryDir(sdir, wt).startsWith(main) && !pm.projectMemoryDir(sdir, wt).startsWith(wt), 'never inside the workspace');
+  });
+
+  await t('the project block sits right after user memory in the prompt', async () => {
+    const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));
+    const prompt = createStructuredPrompt([], 'fix the crash in foo.ts', '', undefined, null, { userMemory: 'USER-MEM\n', projectMemory: 'PROJECT-MEM\n' });
+    assert.ok(prompt.includes('USER-MEM\nPROJECT-MEM\n'), 'project memory follows user memory directly');
   });
 }
 

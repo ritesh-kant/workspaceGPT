@@ -34,9 +34,9 @@ const MAX_BLOCK_CHARS = 2_400; // ≈ 600 tokens, the most memory can ever add t
 const KINDS: readonly MemoryKind[] = ['preference', 'style', 'context'];
 
 /** Looks like a credential — refused so a key pasted into chat is never replayed into prompts. */
-const SECRET_LIKE = /\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|xox[abp]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b|-----BEGIN [A-Z ]*PRIVATE KEY|(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S{6,}/i;
+export const SECRET_LIKE = /\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|xox[abp]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b|-----BEGIN [A-Z ]*PRIVATE KEY|(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S{6,}/i;
 
-const slug = (s: string) =>
+export const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
 const ENABLED_KEY = 'workspacegpt.userMemoryEnabled';

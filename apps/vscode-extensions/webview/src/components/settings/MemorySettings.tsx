@@ -12,6 +12,23 @@ interface Entry {
 
 const KIND_LABEL: Record<Entry['kind'], string> = { preference: 'Preference', style: 'Style', context: 'Context' };
 
+/** A topic in this repository's project memory (host: services/agent/projectMemory.ts). */
+interface ProjectEntry {
+  name: string;
+  description: string;
+  kind: 'preference' | 'convention' | 'reference' | 'decision';
+  updated: string;
+  source?: { type: string; id: string; version?: string };
+  body: string;
+}
+
+const PROJECT_KIND_LABEL: Record<ProjectEntry['kind'], string> = {
+  preference: 'Preference',
+  convention: 'Convention',
+  reference: 'Reference',
+  decision: 'Decision',
+};
+
 /**
  * What WorkspaceGPT has learned about how you work. Everything it remembers is
  * listed here, editable and removable, and the whole feature can be switched
@@ -19,16 +36,18 @@ const KIND_LABEL: Record<Entry['kind'], string> = { preference: 'Preference', st
  * even offered the save tool. Stored on this machine only.
  */
 const MemorySettings: React.FC = () => {
-  const [state, setState] = useState<{ enabled: boolean; entries: Entry[] } | null>(null);
+  const [state, setState] = useState<{ enabled: boolean; entries: Entry[]; project: { folder: string; entries: ProjectEntry[] } | null } | null>(null);
   const [editing, setEditing] = useState<{ name: string; text: string } | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
+  const [projectEditing, setProjectEditing] = useState<{ name: string; description: string; text: string } | null>(null);
+  const [confirmingProjectClear, setConfirmingProjectClear] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const m = event.data;
       if (m?.type === MESSAGE_TYPES.MEMORY_STATE) {
-        setState({ enabled: m.enabled, entries: m.entries ?? [] });
+        setState({ enabled: m.enabled, entries: m.entries ?? [], project: m.project ?? null });
         setError(m.error ?? null);
       }
     };
@@ -43,6 +62,23 @@ const MemorySettings: React.FC = () => {
   function saveEdit(entry: Entry) {
     if (editing && editing.text.trim()) post({ type: MESSAGE_TYPES.MEMORY_SAVE, name: entry.name, kind: entry.kind, text: editing.text });
     setEditing(null);
+  }
+
+  const projectEntries = state?.project?.entries ?? [];
+
+  function saveProjectEdit(entry: ProjectEntry) {
+    if (projectEditing && projectEditing.text.trim()) {
+      post({
+        type: MESSAGE_TYPES.MEMORY_SAVE,
+        scope: 'project',
+        name: entry.name,
+        kind: entry.kind,
+        description: projectEditing.description,
+        text: projectEditing.text,
+        source: entry.source,
+      });
+    }
+    setProjectEditing(null);
   }
 
   return (
@@ -153,6 +189,113 @@ const MemorySettings: React.FC = () => {
             <div>
               <button type='button' className='danger-button danger-button--small' onClick={() => setConfirmingClear(true)}>
                 Forget all
+              </button>
+            </div>
+          ))}
+
+        {state?.project && (
+          <div className='form-group'>
+            <h3 className='sources-group-title'>This project</h3>
+            <span className='import-detail'>
+              Conventions, decisions and pointers WorkspaceGPT keeps for {state.project.folder.split(/[\\/]/).pop()} and its
+              worktrees. Stored on this machine, outside the repository; the index adds about 2,000 tokens at most to a request.
+            </span>
+          </div>
+        )}
+
+        {state?.project && projectEntries.length === 0 && (
+          <span className='import-detail'>Nothing remembered for this project yet.</span>
+        )}
+
+        {projectEntries.map((entry) => (
+          <div className='import-row' key={`project-${entry.name}`}>
+            <div className='import-text'>
+              <span className='import-name'>
+                {entry.name} <span className='import-detail'>· {PROJECT_KIND_LABEL[entry.kind]}</span>
+                {entry.source && (
+                  <span className='import-detail'>
+                    {' '}
+                    · from {entry.source.type} {entry.source.id}
+                  </span>
+                )}
+              </span>
+              {projectEditing?.name === entry.name ? (
+                <>
+                  <input
+                    className='settings-input'
+                    maxLength={150}
+                    value={projectEditing.description}
+                    aria-label='Description'
+                    onChange={(e) => setProjectEditing({ ...projectEditing, description: e.target.value })}
+                  />
+                  <textarea
+                    className='settings-input'
+                    rows={5}
+                    maxLength={4000}
+                    value={projectEditing.text}
+                    autoFocus
+                    onChange={(e) => setProjectEditing({ ...projectEditing, text: e.target.value })}
+                  />
+                </>
+              ) : (
+                <span className='import-detail'>{entry.description}</span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+              {projectEditing?.name === entry.name ? (
+                <>
+                  <button type='button' className='secondary-button' onClick={() => saveProjectEdit(entry)}>
+                    Save
+                  </button>
+                  <button type='button' className='secondary-button' onClick={() => setProjectEditing(null)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type='button'
+                    className='secondary-button'
+                    onClick={() => setProjectEditing({ name: entry.name, description: entry.description, text: entry.body })}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type='button'
+                    className='secondary-button'
+                    aria-label={`Forget ${entry.name}`}
+                    onClick={() => post({ type: MESSAGE_TYPES.MEMORY_DELETE, scope: 'project', name: entry.name })}
+                  >
+                    Forget
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {projectEntries.length > 0 &&
+          (confirmingProjectClear ? (
+            <div className='import-row'>
+              <span className='import-detail'>Forget everything WorkspaceGPT remembers about this project?</span>
+              <button type='button' className='secondary-button' onClick={() => setConfirmingProjectClear(false)}>
+                Cancel
+              </button>
+              <button
+                type='button'
+                className='danger-button danger-button--small'
+                onClick={() => {
+                  post({ type: MESSAGE_TYPES.MEMORY_CLEAR, scope: 'project' });
+                  setConfirmingProjectClear(false);
+                }}
+              >
+                Forget project
+              </button>
+            </div>
+          ) : (
+            <div>
+              <button type='button' className='danger-button danger-button--small' onClick={() => setConfirmingProjectClear(true)}>
+                Forget project
               </button>
             </div>
           ))}

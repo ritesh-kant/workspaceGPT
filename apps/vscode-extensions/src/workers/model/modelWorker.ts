@@ -117,6 +117,8 @@ interface WorkerData {
   workspaceRules?: string;
   /** Remembered user preferences block (services/agent/userMemory.ts). */
   userMemory?: string;
+  /** Project memory index block (services/agent/projectMemory.ts), snapshotted at run start. */
+  projectMemory?: string;
   /**
    * This turn carries out a plan the user just approved, so it is expected to
    * WRITE. Switches the prompt out of plan mode and arms the gate that catches
@@ -227,6 +229,7 @@ const {
   promptProfile,
   workspaceRules,
   userMemory,
+  projectMemory,
   contextWindowOverride,
   executeMandate,
   resumeTranscript,
@@ -678,16 +681,46 @@ const TOOL_DEFS = [
     function: {
       name: 'save_memory',
       description:
-        'Remember one lasting fact about this user (preference, working style, team convention) for future chats. Same name updates it; forget:true removes it. Not for one-off task details, code facts, Knowledge content or secrets.',
+        'Remember one lasting fact for future chats. scope "user" (default): about this person — preference, working style. scope "project": about this repository or team — a convention, a decision and its reason, where something lives; kept per repository and listed by name in what you know about this project. Same name updates it; forget:true removes it. Not for one-off task details, Knowledge content copied wholesale, or secrets.',
       parameters: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Short label, e.g. "package-manager".' },
-          kind: { type: 'string', enum: ['preference', 'style', 'context'] },
-          text: { type: 'string', description: 'The fact, one sentence, under 200 chars.' },
+          scope: { type: 'string', enum: ['user', 'project'], description: 'Default "user".' },
+          kind: {
+            type: 'string',
+            enum: ['preference', 'style', 'context', 'convention', 'reference', 'decision'],
+            description: 'user: preference | style | context. project: preference | convention | reference | decision.',
+          },
+          text: { type: 'string', description: 'user: one sentence, under 200 chars. project: the note, under 4,000 chars.' },
+          description: { type: 'string', description: 'project only: one line shown in the index, under 150 chars.' },
+          source: {
+            type: 'object',
+            description: 'project only: where the fact came from.',
+            properties: {
+              type: { type: 'string', enum: ['confluence', 'ado', 'jira', 'file', 'run'] },
+              id: { type: 'string', description: 'Page id, work item id, issue key, file path, or run id.' },
+              version: { type: 'string', description: 'Page version or commit, when known.' },
+            },
+            required: ['type', 'id'],
+          },
           forget: { type: 'boolean' },
         },
         required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_memory',
+      description:
+        'Read one project memory note in full, by its name from the project memory index. With no name, returns the whole index.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'The topic name, e.g. "release-branching".' },
+        },
       },
     },
   },
@@ -1736,6 +1769,7 @@ async function generateResponse(): Promise<void> {
         promptProfile,
         workspaceRules,
         userMemory,
+        projectMemory,
         textAttachments,
         imageAttachmentNames: imageAttachments?.map((img) => img.name),
         mentionedFiles,

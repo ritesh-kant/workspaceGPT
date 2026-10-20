@@ -190,7 +190,9 @@ export const MESSAGE_TYPES = {
   IMPORT_PROGRESS: 'import-progress',
   IMPORT_RESULT: 'import-result',
   // Settings → Memory. host: MEMORY_GET / MEMORY_SAVE {name,kind,text} / MEMORY_DELETE {name}
-  // / MEMORY_CLEAR / MEMORY_SET_ENABLED {enabled}, every one answered by MEMORY_STATE {enabled, entries}.
+  // / MEMORY_CLEAR / MEMORY_SET_ENABLED {enabled}, every one answered by MEMORY_STATE {enabled, entries,
+  // project: {folder, entries} | null}. SAVE / DELETE / CLEAR with scope:'project' act on the open folder's
+  // project memory instead (SAVE also takes description, source).
   MEMORY_GET: 'memory-get',
   MEMORY_SAVE: 'memory-save',
   MEMORY_DELETE: 'memory-delete',

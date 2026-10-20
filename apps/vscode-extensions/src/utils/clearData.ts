@@ -15,6 +15,8 @@ const STORAGE_DIRECTORIES = [
   // indexes, but the conversations are the user's own work.
   'checkpoints',
   'agent-resume',
+  // Project memory (services/agent/projectMemory.ts) — wiped with user memory, which lives in globalState.
+  'memory',
 ];
 
 const STORAGE_FILES = ['agent-actions.jsonl', 'deployment-runs.jsonl', 'import-log.json'];
