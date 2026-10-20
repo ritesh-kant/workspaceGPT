@@ -121,6 +121,7 @@ import { BROWSER_CHANGE_TOOL_NAMES } from '../workers/model/toolScope';
 import { isControlChromeEnabled } from './browser/browserPrefs';
 import { loadWorkspaceRules } from './agent/rulesFiles';
 import { memoryEnabled, rememberChoice, saveMemory, userMemoryBlock } from './agent/userMemory';
+import { projectMemoryBlock, projectMemoryDir, readProjectMemory, saveProjectMemory } from './agent/projectMemory';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
 import { addCreditTally, creditTallyForCall, CreditTally, emptyCreditTally } from '../utils/creditTally';
@@ -911,6 +912,22 @@ export class ChatService {
     if (run.worker || run.chatHistory.length) return false;
     run.workspaceFolder = folder;
     return true;
+  }
+
+  /** Project memory for the repository the session's first root belongs to (projectMemory.ts). */
+  private projectMemoryDirFor(roots: NamedRoot[]): string | undefined {
+    const folder = roots[0]?.uri.fsPath;
+    if (!folder) return undefined;
+    try {
+      return projectMemoryDir(this.context.globalStorageUri.fsPath, folder);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async projectMemoryBlockFor(roots: NamedRoot[]): Promise<string | undefined> {
+    const dir = this.projectMemoryDirFor(roots);
+    return dir ? projectMemoryBlock(dir).catch(() => undefined) : undefined;
   }
 
   /** The folder this chat works in, if it has one yet. */
@@ -1880,8 +1897,15 @@ export class ChatService {
         return this.findConfluenceLocation(args);
       case 'ask_user':
         return this.askUser(run, args);
-      case 'save_memory':
-        return saveMemory(this.context.globalState, args);
+      case 'save_memory': {
+        if (args?.scope !== 'project') return saveMemory(this.context.globalState, args);
+        const dir = this.projectMemoryDirFor(roots);
+        return dir ? saveProjectMemory(dir, args) : { ok: false, message: 'Project memory needs a folder open. Save it with scope "user" instead, or skip it.' };
+      }
+      case 'read_memory': {
+        const dir = this.projectMemoryDirFor(roots);
+        return dir ? readProjectMemory(dir, args?.name) : { ok: false, message: 'No folder is open, so there is no project memory.' };
+      }
       case 'search_web':
         return searchWeb(this.context, args, (message) => this.postStatus(run, message));
       case 'browser_list_tabs':
@@ -2824,7 +2848,13 @@ export class ChatService {
       case 'find_confluence_location':
         return { kind: 'search', title: 'Looked for a place in Confluence for', detail: String(args?.title ?? '') };
       case 'save_memory':
-        return { kind: 'info', title: args?.forget ? 'Forgot from memory' : 'Saved to memory', detail: String(args?.text ?? args?.name ?? '').slice(0, 90) };
+        return {
+          kind: 'info',
+          title: `${args?.forget ? 'Forgot from' : 'Saved to'} ${args?.scope === 'project' ? 'project memory' : 'memory'}`,
+          detail: String((args?.scope === 'project' ? args?.description : undefined) ?? args?.text ?? args?.name ?? '').slice(0, 90),
+        };
+      case 'read_memory':
+        return { kind: 'read', title: 'Read project memory', detail: String(args?.name ?? 'index') };
       case 'ask_user':
         return { kind: 'info', title: 'Asked you', detail: normalizeQuestions(args).map((q) => q.header || q.question).join(' · ') };
       case 'search_web':
@@ -3077,6 +3107,8 @@ export class ChatService {
         return 'Waiting for your answer…';
       case 'save_memory':
         return 'Saving to memory...';
+      case 'read_memory':
+        return 'Reading project memory...';
       case 'search_web':
         return `Searching the web for "${args?.query ?? ''}"...`;
       case 'add_probe':
@@ -3484,6 +3516,11 @@ Query: "${query}"`;
             ? [loadWorkspaceRules(codebaseRoots), verificationRecipesBlock(this.context)].filter(Boolean).join('\n\n') || undefined
             : undefined,
           userMemory: memoryEnabled(this.context.globalState) ? userMemoryBlock(this.context.globalState) : undefined,
+          // Read once here, at run start: saves later in the run must not change the cached prompt prefix.
+          projectMemory:
+            memoryEnabled(this.context.globalState) && codebaseRoots?.length
+              ? await this.projectMemoryBlockFor(codebaseRoots)
+              : undefined,
           executeMandate,
           resumeTranscript,
           ticketContext: ticketContext ? toTicketPromptContext(ticketContext) : undefined,

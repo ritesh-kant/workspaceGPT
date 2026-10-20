@@ -6,6 +6,7 @@ import { AnalyticsService } from '../services/analyticsService';
 import { installMcpServer } from '../utils/mcpInstaller';
 import { isMcpInstalled } from '../utils/mcpStatusChecker';
 import { clearMemories, listMemories, memoryEnabled, saveMemory, setMemoryEnabled } from '../services/agent/userMemory';
+import { clearProjectMemories, listProjectMemories, projectMemoryDir, saveProjectMemory } from '../services/agent/projectMemory';
 import { syncContextKeys } from '../utils/syncContextKeys';
 import { preserveHostOwnedSyncFields } from '../utils/syncStateStore';
 
@@ -91,17 +92,34 @@ export class SystemMessageHandler {
     const store = this.context.globalState;
     // A refused save (e.g. text that looks like a credential) says why, instead of silently snapping back.
     let error: string | undefined;
-    if (data.type === MESSAGE_TYPES.MEMORY_SAVE) {
-      const result = await saveMemory(store, data);
-      if (!result.ok) error = result.message;
+    // `scope: 'project'` routes the same messages to the open folder's project memory (projectMemory.ts).
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    let projectDir: string | undefined;
+    try {
+      projectDir = folder ? projectMemoryDir(this.context.globalStorageUri.fsPath, folder) : undefined;
+    } catch {
+      projectDir = undefined;
     }
-    if (data.type === MESSAGE_TYPES.MEMORY_DELETE) await saveMemory(store, { name: data.name, forget: true });
-    else if (data.type === MESSAGE_TYPES.MEMORY_CLEAR) await clearMemories(store);
-    else if (data.type === MESSAGE_TYPES.MEMORY_SET_ENABLED) await setMemoryEnabled(store, !!data.enabled);
+    if (data.scope === 'project') {
+      if (projectDir && data.type === MESSAGE_TYPES.MEMORY_SAVE) {
+        const result = await saveProjectMemory(projectDir, data);
+        if (!result.ok) error = result.message;
+      } else if (projectDir && data.type === MESSAGE_TYPES.MEMORY_DELETE) await saveProjectMemory(projectDir, { name: data.name, forget: true });
+      else if (projectDir && data.type === MESSAGE_TYPES.MEMORY_CLEAR) await clearProjectMemories(projectDir);
+    } else {
+      if (data.type === MESSAGE_TYPES.MEMORY_SAVE) {
+        const result = await saveMemory(store, data);
+        if (!result.ok) error = result.message;
+      }
+      if (data.type === MESSAGE_TYPES.MEMORY_DELETE) await saveMemory(store, { name: data.name, forget: true });
+      else if (data.type === MESSAGE_TYPES.MEMORY_CLEAR) await clearMemories(store);
+    }
+    if (data.type === MESSAGE_TYPES.MEMORY_SET_ENABLED) await setMemoryEnabled(store, !!data.enabled);
     this.webviewView.webview.postMessage({
       type: MESSAGE_TYPES.MEMORY_STATE,
       enabled: memoryEnabled(store),
       entries: listMemories(store),
+      project: projectDir ? { folder, entries: await listProjectMemories(projectDir) } : null,
       ...(error && { error }),
     });
   }

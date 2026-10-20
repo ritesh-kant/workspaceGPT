@@ -28,7 +28,7 @@ export interface ToolAvailability {
   browserReadOnly?: boolean;
   /** A code host (GitHub, GitLab, Bitbucket) is connected: `list_prs`, `get_pr`, `get_repo_issue`. */
   codeHost?: boolean;
-  /** User memory is switched on (Settings → Memory): offers `save_memory`. */
+  /** User memory is switched on (Settings → Memory): offers `save_memory` and `read_memory`. */
   memory?: boolean;
   /** This is a Debug-mode run (a Bug ticket being worked, or the user chose Debug): offers the probe, ledger and counterfactual tools. */
   debug?: boolean;
@@ -65,6 +65,7 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   update_confluence_page: 'confluence',
   create_confluence_page: 'confluence',
   save_memory: 'memory',
+  read_memory: 'memory',
   list_prs: 'codeHost',
   get_pr: 'codeHost',
   get_repo_issue: 'codeHost',
