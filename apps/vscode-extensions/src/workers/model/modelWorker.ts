@@ -1953,7 +1953,7 @@ async function generateWithOpenAIStream(
  * soon as its response arrives, since several tool calls happen sequentially
  * within the same worker lifetime.
  */
-function requestTool(name: string, args: unknown, id: string = randomUUID()): Promise<unknown> {
+function requestTool(name: string, args: unknown, id: string = randomUUID(), modelFacing = false): Promise<unknown> {
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const handler = (msg: any) => {
@@ -1964,7 +1964,9 @@ function requestTool(name: string, args: unknown, id: string = randomUUID()): Pr
       }
     };
     parentPort?.on('message', handler);
-    parentPort?.postMessage({ type: 'tool_request', id, name, arguments: args });
+    // modelFacing: the model sees this result as-is, so the host may attach the
+    // folder's AGENTS.md / CLAUDE.md to it (once per run). Internal reads must not.
+    parentPort?.postMessage({ type: 'tool_request', id, name, arguments: args, modelFacing });
   });
 }
 
@@ -3751,7 +3753,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
             parentPort?.postMessage({ type: 'tool_status', id: transportId, name: 'read_file', arguments: { path, auto: true } });
             let result: unknown;
             try {
-              result = await requestTool('read_file', { path }, transportId);
+              result = await requestTool('read_file', { path }, transportId, true);
               readPaths.add(normPath(path));
             } catch (e) {
               result = { error: e instanceof Error ? e.message : String(e) };
@@ -4205,7 +4207,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         };
       }
       try {
-        const result = await requestTool(tc.name, parsedArgs, transportId);
+        const result = await requestTool(tc.name, parsedArgs, transportId, true);
         if (tc.name === 'read_file' || tc.name === 'create_file') {
           const p = normPath((parsedArgs as { path?: unknown } | null)?.path);
           if (p) readPaths.add(p);

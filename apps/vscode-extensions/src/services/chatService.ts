@@ -119,7 +119,7 @@ import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgrou
 import { browserRequest, isBrowserConnected, isPanelSession } from './browser/browserBridge';
 import { BROWSER_CHANGE_TOOL_NAMES } from '../workers/model/toolScope';
 import { isControlChromeEnabled } from './browser/browserPrefs';
-import { loadWorkspaceRules } from './agent/rulesFiles';
+import { loadWorkspaceRules, newSubfolderRulesState, SUBFOLDER_RULES_TOOLS, subfolderRulesFor, SubfolderRulesState } from './agent/rulesFiles';
 import { memoryEnabled, rememberChoice, saveMemory, userMemoryBlock } from './agent/userMemory';
 import { projectMemoryBlock, projectMemoryDir, readProjectMemory, saveProjectMemory } from './agent/projectMemory';
 import { searchWeb } from './webSearchTool';
@@ -383,6 +383,8 @@ interface SessionRun {
    * and re-learning it costs one call instead of nine.
    */
   missingExecutables: Map<string, string>;
+  /** Subfolder AGENTS.md / CLAUDE.md this turn's tool results have already carried (rulesFiles.ts). */
+  subfolderRules: SubfolderRulesState;
   /**
    * Click-to-run mode for the CURRENT turn: file writes and allowlisted
    * test/build commands apply without a review card (still checkpointed and
@@ -786,6 +788,7 @@ export class ChatService {
         checkInFlight: new Map(),
         checkRuns: new Map(),
         missingExecutables: new Map(),
+        subfolderRules: newSubfolderRulesState(),
         autonomous: false,
         permission: 'manual',
         planMode: false,
@@ -1076,6 +1079,7 @@ export class ChatService {
       // A promise left here would be against the previous turn's tree.
       run.checkInFlight.clear();
       run.missingExecutables.clear();
+      run.subfolderRules = newSubfolderRulesState();
 
       const mode = getMode(this.context);
 
@@ -3766,6 +3770,8 @@ Query: "${query}"`;
             id?: string;
             name?: string;
             arguments?: any;
+            /** tool_request: the model reads this result itself (not a worker-internal call). */
+            modelFacing?: boolean;
             ms?: number;
             sessionInvalid?: boolean;
             /** slow_model: observed seconds per completion and the trimmed iteration cap. */
@@ -3926,7 +3932,13 @@ Query: "${query}"`;
                       summary: done.summary,
                       meta: done.meta,
                     });
-                    modelWorker.postMessage({ type: 'tool_response', id: result.id, result: toolResult });
+                    // First touch of a folder with its own AGENTS.md / CLAUDE.md: hand it over
+                    // on this result, ahead of the payload so truncation cannot cut it.
+                    const folderRules =
+                      result.modelFacing && SUBFOLDER_RULES_TOOLS.has(result.name!) && toolResult && typeof toolResult === 'object' && !Array.isArray(toolResult) && !(toolResult as { error?: unknown }).error
+                        ? subfolderRulesFor(codebaseRoots ?? [], result.arguments?.path, result.name === 'list_directory', run.subfolderRules)
+                        : undefined;
+                    modelWorker.postMessage({ type: 'tool_response', id: result.id, result: folderRules ? { folderRules, ...(toolResult as object) } : toolResult });
                   })
                   .catch((err) => {
                     const message = err instanceof Error ? err.message : String(err);
