@@ -17,7 +17,10 @@ routinely reach 90%, build it.
 
 ## Automatic context compaction (summarize-and-continue)
 
-**Status:** deliberately not built. Deferred by Ritesh, 2026-09-05.
+**Status:** built 2026-10-20 (`src/workers/model/conversationCompaction.ts`, mock-tested
+only). Agent runs summarize at `COMPACT_AT_PCT` and keep the first message plus a
+~20k-token tail. Chats summarize history past the 48k-char trim. What still needs a
+live long run is listed in the commit message. The text below is the original brief.
 
 **Why it is wanted:** the agent loop no longer has a turn cap — a run is bounded
 by the context window instead (`src/workers/model/contextBudget.ts`), which is

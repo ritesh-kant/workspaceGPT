@@ -96,7 +96,7 @@ import { detectJiraKey, detectTicketId } from 'src/utils/ticketDetection';
 import { detectConfluenceUrls } from 'src/utils/confluenceUrlDetection';
 import { decideTurnRouting } from 'src/utils/turnRouting';
 import { TicketPromptContext } from 'src/utils/promptTemplates';
-import { formatModelHistory } from 'src/utils/chatHistory';
+import { formatModelHistory, HistorySummary, planHistoryCompaction, validHistorySummary } from 'src/utils/chatHistory';
 import { classifyIntentWithJev } from './jevIntentClassifier';
 import { PERMISSION_SEEKING_RE, PREMATURE_AMBIGUITY_RE, hasWriteIntent, IMPLEMENT_MANDATE_RE, SPIKE_TERMINAL_RE } from 'src/workers/model/answerGates';
 import { logPromptCall } from 'src/workers/model/promptTokenDebug';
@@ -288,6 +288,8 @@ interface SessionRun {
    */
   workspaceFolder?: string;
   chatHistory: ChatMessage[];
+  /** Summary of this chat's older turns, written by the worker when they stopped fitting (chatHistory.ts). */
+  historySummary?: HistorySummary;
   worker: Worker | null;
   reject: ((reason?: any) => void) | null;
   /** Human-approval gate for this session's agent write tools. */
@@ -1906,6 +1908,18 @@ export class ChatService {
         const dir = this.projectMemoryDirFor(roots);
         return dir ? readProjectMemory(dir, args?.name) : { ok: false, message: 'No folder is open, so there is no project memory.' };
       }
+      case 'memory_context':
+        // Not a model tool: the worker re-reads these after compacting its
+        // conversation (conversationCompaction.ts). Same blocks, same gates as
+        // the run-start snapshot in generateModelResponse.
+        return {
+          workspaceRules: roots.length
+            ? [loadWorkspaceRules(roots), verificationRecipesBlock(this.context)].filter(Boolean).join('\n\n') || undefined
+            : undefined,
+          userMemory: memoryEnabled(this.context.globalState) ? userMemoryBlock(this.context.globalState) : undefined,
+          projectMemory:
+            memoryEnabled(this.context.globalState) && roots.length ? await this.projectMemoryBlockFor(roots) : undefined,
+        };
       case 'search_web':
         return searchWeb(this.context, args, (message) => this.postStatus(run, message));
       case 'browser_list_tabs':
@@ -2861,6 +2875,8 @@ export class ChatService {
         return { kind: 'search', title: 'Searched the web', detail: args?.query ?? '' };
       case 'explore':
         return { kind: 'search', title: 'Investigated', detail: String(args?.question ?? '').slice(0, 90) };
+      case 'compact_conversation':
+        return { kind: 'info', title: 'Compacted conversation' };
       case 'explore_codebase':
         // The pre-loop exploration phase (not a tool the model calls); its
         // label is the explorer's own "Exploring <area>…".
@@ -3065,6 +3081,8 @@ export class ChatService {
         return `Investigating: ${String(args?.question ?? '').slice(0, 60)}...`;
       case 'explore_codebase':
         return String(args?.label ?? 'Scouting the codebase…');
+      case 'compact_conversation':
+        return 'Compacting conversation…';
       case 'read_file':
         return `Reading ${args?.path ?? 'file'}...`;
       case 'list_directory':
@@ -3415,7 +3433,12 @@ Query: "${query}"`;
       // carries as the User Question — formatting it here too sent it twice.
       const priorHistory =
         run.chatHistory[run.chatHistory.length - 1]?.role === 'user' ? run.chatHistory.slice(0, -1) : run.chatHistory;
-      const formattedChatHistory = formatModelHistory(priorHistory);
+      // Older turns past the trim cap are summarized by the worker rather than
+      // omitted; the summary is kept on the run and reused until the turns
+      // after it no longer fit either. formattedChatHistory is the fallback.
+      const historySummary = validHistorySummary(priorHistory, run.historySummary);
+      const historyPlan = planHistoryCompaction(priorHistory, historySummary);
+      const formattedChatHistory = formatModelHistory(priorHistory, historySummary);
 
       // Give codebase turns an upfront map of the workspace (file tree +
       // README head) so the model doesn't burn its first tool-call rounds on
@@ -3521,6 +3544,7 @@ Query: "${query}"`;
             memoryEnabled(this.context.globalState) && codebaseRoots?.length
               ? await this.projectMemoryBlockFor(codebaseRoots)
               : undefined,
+          chatHistoryCompaction: historyPlan ? { ...historyPlan, tail: priorHistory.slice(historyPlan.covers) } : undefined,
           executeMandate,
           resumeTranscript,
           ticketContext: ticketContext ? toTicketPromptContext(ticketContext) : undefined,
@@ -3804,6 +3828,18 @@ Query: "${query}"`;
             /** 'tool_step_update' only: new status + one-line summary for an existing step. */
             stepStatus?: 'running' | 'done' | 'error';
             summary?: string;
+            /** history_compacted: the summary of the chat's older turns, kept for later turns. */
+            historySummary?: HistorySummary;
+            /** compacted: counts only (conversationCompaction.ts). */
+            ok?: boolean;
+            scope?: string;
+            messagesBefore?: number;
+            messagesAfter?: number;
+            messagesSummarized?: number;
+            keptTailMessages?: number;
+            summaryChars?: number;
+            usedPctBefore?: number;
+            usedPctAfter?: number;
           }) => {
             armStallTimer();
             switch (result.type) {
@@ -4010,6 +4046,25 @@ Query: "${query}"`;
                 });
                 break;
               }
+
+              case 'history_compacted':
+                if (result.historySummary) run.historySummary = result.historySummary;
+                break;
+
+              case 'compacted':
+                // Counts only, never the summary or any message text.
+                this.analyticsService?.trackEvent('conversation_compacted', {
+                  ok: !!result.ok,
+                  scope: result.scope === 'chat' ? 'chat' : 'run',
+                  messagesBefore: result.messagesBefore ?? 0,
+                  messagesAfter: result.messagesAfter ?? 0,
+                  messagesSummarized: result.messagesSummarized ?? 0,
+                  keptTailMessages: result.keptTailMessages ?? 0,
+                  summaryChars: result.summaryChars ?? 0,
+                  usedPctBefore: result.usedPctBefore ?? 0,
+                  usedPctAfter: result.usedPctAfter ?? 0,
+                });
+                break;
 
               case 'context':
                 // Live context-window occupancy, measured by the provider.

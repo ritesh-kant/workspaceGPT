@@ -11,10 +11,9 @@
  * is what the loop watches instead — a bound that means something, and one the
  * user can see (the composer's context meter).
  *
- * NOTE: automatic summarizing compaction — which would let a run continue past
- * a full context the way Claude Code does — is deliberately NOT built yet (see
- * docs/todo.md). Until it is, a full context genuinely ends a run. That is still a
- * far later and far more honest stop than the turn cap it replaced.
+ * At COMPACT_AT_PCT the run summarizes its conversation and continues, the
+ * way Claude Code does (conversationCompaction.ts). A context that is still
+ * full after that genuinely ends a run.
  *
  * The number it watches is measured, not guessed: every completion response
  * carries `usage.prompt_tokens`, which is the provider's own count of what the
@@ -125,7 +124,7 @@ export function observedWindowFloor(assumed: number, observedPromptTokens: numbe
  * The share of the window past which the run is in its endgame: room is
  * running out, so it should stop opening new lines of enquiry. Today this
  * drives the meter's warning tone and (via `exhausted`) the convergence
- * narrowing; when compaction lands it becomes the trigger to summarize.
+ * narrowing, and it is the trigger to summarize (conversationCompaction.ts).
  */
 export const COMPACT_AT_PCT = 0.75;
 

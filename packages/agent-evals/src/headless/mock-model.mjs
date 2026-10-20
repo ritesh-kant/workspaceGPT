@@ -27,6 +27,17 @@ const EXPLORER_PREAMBLE_RE = /You are a code-reading assistant/;
 const EXPLORER_DEFAULT = '{"claims":[],"entryPoints":[],"unknowns":["scripted run: no preliminary scan"]}';
 
 /**
+ * Summarize-and-continue compaction asks for its summary in a tool-less
+ * request ending on this marker (conversationCompaction.ts). Served from the
+ * `compact` script, so it never consumes a main-loop turn.
+ */
+const COMPACTION_RE = /CONTEXT CHECKPOINT/;
+const COMPACT_DEFAULT =
+  '1. **User requests and intent**: scripted run.\n2. **Key decisions**: none.\n3. **Files touched**: none.\n' +
+  '4. **Errors and fixes**: none.\n5. **Knowledge references**: none.\n6. **Pending tasks and current step**: ' +
+  'continue the scripted task from where it stopped; this summary is padded so it reads as a real handoff.';
+
+/**
  * `fail` lets a test play a provider that REFUSES a request rather than
  * answering it: it is handed the parsed body and returns `{ status, body }` to
  * reject with, or null/undefined to serve the script as usual. A rejection
@@ -34,8 +45,8 @@ const EXPLORER_DEFAULT = '{"claims":[],"entryPoints":[],"unknowns":["scripted ru
  * the failed attempt would have had — which is what makes a strip-and-retry
  * assertable end to end.
  */
-export function startMockModel({ main = [], explore = [], onRequest, fail } = {}) {
-  const state = { mainIndex: 0, exploreIndex: 0, preloopCalls: 0, requests: [] };
+export function startMockModel({ main = [], explore = [], compact = [], onRequest, fail } = {}) {
+  const state = { mainIndex: 0, exploreIndex: 0, compactIndex: 0, preloopCalls: 0, requests: [] };
 
   const nextFrom = (script, index) => (index < script.length ? script[index] : script[script.length - 1]);
 
@@ -56,6 +67,8 @@ export function startMockModel({ main = [], explore = [], onRequest, fail } = {}
       const systemText = String((parsed.messages ?? []).find((m) => m?.role === 'system')?.content ?? '');
       const isPreloopExplorer = withoutTools && EXPLORER_PREAMBLE_RE.test(systemText);
       if (isPreloopExplorer) state.preloopCalls++;
+      const lastMessage = (parsed.messages ?? [])[(parsed.messages ?? []).length - 1];
+      const isCompaction = withoutTools && COMPACTION_RE.test(String(lastMessage?.content ?? ''));
 
       const rejection = fail?.(parsed);
       if (rejection) {
@@ -66,6 +79,7 @@ export function startMockModel({ main = [], explore = [], onRequest, fail } = {}
           toolCount: toolNames.length,
           toolNames,
           messages: parsed.messages ?? [],
+          compaction: isCompaction,
           rejectedWith: rejection.status,
         });
         onRequest?.(state.requests[state.requests.length - 1]);
@@ -76,6 +90,8 @@ export function startMockModel({ main = [], explore = [], onRequest, fail } = {}
 
       const turn = isPreloopExplorer
         ? { finalContent: EXPLORER_DEFAULT }
+        : isCompaction
+          ? compact.length ? nextFrom(compact, state.compactIndex++) : { finalContent: COMPACT_DEFAULT }
         : isSubAgent
           ? nextFrom(explore, state.exploreIndex++)
           : nextFrom(main, state.mainIndex++);
@@ -87,6 +103,7 @@ export function startMockModel({ main = [], explore = [], onRequest, fail } = {}
         toolCount: toolNames.length,
         toolNames,
         messages: parsed.messages ?? [],
+        compaction: isCompaction,
       });
       onRequest?.(state.requests[state.requests.length - 1]);
 
