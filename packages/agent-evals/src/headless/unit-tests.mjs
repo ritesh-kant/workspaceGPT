@@ -24,7 +24,7 @@ const outDir = await buildUnits();
 const writeTools = await import(path.join(outDir, 'agentWriteTools.mjs'));
 const commandTools = await import(path.join(outDir, 'commandTools.mjs'));
 const { CheckpointService } = await import(path.join(outDir, 'checkpointService.mjs'));
-const { loadWorkspaceRules } = await import(path.join(outDir, 'rulesFiles.mjs'));
+const { loadWorkspaceRules, subfolderRulesFor, newSubfolderRulesState, MAX_PER_FILE_CHARS, MAX_TOTAL_CHARS } = await import(path.join(outDir, 'rulesFiles.mjs'));
 const { detectTicketId, detectJiraKey } = await import(path.join(outDir, 'ticketDetection.mjs'));
 const jiraAdf = await import(path.join(outDir, 'adf.mjs'));
 const { extractSearchTerms, termWeight, scout } = await import(path.join(outDir, 'explorationPhase.mjs'));
@@ -525,14 +525,97 @@ console.log('\nrulesFiles (precedence + caps)');
     assert.match(merged, /CURSOR RULES/);
   });
   await t('huge file clipped at per-file cap', () => {
-    const ws = tempWorkspace({ 'CLAUDE.md': 'R'.repeat(10_000) });
+    const ws = tempWorkspace({ 'CLAUDE.md': 'R'.repeat(20_000) });
     const merged = loadWorkspaceRules(rootsFor(ws));
-    assert.ok(merged.length < 5_000);
+    assert.strictEqual(MAX_PER_FILE_CHARS, 8_000);
+    assert.ok(merged.length > 7_500 && merged.length < MAX_PER_FILE_CHARS + 200, `length ${merged.length}`);
     assert.match(merged, /truncated/);
   });
   await t('no rules files → undefined', () => {
     const ws = tempWorkspace({ 'src/x.ts': 'x' });
     assert.strictEqual(loadWorkspaceRules(rootsFor(ws)), undefined);
+  });
+  await t('multi-root: every root contributes, labelled, in root order', () => {
+    const a = tempWorkspace({ 'AGENTS.md': 'ALPHA RULES' });
+    const empty = tempWorkspace({ 'src/x.ts': 'x' });
+    const b = tempWorkspace({ 'CLAUDE.md': 'BETA RULES' });
+    const roots = [
+      { name: 'alpha', uri: { fsPath: a } },
+      { name: 'empty', uri: { fsPath: empty } },
+      { name: 'beta', uri: { fsPath: b } },
+    ];
+    const merged = loadWorkspaceRules(roots);
+    const ia = merged.indexOf('Folder `alpha`');
+    const ib = merged.indexOf('Folder `beta`');
+    assert.ok(ia >= 0 && ib > ia, 'alpha labelled before beta');
+    assert.ok(merged.indexOf('ALPHA RULES') > ia && merged.indexOf('ALPHA RULES') < ib);
+    assert.ok(merged.indexOf('BETA RULES') > ib);
+    assert.ok(!merged.includes('Folder `empty`'), 'a root with no rules gets no label');
+    assert.strictEqual(loadWorkspaceRules(roots), merged, 'deterministic');
+  });
+  await t('total cap ~32 KB across roots; later roots clip, then drop', () => {
+    const roots = [1, 2, 3, 4, 5, 6].map((n) => ({ name: `r${'abcdef'[n - 1]}`, uri: { fsPath: tempWorkspace({ 'AGENTS.md': String(n).repeat(20_000) }) } }));
+    const merged = loadWorkspaceRules(roots);
+    const ruleChars = merged.replace(/[^1-6]/g, '').length;
+    assert.ok(ruleChars <= MAX_TOTAL_CHARS && ruleChars >= MAX_TOTAL_CHARS - 100, `rule chars ${ruleChars}`);
+    assert.ok(merged.includes('1'.repeat(MAX_PER_FILE_CHARS)) && !merged.includes('1'.repeat(MAX_PER_FILE_CHARS + 1)), 'per-file cap still applies');
+    assert.ok(!merged.includes('Folder `re`') && !merged.includes('Folder `rf`'), 'budget spent by r4');
+  });
+}
+
+console.log('\nrulesFiles (subfolder AGENTS.md / CLAUDE.md, lazy)');
+{
+  const ws = tempWorkspace({
+    'AGENTS.md': 'ROOT RULES',
+    'pkg/AGENTS.md': 'PKG RULES',
+    'pkg/api/CLAUDE.md': 'API RULES',
+    'pkg/api/AGENTS.md': 'API AGENTS',
+    'pkg/api/handler.ts': 'x',
+    'pkg/util.ts': 'x',
+    'other/x.ts': 'x',
+  });
+  const roots = rootsFor(ws);
+  await t('first touch: every folder between root and file, outermost first, root excluded', () => {
+    const st = newSubfolderRulesState();
+    const r = subfolderRulesFor(roots, 'pkg/api/handler.ts', false, st);
+    assert.ok(!r.includes('ROOT RULES'), 'root rules are already in the prompt');
+    const ip = r.indexOf('PKG RULES');
+    const ia = r.indexOf('API AGENTS');
+    const ic = r.indexOf('API RULES');
+    assert.ok(ip >= 0 && ia > ip && ic > ia, 'pkg before pkg/api; AGENTS.md before CLAUDE.md');
+    assert.match(r, /From `pkg\/AGENTS\.md` \(applies to files under `pkg\/`/);
+    assert.match(r, /From `pkg\/api\/CLAUDE\.md`/);
+  });
+  await t('once per run: a second touch under the same folders adds nothing', () => {
+    const st = newSubfolderRulesState();
+    assert.ok(subfolderRulesFor(roots, 'pkg/util.ts', false, st).includes('PKG RULES'));
+    const deeper = subfolderRulesFor(roots, 'pkg/api/handler.ts', false, st);
+    assert.ok(deeper.includes('API RULES') && !deeper.includes('PKG RULES'), 'only the new folder');
+    assert.strictEqual(subfolderRulesFor(roots, 'pkg/api/handler.ts', false, st), undefined);
+    assert.strictEqual(subfolderRulesFor(roots, './pkg/util.ts', false, st), undefined);
+    assert.ok(subfolderRulesFor(roots, 'pkg/util.ts', false, newSubfolderRulesState()).includes('PKG RULES'), 'a new run loads again');
+  });
+  await t('list_directory of the folder itself loads its rules; root-level and outside paths load none', () => {
+    const st = newSubfolderRulesState();
+    assert.ok(subfolderRulesFor(roots, 'pkg', true, st).includes('PKG RULES'));
+    assert.strictEqual(subfolderRulesFor(roots, 'pkg', false, newSubfolderRulesState()), undefined, 'a FILE named pkg sits in the root');
+    assert.strictEqual(subfolderRulesFor(roots, 'README.md', false, newSubfolderRulesState()), undefined);
+    assert.strictEqual(subfolderRulesFor(roots, 'other/x.ts', false, newSubfolderRulesState()), undefined);
+    assert.strictEqual(subfolderRulesFor(roots, '../escape/x.ts', false, newSubfolderRulesState()), undefined);
+    assert.strictEqual(subfolderRulesFor(roots, undefined, false, newSubfolderRulesState()), undefined);
+  });
+  await t('multi-root: root-prefixed path resolves to that root and is labelled with it', () => {
+    const second = tempWorkspace({ 'svc/AGENTS.md': 'SVC RULES', 'svc/main.go': 'x' });
+    const two = [{ name: 'web', uri: { fsPath: ws } }, { name: 'backend', uri: { fsPath: second } }];
+    const r = subfolderRulesFor(two, 'backend/svc/main.go', false, newSubfolderRulesState());
+    assert.match(r, /From `backend\/svc\/AGENTS\.md`/);
+    assert.ok(r.includes('SVC RULES'));
+  });
+  await t('subfolder files keep the per-file cap', () => {
+    const big = tempWorkspace({ 'deep/AGENTS.md': 'Z'.repeat(20_000) });
+    const r = subfolderRulesFor(rootsFor(big), 'deep/x.ts', false, newSubfolderRulesState());
+    assert.ok(r.includes('Z'.repeat(MAX_PER_FILE_CHARS)) && !r.includes('Z'.repeat(MAX_PER_FILE_CHARS + 1)));
+    assert.match(r, /truncated/);
   });
 }
 
