@@ -45,6 +45,22 @@ import {
   resolveContextWindow,
 } from './contextBudget';
 import { contextBreakdown } from './contextBreakdown';
+import { formatModelHistory, historyCompactionInput, HistoryCompactionPlan, ModelHistoryMessage } from '../../utils/chatHistory';
+import {
+  CHAT_HISTORY_COMPACTION_REQUEST,
+  COMPACTION_REQUEST,
+  COMPACT_SUMMARY_MAX_TOKENS,
+  RECENT_TAIL_TOKENS,
+  SUMMARY_PREFIX,
+  PromptContextBlocks,
+  buildSummaryMessage,
+  canSummarize,
+  changedContextBlock,
+  estimateTokens,
+  isUsableSummary,
+  knowledgeRefsFromToolCalls,
+  recentTailStart,
+} from './conversationCompaction';
 import {
   COMMIT_NARROWED_NOTICE,
   DISCOVERY_TOOL_NAMES,
@@ -119,6 +135,12 @@ interface WorkerData {
   userMemory?: string;
   /** Project memory index block (services/agent/projectMemory.ts), snapshotted at run start. */
   projectMemory?: string;
+  /**
+   * The older chat history no longer fits the trim cap (chatHistory.ts
+   * planHistoryCompaction): summarize it with this run's model instead of
+   * omitting it. `chatHistory` above is the trimmed fallback if that fails.
+   */
+  chatHistoryCompaction?: HistoryCompactionPlan & { tail: ModelHistoryMessage[] };
   /**
    * This turn carries out a plan the user just approved, so it is expected to
    * WRITE. Switches the prompt out of plan mode and arms the gate that catches
@@ -230,6 +252,7 @@ const {
   workspaceRules,
   userMemory,
   projectMemory,
+  chatHistoryCompaction,
   contextWindowOverride,
   executeMandate,
   resumeTranscript,
@@ -1750,11 +1773,14 @@ async function generateResponse(): Promise<void> {
     // the agent loop's tool turns, and the exploration phase's explorers) is
     // handed this value.
     const resolvedModelId = normalizeModelId(modelId);
+    const historyForPrompt = chatHistoryCompaction
+      ? (await compactChatHistory(chatHistoryCompaction, resolvedModelId, resolvedBaseUrl, failoverKeys)) ?? chatHistory
+      : chatHistory;
 
     const structuredPrompt = createStructuredPrompt(
       searchResults,
       prompt,
-      chatHistory,
+      historyForPrompt,
       currentUserName,
       currentSprint,
       {
@@ -1815,6 +1841,53 @@ async function generateResponse(): Promise<void> {
         (error?.status ?? error?.statusCode ?? error?.response?.status) === 401,
     });
   }
+}
+
+/**
+ * Summarizes the chat's older turns (conversationCompaction.ts), so a long chat
+ * keeps what it established instead of an "omitted" marker. Null on any
+ * failure: the caller then sends the trimmed history, as before, and the turn
+ * goes on.
+ */
+async function compactChatHistory(
+  plan: HistoryCompactionPlan & { tail: ModelHistoryMessage[] },
+  model: string,
+  baseURL: string,
+  apiKeys: string[]
+): Promise<string | null> {
+  const stepId = randomUUID();
+  parentPort?.postMessage({ type: 'tool_status', id: stepId, name: 'compact_conversation', arguments: {} });
+  const counts = { scope: 'chat', messagesBefore: plan.covers + plan.tail.length, messagesSummarized: plan.toSummarize.length };
+  // The request must leave room for the summary in the smallest window this model may have.
+  const window = resolveContextWindow({ modelId: model, override: contextWindowOverride });
+  const maxChars = Math.max(8_000, (window - COMPACT_SUMMARY_MAX_TOKENS) * CHARS_PER_TOKEN * 0.8);
+  let summary = '';
+  try {
+    const outcome = await runToolTurn(
+      [{ role: 'user', content: `${historyCompactionInput(plan, maxChars)}\n\n${CHAT_HISTORY_COMPACTION_REQUEST}` }],
+      model,
+      baseURL,
+      apiKeys,
+      false,
+      COMPACT_SUMMARY_MAX_TOKENS,
+      false
+    );
+    summary = outcome.content || '';
+  } catch (err) {
+    console.warn(`[workspaceGPT] chat history summary failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!isUsableSummary(summary)) {
+    parentPort?.postMessage({ type: 'tool_step_update', id: stepId, stepStatus: 'error', summary: 'summary failed, older turns omitted instead' });
+    parentPort?.postMessage({ type: 'compacted', ok: false, ...counts });
+    return null;
+  }
+  parentPort?.postMessage({ type: 'tool_step_update', id: stepId, stepStatus: 'done', summary: `${plan.toSummarize.length} earlier messages summarized` });
+  parentPort?.postMessage({
+    type: 'history_compacted',
+    historySummary: { text: summary.trim(), covers: plan.covers, coveredKey: plan.coveredKey },
+  });
+  parentPort?.postMessage({ type: 'compacted', ok: true, ...counts, messagesAfter: plan.tail.length + 1, summaryChars: summary.length });
+  return formatModelHistory(plan.tail, { text: summary, covers: 0 });
 }
 
 /**
@@ -3132,6 +3205,160 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     parentPort?.postMessage({ type: 'agent_transcript', append: messages.slice(from) });
   };
 
+  // ── Summarize-and-continue compaction (conversationCompaction.ts) ──
+  // At COMPACT_AT_PCT the run's own model writes a handoff summary, and the
+  // messages between the kept head and the recent tail are replaced by it. The
+  // head (everything before the first assistant turn: harness instructions,
+  // the request, the run-start rules and memory, the scout's claim table) stays
+  // byte-identical, so the provider's prefix cache still serves it. Returns
+  // false whenever it did not compact, and the caller falls back to the
+  // truncating microcompaction above: a failed summary never fails the run.
+  let conversationCompactions = 0;
+  let lastCompactionTurn = -1;
+  // Ids the summarized messages showed: the unverified-id gate must still
+  // count them as seen, and must not count the summary's own retelling.
+  const compactedSeenIds = new Set<string>();
+  // A resumed run's current request sits after the old segment, not in the head.
+  const requestMessageIndex = resume ? resume.messages.length : 0;
+  const summarizeAndContinue = async (turnIndex: number): Promise<boolean> => {
+    if (
+      !canSummarize({
+        usedTokens: contextNow.usedTokens,
+        windowTokens,
+        compactionsDone: conversationCompactions,
+        turnsSinceLastCompaction: turnIndex - lastCompactionTurn,
+      })
+    ) {
+      return false;
+    }
+    let headEnd = messages.findIndex((m) => m.role === 'assistant');
+    if (headEnd < 0) headEnd = messages.length;
+    const pinRequest = requestMessageIndex >= headEnd && requestMessageIndex < messages.length;
+    const tailFrom = pinRequest ? requestMessageIndex + 1 : headEnd;
+    const tailStart = recentTailStart(messages, tailFrom, RECENT_TAIL_TOKENS * CHARS_PER_TOKEN);
+    const dropped = messages.slice(headEnd, tailStart).filter((_, n) => !pinRequest || headEnd + n !== requestMessageIndex);
+    if (!dropped.length) return false;
+
+    const stepId = randomUUID();
+    parentPort?.postMessage({ type: 'tool_status', id: stepId, name: 'compact_conversation', arguments: {} });
+    const finishStep = (ok: boolean, summary: string) =>
+      parentPort?.postMessage({ type: 'tool_step_update', id: stepId, stepStatus: ok ? 'done' : 'error', summary });
+    const counts = {
+      scope: 'run',
+      messagesBefore: messages.length,
+      messagesSummarized: dropped.length,
+      usedPctBefore: contextNow.usedPct,
+    };
+
+    let summary = '';
+    try {
+      const outcome = await runToolTurn(
+        [...messages, { role: 'user', content: COMPACTION_REQUEST }],
+        model,
+        baseURL,
+        apiKeys,
+        false,
+        COMPACT_SUMMARY_MAX_TOKENS,
+        false
+      );
+      apiCallsTotal += outcome.apiCalls;
+      promptTokensTotal += outcome.usage.promptTokens;
+      completionTokensTotal += outcome.usage.completionTokens;
+      summary = outcome.content || '';
+    } catch (err) {
+      console.warn(`[agent] compaction summary failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!isUsableSummary(summary)) {
+      console.log(`[agent] compaction at turn ${turnIndex + 1} produced no usable summary — trimming old tool output instead`);
+      finishStep(false, 'summary failed, trimmed older tool output instead');
+      parentPort?.postMessage({ type: 'compacted', ok: false, ...counts });
+      return false;
+    }
+
+    // Re-read rules and memory from the host, the way Claude Code re-reads its
+    // files after a compact: a save_memory earlier in this run is otherwise
+    // only in the turns just summarized. A host that cannot answer leaves the
+    // run-start copies in the head as the current ones.
+    let current: PromptContextBlocks | null = null;
+    try {
+      current = (await Promise.race([
+        requestTool('memory_context', {}),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5_000).unref?.()),
+      ])) as PromptContextBlocks;
+    } catch {
+      current = null;
+    }
+    const summaryContent = buildSummaryMessage(
+      summary,
+      knowledgeRefsFromToolCalls(dropped),
+      changedContextBlock({ workspaceRules, userMemory, projectMemory }, current)
+    );
+    for (const m of dropped) {
+      if (m.role === 'assistant') continue;
+      const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
+      if (m.role === 'tool' && text.startsWith('{"error"')) continue;
+      noteSeenIds(compactedSeenIds, text);
+    }
+
+    // The host keeps its full-size, append-only copy (see syncTranscript): a
+    // resumed run re-derives its state from the real history and re-compacts.
+    syncTranscript();
+    const next = [
+      ...messages.slice(0, headEnd),
+      ...(pinRequest ? [messages[requestMessageIndex]] : []),
+      { role: 'user', content: summaryContent },
+      ...messages.slice(tailStart),
+    ];
+    const keptTail = messages.length - tailStart;
+    messages.length = 0;
+    messages.push(...next);
+    transcriptSentUpTo = messages.length;
+
+    // toolResultLog and toolCharsUsed both point into the array just replaced.
+    const toolNames = new Map<string, string>();
+    for (const m of messages) for (const tc of m.tool_calls ?? []) toolNames.set(tc.id, tc.function?.name ?? 'tool');
+    toolResultLog.length = 0;
+    toolCharsUsed = 0;
+    messages.forEach((m, idx) => {
+      if (idx > 0 && idx < headEnd) toolCharsUsed += String(m.content ?? '').length;
+      if (m.role !== 'tool') return;
+      const chars = String(m.content ?? '').length;
+      toolResultLog.push({ msgIndex: idx, name: toolNames.get(m.tool_call_id) ?? 'tool', round: turnIndex, chars, compacted: false });
+      toolCharsUsed += chars;
+    });
+    budgetExhausted = false;
+
+    conversationCompactions++;
+    lastCompactionTurn = turnIndex;
+    // An estimate until the next completion reports real usage; without it the
+    // pre-compaction reading would narrow the tools or compact again.
+    const estimated = estimateTokens(messages) + Math.ceil(JSON.stringify(SCOPED_TOOL_DEFS).length / CHARS_PER_TOKEN);
+    contextNow = contextState({ promptTokens: estimated, windowTokens });
+    parentPort?.postMessage({
+      type: 'context',
+      usedTokens: contextNow.usedTokens,
+      windowTokens: contextNow.windowTokens,
+      usedPct: contextNow.usedPct,
+      remainingPct: contextNow.remainingPct,
+      compactions: conversationCompactions,
+    });
+    console.log(
+      `[agent] compacted at turn ${turnIndex + 1}: ${counts.messagesBefore} → ${messages.length} messages ` +
+        `(${dropped.length} summarized, ${keptTail} kept verbatim), context ${counts.usedPctBefore}% → ~${contextNow.usedPct}%`
+    );
+    finishStep(true, `${dropped.length} earlier messages summarized`);
+    parentPort?.postMessage({
+      type: 'compacted',
+      ok: true,
+      ...counts,
+      messagesAfter: messages.length,
+      keptTailMessages: keptTail,
+      summaryChars: summaryContent.length,
+      usedPctAfter: contextNow.usedPct,
+    });
+    return true;
+  };
+
   const emitMetrics = () => {
     parentPort?.postMessage({
       type: 'metrics',
@@ -3146,6 +3373,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       usageMissingTurns,
       toolCallsExecuted,
       writesApplied,
+      /** Summarize-and-continue compactions this run (conversationCompaction.ts). */
+      conversationCompactions,
       /** Wall clock spent waiting on the model, summed over turns. */
       modelMs: turnMsTotal,
       /** Wall clock spent inside host tools; overlapping calls each bill their own. */
@@ -3461,7 +3690,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         remainingPct: contextNow.remainingPct,
         // Truncated-result count, so the meter can say the context has already
         // been trimmed once. Not summarizing compaction — see docs/todo.md.
-        compactions: toolResultLog.filter((e) => e.compacted).length,
+        compactions: conversationCompactions + toolResultLog.filter((e) => e.compacted).length,
         // Where that occupancy came from. The total above is the provider's;
         // this split is derived from the same payload it counted, so the two
         // always agree — see contextBreakdown.ts.
@@ -3633,9 +3862,10 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // generous, and the model's own earlier prose and FAILED lookups (which
       // echo the id they were asked for) are not evidence.
       if (!unverifiedIdsNudgeUsed && !budgetExhausted && outcome.content) {
-        const seen = new Set<string>();
+        const seen = new Set<string>(compactedSeenIds);
         for (const m of messages) {
           if (m.role === 'assistant') continue;
+          if (m.role === 'user' && typeof m.content === 'string' && m.content.startsWith(SUMMARY_PREFIX)) continue;
           const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
           if (m.role === 'tool' && text.startsWith('{"error"')) continue;
           noteSeenIds(seen, text);
@@ -4434,19 +4664,18 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }
 
     // ── Running out of room ends the run; running out of TURNS no longer does ──
-    // Automatic summarizing compaction (which would let a run continue past a
-    // full context, the way Claude Code does) is deliberately not built yet —
-    // see docs/todo.md. Until it is, a genuinely full context is a real stop, and
-    // the honest one: the model cannot be shown any more. Note this is a much
-    // later stop than the old 33-turn cap, and the narrowing above has already
-    // pushed the run to conclude before it gets here.
+    // At the threshold the run summarizes and continues (summarizeAndContinue);
+    // only when that cannot run or fails does it fall back to truncating old
+    // results. A context that is still full after both is a real stop, and the
+    // honest one: the model cannot be shown any more.
     // Relieve pressure when the MEASURED context says to (75% of the window),
     // or when the char backstop trips because the provider reported no usage.
     // Truncating old results is lossy, so it must not start earlier than the
     // real limit demands — which is precisely what the old flat char budget
     // did, at about 35% of the window.
     if (contextNow.shouldCompact || budgetExhausted) {
-      compactOldToolResults(i);
+      const summarized = contextNow.shouldCompact && (await summarizeAndContinue(i));
+      if (!summarized) compactOldToolResults(i);
       if (MAX_TOTAL_TOOL_CHARS - toolCharsUsed >= MAX_TOOL_RESULT_CHARS) budgetExhausted = false;
     }
     // The one real stop: no room left to show the model anything more.

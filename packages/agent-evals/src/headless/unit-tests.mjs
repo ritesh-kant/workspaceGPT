@@ -4372,6 +4372,270 @@ console.log('\ncontextBudget (the context window bounds a run — not a turn cou
 // decision: one per-question byte placed above a few thousand tokens of fixed
 // playbook makes all of it uncacheable. These tests pin the invariant, since
 // nothing about the prompt's readability would suffer from breaking it.
+console.log('\nsummarize-and-continue compaction (conversationCompaction.ts, chatHistory.ts)');
+{
+  const cc = await import(path.join(outDir, 'conversationCompaction.mjs'));
+  const ch = await import(path.join(outDir, 'chatHistory.mjs'));
+
+  await t('a summary is attempted only when it can fit, at most MAX_RUN_COMPACTIONS times, never back to back', () => {
+    const base = { usedTokens: 76_000, windowTokens: 100_000, compactionsDone: 0, turnsSinceLastCompaction: 99 };
+    assert.equal(cc.canSummarize(base), true);
+    assert.equal(cc.canSummarize({ ...base, usedTokens: 100_000 - cc.COMPACT_SUMMARY_MAX_TOKENS + 1 }), false, 'no room for the summary itself');
+    assert.equal(cc.canSummarize({ ...base, usedTokens: 5_000_000 }), false, 'a prompt past the window cannot be summarized');
+    assert.equal(cc.canSummarize({ ...base, compactionsDone: cc.MAX_RUN_COMPACTIONS }), false);
+    assert.equal(cc.canSummarize({ ...base, compactionsDone: 1, turnsSinceLastCompaction: 1 }), false, 'the reading after a compaction is an estimate');
+    assert.equal(cc.canSummarize({ ...base, compactionsDone: 1, turnsSinceLastCompaction: cc.MIN_TURNS_BETWEEN_COMPACTIONS }), true);
+  });
+
+  await t('the verbatim tail starts on an assistant turn, so no tool result loses its call', () => {
+    const big = 'x'.repeat(30_000);
+    const msgs = [
+      { role: 'user', content: 'task' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'a', function: { name: 'read_file', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'a', content: big },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'b', function: { name: 'read_file', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'b', content: big },
+      { role: 'user', content: 'nudge' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'c', function: { name: 'read_file', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'c', content: 'small' },
+    ];
+    assert.equal(cc.recentTailStart(msgs, 1, 40_000), 3, 'the last two rounds fit, the first does not');
+    assert.equal(cc.recentTailStart(msgs, 1, 1_000), 6, 'only the last round');
+    assert.equal(cc.recentTailStart(msgs, 1, 10), msgs.length, 'nothing fits: nothing kept');
+    assert.equal(msgs[cc.recentTailStart(msgs, 1, 40_000)].role, 'assistant');
+  });
+
+  await t('Knowledge ids come from the run\'s own tool calls, exactly as used', () => {
+    const call = (name, args) => ({ function: { name, arguments: JSON.stringify(args) } });
+    const refs = cc.knowledgeRefsFromToolCalls([
+      { role: 'assistant', tool_calls: [call('get_ticket', { id: 'PROJ-123' }), call('get_confluence_page', { pageId: '98765' })] },
+      { role: 'assistant', tool_calls: [call('get_pr', { number: 42 }), call('read_file', { path: 'a.ts' }), call('get_ticket', { id: 'PROJ-123' })] },
+      { role: 'user', content: 'get_ticket 555 is not a call' },
+    ]);
+    assert.deepEqual(refs, ['get_ticket PROJ-123', 'get_confluence_page 98765', 'get_pr 42']);
+  });
+
+  await t('only rules and memory that changed since the run started are re-injected', () => {
+    const snap = { workspaceRules: 'rule A', userMemory: '**Memory:** tabs', projectMemory: undefined };
+    assert.equal(cc.changedContextBlock(snap, null), '', 'a host that cannot answer keeps the head copies');
+    assert.equal(cc.changedContextBlock(snap, { ...snap }), '', 'unchanged: already in the kept first message');
+    const block = cc.changedContextBlock(snap, { ...snap, userMemory: '**Memory:** tabs\n- use pnpm' });
+    assert.match(block, /supersede/);
+    assert.match(block, /use pnpm/);
+    assert.ok(!block.includes('rule A'), 'unchanged rules are not repeated');
+    const msg = cc.buildSummaryMessage('x'.repeat(300), ['get_ticket 1'], block);
+    assert.ok(msg.startsWith(cc.SUMMARY_PREFIX));
+    assert.match(msg, /- get_ticket 1/);
+    assert.equal(cc.isUsableSummary(''), false);
+    assert.equal(cc.isUsableSummary('too short'), false);
+  });
+
+  const turn = (i) => ({ role: i % 2 ? 'assistant' : 'user', content: `turn ${i} ` + 'y'.repeat(2_000) });
+  await t('chat history is summarized only past the trim cap, keeping a recent tail verbatim', () => {
+    const short = Array.from({ length: 10 }, (_, i) => turn(i));
+    assert.equal(ch.planHistoryCompaction(short), null, 'fits: nothing to summarize');
+    const long = Array.from({ length: 60 }, (_, i) => turn(i));
+    const plan = ch.planHistoryCompaction(long);
+    assert.ok(plan, 'past the cap: summarize instead of omitting');
+    assert.equal(plan.toSummarize.length, plan.covers);
+    const tailChars = long.slice(plan.covers).reduce((n, m) => n + m.content.length + 12, 0);
+    assert.ok(tailChars <= ch.HISTORY_SUMMARY_TAIL_CHARS + 2_100, 'the tail is about half the cap');
+    assert.ok(long.length - plan.covers >= ch.MODEL_HISTORY_MIN_RECENT_MESSAGES);
+    const summary = { text: 'S'.repeat(300), covers: plan.covers, coveredKey: plan.coveredKey };
+    const shown = ch.formatModelHistory(long, summary);
+    assert.ok(shown.startsWith(ch.CHAT_SUMMARY_HEADER));
+    assert.ok(shown.includes(`turn ${long.length - 1} `) && !shown.includes('turn 0 '), 'summarized turns replaced, recent kept');
+    assert.ok(!shown.includes('omitted'), 'nothing silently omitted while the summary covers it');
+    // Reused while the turns after it still fit; then extended, not redone.
+    const later = [...long, turn(60), turn(61)];
+    assert.equal(ch.planHistoryCompaction(later, summary), null, 'two more turns still fit beside the summary');
+    const muchLater = [...long, ...Array.from({ length: 30 }, (_, i) => turn(60 + i))];
+    const next = ch.planHistoryCompaction(muchLater, summary);
+    assert.equal(next.previousSummary, summary.text, 'the new summary builds on the old one');
+    assert.equal(next.toSummarize[0], muchLater[summary.covers], 'only the turns after it are re-read');
+    assert.match(ch.historyCompactionInput(next, 1_000_000), /Summary of the conversation before these turns/);
+    // An edited history no longer matches what the summary describes.
+    const edited = long.map((m, i) => (i === 0 ? { ...m, content: 'edited' } : m));
+    assert.equal(ch.validHistorySummary(edited, summary), undefined);
+  });
+
+  // ── Real worker, scripted model ──
+  const BIG = (tag) => Array.from({ length: 300 }, (_, n) => `// ${tag} line ${n} `.padEnd(99, '.')).join('\n');
+  const files = {
+    'src/one.ts': BIG('OLD_MARKER_ONE'),
+    'src/two.ts': BIG('MID_TWO'),
+    'src/three.ts': BIG('MID_THREE'),
+    'src/small.ts': 'export const TAIL_MARKER = 1;\n',
+  };
+  const usage = (n) => ({ prompt_tokens: n, completion_tokens: 20, total_tokens: n + 20 });
+  const script = (lastUsage = 76_000) => [
+    { toolCalls: [{ name: 'read_file', args: { path: 'src/one.ts' } }], usage: usage(40_000) },
+    { toolCalls: [{ name: 'read_file', args: { path: 'src/two.ts' } }], usage: usage(55_000) },
+    { toolCalls: [{ name: 'read_file', args: { path: 'src/three.ts' } }], usage: usage(74_000) },
+    { toolCalls: [{ name: 'read_file', args: { path: 'src/small.ts' } }], usage: usage(lastUsage) },
+    { finalContent: 'The value is defined in `src/small.ts`.' },
+  ];
+  const USER_MEMORY = '**What you remember about this user:**\n- prefers tabs\n';
+  const compactRun = async ({ main = script(), compact, fail, memoryContext, prompt = 'where is TAIL_MARKER defined?' } = {}) => {
+    const ws = tempWorkspace(files);
+    const mock = await startMockModel({ main, compact, fail });
+    try {
+      const record = await runAgent(
+        ws,
+        prompt,
+        () => {},
+        {
+          provider: 'Custom',
+          baseUrl: mock.baseUrl,
+          modelId: 'mock-model',
+          apiKey: 'MOCK',
+          apiKeys: ['MOCK'],
+          harnessProfile: 'strong-model',
+          contextWindowOverride: 100_000,
+          userMemory: USER_MEMORY,
+        },
+        memoryContext ? { memory_context: memoryContext } : {},
+      );
+      const all = mock.state.requests.filter((r) => !r.subAgent && !r.preloopExplorer);
+      return { record, all, main: all.filter((r) => !r.compaction), compactions: all.filter((r) => r.compaction) };
+    } finally {
+      await mock.close();
+    }
+  };
+  const textOf = (req) => req.messages.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''))).join('\n');
+
+  await t('REAL WORKER: crossing COMPACT_AT_PCT summarizes once, keeps the head and recent turns, and the run continues', async () => {
+    const { record, all, main, compactions } = await compactRun();
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    assert.equal(compactions.length, 1, 'one summary call, made at 76% and not at 74%');
+    assert.equal(all.indexOf(compactions[0]), all.indexOf(main[3]) + 1, 'summarized right after the turn that reported 76%, not before');
+    // The summary request is the whole conversation plus the instruction, tool-less.
+    assert.equal(compactions[0].toolCount, 0);
+    assert.match(textOf(compactions[0]), /OLD_MARKER_ONE/, 'the summarizer sees what it is replacing');
+    const before = main[3];
+    const after = main[4];
+    assert.ok(after, 'the run went on after compacting');
+    assert.equal(after.messages[0].content, before.messages[0].content, 'the first message is kept byte-identical (prefix cache)');
+    const afterText = textOf(after);
+    assert.ok(afterText.includes('TAIL_MARKER'), 'recent tool result kept verbatim');
+    assert.ok(!afterText.includes('OLD_MARKER_ONE line 5 '), 'the oldest round was replaced by the summary');
+    assert.ok(afterText.includes('MID_THREE line 5 '), 'rounds within the ~20k-token tail are kept');
+    const summaryMsg = after.messages.find((m) => typeof m.content === 'string' && m.content.startsWith('Another model started this task'));
+    assert.ok(summaryMsg, 'the summary is handed over with the Codex-style prefix');
+    assert.match(summaryMsg.content, /Pending tasks and current step/);
+    // UI: one step row, closed.
+    const step = record.steps.filter((s) => s.name === 'compact_conversation');
+    assert.equal(step.length, 1);
+    assert.equal(step[0].status, 'done');
+    // Analytics: counts only.
+    const ev = record.compactions.find((c) => c.type === 'compacted');
+    assert.equal(ev.ok, true);
+    assert.equal(ev.scope, 'run');
+    assert.ok(ev.messagesSummarized > 0 && ev.messagesAfter < ev.messagesBefore);
+    for (const [k, v] of Object.entries(ev)) {
+      if (k === 'type' || k === 'scope') continue;
+      assert.ok(typeof v === 'number' || typeof v === 'boolean', `compacted.${k} carries ${typeof v}, not a count`);
+    }
+    // The meter is told about the drop before the next completion.
+    const drop = record.contextEvents.find((c) => c.compactions === 1 && c.usedPct < 76);
+    assert.ok(drop, 'no context reading reported the compaction');
+    assert.equal(record.metrics.conversationCompactions, 1);
+  });
+
+  await t('REAL WORKER: memory saved mid-run is re-injected after compaction; unchanged memory is not repeated', async () => {
+    const changed = await compactRun({
+      memoryContext: async () => ({ userMemory: USER_MEMORY + '- saved mid-run: use pnpm\n' }),
+    });
+    assert.ok(changed.record.ok, `run failed: ${changed.record.error}`);
+    const after = changed.main[4];
+    const summaryMsg = after.messages.find((m) => typeof m.content === 'string' && m.content.startsWith('Another model started this task'));
+    assert.match(summaryMsg.content, /saved mid-run: use pnpm/);
+    assert.match(summaryMsg.content, /supersede the copies in the first message/);
+    assert.ok(changed.record.toolCalls.some((c) => c.name === 'memory_context' && !c.fromModel), 'context re-read from the host');
+
+    const same = await compactRun({ memoryContext: async () => ({ userMemory: USER_MEMORY }) });
+    const sameText = textOf(same.main[4]);
+    assert.equal(sameText.split('prefers tabs').length - 1, 1, 'memory appears once: in the kept first message');
+    assert.ok(!sameText.includes('supersede'), 'nothing re-injected when nothing changed');
+  });
+
+  await t('REAL WORKER: a failed summary falls back to the trim and never fails the run', async () => {
+    for (const variant of [
+      { name: 'provider error', fail: (body) => (/CONTEXT CHECKPOINT/.test(JSON.stringify(body.messages?.at(-1) ?? '')) ? { status: 400, body: { error: { message: 'bad request' } } } : null) },
+      { name: 'empty summary', compact: [{ finalContent: '' }] },
+    ]) {
+      const { record, main } = await compactRun(variant);
+      assert.ok(record.ok, `${variant.name}: run failed: ${record.error}`);
+      assert.equal(record.answer.includes('src/small.ts'), true, `${variant.name}: the answer was still delivered`);
+      const afterText = textOf(main[4]);
+      assert.ok(!afterText.includes('Another model started this task'), `${variant.name}: no summary was installed`);
+      assert.ok(afterText.includes('OLD_MARKER_ONE'), `${variant.name}: older turns stay (trimmed at most), not dropped`);
+      const step = record.steps.find((s) => s.name === 'compact_conversation');
+      assert.equal(step?.status, 'error', `${variant.name}: the step row says it failed`);
+      const ev = record.compactions.find((c) => c.type === 'compacted');
+      assert.equal(ev.ok, false);
+      assert.equal(record.metrics.conversationCompactions, 0);
+    }
+  });
+
+  await t('REAL WORKER: a full-window prompt is not summarized (it cannot fit) and still ends as before', async () => {
+    const { record, compactions } = await compactRun({ main: script(5_000_000) });
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    assert.equal(compactions.length, 0);
+  });
+
+  const chatPlan = () => {
+    const long = Array.from({ length: 60 }, (_, i) => turn(i));
+    const plan = ch.planHistoryCompaction(long);
+    return { long, plan: { ...plan, tail: long.slice(plan.covers) } };
+  };
+  const chatRun = async ({ fail, compact } = {}) => {
+    const { long, plan } = chatPlan();
+    const ws = tempWorkspace({ 'src/a.ts': 'export const a = 1;\n' });
+    const mock = await startMockModel({ main: [{ finalContent: 'Answered.' }], compact, fail });
+    try {
+      const record = await runAgent(ws, 'and what about a?', () => {}, {
+        provider: 'Custom',
+        baseUrl: mock.baseUrl,
+        modelId: 'mock-model',
+        apiKey: 'MOCK',
+        apiKeys: ['MOCK'],
+        harnessProfile: 'strong-model',
+        chatHistory: ch.formatModelHistory(long),
+        chatHistoryCompaction: plan,
+      });
+      const reqs = mock.state.requests.filter((r) => !r.subAgent && !r.preloopExplorer);
+      return { record, plan, first: reqs.find((r) => !r.compaction), compactions: reqs.filter((r) => r.compaction) };
+    } finally {
+      await mock.close();
+    }
+  };
+
+  await t('REAL WORKER: a long chat\'s older turns are summarized into the prompt instead of omitted', async () => {
+    const { record, plan, first, compactions } = await chatRun();
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    assert.equal(compactions.length, 1);
+    assert.match(textOf(compactions[0]), /turn 0 /, 'the summarizer is given the old turns');
+    const prompt = textOf(first);
+    assert.ok(prompt.includes(ch.CHAT_SUMMARY_HEADER), 'summary in the history block');
+    assert.ok(!prompt.includes('Earlier conversation omitted'), 'not the trim marker');
+    assert.ok(prompt.includes(`turn 59 `), 'recent turns kept verbatim');
+    const saved = record.compactions.find((c) => c.type === 'history_compacted');
+    assert.equal(saved.historySummary.covers, plan.covers, 'host is handed the summary to reuse next turn');
+    assert.equal(saved.historySummary.coveredKey, plan.coveredKey);
+    assert.equal(record.steps.find((s) => s.name === 'compact_conversation')?.status, 'done');
+  });
+
+  await t('REAL WORKER: a failed chat summary sends the trimmed history, as before', async () => {
+    const { record, first } = await chatRun({ compact: [{ finalContent: '' }] });
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    const prompt = textOf(first);
+    assert.ok(prompt.includes('Earlier conversation omitted'), 'the existing trim is the fallback');
+    assert.ok(!prompt.includes(ch.CHAT_SUMMARY_HEADER));
+    assert.ok(!record.compactions.some((c) => c.type === 'history_compacted'), 'nothing for the host to keep');
+  });
+}
+
 console.log('\nprompt-cache friendliness (block order is a cost decision)');
 {
   const { createStructuredPrompt } = await import(path.join(outDir, 'promptTemplates.mjs'));

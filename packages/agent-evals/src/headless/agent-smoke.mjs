@@ -393,6 +393,10 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
   // resume is fed, so a test can capture a run's transcript and hand it back.
   let transcript = null;
   let resumed = null;
+  // Summarize-and-continue events (counts only) and context readings, in order.
+  const compactions = [];
+  const contextEvents = [];
+  const steps = [];
 
   return new Promise((resolve) => {
     const worker = new Worker(WORKER_PATH, {
@@ -413,7 +417,7 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
     const finish = (outcome) => {
       clearTimeout(timer);
       worker.terminate();
-      resolve({ ...outcome, toolCalls, toolTimings, thoughtMs, metrics, notes, noteLog, chunks, answerEvents, failovers, transcript, resumed, audit, checkpoints });
+      resolve({ ...outcome, toolCalls, toolTimings, thoughtMs, metrics, notes, noteLog, chunks, answerEvents, failovers, transcript, resumed, compactions, contextEvents, steps, audit, checkpoints });
     };
     const timer = setTimeout(() => finish({ ok: false, error: 'scenario timeout' }), SCENARIO_TIMEOUT_MS);
 
@@ -421,7 +425,16 @@ export function runAgent(ws, prompt, log, extraWorkerData = {}, extraTools = {})
       // The worker announces a call the MODEL made with tool_status before its
       // tool_request (same id); its own pre-loop survey (explorationPhase
       // scout) sends tool_request alone. That's how the two are told apart.
-      if (msg.type === 'tool_status') modelCallIds.add(msg.id);
+      if (msg.type === 'tool_status') {
+        modelCallIds.add(msg.id);
+        steps.push({ id: msg.id, name: msg.name, status: 'running' });
+      }
+      if (msg.type === 'tool_step_update') {
+        const step = steps.find((st) => st.id === msg.id);
+        if (step) Object.assign(step, { status: msg.stepStatus, summary: msg.summary });
+      }
+      if (msg.type === 'compacted' || msg.type === 'history_compacted') compactions.push(msg);
+      if (msg.type === 'context') contextEvents.push(msg);
       if (msg.type === 'tool_request') {
         const impl = tools[msg.name];
         toolCalls.push({ name: msg.name, args: msg.arguments, fromModel: modelCallIds.has(msg.id) });
