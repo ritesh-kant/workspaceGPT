@@ -1,12 +1,14 @@
 # Call notes (desktop app only)
 
-Status: design, 2026-10-21. Nothing built. The call-detection signals still need
-one real Teams call per OS to confirm (see "Validate first").
+Status: design, 2026-10-21. Nothing built. Call detection is confirmed on macOS
+for a muted call in the Teams web app; the Teams and Zoom desktop apps and
+Windows are still to test (see "Validate first").
 
 ## What it does
 
 When call notes are turned on, the desktop app notices that the user is in a
-Microsoft Teams call and **asks** whether to take notes. If the user says yes, it
+call, in any app (Teams, Zoom, Meet, a desktop app, a web app or a browser tab),
+and **asks** whether to take notes. If the user says yes, it
 records the call, transcribes it on the device, and adds the transcript to a new
 **Meetings** Knowledge source. The agent can then answer questions such as
 "what did we decide about the retry cap in Tuesday's call?" and cite the call.
@@ -38,12 +40,13 @@ extension code. This follows the rule that desktop must not fork extension code.
 
 ## Flow
 
-1. **Detect.** A cheap poll every few seconds checks whether Teams holds the
-   microphone (see "Detection"). The signal must hold for about 10 s before
-   anything happens, so a mic test or a voice note doesn't trigger it. Only
+1. **Detect.** A cheap poll every few seconds checks whether any app holds both
+   the microphone and audio output (see "Detection"). The signal must hold for
+   about 10 s before anything happens, so a mic test doesn't trigger it. Only
    one prompt is shown per call.
-2. **Prompt.** A native notification says "Teams call detected. Click to take
-   notes." It reuses the `notify.rs` path, which has no action buttons today.
+2. **Prompt.** A native notification says "Call detected. Click to take
+   notes." It never names the app, so the wording is the same whether the
+   call is in Teams, Zoom or a browser tab. It reuses the `notify.rs` path, which has no action buttons today.
    Clicking it opens an in-app card with three choices:
    - **Record & transcribe**
    - **Not this call**
@@ -51,7 +54,7 @@ extension code. This follows the rule that desktop must not fork extension code.
      identify a recurring meeting; without it, the choice becomes "don't ask
      again today".
 3. **Record.** Capture starts on two separate tracks: the microphone ("You")
-   and Teams' own audio output ("Others"). The indicator and Stop are shown.
+   and the call app's own audio output ("Others"). The indicator and Stop are shown.
 4. **End.** Recording stops when the detection signal drops for about 15 s,
    or when the user clicks Stop.
 5. **Transcribe.** Transcription runs on the device, chunk by chunk during the
@@ -63,52 +66,66 @@ extension code. This follows the rule that desktop must not fork extension code.
 
 ## Detection
 
-The goal is a plain "in a Teams call: yes/no" that works muted and with the
-camera off, needs no permission prompt, and needs no Microsoft approval. The
-key assumption is that **Teams keeps the microphone open while muted**. Mute is
-a software mute, which is how Teams can warn "You're muted" when the user
-speaks. That assumption needs testing.
+The goal is one consistent "in a call: yes/no" for any call app. It must work
+muted and with the camera off, need no permission prompt, and need no
+approval from Microsoft, Zoom or anyone else. The app is deliberately **not**
+identified: a call in a browser tab only shows as the browser, so naming the
+app could never be consistent.
 
-**Windows.** Windows records which app is using the microphone; this record
-drives the taskbar mic icon. It lives in the user's own registry, readable
-without admin rights:
+**The rule:** a call is **one process holding both audio input (the mic) and
+audio output for 10 s or more**, excluding a short ignore list.
+- **Muted calls are covered.** Call apps keep the mic open while muted, which
+  is how they can warn "You're muted". This was confirmed on macOS for the
+  Teams web app.
+- **Requiring input and output in the same process** keeps out a voice memo
+  (input only) and music (output only), even when both run at the same time.
+- **The ignore list** covers system listeners and our own helper: macOS's
+  "Hey Siri" listener (`corespeechd`, which holds input at times) and
+  WorkspaceGPT's dictation helper (`wgpt-dictate`).
+- **A wrong guess is cheap.** A false positive, such as a voice chat in a
+  game, costs one dismissed prompt, because nothing records without a click.
+
+**macOS.** Core Audio's per-process state (macOS 14 and later) reports, for
+each process, whether it is running input and whether it is running output.
+No permission is needed. The check goes in a small Swift helper next to
+`wgpt-dictate`.
+
+**Windows.** For the mic, Windows records which app is using the microphone;
+this record drives the taskbar mic icon. It lives in the user's own registry,
+readable without admin rights:
 
 ```
-HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\MSTeams_8wekyb3d8bbwe
+HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone
 ```
 
-New Teams is an MSIX package. While it holds the mic, `LastUsedTimeStop` is 0.
-The check can be read with `reg query`, so no native code is needed.
-`powercfg /requests` would add a second signal, but it needs admin rights, so
-it is not used.
+- Packaged apps, such as new Teams, are direct subkeys of that key.
+- Desktop apps (`zoom.exe`, `chrome.exe` and so on) are under `NonPackaged`.
+- An app is using the mic while its `LastUsedTimeStop` is 0.
 
-**macOS.** On macOS 14 and later, Core Audio can report whether a specific
-process is running audio input (the process object list, input-running per
-process). As a backup signal, Teams holds a "prevent display sleep" power
-assertion during a call. The `pmset -g assertions` list shows these per
-process, and reading it needs no permission. Both checks go in a small Swift
-helper next to `wgpt-dictate`.
-
-**Not covered:**
-- Teams running in a browser tab: the mic then belongs to Chrome or Edge, so
-  the call can't be told apart from other web calls.
-- Other meeting apps such as Zoom or Meet. They are possible later with the
-  same signals.
+For output, enumerating WASAPI audio sessions per process says whether the
+same process is playing audio. That needs native code, which the Windows
+capture helper has anyway. The PowerShell probe can only check the mic.
 
 **Rejected:**
 - Reading window titles: macOS requires Screen Recording permission.
-- Parsing Teams' private log files: undocumented and fragile.
-- Teams' local third-party API: precise, but the user must enable it in Teams
-  settings and pair it.
-- Graph presence: needs Microsoft app approval, which locked-down tenants
-  won't give.
+- Parsing a call app's private log files: undocumented and fragile.
+- Teams' local third-party API: Teams-only, and the user must enable it and
+  pair it.
+- Graph presence: Teams-only, and needs Microsoft app approval, which
+  locked-down tenants won't give.
+- Naming the app through our Chrome extension: it would only work where the
+  extension is installed, which would make the rule inconsistent.
 
 ## Capture
 
-| | Microphone ("You") | Teams output ("Others") |
+| | Microphone ("You") | Call app output ("Others") |
 |---|---|---|
-| **macOS** | AVAudioEngine input. Uses the microphone permission, which dictation already prompts for. | Core Audio process tap on the Teams process (macOS 14.2+). Needs a one-time "System Audio Recording" permission (`NSAudioCaptureUsageDescription`). |
-| **Windows** | WASAPI capture. Subject to the Windows mic privacy toggle for desktop apps. | WASAPI process loopback for the Teams process (Windows 10 2004+). No prompt. |
+| **macOS** | AVAudioEngine input. Uses the microphone permission, which dictation already prompts for. | Core Audio process tap on the detected process (macOS 14.2+). Needs a one-time "System Audio Recording" permission (`NSAudioCaptureUsageDescription`). |
+| **Windows** | WASAPI capture. Subject to the Windows mic privacy toggle for desktop apps. | WASAPI process loopback for the detected process (Windows 10 2004+). No prompt. |
+
+When the call is in a browser, the detected process is the browser's audio
+helper, so a video playing in another tab during the call would be captured
+too. That is acceptable for v1, and the transcript makes it obvious.
 
 Both tracks are written as 16 kHz mono WAV chunks into the app's data folder,
 and each chunk is deleted once it has been transcribed.
@@ -168,24 +185,24 @@ Alternatives that were weighed and set aside:
 
 ## Validate first
 
-Before building, run a small probe on each OS, in one real Teams call that is
-**muted with the camera off**:
-- **Windows (PowerShell):** print the Teams `LastUsedTimeStop` every few
-  seconds.
-- **macOS (Swift):** print whether the Teams process has input running, plus
-  the Teams power assertions.
+Before building, run the probe on each OS in real calls that are **muted
+with the camera off**, at least one each in the Teams app, Zoom, and a browser:
+- **macOS (Swift):** prints every process using audio input or output, and the
+  verdict from the rule.
+- **Windows (PowerShell):** prints every app holding the mic, and the verdict
+  (mic only; see "Detection").
 
-If the signal stays "yes" for the whole muted call, build on it. If not,
-detection falls back to Teams' local API, which the user enables once in Teams.
+If the verdict says "CALL" for the whole muted call in every app, build on
+the rule.
 
 The probes are in `apps/desktop/native/probes/`:
 
 ```bash
-swift apps/desktop/native/probes/teams-call-probe.swift
+swift apps/desktop/native/probes/call-probe.swift
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File apps\desktop\native\probes\teams-call-probe.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File apps\desktop\native\probes\call-probe.ps1
 ```
 
 Each prints every app holding the mic, not only Teams, so the run also shows
@@ -219,19 +236,13 @@ What this shows:
 - **Siri's listener (`corespeechd`) holds input at times,** so "is anyone
   using the mic" is never a valid test.
 
-The detection rule is updated to cover all three cases (implemented in the
-probe):
-1. A **Teams desktop process** (`com.microsoft.teams2*`, including its WebView
-   and ModuleHost helpers) holds input: a Teams call.
-2. A **browser audio helper** (Chrome or Edge) holds input and output for
-   10 s or more **and** a Teams web app is running: a Teams call. Without a
-   Teams web app running, it is still treated as a call, but the prompt says
-   "Call detected" rather than naming Teams.
-3. Anything else, including `corespeechd`: no call.
+Following this, the rule was made app-agnostic: one process holding input
+and output for 10 s or more (see "Detection"). The probe now implements it
+and was renamed `call-probe`.
 
 Still to test:
-- the **Teams desktop app** (`com.microsoft.teams2`) in a muted call, which
-  will show which of its processes holds the mic;
+- the **Teams desktop app** and **Zoom** in a muted call, to confirm each
+  keeps input and output open in one process;
 - the **Windows** probe.
 
 ## Effort (rough)
