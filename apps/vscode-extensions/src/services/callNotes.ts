@@ -286,8 +286,10 @@ export type HeardTurn = CallNoteTurn & { end?: number };
 const ECHO_WINDOW_S = 4;
 /** Share of a "you" turn's words that must also be in the overlapping "others" turns. */
 const ECHO_SHARE = 0.6;
-/** Shorter "you" turns ("Yeah", "Okay sure") are kept: too few words to tell an echo from agreement. */
+/** Shorter "you" turns ("Yeah", "Hello, guys") are judged by the stricter rule below. */
 const ECHO_MIN_WORDS = 3;
+/** A short "you" turn is an echo only if "others" said exactly the same words this close to it. */
+const SHORT_ECHO_WINDOW_S = 1.5;
 
 function wordsOf(text: string): string[] {
   return text.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
@@ -305,7 +307,12 @@ export function dropEchoes(turns: readonly HeardTurn[]): CallNoteTurn[] {
     .filter((t) => {
       if (t.speaker !== 'you') return true;
       const mine = wordsOf(t.text);
-      if (mine.length < ECHO_MIN_WORDS) return true;
+      if (mine.length < ECHO_MIN_WORDS) {
+        // Too few words to compare by share: only the same words at the same moment count, so a
+        // "Yeah" said in reply is kept.
+        const same = mine.join(' ');
+        return !others.some((o) => Math.abs(o.at - t.at) <= SHORT_ECHO_WINDOW_S && wordsOf(o.text).join(' ') === same);
+      }
       const from = t.at - ECHO_WINDOW_S;
       const to = (t.end ?? t.at + 10) + ECHO_WINDOW_S;
       const heard = new Map<string, number>();

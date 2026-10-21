@@ -6628,8 +6628,17 @@ process.stdin.on('data', (d) => {
       { speaker: 'you', at: 17, end: 17.5, text: 'Yeah.' },
       { speaker: 'you', at: 18, end: 22, text: 'Thursday noon works, I will tell Arjun.' },
       { speaker: 'you', at: 60, end: 64, text: 'the release branch gets cut on Thursday at noon' },
+      // Seen in a real call: a short greeting heard through the speakers, at the same moment.
+      { speaker: 'others', at: 70, end: 71, text: 'Hello, guys.' },
+      { speaker: 'you', at: 70.3, end: 71, text: 'Hello guys' },
+      { speaker: 'others', at: 80, end: 81, text: 'Yeah.' },
+      { speaker: 'you', at: 83, end: 83.5, text: 'Yeah.' },
     ];
-    assert.deepEqual(dropEchoes(turns).map((x) => `${x.speaker}@${x.at}`), ['others@10', 'you@17', 'you@18', 'you@60'], 'short replies, own words and a later repeat stay');
+    assert.deepEqual(
+      dropEchoes(turns).map((x) => `${x.speaker}@${x.at}`),
+      ['others@10', 'you@17', 'you@18', 'you@60', 'others@70', 'others@80', 'you@83'],
+      'short replies, own words and a later repeat stay; a short exact echo goes'
+    );
     assert.equal(dropEchoes(turns)[0].end, undefined, 'the note keeps speaker, at and text only');
   });
 
