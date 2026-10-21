@@ -69,6 +69,8 @@ const UNITS = [
   'src/services/agent/projectMemory.ts',
   'src/services/confluence/confluenceAdf.ts',
   'src/services/confluence/confluencePageService.ts',
+  // Desktop call notes: the detection rule and the Windows registry parser (no I/O at import).
+  '../desktop/sidecar/host/callDetection.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',
   'webview/src/utils/ticketRefs.ts',

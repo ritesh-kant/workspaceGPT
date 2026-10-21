@@ -180,6 +180,7 @@ interface UiFrame {
       } else if (frame.t === 'ui') showUi(frame as UiFrame);
       else if (frame.t === 'diff') showDiff(frame as DiffFrame);
       else if (frame.t === 'dictation') onDictation(frame.event);
+      else if (frame.t === 'calls') onCalls(frame.event);
       else if (frame.t === 'toolbar') {
         const hooks = shell();
         if (hooks) hooks.toolbar(viewType, frame.items ?? []);
@@ -223,6 +224,18 @@ interface UiFrame {
     window.dispatchEvent(new CustomEvent('wgpt-dictation', { detail: event }));
   }
 
+  // Call notes (host/callDetection.ts): Settings turns detection on and off
+  // through __wgptBridge.calls, and the page hears back as 'wgpt-calls' events.
+  // Capability and the current state arrive once per connection, maybe before
+  // React exists, so the latest of each is kept for late listeners.
+  let callsCapability: unknown;
+  let callsState: unknown;
+  function onCalls(event: { type?: string } | undefined): void {
+    if (event?.type === 'capability') callsCapability = event;
+    else if (event?.type === 'state') callsState = event;
+    window.dispatchEvent(new CustomEvent('wgpt-calls', { detail: event }));
+  }
+
   // What the shell calls into: its header buttons run the same title actions.
   w.__wgptBridge = {
     viewType,
@@ -230,6 +243,10 @@ interface UiFrame {
     dictation: {
       available: () => dictationAvailable,
       request: (op: 'start' | 'stop' | 'cancel', locale?: string) => send({ t: 'dictation', op, locale }),
+    },
+    calls: {
+      latest: () => ({ capability: callsCapability, state: callsState }),
+      request: (op: 'enable' | 'disable') => send({ t: 'calls', op }),
     },
   };
 

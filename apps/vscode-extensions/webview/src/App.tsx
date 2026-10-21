@@ -18,6 +18,7 @@ import MyWorkTeaser from './components/MyWorkTeaser';
 import HomeGreeting from './components/HomeGreeting';
 import WorkHome from './components/WorkHome';
 import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowledgeSources';
+import CallIndicator from './components/CallIndicator';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
 import CiChip from './components/CiChip';
@@ -2774,6 +2775,7 @@ const App: React.FC = () => {
 
   return (
     <div className='app-container'>
+      {isDesktopHost() && <CallIndicator />}
       <div className={`chat-container${showWorkHome ? ' chat-container--work-home' : ''}`}>
         {showTips && messages.length === 0 && !isDesktopHost() && <div className='mode-bar'>{modeSwitch}</div>}
         {showWorkHome ? (

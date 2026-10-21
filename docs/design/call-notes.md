@@ -1,8 +1,19 @@
 # Call notes (desktop app only)
 
-Status: design, 2026-10-21. Nothing built. Call detection is confirmed on macOS
-for a muted call in the Teams web app; the Teams and Zoom desktop apps and
-Windows are still to test (see "Validate first").
+Status: 2026-10-21. **Built (beta):** call detection, the "Call detected"
+indicator, the ask-before-recording prompt, and Settings → Call notes (desktop
+only, off by default). **Not built:** recording, transcription, and the
+Meetings Knowledge source; "Take notes" says so instead of pretending.
+Detection is confirmed on macOS for a muted call in the Teams web app; the
+Teams and Zoom desktop apps and Windows are still to test (see "Validate first").
+
+Code:
+- `apps/desktop/native/wgpt-calls.swift`: the macOS helper. Every 3 s it
+  prints the processes holding mic + output.
+- `apps/desktop/sidecar/host/callDetection.ts`: the rule (`CallTracker`), the
+  Windows registry reader, and the page and notification events.
+- The webview: `hooks/useCallDetection.ts`, `components/CallIndicator.tsx` and
+  `components/settings/CallNotesSettings.tsx`.
 
 ## What it does
 

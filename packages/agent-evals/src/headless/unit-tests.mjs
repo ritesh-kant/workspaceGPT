@@ -43,6 +43,7 @@ const { formatModelHistory, MODEL_HISTORY_MAX_CHARS } = await import(path.join(o
 const referenceIndex = await import(path.join(outDir, 'referenceIndex.mjs'));
 const permissionPolicy = await import(path.join(outDir, 'permissionPolicy.mjs'));
 const syncedFilePrune = await import(path.join(outDir, 'syncedFilePrune.mjs'));
+const callDetection = await import(path.join(outDir, 'callDetection.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -6390,6 +6391,71 @@ console.log('\nsyncedFilePrune');
     assert.deepEqual(listSyncedFiles(path.join(dir, 'nope'), confluencePageIdOf), []);
   });
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ═══ Call notes: call detection (desktop) ═══
+console.log('\ncall detection (call notes, desktop)');
+{
+  const { CallTracker, parseWindowsMicUsers, CONFIRM_MS, END_MS } = callDetection;
+  const chrome = [{ key: '5516', name: 'Google Chrome' }];
+
+  await t('a call needs the mic + output held for CONFIRM_MS, and starts once', () => {
+    const tr = new CallTracker();
+    assert.equal(tr.update(chrome, 0), undefined);
+    assert.equal(tr.update(chrome, CONFIRM_MS - 1), undefined);
+    assert.equal(tr.update(chrome, CONFIRM_MS), 'start');
+    assert.equal(tr.since, 0, 'since = when the audio started, so the page can key the prompt per call');
+    assert.equal(tr.update(chrome, CONFIRM_MS + 3000), undefined, 'no second start');
+    assert.equal(tr.inCall, true);
+  });
+
+  await t('a short mic blip never becomes a call', () => {
+    const tr = new CallTracker();
+    tr.update(chrome, 0);
+    tr.update([], 3000);
+    assert.equal(tr.update(chrome, 6000), undefined);
+    assert.equal(tr.update(chrome, 6000 + CONFIRM_MS - 1), undefined, 'the clock restarts after a gap');
+    assert.equal(tr.inCall, false);
+  });
+
+  await t('a call ends only after END_MS without a holder (a brief drop does not end it)', () => {
+    const tr = new CallTracker();
+    tr.update(chrome, 0);
+    tr.update(chrome, CONFIRM_MS);
+    assert.equal(tr.update([], CONFIRM_MS + 3000), undefined);
+    assert.equal(tr.update(chrome, CONFIRM_MS + 6000), undefined, 'audio back: still the same call');
+    assert.equal(tr.update([], CONFIRM_MS + 6000 + END_MS - 1), undefined);
+    assert.equal(tr.update([], CONFIRM_MS + 6000 + END_MS), 'end');
+    assert.equal(tr.inCall, false);
+    assert.equal(tr.since, undefined);
+  });
+
+  await t('Windows: apps using the mic now are read from reg query output', () => {
+    const out = [
+      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone',
+      '    Value    REG_SZ    Allow',
+      '',
+      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\MSTeams_8wekyb3d8bbwe',
+      '    Value    REG_SZ    Allow',
+      '    LastUsedTimeStart    REG_QWORD    0x1dc41a2b3c4d5e6',
+      '    LastUsedTimeStop    REG_QWORD    0x0',
+      '',
+      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged',
+      '',
+      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\C:#Users#ada#AppData#Roaming#Zoom#bin#Zoom.exe',
+      '    LastUsedTimeStart    REG_QWORD    0x1dc41a2b3c4d5e6',
+      '    LastUsedTimeStop    REG_QWORD    0x1dc41a2b3c4d5f0',
+      '',
+      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\C:#Program Files#Google#Chrome#Application#chrome.exe',
+      '    LastUsedTimeStart    REG_QWORD    0x1dc41a2b3c4d5e6',
+      '    LastUsedTimeStop    REG_QWORD    0x0',
+      '',
+      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\C:#Tools#never-used.exe',
+      '    LastUsedTimeStart    REG_QWORD    0x0',
+      '    LastUsedTimeStop    REG_QWORD    0x0',
+    ].join('\r\n');
+    assert.deepEqual(parseWindowsMicUsers(out).map((h) => h.name), ['MSTeams_8wekyb3d8bbwe', 'chrome.exe'], 'Zoom stopped; never-used has no start');
+  });
 }
 
 // ── summary ──

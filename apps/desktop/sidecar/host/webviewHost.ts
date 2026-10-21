@@ -18,6 +18,7 @@ import { EventEmitter, Uri } from '../vscode-compat/types';
 import type { DesktopUi, InputBoxRequest, QuickPickRequest, ShowMessageRequest } from '../vscode-compat/runtime';
 import type { DiffAction, DiffFrame } from './diffPanel';
 import type { DictationEvent, DictationRequest } from './dictation';
+import type { CallEvent, CallsRequest } from './callDetection';
 
 export const WS_CLOSE_SUPERSEDED = 4001;
 
@@ -30,6 +31,7 @@ export type HostToPage =
   | { t: 'ui-cancel'; id: number }
   | { t: 'toolbar'; items: unknown[] }
   | { t: 'dictation'; event: DictationEvent }
+  | { t: 'calls'; event: CallEvent }
   | DiffFrame;
 export type PageToHost =
   | { t: 'msg'; d: unknown }
@@ -37,7 +39,8 @@ export type PageToHost =
   | { t: 'command'; id: string }
   | { t: 'page-log'; level: 'error' | 'info'; text: string }
   | { t: 'diff-action'; file: string; action: DiffAction; idx?: number }
-  | ({ t: 'dictation' } & DictationRequest);
+  | ({ t: 'dictation' } & DictationRequest)
+  | ({ t: 'calls' } & CallsRequest);
 
 const MAX_QUEUED = 2000;
 /** How long a question asked with no page connected waits for one. */
@@ -63,6 +66,8 @@ export class ViewSurface {
   readonly diffActionRequested = new EventEmitter<{ file: string; action: DiffAction; idx?: number }>();
   /** The composer's mic button: start, stop or cancel dictation (host/dictation.ts). */
   readonly dictationRequested = new EventEmitter<DictationRequest>();
+  /** Settings → Call notes switched call detection on or off (host/callDetection.ts). */
+  readonly callsRequested = new EventEmitter<CallsRequest>();
   private uiSeq = 0;
   private pendingUi = new Map<number, (value: unknown) => void>();
   /** The `ui` frame behind each pending question, for a page that takes over. */
@@ -233,6 +238,8 @@ export class ViewSurface {
       this.diffActionRequested.fire({ file: frame.file, action: frame.action, idx: frame.idx });
     } else if (frame.t === 'dictation' && typeof frame.op === 'string') {
       this.dictationRequested.fire({ op: frame.op, locale: frame.locale });
+    } else if (frame.t === 'calls' && (frame.op === 'enable' || frame.op === 'disable')) {
+      this.callsRequested.fire({ op: frame.op });
     } else if (frame.t === 'page-log' && typeof frame.text === 'string') {
       (frame.level === 'error' ? console.warn : console.log)(`[page ${this.viewType}] ${frame.text.slice(0, 2000)}`);
     }

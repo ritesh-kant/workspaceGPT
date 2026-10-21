@@ -191,6 +191,11 @@ export interface VectorStoreConfig {
   qdrantApiKey?: string;
 }
 
+/** Call notes (beta, desktop only): detect calls and ask before recording. docs/design/call-notes.md. */
+export interface CallNotesConfig {
+  enabled: boolean;
+}
+
 export interface WebSearchConfig {
   /** Primary key, kept in sync with apiKeys[0] for backward compat. */
   apiKey?: string;

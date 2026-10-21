@@ -10,6 +10,7 @@ import RemoteAccountSettings from './settings/RemoteAccountSettings';
 import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
 import JiraSettings from './settings/JiraSettings';
+import CallNotesSettings from './settings/CallNotesSettings';
 import CodeHostSettings from './settings/CodeHostSettings';
 import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
@@ -203,6 +204,17 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             label: 'Import',
             description: 'Bring in chats from other coding tools on this machine. They are read and kept here only.',
             render: () => <ImportSettings />,
+          } as SettingsPage,
+        ]
+      : []),
+    ...(isDesktopHost()
+      ? [
+          {
+            id: 'callNotes',
+            label: 'Call notes',
+            description: 'Notice when you are in a call and ask whether to take notes. Nothing is recorded without your click.',
+            badge: <span className='beta-badge'>Beta</span>,
+            render: () => <CallNotesSettings />,
           } as SettingsPage,
         ]
       : []),
