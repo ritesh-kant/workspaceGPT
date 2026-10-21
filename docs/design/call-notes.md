@@ -19,7 +19,7 @@ Status: 2026-10-21. **Built (beta, desktop):**
 See "Results: recording" for what was tested.
 
 Code:
-- `apps/desktop/native/wgpt-calls.swift`: the macOS helper. Every 3 s it
+- `apps/desktop/native/wgpt-calls.swift`: the macOS helper. Every second it
   prints the processes holding mic + output.
 - `apps/desktop/sidecar/host/callDetection.ts`: the rule (`CallTracker`), the
   Windows registry reader, and the page and notification events. It starts and
@@ -90,7 +90,7 @@ extension code. This follows the rule that desktop must not fork extension code.
      again today".
 3. **Record.** Capture starts on two separate tracks: the microphone ("You")
    and the call app's own audio output ("Others"). The indicator and Stop are shown.
-4. **End.** Recording stops when the detection signal drops for about 15 s,
+4. **End.** Recording stops when the detection signal drops for about 8 s (macOS checks every second),
    or when the user clicks Stop.
 5. **Transcribe.** Transcription runs on the device, chunk by chunk during the
    call or all at once after it. Speaker labels come from the two tracks

@@ -1,7 +1,7 @@
 // wgpt-calls: reports which processes look like they are in a call, for call notes
 // (sidecar/host/callDetection.ts, docs/design/call-notes.md "Detection").
 //
-// Every few seconds it prints one JSON line:
+// Every second it prints one JSON line:
 //   {"holders":[{"pid":5516,"name":"Google Chrome"}]}
 // listing each process that holds BOTH audio input (the mic) and audio output
 // right now, minus the ignore list. It applies no timing: the sidecar decides
@@ -17,7 +17,8 @@ import CoreAudio
 import Foundation
 
 let system = AudioObjectID(kAudioObjectSystemObject)
-let pollSeconds = 3.0
+/// Once a second: how soon a call's end is noticed depends on it, and the check is a few property reads.
+let pollSeconds = 1.0
 
 /// Processes that hold the mic but are never a call.
 let ignoredBundles: Set<String> = ["com.apple.CoreSpeech"]  // "Hey Siri" listener

@@ -49,8 +49,10 @@ export interface Holder {
 }
 
 export const CONFIRM_MS = 10_000;
-export const END_MS = 15_000;
-const POLL_MS = 3_000;
+/** Short enough that a note closes soon after hanging up; long enough to ride out a device switch (AirPods connecting) mid-call. */
+export const END_MS = 8_000;
+/** Windows: how often `reg query` runs (a process spawn). macOS's helper reports every second on its own. */
+const POLL_MS = 2_000;
 
 /**
  * The rule over a stream of snapshots, without any I/O, so it can be tested.
@@ -249,7 +251,7 @@ export function createCallDetection(
     if (!change) return;
     // The call is over: so is its recording (the helper transcribes what is left first).
     if (change === 'end') recorder?.stop();
-    console.log(`[desktop] calls: ${change === 'start' ? `call detected (${holders.map((h) => h.name).join(', ')})` : 'call ended'}`);
+    console.log(`[desktop] calls: ${change === 'start' ? `call detected (${holders.map((h) => h.name).join(', ')})` : `call ended (no audio for ${END_MS / 1000} s)`}`);
     sendState();
     // The shell only shows this when the window isn't in front; in front, the page's indicator is the prompt.
     if (change === 'start') notify('Call detected', 'Open WorkspaceGPT to choose whether to take notes for this call.');
