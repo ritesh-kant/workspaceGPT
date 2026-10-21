@@ -14,6 +14,7 @@
 //           {"type":"segment","speaker":"you"|"others","at":12.4,"end":15.1,"text":"…"}  seconds since start
 //           {"type":"warning","code":"…","message":"…"}   one track could not start; the other goes on
 //           {"type":"error","code":"…","message":"…"}     nothing can be recorded; the process exits next
+//           {"type":"stats","you":{…},"others":{…}}       how each track's chunks were cut, for the log
 //           {"type":"done"}                               every segment has been printed; exits next
 //   stdin   "stop"  stop recording, transcribe what is left, print done. Closing stdin means the same,
 //                   so the helper never outlives the sidecar.
@@ -156,10 +157,11 @@ final class Transcriber {
     }
   }
 
-  /// Not words: "[BLANK_AUDIO]", "(music)", "*laughs*", a lone "-" or "…".
+  /// Not words: "[BLANK_AUDIO]", "(music)", "*laughs*", a lone "-" or "…", and a lone "you", which
+  /// Whisper writes for background noise (3 of 766 lines in a real call; nobody says only "you").
   static func isNoise(_ text: String) -> Bool {
-    let t = text.trimmingCharacters(in: CharacterSet(charactersIn: " .,-…♪"))
-    if t.isEmpty { return true }
+    let t = text.trimmingCharacters(in: CharacterSet(charactersIn: " .,-…♪!?"))
+    if t.isEmpty || t.lowercased() == "you" { return true }
     if let first = t.first, let last = t.last, "[(*".contains(first), "])*".contains(last) { return true }
     return false
   }
@@ -182,6 +184,8 @@ final class Track {
   /// The track's last words, carried into the next chunk's prompt so names and topics stay spelled the same.
   private var lastText = ""
   private var stopped = false
+  /// How chunks were cut: at a pause (clean), at the length limit (maybe mid-word), or skipped as silence.
+  private(set) var cuts = ["pause": 0, "limit": 0, "silent": 0]
 
   init(speaker: String, transcriber: Transcriber) {
     self.speaker = speaker
@@ -204,10 +208,11 @@ final class Track {
       voiced += Double(n) / sampleRate
     }
     let paused = quietSince.map { t - $0 >= pauseSeconds } ?? false
-    if (length >= minChunkSeconds && paused) || length >= maxChunkSeconds { cut() }
+    if length >= minChunkSeconds && paused { cut("pause") }
+    else if length >= maxChunkSeconds { cut("limit") }
   }
 
-  private func cut() {
+  private func cut(_ why: String) {
     let chunk = samples
     let at = (origin ?? 0) + Double(consumed) / sampleRate
     consumed += chunk.count
@@ -216,9 +221,11 @@ final class Track {
     voiced = 0
     quietSince = nil
     guard speech >= minVoicedSeconds else {
+      if !chunk.isEmpty { cuts["silent", default: 0] += 1 }
       if !chunk.isEmpty { trace("\(speaker) chunk at \(Int(at)) s: \(String(format: "%.1f", speech)) s of speech, skipped") }
       return
     }
+    cuts[why, default: 0] += 1
     transcriber.transcribe(chunk, speaker: speaker, at: at, context: lastText) { [weak self] segments in
       guard let self = self else { return }
       for s in segments {
@@ -231,7 +238,7 @@ final class Track {
   /// Stops taking audio and sends what is left.
   func stop() {
     if stopped { return }
-    cut()
+    cut("stop")
     stopped = true
   }
 
@@ -467,6 +474,7 @@ final class Recorder {
     sourceStops = []
     you.stop()
     others.stop()
+    emit(["type": "stats", "you": you.cuts, "others": others.cuts])
     if transcriber.pending == 0 { return Recorder.finish() }
     transcriber.onIdle = { Recorder.finish() }
     // Last resort: a decode that never returns must not keep the note open.

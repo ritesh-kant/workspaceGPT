@@ -28,6 +28,7 @@ type HelperLine =
   | { type: 'state'; state: string }
   | { type: 'segment'; speaker: CallNoteSpeaker; at: number; end?: number; text: string }
   | { type: 'warning' | 'error'; code: string; message: string }
+  | { type: 'stats'; you?: Record<string, number>; others?: Record<string, number> }
   | { type: 'done' };
 
 /** How long "stop" may take to print the last segments before the helper is killed. */
@@ -116,6 +117,9 @@ export class CallRecorder {
           this.save(note);
         } else if (msg.type === 'error') {
           failure = msg.message;
+        } else if (msg.type === 'stats') {
+          // Chunks cut at the length limit may split a word; many of them mean the pause rule is not finding pauses.
+          console.log(`[desktop] call notes: ${note.id} chunks: you ${JSON.stringify(msg.you ?? {})}, others ${JSON.stringify(msg.others ?? {})}`);
         }
       }
     });
