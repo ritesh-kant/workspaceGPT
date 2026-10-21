@@ -69,8 +69,11 @@ const UNITS = [
   'src/services/agent/projectMemory.ts',
   'src/services/confluence/confluenceAdf.ts',
   'src/services/confluence/confluencePageService.ts',
-  // Desktop call notes: the detection rule and the Windows registry parser (no I/O at import).
+  // Desktop call notes: the detection rule and the Windows registry parser (no I/O at import),
+  // the recorder (driven by a fake helper in the tests), and the note store both sides share.
   '../desktop/sidecar/host/callDetection.ts',
+  '../desktop/sidecar/host/callRecorder.ts',
+  'src/services/callNotes.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',
   'webview/src/utils/ticketRefs.ts',
@@ -132,7 +135,11 @@ export async function buildUnits() {
     target: 'node18',
     sourcemap: false,
     logLevel: 'silent',
-    alias: { vscode: path.join(here, 'vscode-stub.mjs') },
+    alias: {
+      vscode: path.join(here, 'vscode-stub.mjs'),
+      // As in apps/desktop/sidecar/esbuild.config.mjs: the recorder writes the extension's note format.
+      'workspacegpt-extension-callnotes': path.join(extRoot, 'src/services/callNotes.ts'),
+    },
     // The sync schedulers reach axios (via the auth services), whose CJS deps
     // `require('util')` at runtime. An ESM bundle has no `require` unless given one.
     banner: { js: "import { createRequire as __wgptCreateRequire } from 'module'; const require = __wgptCreateRequire(import.meta.url);" },

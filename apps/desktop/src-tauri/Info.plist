@@ -8,5 +8,8 @@
 	<string>WorkspaceGPT uses the microphone to turn your voice into chat input.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>WorkspaceGPT uses speech recognition on this Mac to turn your voice into chat input. Your voice is not sent anywhere.</string>
+	<!-- Call notes (sidecar/host/callRecorder.ts): hearing the other side of a call the user chose to take notes of. -->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>WorkspaceGPT hears the other side of a call you chose to take notes of, and transcribes it on this Mac. The audio is not saved or sent anywhere.</string>
 </dict>
 </plist>

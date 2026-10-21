@@ -230,9 +230,11 @@ interface UiFrame {
   // React exists, so the latest of each is kept for late listeners.
   let callsCapability: unknown;
   let callsState: unknown;
-  function onCalls(event: { type?: string } | undefined): void {
+  let callsRecording: unknown;
+  function onCalls(event: { type?: string; state?: string } | undefined): void {
     if (event?.type === 'capability') callsCapability = event;
     else if (event?.type === 'state') callsState = event;
+    else if (event?.type === 'recording') callsRecording = event.state === 'idle' ? undefined : event;
     window.dispatchEvent(new CustomEvent('wgpt-calls', { detail: event }));
   }
 
@@ -245,8 +247,8 @@ interface UiFrame {
       request: (op: 'start' | 'stop' | 'cancel', locale?: string) => send({ t: 'dictation', op, locale }),
     },
     calls: {
-      latest: () => ({ capability: callsCapability, state: callsState }),
-      request: (op: 'enable' | 'disable') => send({ t: 'calls', op }),
+      latest: () => ({ capability: callsCapability, state: callsState, recording: callsRecording }),
+      request: (op: 'enable' | 'disable' | 'record' | 'stop') => send({ t: 'calls', op }),
     },
   };
 

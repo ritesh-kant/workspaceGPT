@@ -223,6 +223,16 @@ export const MESSAGE_TYPES = {
   // in the panel. The chat owns the mode, so it applies it and reports back
   // with ASSISTANT_MODE_CHANGED.
   SET_ASSISTANT_MODE: 'set-assistant-mode',
+  // Call notes (desktop records them; services/callNotes.ts). Sessions panel → host:
+  // OPEN_CALL_NOTE / DELETE_CALL_NOTE {id}, RENAME_CALL_NOTE {id, title}. Host → chat webview:
+  // SHOW_CALL_NOTE {id} opens the note view, which asks GET_CALL_NOTE {id} and is answered by
+  // CALL_NOTE {id, note | null}. The note view may also send DELETE_CALL_NOTE.
+  OPEN_CALL_NOTE: 'open-call-note',
+  DELETE_CALL_NOTE: 'delete-call-note',
+  RENAME_CALL_NOTE: 'rename-call-note',
+  SHOW_CALL_NOTE: 'show-call-note',
+  GET_CALL_NOTE: 'get-call-note',
+  CALL_NOTE: 'call-note',
 
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',

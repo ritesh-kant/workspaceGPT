@@ -238,7 +238,7 @@ export class ViewSurface {
       this.diffActionRequested.fire({ file: frame.file, action: frame.action, idx: frame.idx });
     } else if (frame.t === 'dictation' && typeof frame.op === 'string') {
       this.dictationRequested.fire({ op: frame.op, locale: frame.locale });
-    } else if (frame.t === 'calls' && (frame.op === 'enable' || frame.op === 'disable')) {
+    } else if (frame.t === 'calls' && (frame.op === 'enable' || frame.op === 'disable' || frame.op === 'record' || frame.op === 'stop')) {
       this.callsRequested.fire({ op: frame.op });
     } else if (frame.t === 'page-log' && typeof frame.text === 'string') {
       (frame.level === 'error' ? console.warn : console.log)(`[page ${this.viewType}] ${frame.text.slice(0, 2000)}`);

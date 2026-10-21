@@ -7,7 +7,8 @@
  * Today that is wgpt-dictate (native/wgpt-dictate.swift), the dictation helper
  * the sidecar starts (sidecar/host/dictation.ts), and wgpt-calls
  * (native/wgpt-calls.swift), the call-detection helper for call notes
- * (sidecar/host/callDetection.ts). Without them the composer shows no mic
+ * (sidecar/host/callDetection.ts), and wgpt-notes (native/wgpt-notes.swift),
+ * which records and transcribes a call (sidecar/host/callRecorder.ts). Without them the composer shows no mic
  * button and call notes reports itself unavailable, so a dev build on a machine
  * without the Swift toolchain just skips them; --require (the release stage)
  * makes that an error.
@@ -39,7 +40,7 @@ const out = path.join(root, 'dist/bin');
 fs.mkdirSync(out, { recursive: true });
 // macOS 12 is the app's floor (tauri.conf.json); the helper checks for newer APIs at run time.
 const triple = `${arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macos12.0`;
-for (const helper of ['wgpt-dictate', 'wgpt-calls']) {
+for (const helper of ['wgpt-dictate', 'wgpt-calls', 'wgpt-notes']) {
   const r = spawnSync('swiftc', ['-O', '-swift-version', '5', '-target', triple, `native/${helper}.swift`, '-o', path.join(out, helper)], {
     cwd: root,
     stdio: 'inherit',

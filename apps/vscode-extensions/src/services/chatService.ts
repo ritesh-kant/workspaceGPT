@@ -122,6 +122,7 @@ import { isControlChromeEnabled } from './browser/browserPrefs';
 import { loadWorkspaceRules, newSubfolderRulesState, SUBFOLDER_RULES_TOOLS, subfolderRulesFor, SubfolderRulesState } from './agent/rulesFiles';
 import { memoryEnabled, rememberChoice, saveMemory, userMemoryBlock } from './agent/userMemory';
 import { projectMemoryBlock, projectMemoryDir, readProjectMemory, saveProjectMemory } from './agent/projectMemory';
+import { callNotesDir, hasCallNotes, readCallNoteForAgent, searchCallNotes } from './callNotes';
 import { searchWeb } from './webSearchTool';
 import { RemoteSignInService } from './remote/remoteSignInService';
 import { addCreditTally, creditTallyForCall, CreditTally, emptyCreditTally } from '../utils/creditTally';
@@ -1173,6 +1174,8 @@ export class ChatService {
         browser: isControlChromeEnabled(this.context) ? isBrowserConnected() : undefined,
         ...(isPanelSession(sessionId) ? { browserReadOnly: true } : {}),
         memory: memoryEnabled(this.context.globalState),
+        // Calls the user recorded in the desktop app; in Chat and Work alike.
+        callNotes: await hasCallNotes(callNotesDir(this.context.globalStorageUri.fsPath)),
         // A connection, or the GitHub CLI already signed in to this workspace's host.
         codeHost:
           isWorkMode &&
@@ -1912,6 +1915,10 @@ export class ChatService {
         const dir = this.projectMemoryDirFor(roots);
         return dir ? readProjectMemory(dir, args?.name) : { ok: false, message: 'No folder is open, so there is no project memory.' };
       }
+      case 'search_call_notes':
+        return searchCallNotes(callNotesDir(this.context.globalStorageUri.fsPath), args ?? {});
+      case 'read_call_note':
+        return readCallNoteForAgent(callNotesDir(this.context.globalStorageUri.fsPath), args?.id);
       case 'memory_context':
         // Not a model tool: the worker re-reads these after compacting its
         // conversation (conversationCompaction.ts). Same blocks, same gates as
@@ -2873,6 +2880,10 @@ export class ChatService {
         };
       case 'read_memory':
         return { kind: 'read', title: 'Read project memory', detail: String(args?.name ?? 'index') };
+      case 'search_call_notes':
+        return { kind: 'search', title: 'Searched call notes', detail: String(args?.query ?? 'recent calls') };
+      case 'read_call_note':
+        return { kind: 'read', title: 'Read call note', detail: String(args?.id ?? '') };
       case 'ask_user':
         return { kind: 'info', title: 'Asked you', detail: normalizeQuestions(args).map((q) => q.header || q.question).join(' · ') };
       case 'search_web':
@@ -3131,6 +3142,10 @@ export class ChatService {
         return 'Saving to memory...';
       case 'read_memory':
         return 'Reading project memory...';
+      case 'search_call_notes':
+        return 'Searching call notes...';
+      case 'read_call_note':
+        return 'Reading a call note...';
       case 'search_web':
         return `Searching the web for "${args?.query ?? ''}"...`;
       case 'add_probe':

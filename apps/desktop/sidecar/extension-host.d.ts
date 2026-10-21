@@ -27,4 +27,20 @@ declare module 'workspacegpt-extension-chromechat' {
     surface: { received: { fire(message: unknown): void }; posted: { event(listener: (message: any) => void): { dispose(): void } } }
   ): void;
 }
+declare module 'workspacegpt-extension-callnotes' {
+  export type CallNoteSpeaker = 'you' | 'others';
+  export interface CallNote {
+    id: string;
+    title: string;
+    startedAt: number;
+    endedAt?: number;
+    status: 'recording' | 'done';
+    notice?: string;
+    turns: Array<{ speaker: CallNoteSpeaker; at: number; text: string }>;
+  }
+  export function callNotesDir(globalStoragePath: string): string;
+  export function newCallNoteId(startedAt: number): string;
+  export function readCallNote(dir: string, id: unknown): Promise<CallNote | undefined>;
+  export function writeCallNote(dir: string, note: CallNote): Promise<void>;
+}
 declare module 'posthog-node-real';

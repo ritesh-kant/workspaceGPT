@@ -13,6 +13,10 @@
  *   it ends after END_MS with none.
  * Muted calls count: call apps keep the mic open while muted (tested on macOS).
  *
+ * Recording starts only on the page's `record` frame, sent when the user
+ * clicks "Take notes" (callRecorder.ts), and stops on `stop`, when the call
+ * ends, or when call notes are turned off. macOS only for now.
+ *
  *  - macOS: native/wgpt-calls.swift prints, every few seconds, the processes
  *    holding mic + output (Core Audio per-process state, macOS 14+; no prompt).
  *  - Windows: Windows' own "who is using the microphone" record in the user's
@@ -23,13 +27,15 @@ import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ViewSurface } from './webviewHost';
+import { CallRecorder, notesHelperPath, type RecordingEvent } from './callRecorder';
 
 export type CallEvent =
-  | { type: 'capability'; available: boolean; reason?: string }
-  | { type: 'state'; inCall: boolean; since?: number };
+  | { type: 'capability'; available: boolean; reason?: string; canRecord?: boolean; recordReason?: string }
+  | { type: 'state'; inCall: boolean; since?: number }
+  | RecordingEvent;
 
 export interface CallsRequest {
-  op: 'enable' | 'disable';
+  op: 'enable' | 'disable' | 'record' | 'stop';
 }
 
 /** Something holding the mic (and, where the OS can tell, audio output). */
@@ -181,24 +187,47 @@ function startWindowsSource(onSnapshot: (h: Holder[]) => void): Source {
   };
 }
 
-export function createCallDetection(surface: ViewSurface, notify: (title: string, body: string) => void): void {
+export function createCallDetection(surface: ViewSurface, notesDir: string, notify: (title: string, body: string) => void): void {
   const macBin = macHelperPath();
+  const notesBin = notesHelperPath();
+  const recordability = notesBin
+    ? { canRecord: true }
+    : {
+        canRecord: false,
+        recordReason:
+          process.platform === 'win32'
+            ? 'Taking notes on Windows comes in a later beta. This build only detects calls.'
+            : 'The call-notes recorder is missing from this build.',
+      };
   let capability: Extract<CallEvent, { type: 'capability' }> =
     process.platform === 'win32'
-      ? { type: 'capability', available: true }
+      ? { type: 'capability', available: true, ...recordability }
       : macBin
-        ? { type: 'capability', available: true }
+        ? { type: 'capability', available: true, ...recordability }
         : { type: 'capability', available: false, reason: process.platform === 'darwin' ? 'The call-detection helper is missing from this build.' : 'Call notes is available on macOS and Windows.' };
 
   const send = (event: CallEvent) => surface.sendControl({ t: 'calls', event });
   const tracker = new CallTracker();
   let source: Source | undefined;
+  /** Who held mic + output in the last snapshot: on macOS their pids, whose audio is the other side of the call. */
+  let lastHolders: Holder[] = [];
+  /** The recording's latest state, replayed to a page that (re)attaches mid-call. */
+  let recordingState: RecordingEvent | undefined;
+  const recorder = notesBin
+    ? new CallRecorder(notesBin, notesDir, (event) => {
+        if (event.type === 'recording') recordingState = event.state === 'idle' ? undefined : event;
+        send(event);
+      })
+    : undefined;
 
   const sendState = () => send({ type: 'state', inCall: tracker.inCall, since: tracker.since });
 
   const onSnapshot = (holders: Holder[]) => {
+    if (holders.length) lastHolders = holders;
     const change = tracker.update(holders, Date.now());
     if (!change) return;
+    // The call is over: so is its recording (the helper transcribes what is left first).
+    if (change === 'end') recorder?.stop();
     console.log(`[desktop] calls: ${change === 'start' ? `call detected (${holders.map((h) => h.name).join(', ')})` : 'call ended'}`);
     sendState();
     // The shell only shows this when the window isn't in front; in front, the page's indicator is the prompt.
@@ -206,6 +235,7 @@ export function createCallDetection(surface: ViewSurface, notify: (title: string
   };
 
   const stop = () => {
+    recorder?.stop();
     source?.stop();
     source = undefined;
     tracker.reset();
@@ -226,9 +256,14 @@ export function createCallDetection(surface: ViewSurface, notify: (title: string
   surface.attached.event(() => {
     send(capability);
     sendState();
+    if (recordingState) send(recordingState);
   });
   surface.callsRequested.event((req) => {
     if (req.op === 'enable') start();
     else if (req.op === 'disable') stop();
+    // Only for a call in progress: the page asks after detection, and only on the user's click.
+    else if (req.op === 'record' && tracker.inCall && recorder && !recorder.active) {
+      recorder.start(process.platform === 'darwin' ? lastHolders.map((h) => Number(h.key)) : []);
+    } else if (req.op === 'stop') recorder?.stop();
   });
 }

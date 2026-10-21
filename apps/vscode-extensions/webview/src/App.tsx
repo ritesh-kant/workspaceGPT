@@ -19,6 +19,7 @@ import HomeGreeting from './components/HomeGreeting';
 import WorkHome from './components/WorkHome';
 import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowledgeSources';
 import CallIndicator from './components/CallIndicator';
+import CallNoteView from './components/CallNoteView';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
 import CiChip from './components/CiChip';
@@ -415,7 +416,7 @@ const App: React.FC = () => {
     setConfig: setSettingsConfig,
   } = useSettingsStore();
 
-  const { activeView, setActiveView, openSettings, settingsHydrated, setSettingsHydrated } = useUiStore();
+  const { activeView, setActiveView, openSettings, settingsHydrated, setSettingsHydrated, callNoteId } = useUiStore();
 
   // The desktop shell hides its sessions sidebar for onboarding and Settings.
   // It can read this frame's DOM to notice, but a message does not depend on that.
@@ -1334,6 +1335,9 @@ const App: React.FC = () => {
           break;
         case MESSAGE_TYPES.SHOW_RELEASES:
           setActiveView('releases');
+          break;
+        case MESSAGE_TYPES.SHOW_CALL_NOTE:
+          if (typeof message.id === 'string') useUiStore.getState().openCallNote(message.id);
           break;
         case MESSAGE_TYPES.CHAT_SNAPSHOT_REQUEST:
           flushStreamRemainderRef.current();
@@ -2775,7 +2779,12 @@ const App: React.FC = () => {
 
   return (
     <div className='app-container'>
-      {isDesktopHost() && <CallIndicator />}
+      {isDesktopHost() && (
+        <CallIndicator
+          onOpenNote={(id) => useUiStore.getState().openCallNote(id)}
+          viewingNoteId={activeView === 'callNote' ? callNoteId ?? undefined : undefined}
+        />
+      )}
       <div className={`chat-container${showWorkHome ? ' chat-container--work-home' : ''}`}>
         {showTips && messages.length === 0 && !isDesktopHost() && <div className='mode-bar'>{modeSwitch}</div>}
         {showWorkHome ? (
@@ -3527,6 +3536,18 @@ const App: React.FC = () => {
           mode={mode}
           onOpenSettings={() => setActiveView('settings')}
         />
+        {activeView === 'callNote' && callNoteId && (
+          <CallNoteView
+            noteId={callNoteId}
+            onBack={() => setActiveView('chat')}
+            onAsk={(note) => {
+              setActiveView('chat');
+              handleNewChat();
+              setInputValue(`About my call "${note.title}" (call note ${note.id}): `);
+              setTimeout(() => inputRef.current?.focus(), 0);
+            }}
+          />
+        )}
         <ChatHistorySidebar
           isVisible={activeView === 'history'}
           historyList={modeHistoryList}

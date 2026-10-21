@@ -44,6 +44,8 @@ const referenceIndex = await import(path.join(outDir, 'referenceIndex.mjs'));
 const permissionPolicy = await import(path.join(outDir, 'permissionPolicy.mjs'));
 const syncedFilePrune = await import(path.join(outDir, 'syncedFilePrune.mjs'));
 const callDetection = await import(path.join(outDir, 'callDetection.mjs'));
+const callRecorderMod = await import(path.join(outDir, 'callRecorder.mjs'));
+const callNotesMod = await import(path.join(outDir, 'callNotes.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -3517,7 +3519,7 @@ console.log('\ntoolScope (a turn is offered only the tools it can actually use)'
       'list_directory', 'find_files', 'run_command', 'check_command', 'run_checks', 'get_diagnostics', 'git_status', 'git_diff',
       'git_log', 'git_blame', 'edit_file', 'create_file', 'delete_file', 'search_docs', 'get_confluence_page',
       'find_confluence_location', 'update_confluence_page', 'create_confluence_page',
-      'save_memory', 'read_memory', 'search_tickets', 'get_ticket', 'list_prs', 'get_pr', 'get_repo_issue', 'browser_list_tabs', 'browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_read_page',
+      'save_memory', 'read_memory', 'search_call_notes', 'read_call_note', 'search_tickets', 'get_ticket', 'list_prs', 'get_pr', 'get_repo_issue', 'browser_list_tabs', 'browser_open_tab', 'browser_close_tab', 'browser_navigate', 'browser_read_page',
       'browser_read_tree', 'browser_screenshot', 'browser_act', 'browser_eval', 'browser_console', 'browser_network',
       'debug_ledger', 'add_probe', 'remove_probes', 'probe_output', 'counterfactual_check', 'git_bisect',
     ];
@@ -6456,6 +6458,166 @@ console.log('\ncall detection (call notes, desktop)');
     ].join('\r\n');
     assert.deepEqual(parseWindowsMicUsers(out).map((h) => h.name), ['MSTeams_8wekyb3d8bbwe', 'chrome.exe'], 'Zoom stopped; never-used has no start');
   });
+}
+
+// ═══ Call notes: the note store and the recorder (desktop) ═══
+console.log('\ncall notes (store, search, recorder)');
+{
+  const { renderCallNote, parseCallNote, writeCallNote, readCallNote, listCallNotes, deleteCallNote, renameCallNote, searchCallNotes, readCallNoteForAgent, hasCallNotes, isCallNoteId, newCallNoteId } = callNotesMod;
+  const { CallRecorder } = callRecorderMod;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-callnotes-'));
+  const started = Date.parse('2026-10-21T05:02:05.000Z');
+  const note = {
+    id: '2026-10-21-1032-k3f9',
+    title: 'Call on Tue 21 Oct, 10:32',
+    startedAt: started,
+    endedAt: started + 30 * 60_000,
+    status: 'done',
+    notice: 'Only your side was transcribed.',
+    turns: [
+      { speaker: 'others', at: 64, text: 'We decided to keep the retry cap at five.' },
+      { speaker: 'you', at: 12, text: 'Morning all,\nlet us start.' },
+      { speaker: 'others', at: 3725, text: 'Rahul will update the Jira ticket.' },
+    ],
+  };
+
+  await t('a call note round-trips through its Markdown, turns in time order on one line each', () => {
+    const md = renderCallNote(note);
+    assert.match(md, /^\[00:12\] You: Morning all, let us start\.$/m);
+    assert.match(md, /^\[1:02:05\] Others: Rahul will update the Jira ticket\.$/m, 'past an hour the stamp has hours');
+    const back = parseCallNote(md);
+    assert.deepEqual(back.turns.map((x) => x.at), [12, 64, 3725]);
+    assert.equal(back.title, note.title);
+    assert.equal(back.notice, note.notice);
+    assert.equal(back.endedAt, note.endedAt);
+    assert.equal(back.status, 'done');
+  });
+
+  await t('ids that could name a path outside the folder are refused', async () => {
+    assert.equal(isCallNoteId('../x'), false);
+    assert.equal(isCallNoteId('a/b'), false);
+    assert.equal(isCallNoteId(newCallNoteId(started)), true);
+    assert.equal(await readCallNote(dir, '../../etc/passwd'), undefined);
+    assert.equal(await deleteCallNote(dir, '../x'), false);
+  });
+
+  await t('list is newest first; rename keeps the transcript; delete removes it', async () => {
+    assert.equal(await hasCallNotes(dir), false);
+    await writeCallNote(dir, note);
+    await writeCallNote(dir, { ...note, id: '2026-10-22-0900-aaaa', title: 'Call on Wed', startedAt: started + 86_400_000, endedAt: undefined, status: 'recording', turns: [] });
+    assert.equal(await hasCallNotes(dir), true);
+    const list = await listCallNotes(dir);
+    assert.deepEqual(list.map((n) => n.id), ['2026-10-22-0900-aaaa', note.id]);
+    assert.equal(list[0].status, 'recording');
+    assert.equal(list[1].turnCount, 3);
+    assert.ok(list[1].preview.startsWith('Morning all'), 'preview is the first words said');
+    assert.equal(await renameCallNote(dir, note.id, '  Sprint   planning '), true);
+    const renamed = await readCallNote(dir, note.id);
+    assert.equal(renamed.title, 'Sprint planning');
+    assert.equal(renamed.turns.length, 3);
+    assert.equal(await deleteCallNote(dir, '2026-10-22-0900-aaaa'), true);
+    assert.deepEqual((await listCallNotes(dir)).map((n) => n.id), [note.id]);
+  });
+
+  await t('search_call_notes finds a call by every word, with its matching lines; read_call_note gives the transcript', async () => {
+    const hit = await searchCallNotes(dir, { query: 'retry cap' });
+    assert.match(hit.message, /2026-10-21-1032-k3f9: "Sprint planning"/);
+    assert.match(hit.message, /\[01:04\] Others: We decided to keep the retry cap at five\./);
+    const miss = await searchCallNotes(dir, { query: 'retry kubernetes' });
+    assert.match(miss.message, /No call note matches/);
+    const all = await searchCallNotes(dir, {});
+    assert.match(all.message, /starts: Morning all/);
+    const read = await readCallNoteForAgent(dir, note.id);
+    assert.equal(read.ok, true);
+    assert.match(read.content, /\[1:02:05\] Others: Rahul will update the Jira ticket\./);
+    assert.equal((await readCallNoteForAgent(dir, 'nope-0000')).ok, false);
+  });
+
+  // A stand-in for native/wgpt-notes: the same JSON lines, driven by FAKE_MODE.
+  const fake = path.join(dir, 'fake-notes.mjs');
+  fs.writeFileSync(
+    fake,
+    `#!/usr/bin/env node
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+const mode = process.env.FAKE_MODE;
+out({ type: 'state', state: 'starting' });
+if (mode === 'fail') { out({ type: 'error', code: 'speech-denied', message: 'Speech Recognition is turned off.' }); process.exit(1); }
+out({ type: 'state', state: 'recording' });
+out({ type: 'warning', code: 'call-audio-unavailable', message: 'Only your side will be transcribed.' });
+out({ type: 'segment', speaker: 'others', at: 3.2, text: 'We keep the retry cap at five.' });
+out({ type: 'segment', speaker: 'you', at: 1, text: 'Hi all' });
+if (mode === 'chatty') setInterval(() => out({ type: 'segment', speaker: 'you', at: 5, text: 'more' }), 100);
+process.stdin.on('data', (d) => {
+  if (!String(d).includes('stop')) return;
+  out({ type: 'segment', speaker: 'you', at: 9, text: 'Bye' });
+  out({ type: 'state', state: 'finishing' });
+  out({ type: 'done' });
+  process.exit(0);
+});
+`
+  );
+  fs.chmodSync(fake, 0o755);
+  const notesDir = path.join(dir, 'recorded');
+  const until = (events, pred, ms = 5000) =>
+    new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const tick = () => {
+        const e = events.find(pred);
+        if (e) return resolve(e);
+        if (Date.now() - t0 > ms) return reject(new Error(`timed out; events: ${JSON.stringify(events)}`));
+        setTimeout(tick, 20);
+      };
+      tick();
+    });
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  await t('the recorder writes segments as they come, and Stop finishes the note', async () => {
+    process.env.FAKE_MODE = 'ok';
+    const events = [];
+    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e));
+    rec.start([4242]);
+    const recording = await until(events, (e) => e.type === 'recording' && e.state === 'recording');
+    await until(events, (e) => e.type === 'recording-notice');
+    rec.stop();
+    const idle = await until(events, (e) => e.type === 'recording' && e.state === 'idle');
+    assert.equal(idle.noteId, recording.noteId);
+    assert.equal(idle.error, undefined);
+    await settle();
+    const saved = await readCallNote(notesDir, recording.noteId);
+    assert.equal(saved.status, 'done');
+    assert.ok(saved.endedAt >= saved.startedAt);
+    assert.deepEqual(saved.turns.map((x) => `${x.speaker}:${x.text}`), ['you:Hi all', 'others:We keep the retry cap at five.', 'you:Bye']);
+    assert.match(saved.notice, /Only your side/);
+    assert.match(saved.title, /^Call on /);
+  });
+
+  await t('a recording that fails before anything is heard leaves no note, and says why', async () => {
+    process.env.FAKE_MODE = 'fail';
+    const events = [];
+    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e));
+    const before = (await listCallNotes(notesDir)).length;
+    rec.start([]);
+    const idle = await until(events, (e) => e.type === 'recording' && e.state === 'idle');
+    assert.match(idle.error, /Speech Recognition is turned off/);
+    await settle();
+    assert.equal((await listCallNotes(notesDir)).length, before);
+  });
+
+  await t('deleting the note while it records stops the recording and it is not written back', async () => {
+    process.env.FAKE_MODE = 'chatty';
+    const events = [];
+    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e));
+    rec.start([]);
+    const started = await until(events, (e) => e.type === 'recording' && e.state === 'recording');
+    await settle();
+    assert.ok(await readCallNote(notesDir, started.noteId), 'the note exists while recording');
+    await deleteCallNote(notesDir, started.noteId);
+    await until(events, (e) => e.type === 'recording' && e.state === 'idle');
+    await settle();
+    assert.equal(await readCallNote(notesDir, started.noteId), undefined);
+  });
+  delete process.env.FAKE_MODE;
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 // ── summary ──

@@ -750,6 +750,37 @@ const TOOL_DEFS = [
   {
     type: 'function',
     function: {
+      name: 'search_call_notes',
+      description:
+        'The user\'s call notes: transcripts of calls (Teams, Zoom, Meet…) they chose to record with WorkspaceGPT, kept on this machine. ' +
+        'Lists calls newest first; with a query, only calls whose transcript holds every word of it, with the matching lines. ' +
+        'Use it when the user asks about a call or meeting ("what did we decide in Tuesday\'s call"), then read_call_note for the full transcript.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Words to find, e.g. "retry cap". Omit to list recent calls.' },
+          days: { type: 'number', description: 'Only calls from the last N days.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_call_note',
+      description: 'One call note\'s full transcript, by its id from search_call_notes. "You" is the user; "Others" is everyone else on the call.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The call note id, e.g. "2026-10-21-1032-k3f9".' },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ask_user',
       description:
         'Ask the user a decision or fact only they can give, as a card they answer with one click, and WAIT for the answer (it comes back as this tool\'s result). ' +

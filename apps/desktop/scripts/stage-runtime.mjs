@@ -18,6 +18,7 @@
  *   runtime/bridge/                  the shell page and view bridge
  *   runtime/bin/wgpt-dictate         (macOS) the dictation helper, native/wgpt-dictate.swift
  *   runtime/bin/wgpt-calls           (macOS) the call-detection helper, native/wgpt-calls.swift
+ *   runtime/bin/wgpt-notes           (macOS) the call-notes recorder, native/wgpt-notes.swift
  *   runtime/extension/               what the extension host reads by path: package.json,
  *                                    resources/, webview/dist/, dist/mcp-server.js
  *   runtime/manifest.json            versions, for diagnostics and the release checks
@@ -143,11 +144,12 @@ if (platform !== 'win32') for (const p of fs.existsSync(ptyPrebuilds) ? fs.readd
 copy(path.join(root, 'dist/bridge'), path.join(out, 'bridge'));
 
 // The native helpers, beside the sidecar where host/dictation.ts and host/callDetection.ts look:
-// native/wgpt-dictate.swift (dictation) and native/wgpt-calls.swift (call detection).
+// native/wgpt-dictate.swift (dictation), native/wgpt-calls.swift (call detection) and
+// native/wgpt-notes.swift (call notes; host/callRecorder.ts).
 if (platform === 'darwin') {
   run('node', ['scripts/build-native.mjs', '--target', target, '--require'], root);
   fs.mkdirSync(path.join(out, 'bin'), { recursive: true });
-  for (const helper of ['wgpt-dictate', 'wgpt-calls']) {
+  for (const helper of ['wgpt-dictate', 'wgpt-calls', 'wgpt-notes']) {
     fs.copyFileSync(path.join(root, 'dist/bin', helper), path.join(out, 'bin', helper));
     fs.chmodSync(path.join(out, 'bin', helper), 0o755);
   }

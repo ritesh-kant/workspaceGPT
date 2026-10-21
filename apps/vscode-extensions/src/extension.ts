@@ -98,6 +98,10 @@ export async function activate(context: vscode.ExtensionContext) {
     },
     (mode) => {
       webViewProvider.setAssistantMode(mode);
+    },
+    context.globalStorageUri.fsPath,
+    (id) => {
+      webViewProvider.openCallNote(id);
     }
   );
   webViewProvider.setSessionsView(sessionsViewProvider);

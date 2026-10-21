@@ -21,7 +21,7 @@ let pollSeconds = 3.0
 
 /// Processes that hold the mic but are never a call.
 let ignoredBundles: Set<String> = ["com.apple.CoreSpeech"]  // "Hey Siri" listener
-let ignoredNames: Set<String> = ["corespeechd", "wgpt-dictate"]  // wgpt-dictate: our own dictation helper
+let ignoredNames: Set<String> = ["corespeechd", "wgpt-dictate", "wgpt-notes"]  // ours: dictation and the call-notes recorder
 
 func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
   AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)

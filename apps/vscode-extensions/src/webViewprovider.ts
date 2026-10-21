@@ -15,6 +15,7 @@ import {
   unmaximizeChatWorkbench,
 } from './utils/chatMaximizeLayout';
 import { SessionsViewProvider } from './sessionsViewProvider';
+import { callNotesDir, deleteCallNote, readCallNote } from './services/callNotes';
 
 const SNAPSHOT_TIMEOUT_MS = 1500;
 
@@ -63,6 +64,12 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
   public loadSession(sessionId: string): void {
     this.revealChat();
     void this.postMessage({ type: MESSAGE_TYPES.LOAD_CHAT_SESSION, sessionId });
+  }
+
+  /** A call note was picked in the Sessions panel: the chat shows it. */
+  public openCallNote(id: string): void {
+    this.revealChat();
+    void this.postMessage({ type: MESSAGE_TYPES.SHOW_CALL_NOTE, id });
   }
 
   /** The Sessions panel's Chat/Work switch moved — the chat applies it. */
@@ -351,6 +358,16 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       this.sessionsView?.setActiveSession(data.sessionId ?? null);
       // The git bar, @-picker and file links follow the chat on screen's folder.
       await this.messageHandler?.handleMessage(data);
+      return;
+    }
+    if (data?.type === MESSAGE_TYPES.GET_CALL_NOTE) {
+      const note = await readCallNote(callNotesDir(this._context.globalStorageUri.fsPath), data.id);
+      await this.hub.postTo(surface, { type: MESSAGE_TYPES.CALL_NOTE, id: data.id, note: note ?? null });
+      return;
+    }
+    if (data?.type === MESSAGE_TYPES.DELETE_CALL_NOTE) {
+      await deleteCallNote(callNotesDir(this._context.globalStorageUri.fsPath), data.id);
+      await this.sessionsView?.refresh();
       return;
     }
     if (data?.type === MESSAGE_TYPES.ASSISTANT_MODE_CHANGED) {

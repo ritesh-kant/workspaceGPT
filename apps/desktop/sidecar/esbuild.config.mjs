@@ -61,6 +61,8 @@ const sidecar = {
     'workspacegpt-extension-browser': path.join(extDir, 'src/services/browser/browserBridge.ts'),
     // The side panel's questions, answered by this host's own chat (the panel holds no provider).
     'workspacegpt-extension-chromechat': path.join(extDir, 'src/services/browser/chromeChat.ts'),
+    // Call notes: the recorder writes the format the Sessions panel and the agent read.
+    'workspacegpt-extension-callnotes': path.join(extDir, 'src/services/callNotes.ts'),
     'posthog-node': path.join(here, 'host/posthogShim.ts'),
     'posthog-node-real': realPosthog,
   },

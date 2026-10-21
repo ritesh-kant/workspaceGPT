@@ -91,3 +91,14 @@
 .call-indicator-link:hover {
   text-decoration: underline;
 }
+
+/* One side of the call could not be heard (e.g. no System Audio Recording permission). */
+.call-indicator-warning {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+/* Not recording any more: a still dot, in the theme's success colour. */
+.call-indicator-dot--still {
+  animation: none;
+  background: var(--vscode-charts-green, #89d185);
+}

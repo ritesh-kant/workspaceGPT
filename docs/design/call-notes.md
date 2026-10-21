@@ -1,19 +1,37 @@
 # Call notes (desktop app only)
 
-Status: 2026-10-21. **Built (beta):** call detection, the "Call detected"
-indicator, the ask-before-recording prompt, and Settings → Call notes (desktop
-only, off by default). **Not built:** recording, transcription, and the
-Meetings Knowledge source; "Take notes" says so instead of pretending.
-Detection is confirmed on macOS for a muted call in the Teams web app; the
-Teams and Zoom desktop apps and Windows are still to test (see "Validate first").
+Status: 2026-10-21. **Built (beta, desktop):**
+- call detection, the "Call detected" prompt, and Settings → Call notes (off by default);
+- **macOS:** "Take notes" records and transcribes on the device, writes a call note
+  as it goes, and stops on Stop or when the call ends;
+- **Call notes** in the sidebar's Sessions list, grouped by day, plus a note view
+  (rename, delete, "Ask about this call");
+- agent tools `search_call_notes` and `read_call_note`.
+
+**Not built:**
+- Windows recording and transcription (whisper.cpp); Windows only detects;
+- a summary per call;
+- embedding notes into the on-device index (search is by words, not meaning);
+- matching a call to its calendar meeting.
+
+See "Results: recording" for what was tested.
 
 Code:
 - `apps/desktop/native/wgpt-calls.swift`: the macOS helper. Every 3 s it
   prints the processes holding mic + output.
 - `apps/desktop/sidecar/host/callDetection.ts`: the rule (`CallTracker`), the
-  Windows registry reader, and the page and notification events.
-- The webview: `hooks/useCallDetection.ts`, `components/CallIndicator.tsx` and
-  `components/settings/CallNotesSettings.tsx`.
+  Windows registry reader, and the page and notification events. It starts and
+  stops the recorder.
+- `apps/desktop/native/wgpt-notes.swift`: the macOS recorder. It taps the call's
+  processes and the mic, transcribes both on the device, and prints segments.
+- `apps/desktop/sidecar/host/callRecorder.ts`: runs the recorder and writes its
+  segments into the call note.
+- `apps/vscode-extensions/src/services/callNotes.ts`: the note format, shared
+  by the recorder, the Sessions list and the agent tools.
+- The Sessions list: `src/sessionsViewProvider.ts` and
+  `src/templates/SessionsHtmlTemplate.ts`.
+- The webview: `hooks/useCallDetection.ts`, `components/CallIndicator.tsx`,
+  `components/CallNoteView.tsx` and `components/settings/CallNotesSettings.tsx`.
 
 ## What it does
 
@@ -277,3 +295,43 @@ That is about three weeks for v1, after the probes pass.
 - Should "Never for this meeting" exist without the Outlook Calendar source,
   or fall back to "don't ask again today"?
 - What retention default should transcripts have (keep forever, or 90 days)?
+
+## Results: recording, macOS, 2026-10-21
+
+**How it was run.** The test used the real desktop sidecar (headless) and its
+real UI in a browser.
+- A stand-in for `wgpt-calls` reported an `afplay` process playing a spoken
+  meeting as the call.
+- The real `wgpt-notes` ran inside a small test app bundle. A process started
+  from a terminal can't get Speech Recognition, so it was run that way.
+
+**What worked:**
+- "Take notes" started recording.
+- The sidebar showed the call as "Recording" within seconds.
+- The note view filled in live.
+- Both ways of ending a recording worked:
+  - when the call ended, it stopped by itself and the note was finalized
+    ("19:04 – 19:05 · 1m");
+  - Stop in the note view finished it at once.
+- Rename, delete, day grouping (Today / Yesterday / a date) and "Ask about this
+  call" all worked.
+
+**The tap.** The process tap heard only the tapped process: the clip played by
+the tapped `afplay`. When that process ended, its track went quiet, as intended.
+The en-IN on-device model transcribed it well, with "jira" in lower case.
+
+**Not tested yet:**
+- the mic ("You") track, which uses the same code as dictation;
+- a real Teams or Zoom call, end to end;
+- the installable build;
+- Windows recording, which isn't built.
+
+**Permissions.** The first time, macOS asks for Speech Recognition, the
+Microphone and System Audio Recording, all under WorkspaceGPT. Until System Audio
+Recording is allowed, the tap delivers silence rather than failing.
+
+**Known limits:**
+- **Speakers, not headphones:** the mic also hears the other side, so their
+  words can appear under "You" too.
+- **The tap follows the processes seen at the start.** If a call app moves its
+  audio to a new process mid-call, the "Others" track goes quiet.

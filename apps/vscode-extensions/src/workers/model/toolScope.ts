@@ -30,6 +30,8 @@ export interface ToolAvailability {
   codeHost?: boolean;
   /** User memory is switched on (Settings → Memory): offers `save_memory` and `read_memory`. */
   memory?: boolean;
+  /** There is at least one call note (recorded by the desktop app): offers `search_call_notes` and `read_call_note`. */
+  callNotes?: boolean;
   /** This is a Debug-mode run (a Bug ticket being worked, or the user chose Debug): offers the probe, ledger and counterfactual tools. */
   debug?: boolean;
 }
@@ -66,6 +68,8 @@ export const TOOL_REQUIREMENTS: Readonly<Record<string, keyof ToolAvailability>>
   create_confluence_page: 'confluence',
   save_memory: 'memory',
   read_memory: 'memory',
+  search_call_notes: 'callNotes',
+  read_call_note: 'callNotes',
   list_prs: 'codeHost',
   get_pr: 'codeHost',
   get_repo_issue: 'codeHost',

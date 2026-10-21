@@ -1,9 +1,11 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { EXTENSION, MESSAGE_TYPES } from '../constants';
 import { HistoryService } from './services/historyService';
 import { openFolderIn } from './services/openFolderIn';
 import { SessionsHtmlTemplate } from './templates/SessionsHtmlTemplate';
 import { tryExecuteCommand } from './utils/chatMaximizeLayout';
+import { callNotesDir, deleteCallNote, listCallNotes, renameCallNote } from './services/callNotes';
 
 const WATCH_DEBOUNCE_MS = 200;
 
@@ -24,7 +26,10 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   private assistantMode: 'chat' | 'work' = 'work';
   private htmlTemplate = new SessionsHtmlTemplate();
   private watcher?: vscode.FileSystemWatcher;
+  private notesWatcher?: vscode.FileSystemWatcher;
   private watchTimer?: ReturnType<typeof setTimeout>;
+  /** Call notes, listed above the chats. Only the desktop app records them; in VS Code the folder stays empty. */
+  private readonly notesDir: string;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -32,8 +37,12 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     private readonly onNewSession: () => void,
     private readonly onSelectSession: (sessionId: string) => void,
     private readonly onDeleteSession: (sessionId: string) => void,
-    private readonly onSetAssistantMode: (mode: 'chat' | 'work') => void
-  ) {}
+    private readonly onSetAssistantMode: (mode: 'chat' | 'work') => void,
+    globalStoragePath: string,
+    private readonly onOpenCallNote: (id: string) => void
+  ) {
+    this.notesDir = callNotesDir(globalStoragePath);
+  }
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -76,6 +85,15 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         if (typeof data.pinned === 'boolean') patch.pinned = data.pinned;
         if (typeof data.group === 'string') patch.group = data.group;
         void this.historyService.updateSessionMeta(data.sessionId, patch).then(() => this.postList());
+      }
+      if (data?.type === MESSAGE_TYPES.OPEN_CALL_NOTE && typeof data.id === 'string') {
+        this.onOpenCallNote(data.id);
+      }
+      if (data?.type === MESSAGE_TYPES.DELETE_CALL_NOTE && typeof data.id === 'string') {
+        void deleteCallNote(this.notesDir, data.id).then(() => this.postList());
+      }
+      if (data?.type === MESSAGE_TYPES.RENAME_CALL_NOTE && typeof data.id === 'string' && typeof data.title === 'string') {
+        void renameCallNote(this.notesDir, data.id, data.title).then(() => this.postList());
       }
       if (data?.type === MESSAGE_TYPES.OPEN_SESSION_IN && typeof data.sessionId === 'string') {
         // The folder comes from the stored chat, never from the webview.
@@ -161,9 +179,12 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     if (!this._view) return;
     const all = await this.historyService.getHistoryList();
     const sessions = all.filter((session) => session.assistantMode === this.assistantMode);
+    const callNotes = await listCallNotes(this.notesDir);
     await this._view.webview.postMessage({
       type: MESSAGE_TYPES.SESSIONS_LIST,
       sessions,
+      // Calls are not Chat or Work: listed in both.
+      callNotes,
       // Work sessions are listed under the folder they were started in, and
       // the open one's group is where a new session lands.
       assistantMode: this.assistantMode,
@@ -190,6 +211,16 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     this.watcher.onDidChange(schedule);
     this.watcher.onDidCreate(schedule);
     this.watcher.onDidDelete(schedule);
+    // A note grows while its call is recorded; the folder has to exist to be watched.
+    try {
+      fs.mkdirSync(this.notesDir, { recursive: true });
+      this.notesWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(this.notesDir, '*.md'));
+      this.notesWatcher.onDidChange(schedule);
+      this.notesWatcher.onDidCreate(schedule);
+      this.notesWatcher.onDidDelete(schedule);
+    } catch {
+      /* no call notes list updates; the list still refreshes on open */
+    }
   }
 
   private disposeWatcher(): void {
@@ -198,6 +229,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       this.watchTimer = undefined;
     }
     this.watcher?.dispose();
+    this.notesWatcher?.dispose();
     this.watcher = undefined;
   }
 }

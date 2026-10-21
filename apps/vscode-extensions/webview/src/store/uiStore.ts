@@ -8,7 +8,7 @@ import { create } from 'zustand';
  * rendered them stacked with no way to tell. Not persisted: which panel is
  * open is session-transient UI state, not something to restore on reload.
  */
-export type ActiveView = 'chat' | 'settings' | 'history' | 'releases' | 'onboarding';
+export type ActiveView = 'chat' | 'settings' | 'history' | 'releases' | 'onboarding' | 'callNote';
 
 interface UiState {
   activeView: ActiveView;
@@ -19,6 +19,9 @@ interface UiState {
   /** A Settings page to land on the next time Settings opens (the desktop's
    *  page layout, see components/Settings.tsx); consumed once it is shown. */
   settingsPage: string | null;
+  /** The call note the 'callNote' view shows (components/CallNoteView.tsx). */
+  callNoteId: string | null;
+  openCallNote: (id: string) => void;
   setActiveView: (view: ActiveView) => void;
   setSettingsHydrated: (hydrated: boolean) => void;
   /** Open Settings, optionally on a given page. */
@@ -30,6 +33,8 @@ export const useUiStore = create<UiState>((set) => ({
   activeView: 'chat',
   settingsHydrated: false,
   settingsPage: null,
+  callNoteId: null,
+  openCallNote: (id) => set({ activeView: 'callNote', callNoteId: id }),
   setActiveView: (activeView) => set({ activeView }),
   setSettingsHydrated: (settingsHydrated) => set({ settingsHydrated }),
   openSettings: (page) => set({ activeView: 'settings', settingsPage: page ?? null }),

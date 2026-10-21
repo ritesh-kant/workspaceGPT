@@ -226,7 +226,7 @@ interface SessionPreview {
       function checkPanel(): void {
         const kids = container ? [...container.children] : [];
         const has = (sel: string) => kids.some((k) => k.matches(sel));
-        panel = has('.history-overlay') ? 'History' : has('[class*="release"]') ? 'Releases' : has('.settings-panel') ? 'Settings' : null;
+        panel = has('.history-overlay') ? 'History' : has('[class*="release"]') ? 'Releases' : has('.settings-panel') ? 'Settings' : has('.call-note-view') ? 'Call notes' : null;
         // Settings brings its own left column (its section nav, see
         // Settings.tsx's page layout); the sessions sidebar steps aside so the
         // window stays two columns, the way Cline's settings sit in its sidebar.
@@ -504,7 +504,7 @@ interface SessionPreview {
     const d = e.data;
     if (d && d.type === 'wgpt:screen') {
       const view = d.view;
-      panel = view === 'history' ? 'History' : view === 'releases' ? 'Releases' : view === 'settings' ? 'Settings' : null;
+      panel = view === 'history' ? 'History' : view === 'releases' ? 'Releases' : view === 'settings' ? 'Settings' : view === 'callNote' ? 'Call notes' : null;
       app.classList.toggle('onboarding', view === 'onboarding');
       app.classList.toggle('settings-open', view === 'settings');
       renderTitle();

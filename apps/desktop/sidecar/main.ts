@@ -45,6 +45,7 @@ import { createViewSurface, type ViewSurface } from './host/webviewHost';
 import { watchForAttention } from './host/notifier';
 import { createDictation } from './host/dictation';
 import { createCallDetection } from './host/callDetection';
+import { callNotesDir } from 'workspacegpt-extension-callnotes';
 import { registerBrowserHost } from './host/browserHost';
 import { startBrowserBridge } from 'workspacegpt-extension-browser';
 import { attachChromeChat } from 'workspacegpt-extension-chromechat';
@@ -407,7 +408,7 @@ async function main(): Promise<void> {
 
   // Call notes (beta): detect a call and let the page ask before anything records.
   // `visible: true` → the shell notifies only when the window isn't in front.
-  createCallDetection(surface, (title, body) => {
+  createCallDetection(surface, callNotesDir(paths.storageDir), (title, body) => {
     if (args.parentStdio) process.stdout.write(`${NOTIFY_PREFIX}${JSON.stringify({ kind: 'call', title, body, visible: true })}\n`);
     else console.log(`[desktop] notify (call): ${title} — ${body}`);
   });

@@ -293,6 +293,24 @@ export class SessionsHtmlTemplate {
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
     }
+    /* Call notes (recorded by the desktop app): one group above the chats, a line per day. */
+    .note-day {
+      padding: 6px 8px 2px 32px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--vscode-descriptionForeground);
+    }
+    .ws-count {
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: normal;
+      opacity: 0.75;
+    }
+    .row.note.recording .dot::before {
+      background: var(--vscode-charts-red, #f85149);
+      animation: dot-pulse 1.2s ease-in-out infinite;
+    }
+    .row.note.recording .meta { color: var(--vscode-charts-red, #f85149); }
     .show-more {
       display: block;
       width: 100%;
@@ -409,9 +427,15 @@ export class SessionsHtmlTemplate {
       DELETE_CHAT_HISTORY: MESSAGE_TYPES.DELETE_CHAT_HISTORY,
       UPDATE_CHAT_SESSION_META: MESSAGE_TYPES.UPDATE_CHAT_SESSION_META,
       OPEN_SESSION_IN: MESSAGE_TYPES.OPEN_SESSION_IN,
+      OPEN_CALL_NOTE: MESSAGE_TYPES.OPEN_CALL_NOTE,
+      DELETE_CALL_NOTE: MESSAGE_TYPES.DELETE_CALL_NOTE,
+      RENAME_CALL_NOTE: MESSAGE_TYPES.RENAME_CALL_NOTE,
     })};
     let sessions = [];
     let activeId = null;
+    // Call notes (services/callNotes.ts CallNoteSummary), newest first; only the desktop app records them.
+    let callNotes = [];
+    let activeNoteId = null;
     let query = '';
     let runningIds = new Set();
     let completedIds = new Set();
@@ -461,6 +485,7 @@ export class SessionsHtmlTemplate {
       const msg = event.data || {};
       if (msg.type === MESSAGE_TYPES.SESSIONS_LIST) {
         sessions = Array.isArray(msg.sessions) ? msg.sessions : [];
+        callNotes = Array.isArray(msg.callNotes) ? msg.callNotes : [];
         if (msg.activeSessionId !== undefined) activeId = msg.activeSessionId || null;
         runningIds = new Set(Array.isArray(msg.runningSessionIds) ? msg.runningSessionIds : []);
         completedIds = new Set(Array.isArray(msg.completedSessionIds) ? msg.completedSessionIds : []);
@@ -550,7 +575,8 @@ export class SessionsHtmlTemplate {
         filed.get(s.group).push(s);
       }
       const rest = matching.filter((s) => !s.pinned && !s.group);
-      let top = '';
+      // Call notes first: a call being recorded is the thing to see.
+      let top = callNotesHtml(now);
       if (pinned.length) top += customGroupHtml('pin:', 'Pinned', pinned, now);
       for (const name of [...filed.keys()].sort()) top += customGroupHtml('grp:' + name, name, filed.get(name), now);
 
@@ -611,6 +637,145 @@ export class SessionsHtmlTemplate {
         '<button class="ws-toggle" type="button" data-ws="' + escapeHtml(key) + '" aria-expanded="' + open + '">' +
         '<span class="ws-name">' + escapeHtml(label) + '</span>' + CHEVRON + '</button></div>' +
         '<div class="ws-rows">' + rowsHtml(key, items, now) + '</div></div>';
+    }
+
+    const NOTES_PAGE = 10;
+    /** The title the recorder gives a call; a row shows its times instead, as the day is already a header. */
+    const DEFAULT_NOTE_TITLE = /^Call on /;
+
+    function noteDayLabel(ts, now) {
+      const today = startOfDay(now);
+      if (ts >= today) return 'Today';
+      if (ts >= today - 86400000) return 'Yesterday';
+      const d = new Date(ts);
+      const sameYear = d.getFullYear() === new Date(now).getFullYear();
+      return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: sameYear ? undefined : 'numeric' });
+    }
+
+    function clock(ts) {
+      return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function callLength(ms) {
+      const m = Math.round(ms / 60000);
+      if (m < 1) return '<1m';
+      if (m < 60) return m + 'm';
+      return Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+    }
+
+    /** Every call note, in one collapsible group with a line per day; nothing when there are none. */
+    function callNotesHtml(now) {
+      const needle = query.trim().toLowerCase();
+      const notes = needle
+        ? callNotes.filter((n) => (String(n.title || '') + ' ' + String(n.preview || '')).toLowerCase().includes(needle))
+        : callNotes;
+      if (!notes.length) return '';
+      const key = 'notes:';
+      const recording = notes.some((n) => n.status === 'recording');
+      const open = !!needle || recording || !(key in wsOpen) || !!wsOpen[key];
+      const activeAt = notes.findIndex((n) => n.id === activeNoteId);
+      const limit = needle ? notes.length : Math.max(shown[key] || NOTES_PAGE, activeAt + 1);
+      let body = '';
+      let day = '';
+      for (const n of notes.slice(0, limit)) {
+        const label = noteDayLabel(n.startedAt || 0, now);
+        if (label !== day) {
+          day = label;
+          body += '<div class="note-day">' + escapeHtml(label) + '</div>';
+        }
+        body += noteRowHtml(n);
+      }
+      const left = notes.length - limit;
+      if (left > 0) {
+        body += '<button class="show-more" type="button" data-more="' + key + '" data-shown="' + limit + '">Show ' +
+          Math.min(PAGE_SIZE, left) + ' more</button>';
+      }
+      return '<div class="ws-group notes' + (open ? ' open' : '') + '"><div class="ws-header">' +
+        '<button class="ws-toggle" type="button" data-ws="' + key + '" aria-expanded="' + open + '">' +
+        '<span class="ws-name">Call notes</span><span class="ws-count">' + notes.length + '</span>' + CHEVRON + '</button></div>' +
+        '<div class="ws-rows">' + body + '</div></div>';
+    }
+
+    function noteRowHtml(n) {
+      const rec = n.status === 'recording';
+      const span = clock(n.startedAt || 0) + (n.endedAt ? ' – ' + clock(n.endedAt) : '');
+      const named = n.title && !DEFAULT_NOTE_TITLE.test(n.title);
+      const main = named ? n.title : span;
+      const length = n.endedAt ? callLength(n.endedAt - n.startedAt) : '';
+      const meta = rec ? 'Recording' : named ? clock(n.startedAt || 0) + (length ? ' · ' + length : '') : length;
+      const tip = (n.title || 'Call') + (named ? ' (' + span + ')' : '') + (n.preview ? '\\n' + n.preview : '');
+      return '<button class="row note' + (rec ? ' recording' : '') + (n.id === activeNoteId ? ' active' : '') +
+        '" type="button" title="' + escapeHtml(tip) + '" data-note-id="' + escapeHtml(n.id) + '">' +
+        '<span class="dot"></span>' +
+        '<span class="title">' + escapeHtml(main) + '</span>' +
+        '<span class="meta"><span class="age">' + escapeHtml(meta) + '</span></span>' +
+        '<span class="row-delete" data-delete-note="' + escapeHtml(n.id) + '" title="' + (rec ? 'Stop and delete' : 'Delete call note') +
+        '" role="button" aria-label="Delete call note">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+        '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg></span>' +
+        '</button>';
+    }
+
+    function startNoteRename(id) {
+      const row = listEl.querySelector('.row.note[data-note-id="' + CSS.escape(id) + '"]');
+      const note = callNotes.find((n) => n.id === id);
+      const titleEl = row && row.querySelector('.title');
+      if (!titleEl || !note) return;
+      const input = document.createElement('input');
+      input.className = 'row-input';
+      input.value = note.title || '';
+      let done = false;
+      const finish = (save) => {
+        if (done) return;
+        done = true;
+        if (save && input.value.trim()) vscode.postMessage({ type: MESSAGE_TYPES.RENAME_CALL_NOTE, id, title: input.value });
+        render();
+      };
+      input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') finish(true);
+        if (e.key === 'Escape') finish(false);
+      });
+      input.addEventListener('blur', () => finish(true));
+      input.addEventListener('click', (e) => e.stopPropagation());
+      titleEl.replaceWith(input);
+      input.focus();
+      input.select();
+    }
+
+    function showNoteMenu(id, x, y) {
+      closeMenu();
+      const note = callNotes.find((n) => n.id === id);
+      if (!note) return;
+      const menu = document.createElement('div');
+      menu.className = 'menu';
+      menu.setAttribute('role', 'menu');
+      const add = (label, onClick, cls) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'menu-item' + (cls ? ' ' + cls : '');
+        b.textContent = label;
+        b.addEventListener('click', () => { closeMenu(); onClick(); });
+        menu.appendChild(b);
+      };
+      add('Open', () => openNote(id));
+      add('Rename', () => startNoteRename(id));
+      const sep = document.createElement('div');
+      sep.className = 'menu-sep';
+      menu.appendChild(sep);
+      add(note.status === 'recording' ? 'Stop and delete' : 'Delete', () => vscode.postMessage({ type: MESSAGE_TYPES.DELETE_CALL_NOTE, id }), 'danger');
+      document.body.appendChild(menu);
+      menuEl = menu;
+      const r = menu.getBoundingClientRect();
+      menu.style.left = Math.max(4, Math.min(x, window.innerWidth - r.width - 4)) + 'px';
+      menu.style.top = Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) + 'px';
+    }
+
+    function openNote(id) {
+      activeNoteId = id;
+      vscode.postMessage({ type: MESSAGE_TYPES.OPEN_CALL_NOTE, id });
+      render();
     }
 
     function rowHtml(session, now) {
@@ -826,6 +991,8 @@ export class SessionsHtmlTemplate {
       const row = event.target.closest('.row');
       if (!row) return;
       event.preventDefault();
+      const noteId = row.getAttribute('data-note-id');
+      if (noteId) return showNoteMenu(noteId, event.clientX, event.clientY);
       const id = row.getAttribute('data-id');
       if (id) showMenu(id, event.clientX, event.clientY, 'main');
     });
@@ -857,6 +1024,17 @@ export class SessionsHtmlTemplate {
         vscode.postMessage({ type: MESSAGE_TYPES.NEW_CHAT });
         return;
       }
+      const noteDelete = event.target.closest('[data-delete-note]');
+      if (noteDelete) {
+        event.stopPropagation();
+        vscode.postMessage({ type: MESSAGE_TYPES.DELETE_CALL_NOTE, id: noteDelete.getAttribute('data-delete-note') });
+        return;
+      }
+      const noteRow = event.target.closest('.row.note');
+      if (noteRow) {
+        openNote(noteRow.getAttribute('data-note-id'));
+        return;
+      }
       const deleteBtn = event.target.closest('.row-delete');
       if (deleteBtn) {
         event.stopPropagation();
@@ -867,7 +1045,10 @@ export class SessionsHtmlTemplate {
       const row = event.target.closest('.row');
       if (!row) return;
       const id = row.getAttribute('data-id');
-      if (id) vscode.postMessage({ type: MESSAGE_TYPES.LOAD_CHAT_SESSION, sessionId: id });
+      if (id) {
+        activeNoteId = null;
+        vscode.postMessage({ type: MESSAGE_TYPES.LOAD_CHAT_SESSION, sessionId: id });
+      }
     });
   </script>
 </body>
