@@ -200,6 +200,40 @@ That is why detection must match the Teams process and never use "is anyone
 using the mic". The Windows probe has not been run; no Windows machine was
 available.
 
+### Results: macOS, 2026-10-21
+
+The test was a real call in **Teams installed as a Chrome web app** ("Microsoft
+Teams (PWA)", bundle `com.google.Chrome.app.<id>`), with the camera off.
+
+| State | What held audio | Verdict |
+|---|---|---|
+| No call (Teams desktop and the web app both open) | nothing (Siri's `corespeechd` only, at times) | no call ✅ |
+| In call, unmuted | `Google Chrome Helper (Aperitif)` IN+OUT | call ✅ |
+| **In call, muted** | `Google Chrome Helper (Aperitif)` IN+OUT, the whole time | **call ✅** |
+
+What this shows:
+- **Muted calls are detectable.** The browser keeps the mic open while the
+  user is muted.
+- **A web-app or browser call runs its audio in the browser's helper
+  process,** not in a Teams process. Matching only Teams processes misses it.
+- **Siri's listener (`corespeechd`) holds input at times,** so "is anyone
+  using the mic" is never a valid test.
+
+The detection rule is updated to cover all three cases (implemented in the
+probe):
+1. A **Teams desktop process** (`com.microsoft.teams2*`, including its WebView
+   and ModuleHost helpers) holds input: a Teams call.
+2. A **browser audio helper** (Chrome or Edge) holds input and output for
+   10 s or more **and** a Teams web app is running: a Teams call. Without a
+   Teams web app running, it is still treated as a call, but the prompt says
+   "Call detected" rather than naming Teams.
+3. Anything else, including `corespeechd`: no call.
+
+Still to test:
+- the **Teams desktop app** (`com.microsoft.teams2`) in a muted call, which
+  will show which of its processes holds the mic;
+- the **Windows** probe.
+
 ## Effort (rough)
 
 | Piece | Estimate |

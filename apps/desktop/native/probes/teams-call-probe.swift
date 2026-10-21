@@ -77,6 +77,21 @@ func isTeams(bundle: String?, name: String) -> Bool {
   (bundle ?? "").lowercased().contains("com.microsoft.teams") || name.lowercased().contains("teams")
 }
 
+/// Chrome/Edge audio helpers: a call in a browser tab or a browser-installed web app (PWA)
+/// runs its audio here, not in the app's own process.
+func isBrowserAudio(bundle: String?) -> Bool {
+  let b = (bundle ?? "").lowercased()
+  return b.hasPrefix("com.google.chrome") || b.hasPrefix("com.microsoft.edgemac")
+}
+
+/// Teams installed as a Chrome/Edge web app: e.g. "Microsoft Teams (PWA)", bundle com.google.Chrome.app.<id>.
+func teamsWebAppRunning() -> Bool {
+  NSWorkspace.shared.runningApplications.contains {
+    let b = ($0.bundleIdentifier ?? "").lowercased()
+    return (b.hasPrefix("com.google.chrome.app.") || b.hasPrefix("com.microsoft.edgemac.app.")) && ($0.localizedName ?? "").lowercased().contains("teams")
+  }
+}
+
 func defaultInputInUse() -> Bool? {
   guard let device = readUInt32(system, kAudioHardwarePropertyDefaultInputDevice) else { return nil }
   return readUInt32(AudioObjectID(device), kAudioDevicePropertyDeviceIsRunningSomewhere).map { $0 != 0 }
@@ -120,6 +135,7 @@ print("Teams call probe: polling every 3 s. Ctrl-C to stop.\n")
 while Date().timeIntervalSince(started) < Double(seconds) {
   var lines: [String] = []
   var teamsInput = false
+  var browserCall = false
   var teamsRunning = NSWorkspace.shared.runningApplications.contains { isTeams(bundle: $0.bundleIdentifier, name: $0.localizedName ?? "") }
 
   for object in audioProcesses() {
@@ -131,13 +147,16 @@ while Date().timeIntervalSince(started) < Double(seconds) {
     let teams = isTeams(bundle: bundle, name: name)
     if teams { teamsRunning = true }
     if teams && input { teamsInput = true }
+    if isBrowserAudio(bundle: bundle) && input && output { browserCall = true }
     let what = [input ? "IN" : nil, output ? "OUT" : nil].compactMap { $0 }.joined(separator: "+")
     lines.append("    \(teams ? "*" : " ") \(what.padding(toLength: 6, withPad: " ", startingAt: 0)) pid \(pid)  \(name)  [\(bundle ?? "-")]")
   }
 
   let assertions = teamsAssertions()
   let anyMic = defaultInputInUse().map { $0 ? "yes" : "no" } ?? "?"
-  let verdict = teamsInput ? "=> CALL (Teams holds the mic)" : (!assertions.isEmpty ? "=> maybe (Teams assertion only)" : "=> no call")
+  let verdict = teamsInput ? "=> CALL (Teams app holds the mic)"
+    : browserCall ? (teamsWebAppRunning() ? "=> CALL (browser audio, Teams web app open)" : "=> CALL? (browser audio, app unknown)")
+    : (!assertions.isEmpty ? "=> maybe (Teams assertion only)" : "=> no call")
   print("\(clock.string(from: Date()))  teams running: \(teamsRunning ? "yes" : "no")  mic in use (anyone): \(anyMic)  \(verdict)")
   lines.forEach { print($0) }
   assertions.forEach { print("    assertion: \($0)") }
