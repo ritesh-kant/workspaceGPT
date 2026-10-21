@@ -69,8 +69,15 @@ struct Transcript {
 
   mutating func update(_ new: String) {
     if new.isEmpty { return }
-    if startedOver(new) { committed = text }
+    // A result that already holds what was kept (the recognizer went back to the whole stretch,
+    // often in its final result) replaces it: kept as well, the words would appear twice.
+    if !committed.isEmpty && Transcript.words(new).starts(with: Transcript.words(committed)) { committed = "" }
+    else if startedOver(new) { committed = text }
     current = new
+  }
+
+  private static func words(_ text: String) -> [String] {
+    text.split(separator: " ").map(key).filter { !$0.isEmpty }
   }
 
   /// Fewer words than before and a different first word. Revisions keep the beginning and grow
