@@ -178,6 +178,28 @@ Before building, run a small probe on each OS, in one real Teams call that is
 If the signal stays "yes" for the whole muted call, build on it. If not,
 detection falls back to Teams' local API, which the user enables once in Teams.
 
+The probes are in `apps/desktop/native/probes/`:
+
+```bash
+swift apps/desktop/native/probes/teams-call-probe.swift
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File apps\desktop\native\probes\teams-call-probe.ps1
+```
+
+Each prints every app holding the mic, not only Teams, so the run also shows
+*which* process holds it. New Teams may capture through a helper process (a
+WebView helper on Mac, `msedgewebview2.exe` on Windows), and detection must
+match that process.
+
+The macOS probe was checked on macOS 27 with no call running. It reported
+"no call", and the per-process listing worked: `afplay` appeared while a sound
+played. It also showed the "Hey Siri" listener (`corespeechd`) holding input.
+That is why detection must match the Teams process and never use "is anyone
+using the mic". The Windows probe has not been run; no Windows machine was
+available.
+
 ## Effort (rough)
 
 | Piece | Estimate |
