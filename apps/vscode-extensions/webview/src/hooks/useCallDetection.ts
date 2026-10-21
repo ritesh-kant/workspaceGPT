@@ -11,7 +11,7 @@ import { useSettingsStore } from '../store/settingsStore';
  */
 type CallsOp = 'enable' | 'disable' | 'record' | 'stop';
 interface CallsBridge {
-  latest(): { capability?: CallCapability; state?: CallState; recording?: CallRecording };
+  latest(): { capability?: CallCapability; state?: CallState; recording?: CallRecording; model?: SpeechModel };
   request(op: CallsOp): void;
 }
 export interface CallCapability {
@@ -32,6 +32,12 @@ export interface CallRecording {
   noteId: string;
   startedAt: number;
 }
+/** The speech model "Take notes" transcribes with, downloaded when call notes are turned on. */
+export type SpeechModel =
+  | { state: 'ready' | 'missing' }
+  | { state: 'downloading'; received: number; total: number }
+  | { state: 'failed'; error: string };
+
 /** How the last recording ended, for the indicator to say so: an error, or what one side lacked. */
 export interface RecordingOutcome {
   noteId?: string;
@@ -48,14 +54,18 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
   state: CallState;
   recording: CallRecording | undefined;
   outcome: RecordingOutcome | undefined;
+  model: SpeechModel | undefined;
   record(): void;
   stop(): void;
+  /** Ask again for the model after a failed download (turning detection on fetches it). */
+  retryModel(): void;
 } {
   const enabled = useSettingsStore((s) => !!s.config.callNotes?.enabled);
   const [capability, setCapability] = useState<CallCapability | undefined>(() => bridge()?.latest().capability);
   const [state, setState] = useState<CallState>(() => bridge()?.latest().state ?? { inCall: false });
   const [recording, setRecording] = useState<CallRecording | undefined>(() => bridge()?.latest().recording);
   const [outcome, setOutcome] = useState<RecordingOutcome | undefined>();
+  const [model, setModel] = useState<SpeechModel | undefined>(() => bridge()?.latest().model);
 
   useEffect(() => {
     if (!isDesktopHost()) return;
@@ -76,6 +86,9 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
           setRecording({ state: event.state, noteId: event.noteId, startedAt: event.startedAt ?? Date.now() });
           if (event.state === 'starting') setOutcome({ noteId: event.noteId, notices: [] });
         }
+      } else if (event?.type === 'model') {
+        const m = event as unknown as SpeechModel;
+        setModel(m.state === 'downloading' ? { state: 'downloading', received: m.received, total: m.total } : m.state === 'failed' ? { state: 'failed', error: m.error } : { state: m.state });
       } else if (event?.type === 'recording-notice' && event.message) {
         const message = event.message;
         setOutcome((prev) => ({ noteId: event.noteId, error: prev?.error, notices: [...(prev && prev.noteId === event.noteId ? prev.notices : []), message] }));
@@ -97,7 +110,9 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
     state,
     recording,
     outcome,
+    model,
     record: () => bridge()?.request('record'),
     stop: () => bridge()?.request('stop'),
+    retryModel: () => bridge()?.request('enable'),
   };
 }

@@ -1,43 +1,52 @@
-// wgpt-notes: records a call the user said yes to and transcribes it on this Mac, for call
-// notes (sidecar/host/callNotes.ts, docs/design/call-notes.md "Capture" and "Transcription").
+// wgpt-notes: records a call the user said yes to and transcribes it on this Mac with
+// whisper.cpp, for call notes (sidecar/host/callRecorder.ts, docs/design/call-notes.md).
 //
-//   wgpt-notes [--pid 5516 ...] [--locale en-IN] [--others-file talk.aiff] [--no-mic]
+//   wgpt-notes --model ggml-small-q5_1.bin [--pid 5516 ...] [--language en] [--no-mic]
+//              [--others-file talk.wav] [--you-file me.wav]
 //
-// Two tracks, each its own recognizer, so the speaker labels come for free:
+// Two tracks, so the speaker labels come for free:
 //   "you"     the microphone (AVAudioEngine input)
 //   "others"  the call app's own audio output: a Core Audio process tap on the --pid processes
 //             (the ones call detection saw holding mic + output), macOS 14.2+. Without a pid, or
 //             when none of them can be tapped, every app's output except our own.
 //
 //   stdout  {"type":"state","state":"starting"|"recording"|"finishing"}
-//           {"type":"segment","speaker":"you"|"others","at":12.4,"text":"…"}   at = seconds since start
+//           {"type":"segment","speaker":"you"|"others","at":12.4,"end":15.1,"text":"…"}  seconds since start
 //           {"type":"warning","code":"…","message":"…"}   one track could not start; the other goes on
 //           {"type":"error","code":"…","message":"…"}     nothing can be recorded; the process exits next
 //           {"type":"done"}                               every segment has been printed; exits next
 //   stdin   "stop"  stop recording, transcribe what is left, print done. Closing stdin means the same,
 //                   so the helper never outlives the sidecar.
 //
-// Nothing is written to disk and nothing leaves the machine: audio goes straight from Core Audio to
-// the on-device recognizer (forced on-device, as dictation is), and only text is printed. The
-// sidecar writes the note. `--others-file` feeds an audio file as the "others" track, for checking
-// the build without a call.
+// Nothing is written to disk and nothing leaves the machine: audio is held in memory until its
+// chunk is transcribed, then dropped; only text is printed. The sidecar writes the note.
+// `--others-file` / `--you-file` feed audio files as a track, for checking the build without a call.
 //
-// Long audio: one recognition request per segment. A segment ends at a pause once it is 15 s long,
-// or at 50 s regardless, and the next one starts on the very next buffer, so nothing is dropped.
+// Chunks: a track's audio is cut at a pause once it is 8 s long, or at 28 s regardless (Whisper
+// hears 30 s at a time). A chunk with almost no speech in it is not transcribed at all: Whisper
+// invents words ("Thank you.") in silence.
 import AVFoundation
 import CoreAudio
 import Foundation
-import Speech
+import whisper
 
-let minSegmentSeconds = 15.0
-let maxSegmentSeconds = 50.0
-/// Quiet for this long ends a segment that is long enough.
-let pauseSeconds = 0.7
+let minChunkSeconds = 8.0
+let maxChunkSeconds = 28.0
+/// Quiet for this long ends a chunk that is long enough.
+let pauseSeconds = 0.6
 /// Below this RMS a buffer counts as quiet (about -46 dBFS).
 let quietLevel: Float = 0.005
-/// After endAudio, how long to wait for the recognizer's final result before using its last partial.
-let settleSeconds = 8.0
+/// A chunk with less speech than this is dropped untranscribed.
+let minVoicedSeconds = 0.5
+/// Segments Whisper itself thinks are probably not speech.
+let noSpeechThreshold: Float = 0.6
 let sampleRate = 16_000.0
+/// After "stop", how long the last chunks may take to transcribe before the helper gives up on them.
+let drainSeconds = 120.0
+/// Primes the decoder for this kind of talk: Indian English with Hindi words kept in Roman script,
+/// and the tools people name in calls.
+let basePrompt =
+  "Team call in Indian English, some Hinglish, written in Roman script: haan, theek hai, acha, matlab, yaar, chalo. Jira, Confluence, Azure DevOps, PR, release, sprint, standup."
 
 func emit(_ object: [String: Any]) {
   guard let data = try? JSONSerialization.data(withJSONObject: object), var line = String(data: data, encoding: .utf8) else { return }
@@ -45,29 +54,35 @@ func emit(_ object: [String: Any]) {
   FileHandle.standardOutput.write(Data(line.utf8))
 }
 
+/// _exit, not exit: exit's teardown frees whisper.cpp's Metal state from under a decode and aborts.
+/// Every line was already written straight to the pipe (FileHandle), so nothing is lost.
 func fail(_ code: String, _ message: String) -> Never {
   emit(["type": "error", "code": code, "message": message])
-  exit(1)
+  _exit(1)
 }
 
 func warn(_ code: String, _ message: String) { emit(["type": "warning", "code": code, "message": message]) }
 
-/// WGPT_NOTES_DEBUG=1: every recognizer result and segment boundary to stderr.
+/// WGPT_NOTES_DEBUG=1: chunk boundaries, timings and whisper.cpp's own log to stderr.
 let debug = ProcessInfo.processInfo.environment["WGPT_NOTES_DEBUG"] != nil
 func trace(_ text: @autoclosure () -> String) {
   if debug { FileHandle.standardError.write(Data("[notes] \(text())\n".utf8)) }
 }
 
 var pids: [pid_t] = []
-var localeId: String?
+var modelPath: String?
+var language = "en"
 var othersFile: String?
+var youFile: String?
 var useMic = true
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
   let a = args.removeFirst()
   if a == "--pid", !args.isEmpty, let p = pid_t(args.removeFirst()) { pids.append(p) }
-  else if a == "--locale", !args.isEmpty { localeId = args.removeFirst() }
+  else if a == "--model", !args.isEmpty { modelPath = args.removeFirst() }
+  else if a == "--language", !args.isEmpty { language = args.removeFirst() }
   else if a == "--others-file", !args.isEmpty { othersFile = args.removeFirst() }
+  else if a == "--you-file", !args.isEmpty { youFile = args.removeFirst() }
   else if a == "--no-mic" { useMic = false }
 }
 
@@ -75,161 +90,149 @@ while !args.isEmpty {
 var started = Date()
 func now() -> Double { Date().timeIntervalSince(started) }
 
-// --- Transcript: what has been heard, which only grows (a copy of wgpt-dictate.swift's) ---
-/// The recognizer's transcript is not monotonic. After a pause it can start over (the next
-/// partial holds only the new words), and its last result can be shorter or empty. So what was
-/// heard is kept: a result that starts over is appended to it, and an empty one changes nothing.
-struct Transcript {
-  private var committed = ""
-  private var current = ""
+// MARK: - Whisper
 
-  var text: String { [committed, current].filter { !$0.isEmpty }.joined(separator: " ") }
-
-  mutating func update(_ new: String) {
-    if new.isEmpty { return }
-    // A result that already holds what was kept (the recognizer went back to the whole stretch,
-    // often in its final result) replaces it: kept as well, the words would appear twice.
-    if !committed.isEmpty && Transcript.words(new).starts(with: Transcript.words(committed)) { committed = "" }
-    else if startedOver(new) { committed = text }
-    current = new
-  }
-
-  private static func words(_ text: String) -> [String] {
-    text.split(separator: " ").map(key).filter { !$0.isEmpty }
-  }
-
-  private func startedOver(_ new: String) -> Bool {
-    let old = current.split(separator: " "), now = new.split(separator: " ")
-    guard old.count >= 3, now.count < old.count else { return false }
-    return Transcript.key(old[0]) != Transcript.key(now[0])
-  }
-
-  private static func key(_ word: Substring) -> String {
-    String(word.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
-  }
-}
-// --- end Transcript ---
-
-/// One recognition request: a stretch of one track, printed as one segment when it settles.
-final class Segment {
-  let speaker: String
-  let request = SFSpeechAudioBufferRecognitionRequest()
-  var task: SFSpeechRecognitionTask?
-  var transcript = Transcript()
-  let opened = now()
-  /// When speech was first heard in it: the segment's timestamp.
-  var at: Double?
-  var quietSince: Double?
-  private(set) var printed = false
-  var onPrinted: (() -> Void)?
-
-  init(speaker: String, recognizer: SFSpeechRecognizer) {
-    self.speaker = speaker
-    request.shouldReportPartialResults = true
-    request.requiresOnDeviceRecognition = true
-    request.taskHint = .dictation
-    if #available(macOS 13.0, *) { request.addsPunctuation = true }
-    task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-      DispatchQueue.main.async { self?.heard(result, error) }
-    }
-  }
-
-  private func heard(_ result: SFSpeechRecognitionResult?, _ error: Error?) {
-    if printed { return }
-    if let result = result {
-      transcript.update(result.bestTranscription.formattedString)
-      trace("\(speaker) \(result.isFinal ? "final" : "partial") \(transcript.text.debugDescription)")
-      if result.isFinal { return print() }
-    }
-    if let error = error {
-      // Usually "no speech detected" for a quiet stretch; either way, keep what was heard.
-      trace("\(speaker) error \(error)")
-      print()
-    }
-  }
-
-  func end() {
-    request.endAudio()
-    DispatchQueue.main.asyncAfter(deadline: .now() + settleSeconds) { [weak self] in self?.print() }
-  }
-
-  func print() {
-    if printed { return }
-    printed = true
-    task?.cancel()
-    let text = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !text.isEmpty {
-      emit(["type": "segment", "speaker": speaker, "at": ((at ?? opened) * 10).rounded() / 10, "text": text])
-    }
-    onPrinted?()
-  }
-}
-
-/// One speaker's audio: converts to 16 kHz mono and cuts it into segments at pauses.
-final class Track {
-  let speaker: String
-  let recognizer: SFSpeechRecognizer
-  private var segment: Segment?
-  /// Segments that have ended but not yet printed: held here, or they would be freed before their last result.
-  private var ending: [Segment] = []
-  private var converter: AVAudioConverter?
-  private let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
-  private(set) var open = 0
-  private var stopped = false
+/// One model, one decode at a time (a whisper context is not safe to share across threads),
+/// so both tracks' chunks queue here in the order they were cut.
+final class Transcriber {
+  private let ctx: OpaquePointer
+  private let queue = DispatchQueue(label: "wgpt-notes.whisper")
+  private let languageC: UnsafeMutablePointer<CChar>
+  private let threads = Int32(max(1, min(4, ProcessInfo.processInfo.activeProcessorCount - 2)))
+  /// Chunks queued or decoding. Read and written on the main queue.
+  private(set) var pending = 0
   var onIdle: (() -> Void)?
 
-  init(speaker: String, recognizer: SFSpeechRecognizer) {
+  init?(model: String) {
+    if !debug { whisper_log_set({ _, _, _ in }, nil) }
+    var params = whisper_context_default_params()
+    params.use_gpu = true
+    guard let ctx = whisper_init_from_file_with_params(model, params) else { return nil }
+    self.ctx = ctx
+    languageC = strdup(language)
+  }
+
+  /// Called on the main queue; `done` comes back on the main queue with the chunk's segments.
+  func transcribe(_ samples: [Float], speaker: String, at: Double, context: String, done: @escaping ([(at: Double, end: Double, text: String)]) -> Void) {
+    pending += 1
+    let prompt = strdup(context.isEmpty ? basePrompt : "\(basePrompt) \(context)")
+    queue.async { [self] in
+      let t0 = Date()
+      var p = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+      p.n_threads = threads
+      p.language = UnsafePointer(languageC)
+      p.initial_prompt = UnsafePointer(prompt)
+      p.no_context = true
+      p.suppress_blank = true
+      p.suppress_nst = true
+      p.no_speech_thold = noSpeechThreshold
+      p.print_progress = false
+      p.print_realtime = false
+      p.print_timestamps = false
+      p.print_special = false
+      var segments: [(at: Double, end: Double, text: String)] = []
+      let rc = samples.withUnsafeBufferPointer { whisper_full(ctx, p, $0.baseAddress, Int32($0.count)) }
+      free(prompt)
+      if rc == 0 {
+        for i in 0..<whisper_full_n_segments(ctx) {
+          guard let raw = whisper_full_get_segment_text(ctx, i) else { continue }
+          let text = String(cString: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+          let noSpeech = whisper_full_get_segment_no_speech_prob(ctx, i)
+          trace("  \(speaker) no_speech \(String(format: "%.2f", noSpeech)): \(text)")
+          if noSpeech > noSpeechThreshold { continue }
+          if Transcriber.isNoise(text) { continue }
+          // t0/t1 are in hundredths of a second from the chunk's start.
+          let s = at + Double(whisper_full_get_segment_t0(ctx, i)) / 100
+          let e = at + Double(whisper_full_get_segment_t1(ctx, i)) / 100
+          segments.append((at: s, end: e, text: text))
+        }
+      }
+      trace("\(speaker) chunk at \(Int(at)) s, \(samples.count / Int(sampleRate)) s of audio, decoded in \(String(format: "%.1f", Date().timeIntervalSince(t0))) s: \(segments.count) segments\(rc == 0 ? "" : " (whisper_full failed: \(rc))")")
+      DispatchQueue.main.async {
+        done(segments)
+        self.pending -= 1
+        if self.pending == 0 { self.onIdle?() }
+      }
+    }
+  }
+
+  /// Not words: "[BLANK_AUDIO]", "(music)", "*laughs*", a lone "-" or "…".
+  static func isNoise(_ text: String) -> Bool {
+    let t = text.trimmingCharacters(in: CharacterSet(charactersIn: " .,-…♪"))
+    if t.isEmpty { return true }
+    if let first = t.first, let last = t.last, "[(*".contains(first), "])*".contains(last) { return true }
+    return false
+  }
+}
+
+// MARK: - A track: one speaker's audio, cut into chunks at pauses
+
+final class Track {
+  let speaker: String
+  private let transcriber: Transcriber
+  private var converter: AVAudioConverter?
+  private let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
+  private var samples: [Float] = []
+  /// Where this track's clock starts, in seconds since recording began (its first buffer).
+  private var origin: Double?
+  /// Samples already cut into chunks: the track's own clock, so timestamps don't drift with the queue.
+  private var consumed = 0
+  private var voiced = 0.0
+  private var quietSince: Double?
+  /// The track's last words, carried into the next chunk's prompt so names and topics stay spelled the same.
+  private var lastText = ""
+  private var stopped = false
+
+  init(speaker: String, transcriber: Transcriber) {
     self.speaker = speaker
-    self.recognizer = recognizer
+    self.transcriber = transcriber
   }
 
   /// Called on the main queue with audio in the source's own format.
   func append(_ buffer: AVAudioPCMBuffer) {
     if stopped { return }
-    guard let converted = convert(buffer) else { return }
-    let seg = current()
-    seg.request.append(converted)
-    let t = now()
-    if level(converted) < quietLevel {
-      seg.quietSince = seg.quietSince ?? t
+    guard let converted = convert(buffer), let data = converted.floatChannelData?[0] else { return }
+    if origin == nil { origin = now() }
+    let n = Int(converted.frameLength)
+    samples.append(contentsOf: UnsafeBufferPointer(start: data, count: n))
+    let length = Double(samples.count) / sampleRate
+    let t = length
+    if level(data, n) < quietLevel {
+      quietSince = quietSince ?? t
     } else {
-      seg.quietSince = nil
-      if seg.at == nil { seg.at = t }
+      quietSince = nil
+      voiced += Double(n) / sampleRate
     }
-    let length = t - seg.opened
-    let paused = seg.quietSince.map { t - $0 >= pauseSeconds } ?? false
-    if (length >= minSegmentSeconds && paused) || length >= maxSegmentSeconds { rotate() }
+    let paused = quietSince.map { t - $0 >= pauseSeconds } ?? false
+    if (length >= minChunkSeconds && paused) || length >= maxChunkSeconds { cut() }
   }
 
-  private func current() -> Segment {
-    if let s = segment { return s }
-    let s = Segment(speaker: speaker, recognizer: recognizer)
-    open += 1
-    s.onPrinted = { [weak self, unowned s] in
+  private func cut() {
+    let chunk = samples
+    let at = (origin ?? 0) + Double(consumed) / sampleRate
+    consumed += chunk.count
+    samples.removeAll(keepingCapacity: true)
+    let speech = voiced
+    voiced = 0
+    quietSince = nil
+    guard speech >= minVoicedSeconds else {
+      if !chunk.isEmpty { trace("\(speaker) chunk at \(Int(at)) s: \(String(format: "%.1f", speech)) s of speech, skipped") }
+      return
+    }
+    transcriber.transcribe(chunk, speaker: speaker, at: at, context: lastText) { [weak self] segments in
       guard let self = self else { return }
-      self.ending.removeAll { $0 === s }
-      self.open -= 1
-      if self.stopped && self.open == 0 { self.onIdle?() }
+      for s in segments {
+        emit(["type": "segment", "speaker": self.speaker, "at": (s.at * 10).rounded() / 10, "end": (s.end * 10).rounded() / 10, "text": s.text])
+      }
+      if let last = segments.last?.text { self.lastText = String(last.suffix(200)) }
     }
-    segment = s
-    trace("\(speaker) segment opened")
-    return s
   }
 
-  /// Ends the current segment; the next buffer opens a new one.
-  private func rotate() {
-    guard let s = segment else { return }
-    segment = nil
-    ending.append(s)
-    trace("\(speaker) segment ended after \(Int(now() - s.opened)) s")
-    s.end()
-  }
-
+  /// Stops taking audio and sends what is left.
   func stop() {
     if stopped { return }
+    cut()
     stopped = true
-    rotate()
-    if open == 0 { onIdle?() }
   }
 
   private func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
@@ -253,11 +256,11 @@ final class Track {
     return error == nil && out.frameLength > 0 ? out : nil
   }
 
-  private func level(_ buffer: AVAudioPCMBuffer) -> Float {
-    guard let data = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 0 }
+  private func level(_ data: UnsafePointer<Float>, _ n: Int) -> Float {
+    guard n > 0 else { return 0 }
     var sum: Float = 0
-    for i in 0..<Int(buffer.frameLength) { sum += data[i] * data[i] }
-    return (sum / Float(buffer.frameLength)).squareRoot()
+    for i in 0..<n { sum += data[i] * data[i] }
+    return (sum / Float(n)).squareRoot()
   }
 }
 
@@ -369,29 +372,36 @@ final class ProcessTap {
 // MARK: - Recording
 
 final class Recorder {
+  private let transcriber: Transcriber
   private let you: Track
   private let others: Track
   private let engine = AVAudioEngine()
-  private var tapStop: (() -> Void)?
+  private var sourceStops: [() -> Void] = []
   private var stopping = false
-  private var idle = 0
 
-  init(recognizer: SFSpeechRecognizer) {
-    you = Track(speaker: "you", recognizer: recognizer)
-    others = Track(speaker: "others", recognizer: recognizer)
-    you.onIdle = { [weak self] in self?.trackIdle() }
-    others.onIdle = { [weak self] in self?.trackIdle() }
+  init(transcriber: Transcriber) {
+    self.transcriber = transcriber
+    you = Track(speaker: "you", transcriber: transcriber)
+    others = Track(speaker: "others", transcriber: transcriber)
   }
+
+  /// Held while recording: a call is the user's own work, so macOS must not nap this process
+  /// (late audio, late chunks) or sleep the Mac mid-call.
+  private var activity: NSObjectProtocol?
 
   /// Starts whatever can start; fails only when neither track can.
   func start(mic: Bool) {
     started = Date()
+    activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "Taking call notes")
     var running = 0
-    if mic {
+    if let path = youFile {
+      startFile(URL(fileURLWithPath: path), into: you)
+      running += 1
+    } else if mic {
       if let why = startMicrophone() { warn("microphone-unavailable", why) } else { running += 1 }
     }
     if let path = othersFile {
-      startFile(URL(fileURLWithPath: path))
+      startFile(URL(fileURLWithPath: path), into: others)
       running += 1
     } else if #available(macOS 14.2, *) {
       let tap = ProcessTap()
@@ -399,7 +409,7 @@ final class Recorder {
         tap.stop()
         warn("call-audio-unavailable", "\(why) Only your side of the call will be transcribed.")
       } else {
-        tapStop = { tap.stop() }
+        sourceStops.append { tap.stop() }
         running += 1
       }
     } else {
@@ -418,52 +428,54 @@ final class Recorder {
     }
     engine.prepare()
     do { try engine.start() } catch { return "Could not start the microphone: \(error.localizedDescription)" }
+    sourceStops.append { [engine] in
+      engine.stop()
+      engine.inputNode.removeTap(onBus: 0)
+    }
     return nil
   }
 
-  /// --others-file: the file's audio, fed at its own pace as if it were playing.
-  private func startFile(_ url: URL) {
+  /// --others-file / --you-file: the file's audio, fed at its own pace as if it were playing.
+  private func startFile(_ url: URL, into track: Track) {
     guard let file = try? AVAudioFile(forReading: url) else { fail("file-unreadable", "Could not read \(url.path).") }
-    let chunk = AVAudioFrameCount(file.processingFormat.sampleRate / 10)
+    let rate = file.processingFormat.sampleRate
+    let begun = Date()
+    var fed = 0.0
     let timer = DispatchSource.makeTimerSource(queue: .main)
     timer.schedule(deadline: .now(), repeating: 0.1)
-    timer.setEventHandler { [weak self] in
-      guard let self = self, let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunk) else { return }
+    timer.setEventHandler {
+      // By the clock, not per tick: a late tick feeds more, so the file plays in real time.
+      let chunk = AVAudioFrameCount(max(0, Date().timeIntervalSince(begun) * rate - fed))
+      guard chunk > 0, let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunk) else { return }
+      fed += Double(chunk)
       if (try? file.read(into: buffer, frameCount: chunk)) == nil || buffer.frameLength == 0 {
         // Past the end: silence, so the track keeps time like a quiet call.
         buffer.frameLength = chunk
         if let data = buffer.floatChannelData { for c in 0..<Int(buffer.format.channelCount) { memset(data[c], 0, Int(chunk) * 4) } }
       }
-      self.others.append(buffer)
+      track.append(buffer)
     }
     timer.resume()
-    tapStop = { timer.cancel() }
+    sourceStops.append { timer.cancel() }
   }
 
   func stop() {
     if stopping { return }
     stopping = true
     emit(["type": "state", "state": "finishing"])
-    if engine.isRunning {
-      engine.stop()
-      engine.inputNode.removeTap(onBus: 0)
-    }
-    tapStop?()
-    tapStop = nil
+    sourceStops.forEach { $0() }
+    sourceStops = []
     you.stop()
     others.stop()
-    // Last resort: a recognizer that never settles must not keep the note open.
-    DispatchQueue.main.asyncAfter(deadline: .now() + settleSeconds + 4) { Recorder.finish() }
-  }
-
-  private func trackIdle() {
-    idle += 1
-    if idle == 2 { Recorder.finish() }
+    if transcriber.pending == 0 { return Recorder.finish() }
+    transcriber.onIdle = { Recorder.finish() }
+    // Last resort: a decode that never returns must not keep the note open.
+    DispatchQueue.main.asyncAfter(deadline: .now() + drainSeconds) { Recorder.finish() }
   }
 
   static func finish() {
     emit(["type": "done"])
-    exit(0)
+    _exit(0)
   }
 }
 
@@ -475,39 +487,21 @@ func microphoneAllowed(_ then: @escaping (Bool) -> Void) {
   }
 }
 
-func speechAllowed(_ then: @escaping (Bool) -> Void) {
-  switch SFSpeechRecognizer.authorizationStatus() {
-  case .authorized: then(true)
-  case .notDetermined: SFSpeechRecognizer.requestAuthorization { s in DispatchQueue.main.async { then(s == .authorized) } }
-  default: then(false)
-  }
-}
-
-/// en-IN when this Mac can run it on-device (Indian English names and Hinglish words come out
-/// closer), else en-US, else the Mac's own language: whichever runs on-device first.
-func pickRecognizer() -> SFSpeechRecognizer? {
-  let wanted = [localeId, "en-IN", "en-US", Locale.current.identifier].compactMap { $0 }
-  for id in wanted {
-    if let r = SFSpeechRecognizer(locale: Locale(identifier: id)), r.supportsOnDeviceRecognition { return r }
-  }
-  return nil
-}
-
 emit(["type": "state", "state": "starting"])
 
-guard let recognizer = pickRecognizer() else {
-  fail(
-    "on-device-unavailable",
-    "This Mac has no on-device speech model for English, and WorkspaceGPT keeps calls on the machine. Add one in System Settings → Keyboard → Dictation.")
+guard let model = modelPath, FileManager.default.fileExists(atPath: model) else {
+  fail("model-missing", "The speech model is not on this Mac yet. Turn Call notes off and on in Settings to download it.")
 }
-trace("recognizer \(recognizer.locale.identifier)")
-let recorder = Recorder(recognizer: recognizer)
+let loadStart = Date()
+guard let transcriber = Transcriber(model: model) else {
+  fail("model-unreadable", "The speech model could not be loaded. Turn Call notes off and on in Settings to download it again.")
+}
+trace("model loaded in \(String(format: "%.1f", Date().timeIntervalSince(loadStart))) s")
+let recorder = Recorder(transcriber: transcriber)
 
-speechAllowed { ok in
-  guard ok else {
-    fail("speech-denied", "Speech Recognition is turned off for WorkspaceGPT. Allow it in System Settings → Privacy & Security → Speech Recognition.")
-  }
-  guard useMic else { return recorder.start(mic: false) }
+if !useMic || youFile != nil {
+  recorder.start(mic: false)
+} else {
   microphoneAllowed { ok in
     if !ok { warn("microphone-denied", "The microphone is turned off for WorkspaceGPT, so your side of the call is not transcribed. Allow it in System Settings → Privacy & Security → Microphone.") }
     recorder.start(mic: ok)

@@ -25,13 +25,17 @@
  */
 import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ViewSurface } from './webviewHost';
 import { CallRecorder, notesHelperPath, type RecordingEvent } from './callRecorder';
+import { WhisperModel, type ModelState } from './whisperModel';
 
 export type CallEvent =
   | { type: 'capability'; available: boolean; reason?: string; canRecord?: boolean; recordReason?: string }
   | { type: 'state'; inCall: boolean; since?: number }
+  /** The speech model "Take notes" needs: downloaded when call notes are turned on (whisperModel.ts). */
+  | ({ type: 'model' } & ModelState)
   | RecordingEvent;
 
 export interface CallsRequest {
@@ -187,18 +191,28 @@ function startWindowsSource(onSnapshot: (h: Holder[]) => void): Source {
   };
 }
 
-export function createCallDetection(surface: ViewSurface, notesDir: string, notify: (title: string, body: string) => void): void {
+export function createCallDetection(
+  surface: ViewSurface,
+  notesDir: string,
+  modelDir: string,
+  notify: (title: string, body: string) => void
+): void {
   const macBin = macHelperPath();
   const notesBin = notesHelperPath();
-  const recordability = notesBin
-    ? { canRecord: true }
-    : {
-        canRecord: false,
-        recordReason:
-          process.platform === 'win32'
-            ? 'Taking notes on Windows comes in a later beta. This build only detects calls.'
-            : 'The call-notes recorder is missing from this build.',
-      };
+  // macOS 14 = Darwin 23: the first that can tap a call app's audio (and the recorder needs 13.3).
+  const macOld = process.platform === 'darwin' && Number(os.release().split('.')[0]) < 23;
+  const recordability =
+    notesBin && !macOld
+      ? { canRecord: true }
+      : {
+          canRecord: false,
+          recordReason:
+            process.platform === 'win32'
+              ? 'Taking notes on Windows comes in a later beta. This build only detects calls.'
+              : macOld
+                ? 'Taking notes needs macOS 14 or later.'
+                : 'The call-notes recorder is missing from this build.',
+        };
   let capability: Extract<CallEvent, { type: 'capability' }> =
     process.platform === 'win32'
       ? { type: 'capability', available: true, ...recordability }
@@ -213,12 +227,19 @@ export function createCallDetection(surface: ViewSurface, notesDir: string, noti
   let lastHolders: Holder[] = [];
   /** The recording's latest state, replayed to a page that (re)attaches mid-call. */
   let recordingState: RecordingEvent | undefined;
-  const recorder = notesBin
-    ? new CallRecorder(notesBin, notesDir, (event) => {
-        if (event.type === 'recording') recordingState = event.state === 'idle' ? undefined : event;
-        send(event);
-      })
-    : undefined;
+  const model = new WhisperModel(modelDir, (state) => send({ type: 'model', ...state }));
+  const recorder =
+    notesBin && recordability.canRecord
+      ? new CallRecorder(
+          notesBin,
+          notesDir,
+          (event) => {
+            if (event.type === 'recording') recordingState = event.state === 'idle' ? undefined : event;
+            send(event);
+          },
+          model.path
+        )
+      : undefined;
 
   const sendState = () => send({ type: 'state', inCall: tracker.inCall, since: tracker.since });
 
@@ -243,6 +264,8 @@ export function createCallDetection(surface: ViewSurface, notesDir: string, noti
   };
 
   const start = () => {
+    // Turning call notes on is when the model comes down, so "Take notes" works on the first call.
+    if (recorder) void model.ensure();
     if (source || !capability.available) return;
     if (process.platform === 'win32') source = startWindowsSource(onSnapshot);
     else if (macBin)
@@ -256,6 +279,7 @@ export function createCallDetection(surface: ViewSurface, notesDir: string, noti
   surface.attached.event(() => {
     send(capability);
     sendState();
+    if (recorder) send({ type: 'model', ...model.state });
     if (recordingState) send(recordingState);
   });
   surface.callsRequested.event((req) => {
@@ -263,7 +287,11 @@ export function createCallDetection(surface: ViewSurface, notesDir: string, noti
     else if (req.op === 'disable') stop();
     // Only for a call in progress: the page asks after detection, and only on the user's click.
     else if (req.op === 'record' && tracker.inCall && recorder && !recorder.active) {
-      recorder.start(process.platform === 'darwin' ? lastHolders.map((h) => Number(h.key)) : []);
+      if (model.state.state !== 'ready') {
+        // The page only offers "Take notes" once the model is ready; this is the race where it was not.
+        send({ type: 'recording', state: 'idle', error: 'The speech model is not downloaded yet. Try again once Settings → Call notes says it is ready.' });
+        void model.ensure();
+      } else recorder.start(process.platform === 'darwin' ? lastHolders.map((h) => Number(h.key)) : []);
     } else if (req.op === 'stop') recorder?.stop();
   });
 }

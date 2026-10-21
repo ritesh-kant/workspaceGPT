@@ -3,10 +3,13 @@
  * (docs/design/call-notes.md). callDetection.ts decides when; this runs it.
  *
  * On macOS the work is native/wgpt-notes.swift: it taps the call app's audio
- * and the mic, transcribes both on the device, and prints one JSON line per
- * settled segment. This module writes those segments into a call note (the
+ * and the mic, transcribes both on the device with whisper.cpp (the model is
+ * whisperModel.ts), and prints one JSON line per segment. This module writes those segments into a call note (the
  * extension's format, services/callNotes.ts), which the Sessions panel lists
  * as it grows. Only text is written; the audio never touches the disk.
+ *
+ * A "you" line that is really the call's audio heard through the speakers is
+ * left out of the note (dropEchoes), re-decided on every write as "others" lines arrive.
  *
  * Deleting the note while it records is the user saying "stop and forget
  * this": the next write finds it gone, stops the helper and writes nothing.
@@ -14,7 +17,7 @@
 import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { newCallNoteId, readCallNote, writeCallNote, type CallNote, type CallNoteSpeaker } from 'workspacegpt-extension-callnotes';
+import { dropEchoes, newCallNoteId, readCallNote, writeCallNote, type CallNote, type CallNoteSpeaker, type HeardTurn } from 'workspacegpt-extension-callnotes';
 
 export type RecordingEvent =
   | { type: 'recording'; state: 'starting' | 'recording' | 'finishing'; noteId: string; startedAt: number }
@@ -23,7 +26,7 @@ export type RecordingEvent =
 
 type HelperLine =
   | { type: 'state'; state: string }
-  | { type: 'segment'; speaker: CallNoteSpeaker; at: number; text: string }
+  | { type: 'segment'; speaker: CallNoteSpeaker; at: number; end?: number; text: string }
   | { type: 'warning' | 'error'; code: string; message: string }
   | { type: 'done' };
 
@@ -58,7 +61,9 @@ export class CallRecorder {
   constructor(
     private readonly bin: string,
     private readonly dir: string,
-    private readonly send: (event: RecordingEvent) => void
+    private readonly send: (event: RecordingEvent) => void,
+    /** The whisper model (whisperModel.ts); the caller only starts a recording once it is on disk. */
+    private readonly modelPath: string
   ) {}
 
   get active(): boolean {
@@ -72,7 +77,9 @@ export class CallRecorder {
     const note: CallNote = { id: newCallNoteId(startedAt), title: callNoteTitle(startedAt), startedAt, status: 'recording', turns: [] };
     this.note = note;
     this.discarded = false;
-    const argv = pids.filter((p) => Number.isInteger(p) && p > 0).flatMap((p) => ['--pid', String(p)]);
+    /** Everything heard; the note shows it less the echoes. */
+    const heard: HeardTurn[] = [];
+    const argv = ['--model', this.modelPath, ...pids.filter((p) => Number.isInteger(p) && p > 0).flatMap((p) => ['--pid', String(p)])];
     const proc = cp.spawn(this.bin, argv, { stdio: ['pipe', 'pipe', 'inherit'] });
     this.proc = proc;
     this.send({ type: 'recording', state: 'starting', noteId: note.id, startedAt });
@@ -99,7 +106,9 @@ export class CallRecorder {
         if (msg.type === 'state' && (msg.state === 'recording' || msg.state === 'finishing')) {
           this.send({ type: 'recording', state: msg.state, noteId: note.id, startedAt });
         } else if (msg.type === 'segment' && typeof msg.text === 'string' && msg.text.trim()) {
-          note.turns.push({ speaker: msg.speaker === 'you' ? 'you' : 'others', at: Number(msg.at) || 0, text: msg.text });
+          const end = Number(msg.end);
+          heard.push({ speaker: msg.speaker === 'you' ? 'you' : 'others', at: Number(msg.at) || 0, ...(Number.isFinite(end) ? { end } : {}), text: msg.text.trim() });
+          note.turns = dropEchoes(heard);
           this.save(note);
         } else if (msg.type === 'warning') {
           note.notice = note.notice ? `${note.notice} ${msg.message}` : msg.message;

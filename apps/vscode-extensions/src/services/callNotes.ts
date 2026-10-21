@@ -278,3 +278,50 @@ export async function readCallNoteForAgent(dir: string, id: unknown): Promise<{ 
   if (!note) return { ok: false, message: `No call note "${String(id ?? '')}". search_call_notes lists them.` };
   return { ok: true, message: `Call note ${note.id}`, content: renderCallNote(note) };
 }
+
+/** A turn as the recorder hears it: with its end, which echo detection needs. */
+export type HeardTurn = CallNoteTurn & { end?: number };
+
+/** Seconds either side of a "you" turn in which the same words from "others" count as its echo. */
+const ECHO_WINDOW_S = 4;
+/** Share of a "you" turn's words that must also be in the overlapping "others" turns. */
+const ECHO_SHARE = 0.6;
+/** Shorter "you" turns ("Yeah", "Okay sure") are kept: too few words to tell an echo from agreement. */
+const ECHO_MIN_WORDS = 3;
+
+function wordsOf(text: string): string[] {
+  return text.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+}
+
+/**
+ * Drops "you" turns that are the call's own audio picked up by the mic (the
+ * user on speakers, not headphones): most of their words were said by "others"
+ * at the same moment. "Others" is the call app's audio read directly, so when
+ * the two disagree about who said it, "others" is right.
+ */
+export function dropEchoes(turns: readonly HeardTurn[]): CallNoteTurn[] {
+  const others = turns.filter((t) => t.speaker === 'others');
+  return turns
+    .filter((t) => {
+      if (t.speaker !== 'you') return true;
+      const mine = wordsOf(t.text);
+      if (mine.length < ECHO_MIN_WORDS) return true;
+      const from = t.at - ECHO_WINDOW_S;
+      const to = (t.end ?? t.at + 10) + ECHO_WINDOW_S;
+      const heard = new Map<string, number>();
+      for (const o of others) {
+        if ((o.end ?? o.at + 10) < from || o.at > to) continue;
+        for (const w of wordsOf(o.text)) heard.set(w, (heard.get(w) ?? 0) + 1);
+      }
+      let shared = 0;
+      for (const w of mine) {
+        const n = heard.get(w) ?? 0;
+        if (n > 0) {
+          shared++;
+          heard.set(w, n - 1);
+        }
+      }
+      return shared / mine.length < ECHO_SHARE;
+    })
+    .map(({ speaker, at, text }) => ({ speaker, at, text }));
+}

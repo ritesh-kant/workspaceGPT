@@ -73,6 +73,7 @@ const UNITS = [
   // the recorder (driven by a fake helper in the tests), and the note store both sides share.
   '../desktop/sidecar/host/callDetection.ts',
   '../desktop/sidecar/host/callRecorder.ts',
+  '../desktop/sidecar/host/whisperModel.ts',
   'src/services/callNotes.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',

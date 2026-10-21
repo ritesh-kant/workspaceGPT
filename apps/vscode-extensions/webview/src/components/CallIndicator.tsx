@@ -17,7 +17,7 @@ const CallIndicator: React.FC<{
   /** The call note on screen: its own view shows the recording and Stop, so this steps aside for it. */
   viewingNoteId?: string;
 }> = ({ onOpenNote, viewingNoteId }) => {
-  const { enabled, capability, state, recording, outcome, record, stop } = useCallDetection();
+  const { enabled, capability, state, recording, outcome, model, record, stop, retryModel } = useCallDetection();
   const [choices, setChoices] = useState<Record<number, Choice>>({});
   const [copied, setCopied] = useState(false);
   const [dismissedOutcome, setDismissedOutcome] = useState<string | undefined>();
@@ -127,10 +127,34 @@ const CallIndicator: React.FC<{
   // Asked and answered for this call: a recording that ended (Stop) does not ask again.
   if (choice === 'take-notes' && capability.canRecord) return null;
 
+  // Recording works here, but the speech model is not on this Mac yet: say so rather than offer a button that fails.
+  const modelReady = !capability.canRecord || model?.state === 'ready';
+  const modelLine =
+    model?.state === 'downloading'
+      ? `The speech model is still downloading (${Math.floor((model.received / Math.max(1, model.total)) * 100)}%). You can take notes once it is ready.`
+      : model?.state === 'failed'
+        ? model.error
+        : 'The speech model is not downloaded yet.';
+
   return (
     <div className='call-indicator' role='status' aria-live='polite'>
       <span className='call-indicator-dot' aria-hidden='true' />
-      {choice === 'take-notes' ? (
+      {!modelReady && choice !== 'take-notes' ? (
+        <div className='call-indicator-body'>
+          <strong>Call detected</strong>
+          <span className='call-indicator-text'>{modelLine}</span>
+          <div className='call-indicator-actions'>
+            {model?.state !== 'downloading' && (
+              <button type='button' className='call-indicator-button call-indicator-button--primary' onClick={retryModel}>
+                Download the speech model
+              </button>
+            )}
+            <button type='button' className='call-indicator-button' onClick={() => choose('not-this-call')}>
+              Not this call
+            </button>
+          </div>
+        </div>
+      ) : choice === 'take-notes' ? (
         <div className='call-indicator-body'>
           <strong>Call detected · notes requested</strong>
           <span className='call-indicator-text'>

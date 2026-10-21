@@ -42,5 +42,7 @@ declare module 'workspacegpt-extension-callnotes' {
   export function newCallNoteId(startedAt: number): string;
   export function readCallNote(dir: string, id: unknown): Promise<CallNote | undefined>;
   export function writeCallNote(dir: string, note: CallNote): Promise<void>;
+  export type HeardTurn = { speaker: CallNoteSpeaker; at: number; text: string; end?: number };
+  export function dropEchoes(turns: readonly HeardTurn[]): CallNote['turns'];
 }
 declare module 'posthog-node-real';

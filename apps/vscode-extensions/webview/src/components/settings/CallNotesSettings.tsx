@@ -12,7 +12,7 @@ import StatusDot from './StatusDot';
  */
 const CallNotesSettings: React.FC = () => {
   const updateConfig = useSettingsStore((s) => s.updateConfig);
-  const { enabled, capability, state, recording } = useCallDetection();
+  const { enabled, capability, state, recording, model, retryModel } = useCallDetection();
   const unavailable = capability && !capability.available;
 
   const summary = !enabled ? (
@@ -65,10 +65,33 @@ const CallNotesSettings: React.FC = () => {
         {enabled && capability?.available && capability.canRecord === false && capability.recordReason && (
           <small className='form-text'>{capability.recordReason}</small>
         )}
+        {enabled && capability?.canRecord && model && (
+          <small className='form-text'>
+            {model.state === 'ready' ? (
+              <>
+                <StatusDot tone='ok' />
+                Speech model ready (Whisper small, 190 MB, on this Mac).
+              </>
+            ) : model.state === 'downloading' ? (
+              <>
+                <StatusDot tone='warn' />
+                Downloading the speech model: {Math.floor((model.received / Math.max(1, model.total)) * 100)}% of 190 MB.
+              </>
+            ) : (
+              <>
+                <StatusDot tone='warn' />
+                {model.state === 'failed' ? model.error : 'The speech model is not downloaded yet.'}{' '}
+                <button type='button' className='link-like' onClick={retryModel}>
+                  Download it
+                </button>
+              </>
+            )}
+          </small>
+        )}
         <small className='form-text'>
-          “Take notes” transcribes your microphone (“You”) and the call’s own audio (“Others”) on this Mac. Only the text is kept, on this machine; the audio is
-          never saved. Notes appear under Call notes in the sidebar, and chats can search them. The first time, macOS asks to allow Speech Recognition, the
-          Microphone and System Audio Recording. If you take notes, let everyone on the call know.
+          “Take notes” transcribes your microphone (“You”) and the call’s own audio (“Others”) on this Mac with Whisper, a speech model downloaded once (190
+          MB) when you turn this on. Only the text is kept, on this machine; the audio is never saved. Notes appear under Call notes in the sidebar, and chats
+          can search them. The first time, macOS asks to allow the Microphone and System Audio Recording. If you take notes, let everyone on the call know.
         </small>
       </div>
     </SectionShell>

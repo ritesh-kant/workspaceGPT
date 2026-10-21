@@ -19,6 +19,7 @@
  *   runtime/bin/wgpt-dictate         (macOS) the dictation helper, native/wgpt-dictate.swift
  *   runtime/bin/wgpt-calls           (macOS) the call-detection helper, native/wgpt-calls.swift
  *   runtime/bin/wgpt-notes           (macOS) the call-notes recorder, native/wgpt-notes.swift
+ *   runtime/bin/libwhisper.dylib     (macOS) whisper.cpp, which wgpt-notes transcribes with
  *   runtime/extension/               what the extension host reads by path: package.json,
  *                                    resources/, webview/dist/, dist/mcp-server.js
  *   runtime/manifest.json            versions, for diagnostics and the release checks
@@ -149,7 +150,7 @@ copy(path.join(root, 'dist/bridge'), path.join(out, 'bridge'));
 if (platform === 'darwin') {
   run('node', ['scripts/build-native.mjs', '--target', target, '--require'], root);
   fs.mkdirSync(path.join(out, 'bin'), { recursive: true });
-  for (const helper of ['wgpt-dictate', 'wgpt-calls', 'wgpt-notes']) {
+  for (const helper of ['wgpt-dictate', 'wgpt-calls', 'wgpt-notes', 'libwhisper.dylib']) {
     fs.copyFileSync(path.join(root, 'dist/bin', helper), path.join(out, 'bin', helper));
     fs.chmodSync(path.join(out, 'bin', helper), 0o755);
   }

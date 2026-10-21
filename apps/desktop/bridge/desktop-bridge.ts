@@ -231,9 +231,11 @@ interface UiFrame {
   let callsCapability: unknown;
   let callsState: unknown;
   let callsRecording: unknown;
+  let callsModel: unknown;
   function onCalls(event: { type?: string; state?: string } | undefined): void {
     if (event?.type === 'capability') callsCapability = event;
     else if (event?.type === 'state') callsState = event;
+    else if (event?.type === 'model') callsModel = event;
     else if (event?.type === 'recording') callsRecording = event.state === 'idle' ? undefined : event;
     window.dispatchEvent(new CustomEvent('wgpt-calls', { detail: event }));
   }
@@ -247,7 +249,7 @@ interface UiFrame {
       request: (op: 'start' | 'stop' | 'cancel', locale?: string) => send({ t: 'dictation', op, locale }),
     },
     calls: {
-      latest: () => ({ capability: callsCapability, state: callsState, recording: callsRecording }),
+      latest: () => ({ capability: callsCapability, state: callsState, recording: callsRecording, model: callsModel }),
       request: (op: 'enable' | 'disable' | 'record' | 'stop') => send({ t: 'calls', op }),
     },
   };

@@ -46,6 +46,7 @@ const syncedFilePrune = await import(path.join(outDir, 'syncedFilePrune.mjs'));
 const callDetection = await import(path.join(outDir, 'callDetection.mjs'));
 const callRecorderMod = await import(path.join(outDir, 'callRecorder.mjs'));
 const callNotesMod = await import(path.join(outDir, 'callNotes.mjs'));
+const whisperModelMod = await import(path.join(outDir, 'whisperModel.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -6463,7 +6464,8 @@ console.log('\ncall detection (call notes, desktop)');
 // ═══ Call notes: the note store and the recorder (desktop) ═══
 console.log('\ncall notes (store, search, recorder)');
 {
-  const { renderCallNote, parseCallNote, writeCallNote, readCallNote, listCallNotes, deleteCallNote, renameCallNote, searchCallNotes, readCallNoteForAgent, hasCallNotes, isCallNoteId, newCallNoteId } = callNotesMod;
+  const { renderCallNote, parseCallNote, writeCallNote, readCallNote, listCallNotes, deleteCallNote, renameCallNote, searchCallNotes, readCallNoteForAgent, hasCallNotes, isCallNoteId, newCallNoteId, dropEchoes } = callNotesMod;
+  const { WhisperModel } = whisperModelMod;
   const { CallRecorder } = callRecorderMod;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-callnotes-'));
   const started = Date.parse('2026-10-21T05:02:05.000Z');
@@ -6544,8 +6546,11 @@ out({ type: 'state', state: 'starting' });
 if (mode === 'fail') { out({ type: 'error', code: 'speech-denied', message: 'Speech Recognition is turned off.' }); process.exit(1); }
 out({ type: 'state', state: 'recording' });
 out({ type: 'warning', code: 'call-audio-unavailable', message: 'Only your side will be transcribed.' });
-out({ type: 'segment', speaker: 'others', at: 3.2, text: 'We keep the retry cap at five.' });
-out({ type: 'segment', speaker: 'you', at: 1, text: 'Hi all' });
+if (!process.argv.includes('--model')) { out({ type: 'error', code: 'model-missing', message: 'no --model' }); process.exit(1); }
+out({ type: 'segment', speaker: 'others', at: 3.2, end: 6, text: 'We keep the retry cap at five.' });
+out({ type: 'segment', speaker: 'you', at: 1, end: 2, text: 'Hi all' });
+// The same words through the speakers into the mic: an echo, left out of the note.
+out({ type: 'segment', speaker: 'you', at: 3.5, end: 6.2, text: 'we keep the retry cap at five' });
 if (mode === 'chatty') setInterval(() => out({ type: 'segment', speaker: 'you', at: 5, text: 'more' }), 100);
 process.stdin.on('data', (d) => {
   if (!String(d).includes('stop')) return;
@@ -6574,7 +6579,7 @@ process.stdin.on('data', (d) => {
   await t('the recorder writes segments as they come, and Stop finishes the note', async () => {
     process.env.FAKE_MODE = 'ok';
     const events = [];
-    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e));
+    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e), '/models/ggml-small-q5_1.bin');
     rec.start([4242]);
     const recording = await until(events, (e) => e.type === 'recording' && e.state === 'recording');
     await until(events, (e) => e.type === 'recording-notice');
@@ -6586,7 +6591,7 @@ process.stdin.on('data', (d) => {
     const saved = await readCallNote(notesDir, recording.noteId);
     assert.equal(saved.status, 'done');
     assert.ok(saved.endedAt >= saved.startedAt);
-    assert.deepEqual(saved.turns.map((x) => `${x.speaker}:${x.text}`), ['you:Hi all', 'others:We keep the retry cap at five.', 'you:Bye']);
+    assert.deepEqual(saved.turns.map((x) => `${x.speaker}:${x.text}`), ['you:Hi all', 'others:We keep the retry cap at five.', 'you:Bye'], 'the echoed "you" line is not in the note');
     assert.match(saved.notice, /Only your side/);
     assert.match(saved.title, /^Call on /);
   });
@@ -6594,7 +6599,7 @@ process.stdin.on('data', (d) => {
   await t('a recording that fails before anything is heard leaves no note, and says why', async () => {
     process.env.FAKE_MODE = 'fail';
     const events = [];
-    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e));
+    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e), '/models/m.bin');
     const before = (await listCallNotes(notesDir)).length;
     rec.start([]);
     const idle = await until(events, (e) => e.type === 'recording' && e.state === 'idle');
@@ -6606,7 +6611,7 @@ process.stdin.on('data', (d) => {
   await t('deleting the note while it records stops the recording and it is not written back', async () => {
     process.env.FAKE_MODE = 'chatty';
     const events = [];
-    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e));
+    const rec = new CallRecorder(fake, notesDir, (e) => events.push(e), '/models/m.bin');
     rec.start([]);
     const started = await until(events, (e) => e.type === 'recording' && e.state === 'recording');
     await settle();
@@ -6615,6 +6620,48 @@ process.stdin.on('data', (d) => {
     await until(events, (e) => e.type === 'recording' && e.state === 'idle');
     await settle();
     assert.equal(await readCallNote(notesDir, started.noteId), undefined);
+  });
+  await t('echoes: a "you" line mostly made of what "others" said at that moment is dropped; real replies stay', () => {
+    const turns = [
+      { speaker: 'others', at: 10, end: 16, text: 'So the release branch gets cut on Thursday at noon.' },
+      { speaker: 'you', at: 10.4, end: 16.3, text: 'so the release branch gets cut on Thursday at noon' },
+      { speaker: 'you', at: 17, end: 17.5, text: 'Yeah.' },
+      { speaker: 'you', at: 18, end: 22, text: 'Thursday noon works, I will tell Arjun.' },
+      { speaker: 'you', at: 60, end: 64, text: 'the release branch gets cut on Thursday at noon' },
+    ];
+    assert.deepEqual(dropEchoes(turns).map((x) => `${x.speaker}@${x.at}`), ['others@10', 'you@17', 'you@18', 'you@60'], 'short replies, own words and a later repeat stay');
+    assert.equal(dropEchoes(turns)[0].end, undefined, 'the note keeps speaker, at and text only');
+  });
+
+  // The model download, against a fake server: a file and its checksum.
+  const crypto = await import('crypto');
+  const blob = Buffer.from('fake whisper model '.repeat(5000));
+  const spec = (body) => ({ file: 'm.bin', url: 'https://example.invalid/m.bin', bytes: blob.length, sha256: crypto.createHash('sha256').update(body).digest('hex') });
+  const fakeFetch = (body) => async () => new Response(new Blob([body]).stream(), { status: 200 });
+
+  await t('the speech model downloads, is checked against its SHA-256, and reports progress then ready', async () => {
+    const modelDir = path.join(dir, 'models');
+    const states = [];
+    const m = new WhisperModel(modelDir, (s) => states.push(s.state), fakeFetch(blob), spec(blob));
+    assert.equal(m.state.state, 'missing');
+    await m.ensure();
+    assert.equal(m.state.state, 'ready');
+    assert.ok(states.includes('downloading'));
+    assert.equal(fs.readFileSync(m.path).length, blob.length);
+    assert.equal(fs.existsSync(`${m.path}.part`), false);
+    assert.equal(new WhisperModel(modelDir, () => {}, fakeFetch(blob), spec(blob)).state.state, 'ready', 'found on disk next launch');
+  });
+
+  await t('a download that does not match its checksum is thrown away and reported', async () => {
+    const modelDir = path.join(dir, 'models-bad');
+    const tampered = Buffer.from(blob);
+    tampered[10] ^= 1;
+    const m = new WhisperModel(modelDir, () => {}, fakeFetch(tampered), spec(blob));
+    await m.ensure();
+    assert.equal(m.state.state, 'failed');
+    assert.match(m.state.error, /did not match/);
+    assert.equal(fs.existsSync(m.path), false);
+    assert.equal(fs.existsSync(`${m.path}.part`), false);
   });
   delete process.env.FAKE_MODE;
   fs.rmSync(dir, { recursive: true, force: true });

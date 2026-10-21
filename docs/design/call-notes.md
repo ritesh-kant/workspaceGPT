@@ -2,8 +2,10 @@
 
 Status: 2026-10-21. **Built (beta, desktop):**
 - call detection, the "Call detected" prompt, and Settings → Call notes (off by default);
-- **macOS:** "Take notes" records and transcribes on the device, writes a call note
-  as it goes, and stops on Stop or when the call ends;
+- **macOS:** "Take notes" records and transcribes on the device with Whisper
+  (whisper.cpp, the `small` model), writes a call note as it goes, and stops on
+  Stop or when the call ends;
+- "You" lines that are the call's own audio heard through the speakers are dropped;
 - **Call notes** in the sidebar's Sessions list, grouped by day, plus a note view
   (rename, delete, "Ask about this call");
 - agent tools `search_call_notes` and `read_call_note`.
@@ -23,7 +25,11 @@ Code:
   Windows registry reader, and the page and notification events. It starts and
   stops the recorder.
 - `apps/desktop/native/wgpt-notes.swift`: the macOS recorder. It taps the call's
-  processes and the mic, transcribes both on the device, and prints segments.
+  processes and the mic, transcribes both with whisper.cpp, and prints segments.
+  It links `libwhisper.dylib`: whisper.cpp v1.9.2's prebuilt Apple framework,
+  pinned with its SHA-256 in `scripts/build-native.mjs` and flattened to one dylib.
+- `apps/desktop/sidecar/host/whisperModel.ts`: downloads the model the first time
+  call notes are turned on, from a pinned revision, and checks its SHA-256.
 - `apps/desktop/sidecar/host/callRecorder.ts`: runs the recorder and writes its
   segments into the call note.
 - `apps/vscode-extensions/src/services/callNotes.ts`: the note format, shared
@@ -160,6 +166,20 @@ Both tracks are written as 16 kHz mono WAV chunks into the app's data folder,
 and each chunk is deleted once it has been transcribed.
 
 ## Transcription
+
+**Update, 2026-10-21: macOS uses Whisper too.** Apple's recognizer was tried
+first, as planned below, and was poor on a real call: many words were wrong, on
+Indian English and Hinglish especially. Both platforms now use whisper.cpp.
+- **Model:** multilingual `small`, 5-bit quantized
+  (`ggml-small-q5_1.bin`, 190 MB). It is downloaded once into `<app data>/models`.
+- **Language:** `en`, with a prompt written in Romanized Hinglish.
+- **How it runs:** audio stays in memory, never on disk. Each track is cut into
+  chunks of 8–28 s at pauses, and a chunk with less than 0.5 s of speech is never
+  transcribed, because Whisper invents words in silence.
+- **Speed:** on an M4 Pro, a 10 s chunk decodes in about 0.3 s on the GPU.
+- **Permissions:** Speech Recognition is no longer needed.
+
+The original plan follows.
 
 **macOS: Apple's on-device recognizer.** This is the same family as dictation.
 On macOS 26 and later, use `SpeechAnalyzer` / `SpeechTranscriber`, which are
@@ -335,3 +355,22 @@ Recording is allowed, the tap delivers silence rather than failing.
   words can appear under "You" too.
 - **The tap follows the processes seen at the start.** If a call app moves its
   audio to a new process mid-call, the "Others" track goes quiet.
+
+## Results: Whisper, macOS, 2026-10-21
+
+- **Real call, Apple recognizer:** the user's call in the Teams web app, before
+  the switch. Many words were wrong, some lines were doubled (since fixed), and
+  some of the other side's words appeared as "You". That last part was most
+  likely the mic hearing the speakers.
+- **Whisper on a spoken test meeting:** Indian English voice, with Hinglish lines.
+  - Every line was right, with Hindi kept in Roman script: "haan, theek hai,
+    matlab … kal tak build chaahiye, warna Thursday ka … miss ho jayega";
+    "Arjun, kya status hai?"; "chalo".
+  - Silent stretches were skipped and nothing was invented.
+- **In the desktop sidecar:** turning call notes on downloaded the model through
+  the app, with progress in Settings and the checksum passing. A pretend call was
+  then transcribed live into the note.
+- **Echoes:** dropping is covered by unit tests only.
+- **Not tested yet:** a real Teams or Zoom call with Whisper, and the installable
+  build. Packaging now carries `libwhisper.dylib`, which is ad-hoc signed like the
+  other helpers.

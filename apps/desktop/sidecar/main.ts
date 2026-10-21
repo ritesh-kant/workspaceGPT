@@ -408,7 +408,7 @@ async function main(): Promise<void> {
 
   // Call notes (beta): detect a call and let the page ask before anything records.
   // `visible: true` → the shell notifies only when the window isn't in front.
-  createCallDetection(surface, callNotesDir(paths.storageDir), (title, body) => {
+  createCallDetection(surface, callNotesDir(paths.storageDir), path.join(paths.root, 'models'), (title, body) => {
     if (args.parentStdio) process.stdout.write(`${NOTIFY_PREFIX}${JSON.stringify({ kind: 'call', title, body, visible: true })}\n`);
     else console.log(`[desktop] notify (call): ${title} — ${body}`);
   });
