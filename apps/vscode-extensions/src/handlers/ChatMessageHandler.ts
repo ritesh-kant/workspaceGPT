@@ -18,6 +18,7 @@ import { getCiSnapshot, getCiSnapshotViaHost, getFailureLog, getFailureLogViaHos
 import { CodeHostConnections } from '../services/codehost/connections';
 import { isPermission } from '../services/agent/permissionPolicy';
 import { ensureWorktree, getAlwaysAskFolder, getDefaultFolder, getRecentFolders, listBranches, openFolder, pickFolder, recordRecentFolder, resolveFolder, savePendingStart, setAlwaysAskFolder, setDefaultFolder, switchBranch, takePendingStart } from '../services/agent/workspaceControls';
+import { executeCommand } from '../services/agent/commandTools';
 import { isBrowserConnected } from '../services/browser/browserBridge';
 import { openChromeExtensionInstall } from '../services/browser/installChromeExtension';
 import { isControlChromeEnabled, setControlChromeEnabled } from '../services/browser/browserPrefs';
@@ -122,6 +123,10 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.OPEN_EXTERNAL:
         await this.handleOpenExternal(data.url);
+        return true;
+      case MESSAGE_TYPES.RUN_INLINE_COMMAND:
+        this.analyticsService.trackEvent('inline_command_run');
+        void this.handleRunInlineCommand(data.id, data.command);
         return true;
       case MESSAGE_TYPES.AGENT_REVERT_CHECKPOINT:
         this.analyticsService.trackEvent('agent_revert_checkpoint_triggered');
@@ -386,6 +391,26 @@ export class ChatMessageHandler {
    * `command:` or `file:` URI would turn a chat link into arbitrary local
    * action.
    */
+  /**
+   * ▶ Run on a shell block in the chat: runs in the chat's own folder and
+   * streams the output back to the block that asked. The user clicked it, so
+   * it is not held to the agent's command allow-list.
+   */
+  private async handleRunInlineCommand(id: unknown, command: unknown): Promise<void> {
+    if (typeof id !== 'string' || typeof command !== 'string' || !command.trim() || command.length > 10_000) return;
+    const post = (output: string, done: boolean, exitCode: number | null = null) =>
+      this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.INLINE_COMMAND_OUTPUT, id, output, done, exitCode });
+    const cwd = this.viewedRoots()[0]?.uri.fsPath ?? os.homedir();
+    let last = 0;
+    const result = await executeCommand(command, cwd, 120, (so) => {
+      const now = Date.now();
+      if (now - last < 100) return;
+      last = now;
+      post(so, false);
+    });
+    post(result.output, true, result.exitCode);
+  }
+
   private async handleOpenExternal(rawUrl: string): Promise<void> {
     if (!rawUrl) return;
     let parsed: vscode.Uri;

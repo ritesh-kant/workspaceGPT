@@ -2015,6 +2015,28 @@ button:disabled {
   padding: 0.85em 4.5em 0.85em 1em;
 }
 
+/* Output of ▶ Run, under the command, inside the same block. */
+.code-block-output {
+  border-top: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.25));
+}
+.code-block-output pre {
+  margin: 0;
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.7em 1em;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.85em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--vscode-descriptionForeground);
+}
+.code-block-output-status {
+  padding: 0 1em 0.6em;
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+}
+
 /* rehype-highlight token colors, mapped to the editor's own theme variables
    so highlighting follows the user's VS Code theme in both light and dark
    instead of shipping a fixed highlight.js theme. */

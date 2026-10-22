@@ -97,6 +97,11 @@ export const MESSAGE_TYPES = {
   AGENT_WRITE_OUTCOME: 'agent-write-outcome',
   // Webview → host: open a reviewed file (edit/create/delete) in the editor.
   OPEN_FILE_IN_EDITOR: 'open-file-in-editor',
+  // A fenced shell block's ▶ Run shows its output under the block, in the chat.
+  // Webview → host: RUN_INLINE_COMMAND {id, command}; host → webview:
+  // INLINE_COMMAND_OUTPUT {id, output, done, exitCode} (output = everything so far).
+  RUN_INLINE_COMMAND: 'run-inline-command',
+  INLINE_COMMAND_OUTPUT: 'inline-command-output',
   // Webview → host: open an http(s) URL in the user's browser — the ticket
   // chip above an agent answer and any link in model prose. The host validates
   // the scheme (never command:/file:), since the URL can come from model text.

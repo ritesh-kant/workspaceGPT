@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { copyToClipboard } from '../utils/clipboard';
-import { isDesktopHost } from '../vscode';
+import { isDesktopHost, VSCodeAPI } from '../vscode';
+import { MESSAGE_TYPES } from '../constants';
 import { ImageViewer } from './ImageViewer';
 import { renderDiagramPng } from '../utils/diagramExport';
 
@@ -48,9 +49,24 @@ const PlainCodeBlock: React.FC<CodeBlockProps> = ({ children, ...rest }) => {
     }
   };
 
+  const [run, setRun] = useState<{ output: string; done: boolean; exitCode: number | null } | null>(null);
+  const runId = useRef(`run-${Math.random().toString(36).slice(2)}`);
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      const m = e.data;
+      if (m?.type === MESSAGE_TYPES.INLINE_COMMAND_OUTPUT && m.id === runId.current) {
+        setRun({ output: String(m.output ?? ''), done: !!m.done, exitCode: m.exitCode ?? null });
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
   const handleRun = () => {
     const command = extractText(children).trim().replace(/^\$ /, '');
-    if (command) window.parent.postMessage({ type: RUN_IN_TERMINAL, command }, '*');
+    if (!command) return;
+    setRun({ output: '', done: false, exitCode: null });
+    VSCodeAPI().postMessage({ type: MESSAGE_TYPES.RUN_INLINE_COMMAND, id: runId.current, command });
   };
   const canRun = isDesktopHost() && !!language && SHELL_LANGS.has(language.toLowerCase());
 
@@ -77,6 +93,14 @@ const PlainCodeBlock: React.FC<CodeBlockProps> = ({ children, ...rest }) => {
         </button>
       </div>
       <pre {...rest}>{children}</pre>
+      {run && (
+        <div className='code-block-output'>
+          <pre>{run.output || (run.done ? '(no output)' : 'Running…')}</pre>
+          <div className='code-block-output-status'>
+            {!run.done ? 'Running…' : run.exitCode === 0 ? '✓ Done' : run.exitCode === null ? '✕ Did not finish' : `✕ Exit ${run.exitCode}`}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
