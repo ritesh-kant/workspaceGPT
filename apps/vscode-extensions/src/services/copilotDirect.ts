@@ -113,17 +113,18 @@ export async function listDirectCopilotModels(): Promise<DirectCopilotModel[]> {
   if (!res.ok) throw new Error(`GitHub Copilot model list failed (${res.status}).`);
   const body: any = await res.json();
   return (body.data ?? [])
-    .filter(
-      (m: any) =>
-        m.capabilities?.type === 'chat' &&
-        m.capabilities?.supports?.tool_calls &&
-        m.model_picker_enabled !== false &&
-        (!m.supported_endpoints || m.supported_endpoints.includes('/chat/completions')) &&
-        !chatUnsupported.has(m.id) &&
-        (m.capabilities?.limits?.max_prompt_tokens ?? 0) >= MIN_INPUT_TOKENS
-    )
+    .filter(isUsableModel)
     .map((m: any) => ({ id: m.id, maxInputTokens: m.capabilities.limits.max_prompt_tokens }));
 }
+
+/** One entry of Copilot's /models that the agent can run on; the picker (via the bridge) and readiness both use it. */
+const isUsableModel = (m: any): boolean =>
+  m.capabilities?.type === 'chat' &&
+  !!m.capabilities?.supports?.tool_calls &&
+  m.model_picker_enabled !== false &&
+  (!m.supported_endpoints || m.supported_endpoints.includes('/chat/completions')) &&
+  !chatUnsupported.has(m.id) &&
+  (m.capabilities?.limits?.max_prompt_tokens ?? 0) >= MIN_INPUT_TOKENS;
 
 /**
  * Premium requests. Copilot bills a request it is told the user initiated
@@ -194,6 +195,13 @@ export async function forwardToCopilot(path: string, raw: string, res: http.Serv
     }
     res.writeHead(400, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
     return void res.end(text);
+  }
+  // The model picker reads this list: offer only models the agent can run on
+  // (a /responses-only model would 400 on its first request).
+  if (!raw && path === '/models' && upstream.ok) {
+    const list: any = await upstream.json();
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return void res.end(JSON.stringify({ ...list, data: (list.data ?? []).filter(isUsableModel) }));
   }
   res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
   if (!upstream.body) return void res.end();
