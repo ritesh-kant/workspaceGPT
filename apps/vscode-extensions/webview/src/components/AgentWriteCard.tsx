@@ -88,8 +88,16 @@ const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) =>
             <path d='M9 6L15 12L9 18' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
           </svg>
         </button>
-        <span className={`agent-write-kind kind-${review.kind}`}>{KIND_LABEL[review.kind]}</span>
-        <code className='agent-write-path'>{review.path}</code>
+        {review.kind === 'command' ? (
+          <code className='agent-command-line' title={review.command ?? review.summary}>
+            <span className='agent-command-prompt'>$</span> {review.command ?? review.summary}
+          </code>
+        ) : (
+          <>
+            <span className={`agent-write-kind kind-${review.kind}`}>{KIND_LABEL[review.kind]}</span>
+            <code className='agent-write-path'>{review.path}</code>
+          </>
+        )}
         {review.kind !== 'command' && (!isConfluence || !!review.url) && (
           <button type='button' className='agent-write-open' aria-label={openLabel} title={openLabel} onClick={openInEditor}>
             <svg width='13' height='13' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>

@@ -1967,48 +1967,52 @@ button:disabled {
 /* Fenced code blocks — a small header (language + copy) above the
    highlighted <pre> that .markdown-content pre already styles. */
 .code-block {
+  position: relative;
   margin: 0.75em 0;
+  border: 1px solid var(--wgpt-border, rgba(128, 128, 128, 0.25));
+  border-radius: 10px;
+  background-color: var(--vscode-textCodeBlock-background, var(--vscode-textBlockQuote-background));
+  overflow: hidden;
 }
 
+/* Language label is dropped; run/copy sit as icons at the right edge. */
 .code-block-header {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0.3em 0.75em;
-  background-color: var(--vscode-editorWidget-background, var(--vscode-textBlockQuote-background));
-  border: 1px solid var(--vscode-editor-lineHighlightBorder);
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
-  font-size: 0.7rem;
+  gap: 2px;
+  padding: 0.5em 0.6em;
 }
 
 .code-block-lang {
-  color: var(--vscode-descriptionForeground);
-  text-transform: lowercase;
+  display: none;
 }
 
 .code-block-copy {
-  padding: 0.15em 0.6em !important;
-  font-size: 0.68rem !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25em !important;
   background: transparent !important;
   color: var(--vscode-descriptionForeground) !important;
-  border: 1px solid var(--vscode-input-border) !important;
-  border-radius: 3px !important;
-}
-
-.code-block-run {
-  margin-left: auto;
-  margin-right: 0.4em;
+  border: 0 !important;
+  border-radius: 4px !important;
+  cursor: pointer;
 }
 
 .code-block-copy:hover {
   color: var(--vscode-foreground) !important;
-  border-color: var(--vscode-focusBorder) !important;
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2)) !important;
 }
 
 .code-block pre {
   margin: 0;
-  border-radius: 0 0 4px 4px;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.85em 4.5em 0.85em 1em;
 }
 
 /* rehype-highlight token colors, mapped to the editor's own theme variables
@@ -2545,6 +2549,20 @@ button:disabled {
 .agent-write-decision.applying { color: var(--vscode-descriptionForeground); }
 .agent-write-kind.kind-command { background: rgba(200, 140, 255, 0.18); color: var(--vscode-charts-purple, #b180d7); }
 .agent-command-text { font-weight: 600; }
+
+/* Command review: the command itself is the header, like a terminal block. */
+.agent-write-card.kind-command { border-radius: 10px; }
+.agent-command-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.95em;
+  color: var(--vscode-foreground);
+}
+.agent-command-prompt { color: var(--vscode-descriptionForeground); }
 
 /* ── Messages pane ──────────────────────────────────────────────────────
    Flex:1 wrapper around the transcript so "jump to latest" can float over
