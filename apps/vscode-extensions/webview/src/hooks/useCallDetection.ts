@@ -43,7 +43,14 @@ export interface RecordingOutcome {
   noteId?: string;
   error?: string;
   notices: string[];
+  /** When the recording started and ended, for the home row's "Last call notes". */
+  startedAt?: number;
+  endedAt?: number;
 }
+
+// Shared by every use of the hook, so one mounted later (the home row) still knows how the last recording went.
+let lastOutcome: RecordingOutcome | undefined;
+const startedAt: Record<string, number> = {};
 
 const bridge = (): CallsBridge | undefined => (window as { __wgptBridge?: { calls?: CallsBridge } }).__wgptBridge?.calls;
 
@@ -66,7 +73,9 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
   const [capability, setCapability] = useState<CallCapability | undefined>(() => bridge()?.latest().capability);
   const [state, setState] = useState<CallState>(() => bridge()?.latest().state ?? { inCall: false });
   const [recording, setRecording] = useState<CallRecording | undefined>(() => bridge()?.latest().recording);
-  const [outcome, setOutcome] = useState<RecordingOutcome | undefined>();
+  const [outcome, setOutcomeState] = useState<RecordingOutcome | undefined>(() => lastOutcome);
+  const setOutcome = (next: (prev: RecordingOutcome | undefined) => RecordingOutcome) =>
+    setOutcomeState((prev) => (lastOutcome = next(prev)));
   const [model, setModel] = useState<SpeechModel | undefined>(() => bridge()?.latest().model);
 
   useEffect(() => {
@@ -83,17 +92,25 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
       } else if (event?.type === 'recording') {
         if (event.state === 'idle') {
           setRecording(undefined);
-          setOutcome((prev) => ({ noteId: event.noteId, error: event.error, notices: prev && prev.noteId === event.noteId ? prev.notices : [] }));
+          setOutcome((prev) => ({
+            noteId: event.noteId,
+            error: event.error,
+            notices: prev && prev.noteId === event.noteId ? prev.notices : [],
+            startedAt: event.noteId ? startedAt[event.noteId] : undefined,
+            endedAt: Date.now(),
+          }));
         } else if (event.noteId && (event.state === 'starting' || event.state === 'recording' || event.state === 'finishing')) {
-          setRecording({ state: event.state, noteId: event.noteId, startedAt: event.startedAt ?? Date.now() });
-          if (event.state === 'starting') setOutcome({ noteId: event.noteId, notices: [] });
+          const noteId = event.noteId;
+          startedAt[noteId] ??= event.startedAt ?? Date.now();
+          setRecording({ state: event.state, noteId, startedAt: event.startedAt ?? Date.now() });
+          if (event.state === 'starting') setOutcome(() => ({ noteId, notices: [] }));
         }
       } else if (event?.type === 'model') {
         const m = event as unknown as SpeechModel;
         setModel(m.state === 'downloading' ? { state: 'downloading', received: m.received, total: m.total } : m.state === 'failed' ? { state: 'failed', error: m.error } : { state: m.state });
       } else if (event?.type === 'recording-notice' && event.message) {
         const message = event.message;
-        setOutcome((prev) => ({ noteId: event.noteId, error: prev?.error, notices: [...(prev && prev.noteId === event.noteId ? prev.notices : []), message] }));
+        setOutcome((prev) => ({ ...(prev && prev.noteId === event.noteId ? prev : {}), noteId: event.noteId, error: prev?.error, notices: [...(prev && prev.noteId === event.noteId ? prev.notices : []), message] }));
       }
     };
     window.addEventListener('wgpt-calls', onEvent);

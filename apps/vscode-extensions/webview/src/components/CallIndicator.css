@@ -1,21 +1,148 @@
-/* Call notes (beta): the "Call detected" prompt, floating over the top of the chat. */
-.call-indicator {
+/* Call notes (beta): a pill in the top-right corner while notes are taken, and small toasts in the bottom right. */
+.call-pill-anchor {
   position: fixed;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 10px;
+  right: 12px;
   z-index: 1000;
+}
+
+.call-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.call-pill:hover {
+  border-color: var(--vscode-focusBorder, rgba(128, 128, 128, 0.6));
+}
+
+.call-pill .call-indicator-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 0;
+}
+
+.call-pill-warning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--vscode-editorWarning-foreground, #cca700);
+  color: var(--vscode-editor-background, #1e1e1e);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.call-pill-chevron {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.call-pop,
+.call-toast {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  max-width: min(520px, calc(100vw - 32px));
-  padding: 12px 14px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   color: var(--vscode-foreground);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+}
+
+.call-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(280px, calc(100vw - 24px));
+}
+
+.call-pop-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
+}
+
+.call-pop-title .call-indicator-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 0;
+}
+
+.call-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 88px;
+  z-index: 1000;
+  max-width: min(360px, calc(100vw - 32px));
+  overflow: hidden;
+}
+
+.call-toast-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.call-toast-row strong {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.call-toast-row .call-indicator-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 0;
+}
+
+.call-toast-row .call-indicator-button {
+  padding: 3px 10px;
+}
+
+.call-toast-close {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.call-toast-close:hover {
+  color: var(--vscode-foreground);
+}
+
+/* How long the "saved" toast has left: a hairline that runs out. */
+.call-toast-timer {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.6));
+  opacity: 0.5;
+  animation: call-toast-timer 5s linear forwards;
+}
+
+@keyframes call-toast-timer {
+  from { width: 100%; }
+  to { width: 0; }
 }
 
 .call-indicator-dot {
@@ -35,6 +162,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .call-indicator-dot { animation: none; }
+  .call-toast-timer { display: none; }
 }
 
 .call-indicator-body {
@@ -101,4 +229,40 @@
 .call-indicator-dot--still {
   animation: none;
   background: var(--vscode-charts-green, #89d185);
+}
+
+.call-indicator-dot--error {
+  background: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+/* Your work: the call being taken notes of, or the last one's notes. */
+.call-home-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  font-size: 13px;
+}
+
+.call-home-row .call-indicator-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 0;
+}
+
+.call-home-row-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+
+.call-home-row .call-indicator-button {
+  padding: 3px 10px;
 }

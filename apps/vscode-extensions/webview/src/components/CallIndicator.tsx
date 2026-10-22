@@ -1,12 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useCallDetection } from '../hooks/useCallDetection';
 import './CallIndicator.css';
 
 type Choice = 'take-notes' | 'not-this-call';
 
+const SAVED_TOAST_MS = 5000;
+
+/** Time since `startedAt` as m:ss. */
+export function callClock(startedAt: number, now: number): string {
+  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+  return `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+}
+
 /**
- * Call notes (beta, desktop only): the "Call detected" prompt, and while a
- * call is recorded, the recording indicator with Stop. docs/design/call-notes.md.
+ * Call notes (beta, desktop only): the "Call detected" prompt and "saved"
+ * toast (bottom right), and while a call is recorded, a pill (top right) whose
+ * details hold Stop. docs/design/call-notes.md.
  *
  * Nothing records without the "Take notes" click. Recording is always visible
  * here, and stops by itself when the call ends. The choice is per call (keyed
@@ -16,12 +25,37 @@ const CallIndicator: React.FC<{
   onOpenNote: (id: string) => void;
   /** The call note on screen: its own view shows the recording and Stop, so this steps aside for it. */
   viewingNoteId?: string;
-}> = ({ onOpenNote, viewingNoteId }) => {
+  /** Your work shows the recording in its own row (CallHomeRow), so the pill is not needed there. */
+  hideRecording?: boolean;
+}> = ({ onOpenNote, viewingNoteId, hideRecording }) => {
   const { enabled, capability, state, recording, outcome, model, record, stop, retryModel } = useCallDetection();
   const [choices, setChoices] = useState<Record<number, Choice>>({});
   const [copied, setCopied] = useState(false);
   const [dismissedOutcome, setDismissedOutcome] = useState<string | undefined>();
   const [now, setNow] = useState(() => Date.now());
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const anchor = useRef<HTMLDivElement>(null);
+
+  // The pill's details close on a click elsewhere or Escape.
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (!anchor.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!recording) setOpen(false);
+  }, [recording]);
 
   useEffect(() => {
     if (!recording) return;
@@ -33,6 +67,14 @@ const CallIndicator: React.FC<{
   useEffect(() => {
     if (recording && state.inCall && state.since !== undefined) setChoices((prev) => (prev[state.since!] ? prev : { [state.since!]: 'take-notes' }));
   }, [recording, state.inCall, state.since]);
+
+  // "Call notes saved" leaves by itself after a few seconds; it is in the sidebar and on Your work.
+  useEffect(() => {
+    if (recording || !outcome?.noteId || outcome.error || hovered) return;
+    const id = outcome.noteId;
+    const timer = setTimeout(() => setDismissedOutcome(id), SAVED_TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [recording, outcome, hovered]);
 
   // Saved notes the user is already looking at need no "saved" card afterwards.
   useEffect(() => {
@@ -46,47 +88,66 @@ const CallIndicator: React.FC<{
       () => setCopied(false)
     );
   };
-  const copyLink = (
+  const copyLink = (label: string) => (
     <button type='button' className='call-indicator-link' onClick={copyNotice}>
-      {copied ? 'Copied' : 'Copy a line for the chat'}
+      {copied ? 'Copied' : label}
     </button>
   );
 
   if (recording && recording.noteId === viewingNoteId) return null;
-  // Recording: shown whatever else is going on, until it has finished.
+  // Recording: a pill in the top-right corner, with the details and Stop one click away. Your work shows its own row instead.
   if (recording) {
-    const elapsed = Math.max(0, Math.floor((now - recording.startedAt) / 1000));
-    const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+    if (hideRecording) return null;
     const notices = outcome?.noteId === recording.noteId ? outcome.notices : [];
+    const title = recording.state === 'finishing' ? 'Finishing the transcript…' : recording.state === 'starting' ? 'Starting to take notes…' : 'Taking notes';
     return (
-      <div className='call-indicator' role='status' aria-live='polite'>
-        <span className='call-indicator-dot' aria-hidden='true' />
-        <div className='call-indicator-body'>
-          <strong>
-            {recording.state === 'finishing' ? 'Finishing the transcript…' : recording.state === 'starting' ? 'Starting to take notes…' : `Taking notes · ${clock}`}
-          </strong>
-          <span className='call-indicator-text'>
-            {recording.state === 'finishing'
-              ? 'Transcribing the last few seconds on this Mac.'
-              : 'Transcribing on this Mac. Stops by itself when the call ends.'}{' '}
-            {recording.state !== 'finishing' && copyLink}
-          </span>
-          {notices.map((n, i) => (
-            <span key={i} className='call-indicator-text call-indicator-warning'>
-              {n}
+      <div className='call-pill-anchor' ref={anchor}>
+        <button
+          type='button'
+          className='call-pill'
+          aria-expanded={open}
+          aria-label={`${title}, ${callClock(recording.startedAt, now)}${notices.length ? ', needs attention' : ''}`}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <span className='call-indicator-dot' aria-hidden='true' />
+          <span className='call-pill-clock'>{callClock(recording.startedAt, now)}</span>
+          {notices.length > 0 && <span className='call-pill-warning' aria-hidden='true'>!</span>}
+          <span className='call-pill-chevron' aria-hidden='true'>▾</span>
+        </button>
+        {open && (
+          <div className='call-pop' role='dialog' aria-label='Call notes'>
+            <strong className='call-pop-title'>
+              <span className='call-indicator-dot' aria-hidden='true' />
+              {title}
+            </strong>
+            <span className='call-indicator-text'>
+              {recording.state === 'finishing' ? 'Transcribing the last few seconds on this Mac.' : 'On this Mac. Stops when the call ends.'}
             </span>
-          ))}
-          <div className='call-indicator-actions'>
-            <button type='button' className='call-indicator-button' onClick={() => onOpenNote(recording.noteId)}>
-              Open notes
-            </button>
-            {recording.state !== 'finishing' && (
-              <button type='button' className='call-indicator-button call-indicator-button--primary' onClick={stop}>
-                Stop
+            {notices.map((n, i) => (
+              <span key={i} className='call-indicator-text call-indicator-warning'>
+                {n}
+              </span>
+            ))}
+            <div className='call-indicator-actions'>
+              <button
+                type='button'
+                className='call-indicator-button'
+                onClick={() => {
+                  setOpen(false);
+                  onOpenNote(recording.noteId);
+                }}
+              >
+                Open notes
               </button>
-            )}
+              {recording.state !== 'finishing' && (
+                <button type='button' className='call-indicator-button' onClick={stop}>
+                  Stop
+                </button>
+              )}
+              {recording.state !== 'finishing' && copyLink('Copy a line for the chat')}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -95,32 +156,36 @@ const CallIndicator: React.FC<{
   const outcomeKey = outcome?.noteId;
   const callUnanswered = enabled && !!capability?.available && state.inCall && state.since !== undefined && !choices[state.since];
   if (outcome && outcomeKey && dismissedOutcome !== outcomeKey && !(outcomeKey === viewingNoteId && !outcome.error) && !callUnanswered) {
+    // Saved: a toast that leaves by itself (not while the pointer is on it). An error stays until dismissed.
     return (
-      <div className='call-indicator' role='status' aria-live='polite'>
-        <span className='call-indicator-dot call-indicator-dot--still' aria-hidden='true' />
-        <div className='call-indicator-body'>
+      <div
+        className='call-toast'
+        role='status'
+        aria-live='polite'
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        <div className='call-toast-row'>
+          <span className={`call-indicator-dot call-indicator-dot--still${outcome.error ? ' call-indicator-dot--error' : ''}`} aria-hidden='true' />
           <strong>{outcome.error ? 'Couldn’t take notes' : 'Call notes saved'}</strong>
-          <span className='call-indicator-text'>
-            {outcome.error ?? 'Find them under Call notes in the sidebar, or ask about the call in a chat.'}
-          </span>
-          <div className='call-indicator-actions'>
-            {!outcome.error && (
-              <button
-                type='button'
-                className='call-indicator-button call-indicator-button--primary'
-                onClick={() => {
-                  setDismissedOutcome(outcomeKey);
-                  onOpenNote(outcomeKey);
-                }}
-              >
-                Open notes
-              </button>
-            )}
-            <button type='button' className='call-indicator-button' onClick={() => setDismissedOutcome(outcomeKey)}>
-              Dismiss
+          {!outcome.error && (
+            <button
+              type='button'
+              className='call-indicator-link'
+              onClick={() => {
+                setDismissedOutcome(outcomeKey);
+                onOpenNote(outcomeKey);
+              }}
+            >
+              Open
             </button>
-          </div>
+          )}
+          <button type='button' className='call-toast-close' aria-label='Dismiss' onClick={() => setDismissedOutcome(outcomeKey)}>
+            ×
+          </button>
         </div>
+        {outcome.error && <span className='call-indicator-text'>{outcome.error}</span>}
+        {!outcome.error && !hovered && <span className='call-toast-timer' key={outcomeKey} />}
       </div>
     );
   }
@@ -146,43 +211,42 @@ const CallIndicator: React.FC<{
         ? model.error
         : 'The speech model is not downloaded yet.';
 
+  // Asked until answered or the call ends: nothing is recorded without "Take notes".
+  const close = (
+    <button type='button' className='call-toast-close' aria-label={choice === 'take-notes' ? 'Dismiss' : 'Not this call'} onClick={() => choose('not-this-call')}>
+      ×
+    </button>
+  );
   return (
-    <div className='call-indicator' role='status' aria-live='polite'>
-      <span className='call-indicator-dot' aria-hidden='true' />
+    <div className='call-toast' role='status' aria-live='polite'>
       {!modelReady && choice !== 'take-notes' ? (
-        <div className='call-indicator-body'>
-          <strong>Call detected</strong>
-          <span className='call-indicator-text'>{modelLine}</span>
-          <div className='call-indicator-actions'>
+        <>
+          <div className='call-toast-row'>
+            <span className='call-indicator-dot' aria-hidden='true' />
+            <strong>Call detected</strong>
             {model?.state !== 'downloading' && (
               <button type='button' className='call-indicator-button call-indicator-button--primary' onClick={retryModel}>
-                Download the speech model
+                Download speech model
               </button>
             )}
-            <button type='button' className='call-indicator-button' onClick={() => choose('not-this-call')}>
-              Not this call
-            </button>
+            {close}
           </div>
-        </div>
+          <span className='call-indicator-text'>{modelLine}</span>
+        </>
       ) : choice === 'take-notes' ? (
-        <div className='call-indicator-body'>
-          <strong>Call detected · notes requested</strong>
-          <span className='call-indicator-text'>
-            {capability.recordReason ?? 'Taking notes is not available in this build.'} No notes are being taken.
-          </span>
-          <div className='call-indicator-actions'>
-            <button type='button' className='call-indicator-button' onClick={() => choose('not-this-call')}>
-              Dismiss
-            </button>
+        <>
+          <div className='call-toast-row'>
+            <span className='call-indicator-dot call-indicator-dot--still call-indicator-dot--error' aria-hidden='true' />
+            <strong>No notes are being taken</strong>
+            {close}
           </div>
-        </div>
+          <span className='call-indicator-text'>{capability.recordReason ?? 'Taking notes is not available in this build.'}</span>
+        </>
       ) : (
-        <div className='call-indicator-body'>
-          <strong>Call detected. Take notes for this call?</strong>
-          <span className='call-indicator-text'>
-            Notes are only taken if you choose to. If you do, let everyone on the call know. {copyLink}
-          </span>
-          <div className='call-indicator-actions'>
+        <>
+          <div className='call-toast-row'>
+            <span className='call-indicator-dot' aria-hidden='true' />
+            <strong>Call detected</strong>
             <button
               type='button'
               className='call-indicator-button call-indicator-button--primary'
@@ -193,11 +257,10 @@ const CallIndicator: React.FC<{
             >
               Take notes
             </button>
-            <button type='button' className='call-indicator-button' onClick={() => choose('not-this-call')}>
-              Not this call
-            </button>
+            {close}
           </div>
-        </div>
+          <span className='call-indicator-text'>Only if you choose to. Let everyone know: {copyLink('copy a line for the chat')}</span>
+        </>
       )}
     </div>
   );

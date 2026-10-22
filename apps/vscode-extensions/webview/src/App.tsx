@@ -2783,6 +2783,7 @@ const App: React.FC = () => {
         <CallIndicator
           onOpenNote={(id) => useUiStore.getState().openCallNote(id)}
           viewingNoteId={activeView === 'callNote' ? callNoteId ?? undefined : undefined}
+          hideRecording={showWorkHome && activeView === 'chat'}
         />
       )}
       <div className={`chat-container${showWorkHome ? ' chat-container--work-home' : ''}`}>

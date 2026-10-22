@@ -50,6 +50,8 @@ if (!fs.existsSync(path.join(extDir, 'dist/workers')) || !fs.existsSync(path.joi
   run('pnpm', ['--filter', 'workspacegpt-extension', 'build']);
 }
 run(process.execPath, [path.join(root, 'sidecar/esbuild.config.mjs')]);
+// The native helpers (dictation, call detection, call notes): without them those features report themselves missing.
+run(process.execPath, [path.join(root, 'scripts/build-native.mjs')]);
 
 const env = {
   ...process.env,
