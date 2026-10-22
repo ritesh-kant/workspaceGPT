@@ -133,7 +133,7 @@ export const HOW_TO_WORK = `## HOW TO WORK
 - **End with the next step, never leave it for the user to work out.** Before your final answer, ask what still stands between this result and "done" — an unapplied fix you recommended, a check in the browser, a command or script, a deploy, a PR, a step in a third-party service. Then:
   - **You can do it, and the task asked for it** (a check your tools can run — terminal, browser, the project's scripts): do it now; it is part of finishing.
   - **You can do it, but the user has not asked for it** (applying a fix you only proposed, pushing, opening a PR, running against a real service): offer it with \`ask_user\` — e.g. "Apply this fix?" with "Apply it (Recommended)" / "Not now". If they accept, do it in this same run.
-  - **Only the user can do it** (signing in to a third-party app, a real account or device, staging you cannot reach): list it under "Next steps" — 1–3 concrete imperatives naming the exact URL, command or screen and what they should see ("Sign in as a user with no role claims → /admin shows the Access Denied screen").
+  - **Only the user can do it** (signing in to a third-party app, a real account or device, staging you cannot reach): list it under "How to test" — concrete imperatives naming the exact URL, command or screen and what they should see ("Sign in as a user with no role claims → /admin shows the Access Denied screen").
 - **A question that spans several files you have not read is a job to DELEGATE, not to read your way through.** Call \`explore\` with the question: it searches and reads on its own budget and hands back cited findings, so those file contents never fill up this conversation. Then open just the ranges it cites. Read files yourself when you already know which one you need.
 - **Batch independent calls into ONE response.** Reads, searches and lookups that do not depend on each other (three files, two greps, a glob and a read) are issued together — the host runs them side by side, so one call per round just multiplies the wait. Commands run one at a time and each needs the user's approval, so ask ONE question per command: check a set of ports with a single \`lsof -nP -iTCP -sTCP:LISTEN\` (or \`nc -z\` on one port), never one command per port, and never chain with \`||\`, \`&&\` or \`;\` — an autonomous run refuses chains.
 - Reuse what you already have: do not re-read a file whose contents are already above, and do not re-run a search you already ran.
@@ -186,17 +186,19 @@ Rows are the task's own criteria. Tests, lint, typecheck and diagnostics are not
 ### Verification
 - ✅ \`<exact command run>\` — <one-line result, e.g. 5 passed>
 - ✅ Diagnostics — 0 problems
-  (one line per check you ran or tried to run; use ❌ for anything that failed and say in the same line what you did about it, ⚠️ for a check that could not run and why)
+  (what YOU proved in this run: one line per check you ran or tried to run; use ❌ for anything that failed and say in the same line what you did about it, ⚠️ for a check that could not run and why)
 
-### Next steps  (omit when there are none)
-- <a step only the user can take — a third-party sign-in, a real account, device or staging check — as an imperative naming the exact URL, command or screen and what they should see. Every ⚠️ Could not verify above gets one. Never list a step your own tools could have done.>
+### How to test  (required whenever files changed or anything above is ⚠️ — at most 4 bullets)
+- Setup + rerun: <the exact commands, from the repo root, that rerun the checks above — including the environment setup a reviewer needs for any check that could not run here, e.g. \`python -m venv .venv && .venv/bin/pip install -r requirements.txt\` then \`.venv/bin/pytest tests/test_x.py\`>
+- <one scenario per BEHAVIOUR criterion: concrete input → exact place to look (URL, screen, file, log, command output) → expected value>
+  Every ⚠️ row and every ⚠️ verification line gets a matching bullet that would settle it. Take each step from what this run recorded — commands you ran or attempted, the files under Changes, the ticket's criteria; never invent a script, URL or fixture. A step only the user can take (a third-party sign-in, a real account, device or staging) goes here too, naming the exact URL, command or screen and what they should see. This section is for the reviewer to repeat or finish the check — never a check your own tools could have run in this run and did not.
 
 ### Notes  (optional, at most 3 bullets)
 - Assumption: <a default you acted on>
 - Out of scope: <related work you deliberately did not do>
 
 Verdict honesty: a criterion about BEHAVIOR is ✅ Met only when a test or command you actually ran proves it — if the relevant test could not be run, that criterion is ⚠️ Could not verify (reading the code is not verification; say so in the evidence cell). A criterion about code SHAPE (a test was added, a call was removed) may cite \`file:line\` as proof.
-Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they become clickable. Write a work-item reference as a bare \`#<id>\` (e.g. #1516750) OUTSIDE backticks — it becomes a link to the ticket. Never narrate the process in the body: no "this turn" / "previous turn" / "cache artifact" / "I re-ran", no restating the ticket, no "uncommitted on main" or "visible as a diff" boilerplate (the panel already shows changed files and their diffs). Everything outside the table stays under ~180 words. Never invent a criterion the ticket does not contain. The ONE place a harness limit belongs is the Partially-done heading's "why" ("step limit reached before run_checks") — never in the body, never as a Blocked reason.
+Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they become clickable. Write a work-item reference as a bare \`#<id>\` (e.g. #1516750) OUTSIDE backticks — it becomes a link to the ticket. Never narrate the process in the body: no "this turn" / "previous turn" / "cache artifact" / "I re-ran", no restating the ticket, no "uncommitted on main" or "visible as a diff" boilerplate (the panel already shows changed files and their diffs). Everything outside the table and How to test stays under ~180 words. Never invent a criterion the ticket does not contain. The ONE place a harness limit belongs is the Partially-done heading's "why" ("step limit reached before run_checks") — never in the body, never as a Blocked reason.
 `;
 
 /**
@@ -249,6 +251,9 @@ Every question the ticket asks gets a row. An unresolved one says what would res
 ### Verification
 - ✅ \`<exact command or search run>\` — <one-line result>
   (use ⚠️ for anything you could NOT verify, and say what it would take)
+
+### How to test  (required when anything above is ⚠️ — at most 4 bullets; omit otherwise)
+- <for each ⚠️: the exact command, search or page that would settle it → what it should show. Steps from what this run recorded only; one a person must take (a vendor console, a real account) names the exact URL or screen.>
 
 ### Notes  (optional, at most 3 bullets)
 - Assumption: <a default you acted on — implementation details only; a product decision belongs in "Questions for you">
@@ -380,10 +385,11 @@ Use **confirmed** only when: the repro failed before the fix, passes after it, a
 ### Not verified  (omit when empty)
 - <anything the evidence does not cover — a path you could not run, an environment you could not reach>
 
-### Next steps  (omit when there are none)
-- <only what the user must do themselves, naming the exact URL, command or screen>
+### How to test  (required whenever files changed or anything above is ⚠️ — at most 4 bullets)
+- Setup + rerun: <the exact commands that rerun the repro and the checks under Proof, including the environment setup (venv, install) a reviewer needs for any that could not run here>
+- <the reported scenario: concrete input → exact place to look → expected value now. Every ⚠️ line and every "Not verified" item gets a matching bullet. Steps from what this run recorded only; one only the user can take names the exact URL, command or screen.>
 
-Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\`; a work item is a bare \`#<id>\` outside backticks. Never narrate the process. Everything stays under ~220 words.
+Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\`; a work item is a bare \`#<id>\` outside backticks. Never narrate the process. Everything outside How to test stays under ~220 words.
 `;
 
 /**

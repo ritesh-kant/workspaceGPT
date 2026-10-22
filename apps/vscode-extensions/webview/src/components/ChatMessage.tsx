@@ -166,6 +166,38 @@ const ReportH3: React.FC<H3Props> = ({ node, children, className, ...rest }) => 
   );
 };
 
+/**
+ * "### How to test" (FINAL / SPIKE / DEBUG REPORT FORMAT; HOW_TO_TEST_HEADING_RE
+ * in answerGates.ts) and the "### Next steps" older reports carry: the heading
+ * and everything up to the next heading become one collapsible <details>, open
+ * by default. A rehype step because a heading renderer cannot wrap its siblings.
+ */
+const COLLAPSIBLE_SECTION_RE = /^(how to test|next steps)\b/i;
+type HastNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[] };
+const isSectionBreak = (n: HastNode | undefined) => n?.type === 'element' && /^(h[1-3]|hr)$/.test(n.tagName ?? '');
+function rehypeCollapsibleSections() {
+  return (tree: HastNode) => {
+    const kids = tree.children ?? [];
+    const out: HastNode[] = [];
+    for (let i = 0; i < kids.length; i++) {
+      const k = kids[i];
+      if (k.type !== 'element' || k.tagName !== 'h3' || !COLLAPSIBLE_SECTION_RE.test(hastText(k).replace(LEADING_EMOJI_RE, '').trim())) {
+        out.push(k);
+        continue;
+      }
+      const body: HastNode[] = [];
+      while (i + 1 < kids.length && !isSectionBreak(kids[i + 1])) body.push(kids[++i]);
+      out.push({
+        type: 'element',
+        tagName: 'details',
+        properties: { className: ['report-collapsible'], open: true },
+        children: [{ type: 'element', tagName: 'summary', properties: { className: ['report-section-title'] }, children: k.children ?? [] }, ...body],
+      });
+    }
+    tree.children = out;
+  };
+}
+
 /** A verdict cell ("✅ Met", "Not met", "Could not verify", "pass") → coloured badge. */
 const VERDICT_RE = /^(met|passed?|pass|ok|yes|done|not met|unmet|failed?|fail|no|could not verify|couldn'?t verify|unverified|not verified|partially met|partial)$/i;
 function verdictKind(raw: string): 'met' | 'notmet' | 'unverified' | 'partial' | null {
@@ -273,7 +305,7 @@ const MarkdownBody = React.memo(function MarkdownBody({
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={highlight ? [rehypeHighlight] : []}
+      rehypePlugins={highlight ? [rehypeHighlight, rehypeCollapsibleSections] : [rehypeCollapsibleSections]}
       components={MARKDOWN_COMPONENTS}
     >
       {linkifyTicketIds(content, {

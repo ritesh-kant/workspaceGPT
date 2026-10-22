@@ -517,6 +517,44 @@ export function isUnbackedCompletionClaim(
 }
 
 /**
+ * The report's "### How to test" section (FINAL / SPIKE / DEBUG REPORT FORMAT).
+ * The webview renders the same heading as a collapsible section (ChatMessage.tsx).
+ */
+export const HOW_TO_TEST_HEADING_RE =
+  /^\s*#{2,4}\s*(?:[\p{Extended_Pictographic}️‍]+\s*)?how to test\b/imu;
+
+/**
+ * A finished report that leaves the user no way to check the change: it
+ * changed code (or marked something ⚠️ unverified) and has no "How to test"
+ * section. Observed on #1563242: a Python repo where the tests could not run,
+ * two ⚠️ rows, and no step the user could take to check either. The facts are
+ * the run's own — files it changed, a ⚠️ it wrote — and the heading is only
+ * looked for in a report-shaped answer, so a plain chat reply is never sent
+ * back. Only ever ADDS one turn.
+ */
+export function missingHowToTest(
+  answer: string,
+  ctx: {
+    /** Files this run changed, prose docs excluded (a spike's own document is not a change to test). */
+    codeFilesChanged: number;
+    planMode?: boolean;
+  }
+): boolean {
+  const a = String(answer ?? '');
+  if (!a.trim() || ctx.planMode) return false;
+  if (!REPORT_STATUS_HEADING_RE.test(a) && !REPORT_SHAPED_RE.test(a)) return false;
+  if (HOW_TO_TEST_HEADING_RE.test(a)) return false;
+  return ctx.codeFilesChanged > 0 || a.includes('⚠');
+}
+
+/** The one instruction a report missing "How to test" is sent back with. */
+export const HOW_TO_TEST_NUDGE =
+  'Your report has no "### How to test" section, and it changed files or marks something ⚠️. Add it where the report format puts it and return the whole report again, otherwise unchanged. ' +
+  'At most 4 bullets: first the exact setup and commands that rerun the checks (including the environment setup — venv, install — a check that could not run here needs); ' +
+  'then one scenario per behaviour criterion as concrete input → exact place to look → expected value. Every ⚠️ row or ⚠️ verification line gets a matching bullet. ' +
+  'Take every step from what this run recorded — commands run or attempted, files changed, the ticket\'s criteria. Do not call more tools unless a step is unknown.';
+
+/**
  * The answer's last line is a question — "Where should the page go?", "Shall I
  * create it as a draft?" — i.e. the run ended by asking in prose. Markdown
  * wrapping (`**…?**`, `_…?_`, a trailing `)` or quote) is looked through.

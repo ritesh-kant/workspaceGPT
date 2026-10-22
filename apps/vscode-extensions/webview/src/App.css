@@ -1792,6 +1792,20 @@ button:disabled {
   color: var(--vscode-descriptionForeground);
 }
 
+/* "### How to test" (and older "### Next steps") — a collapsible section, open by default. */
+.markdown-content details.report-collapsible {
+  margin: 1.1em 0 0.4em;
+}
+.markdown-content details.report-collapsible > summary.report-section-title {
+  cursor: pointer;
+  margin-bottom: 0.4em;
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+
 /* Verdict badge inside a table cell. */
 .verdict {
   display: inline-flex;

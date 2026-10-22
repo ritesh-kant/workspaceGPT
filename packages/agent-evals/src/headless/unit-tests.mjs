@@ -5701,6 +5701,127 @@ console.log('\nspike coverage reflection (built from what the run actually did)'
   });
 }
 
+// #1563242: a Python repo where the tests could not run ended on two ⚠️ rows
+// and no step the user could take to check the change. Every report that
+// changed code or admits a ⚠️ must say how to test it.
+console.log('\n"How to test" (prompt, gate and card agree on the heading)');
+{
+  const { missingHowToTest, HOW_TO_TEST_HEADING_RE, HOW_TO_TEST_NUDGE } = await import(path.join(outDir, 'answerGates.mjs'));
+  const { FINAL_REPORT_FORMAT, SPIKE_REPORT_FORMAT, DEBUG_REPORT_FORMAT, HOW_TO_WORK } = await import(path.join(outDir, 'promptTemplates.mjs'));
+
+  const REPORT = [
+    '## ⚠️ Partially done — tests unverified · pytest not installed in the workspace',
+    '',
+    '### Acceptance criteria',
+    '| Criterion | Verdict | Evidence |',
+    '|---|---|---|',
+    '| Discount applied to bundles | ⚠️ Could not verify | `pricing/bundle.py:L40-L52` |',
+    '',
+    '### Changes',
+    '- `pricing/bundle.py` — apply the bundle discount before tax',
+    '',
+    '### Verification',
+    '- ⚠️ `pytest tests/test_bundle.py` — could not run: No module named pytest',
+  ].join('\n');
+  const HOW_TO_TEST = [
+    '',
+    '### How to test',
+    '- Setup + rerun: `python -m venv .venv && .venv/bin/pip install -r requirements.txt` then `.venv/bin/pytest tests/test_bundle.py`',
+    '- Bundle of 2 × $10 with 10% discount → `price_bundle()` return value → `18.00`',
+  ].join('\n');
+
+  await t('a report that changed code with no How to test is sent back', () => {
+    assert.equal(missingHowToTest(REPORT, { codeFilesChanged: 1 }), true);
+  });
+
+  await t('a ⚠️ alone requires it, even with nothing changed', () => {
+    const noChange = '## ✅ No change needed — already applied\n\n### Verification\n- ⚠️ `pytest` — could not run';
+    assert.equal(missingHowToTest(noChange, { codeFilesChanged: 0 }), true);
+  });
+
+  await t('the section present (any heading level, emoji or not) passes', () => {
+    assert.equal(missingHowToTest(REPORT + HOW_TO_TEST, { codeFilesChanged: 1 }), false);
+    assert.equal(missingHowToTest(REPORT + '\n\n## 🧪 How to test\n- run it', { codeFilesChanged: 1 }), false);
+  });
+
+  await t('no changes and no ⚠️ → not required', () => {
+    const clean = '## ✅ No change needed — the mapper already sends it\n\n### Verification\n- ✅ `pnpm test` — 5 passed';
+    assert.equal(missingHowToTest(clean, { codeFilesChanged: 0 }), false);
+    assert.equal(missingHowToTest('## 🚫 Blocked — needs the empty-state copy', { codeFilesChanged: 0 }), false);
+  });
+
+  await t('only a report is checked: chat prose with a ⚠️ risks heading, plan mode, and the old "Next steps" heading', () => {
+    assert.equal(missingHowToTest('**TL;DR** it retries.\n\n## ⚠️ Risks\n- none', { codeFilesChanged: 3 }), false);
+    assert.equal(missingHowToTest(REPORT, { codeFilesChanged: 1, planMode: true }), false);
+    assert.equal(missingHowToTest(REPORT + '\n\n### Next steps\n- run pytest', { codeFilesChanged: 1 }), true, '"Next steps" is not "How to test"');
+  });
+
+  await t('every report format teaches the heading the gate looks for, and none still says "Next steps"', () => {
+    for (const [name, fmt] of Object.entries({ FINAL_REPORT_FORMAT, SPIKE_REPORT_FORMAT, DEBUG_REPORT_FORMAT })) {
+      assert.ok(HOW_TO_TEST_HEADING_RE.test(fmt), `${name} has no "### How to test"`);
+      assert.ok(!/###\s*Next steps/i.test(fmt), `${name} still teaches "Next steps"`);
+    }
+    assert.match(FINAL_REPORT_FORMAT, /at most 4 bullets/);
+    assert.match(FINAL_REPORT_FORMAT, /venv/);
+    assert.match(HOW_TO_WORK, /under "How to test"/);
+  });
+
+  await t('the card folds the same heading (and the old one) into a collapsible section', () => {
+    const src = fs.readFileSync(path.join(here, '../../../../apps/vscode-extensions/webview/src/components/ChatMessage.tsx'), 'utf8');
+    const re = src.match(/const COLLAPSIBLE_SECTION_RE = (\/.+\/i);/);
+    assert.ok(re, 'COLLAPSIBLE_SECTION_RE not found in ChatMessage.tsx');
+    const collapsible = eval(re[1]);
+    assert.ok(collapsible.test('How to test') && collapsible.test('Next steps'));
+    assert.match(src, /rehypeCollapsibleSections\]/, 'the plugin must be in rehypePlugins');
+  });
+
+  // Driven through the real worker: the gate must fire once, not loop.
+  const FILE = 'pricing/bundle.py';
+  const ORIGINAL = 'def price(total):\n    return total\n';
+  const runReport = async (finalContent) => {
+    const ws = tempWorkspace({ [FILE]: ORIGINAL });
+    const mock = await startMockModel({
+      main: [
+        { toolCalls: [{ name: 'read_file', args: { path: FILE } }] },
+        { toolCalls: [{ name: 'edit_file', args: { path: FILE, oldString: 'return total', newString: 'return total * 0.9' } }] },
+        // Repeated for every later turn: a model that never adds the section.
+        { finalContent },
+      ],
+    });
+    try {
+      const record = await runAgent(ws, 'Fix the bundle discount.', () => {}, {
+        provider: 'Custom',
+        baseUrl: mock.baseUrl,
+        modelId: 'mock-model',
+        apiKey: 'MOCK',
+        apiKeys: ['MOCK'],
+        autonomous: true,
+        harnessProfile: 'strong-model',
+      });
+      const main = mock.state.requests.filter((r) => !r.subAgent && !r.preloopExplorer);
+      const nudges = main.filter((r) => (r.messages ?? []).some((m) => m.role === 'user' && m.content === HOW_TO_TEST_NUDGE));
+      const sentBack = main.filter((r) => { const msgs = r.messages ?? []; return msgs[msgs.length - 1]?.content === HOW_TO_TEST_NUDGE; });
+      return { record, nudges, sentBack };
+    } finally {
+      await mock.close();
+    }
+  };
+
+  await t('real worker: a report missing How to test goes back exactly once, then is delivered', async () => {
+    const { record, sentBack } = await runReport(REPORT);
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    assert.equal(record.metrics.writesApplied, 1, 'the run must really have written');
+    assert.equal(sentBack.length, 1, `expected one retry, got ${sentBack.length}`);
+    assert.match(record.answer ?? '', /Partially done/, 'the report is still delivered after the one retry');
+  });
+
+  await t('real worker: a report with How to test is never sent back', async () => {
+    const { record, nudges } = await runReport(REPORT + HOW_TO_TEST);
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    assert.equal(nudges.length, 0);
+  });
+}
+
 console.log('\nproject memory (file-backed, per repository, outside the workspace)');
 {
   const pm = await import(path.join(outDir, 'projectMemory.mjs'));

@@ -11,6 +11,8 @@ import { runExplorationPhase, defaultExplorationConfig } from './explorationPhas
 import { runExploreSubagent, defaultExploreConfig, EXPLORE_TOOL_NAMES } from './exploreSubagent';
 import {
   endsOnQuestion,
+  HOW_TO_TEST_NUDGE,
+  missingHowToTest,
   INCOMPLETE_ANSWER_RE,
   PERMISSION_SEEKING_RE,
   CHANGE_PLAN_RE,
@@ -2985,6 +2987,9 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // gaps with tools, or return the same answer.
   let completenessReflectionUsed = false;
   let researchCoverageReflectionUsed = false;
+  // One-shot: a finished report that changed code or marks a ⚠️ but tells the
+  // user nothing about how to test it (see missingHowToTest).
+  let howToTestNudgeUsed = false;
   let incompleteAnswerNudgesUsed = 0;
   // Answer-shape failure signatures live in answerGates.ts (shared with the
   // eval harness, which pins the live transcripts that motivated each one).
@@ -4140,6 +4145,23 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
             : 'Your answer says something still needs to be examined or checked — do NOT stop to announce remaining work, and do NOT wait for the user to say "continue". ' +
               'Do the remaining examination NOW with your tools, then give ONE complete final answer that includes what you find.',
         });
+        continue;
+      }
+      // The report changed code or admits a ⚠️ yet has no "How to test": the
+      // user is left with no way to check it (#1563242). Structural — the
+      // run's own changed files and the report's own headings — so it runs in
+      // both harness profiles, once.
+      if (
+        !howToTestNudgeUsed &&
+        !budgetExhausted &&
+        missingHowToTest(outcome.content, {
+          codeFilesChanged: [...lastWriteOutcome].filter(([p, ok]) => ok && !DOC_FILE_RE.test(p)).length,
+          planMode,
+        })
+      ) {
+        howToTestNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({ role: 'user', content: HOW_TO_TEST_NUDGE });
         continue;
       }
       // A spike's one coverage reflection: built from the run's own tool counts
