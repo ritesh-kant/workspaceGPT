@@ -200,6 +200,17 @@ console.log('\nbackgroundJobs (long commands outlive the call; check_command fol
     assert.equal(stopped.running, false);
     await assert.rejects(() => bg.checkBackgroundCommand({ id: 'nope' }), /No background job/);
   });
+  await t('a replayed exit 127 names the alternatives actually on PATH, and claims nothing about the rest', () => {
+    // Ticket 1563242: "a different package manager will fail identically" was
+    // read as "python3 will fail too" — it was installed.
+    const withPy3 = commandTools.missingExecutableNote('python', (n) => n === 'python3');
+    assert.match(withPy3, /"python3" is on this PATH: rerun the command with it in place of "python"/);
+    assert.doesNotMatch(withPy3, /package manager/);
+    assert.match(commandTools.missingExecutableNote('python', () => false), /"python3", "py" are not on this PATH either/);
+    const pnpm = commandTools.missingExecutableNote('pnpm', () => true);
+    assert.doesNotMatch(pnpm, /package manager|on this PATH:/);
+    assert.match(pnpm, /retrying "pnpm" will fail identically\. Verify what you can/);
+  });
   await t('a script outside the verification allowlist is not auto-run, and shell plumbing is told apart', () => {
     assert.equal(isAutonomousSafeCommand('python research/backtests/ibkr_us_history.py --port 4001'), false);
     assert.equal(hasAutonomousShellPlumbing('python research/backtests/ibkr_us_history.py --port 4001'), false);
@@ -2082,8 +2093,8 @@ This is a one-line behavioral fix in three files; I did not apply it because all
 
 // ── verification planner, hunk diff, ship helpers (round 3) ──
 {
-  const { planVerification } = await import(path.join(outDir, 'verifyTools.mjs'));
-  const { computeHunks } = await import(path.join(outDir, 'agentHunkLens.mjs'));
+  const { planVerification, derivableChecks } = await import(path.join(outDir, 'verifyTools.mjs'));
+  const { computeHunks, lineChangeStats } = await import(path.join(outDir, 'agentHunkLens.mjs'));
   const { pullRequestUrl, pullRequestUrlTemplate, slugify, reportToHtml, turnCommitType, deriveShipTitle, cutAtWord } = await import(path.join(outDir, 'shipHelpers.mjs'));
   const fs = await import('fs');
   const os = await import('os');
@@ -2206,6 +2217,73 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     assert.throws(() => planVerification(roots, { path: 'apps/api' }), /package directory/);
     assert.equal(planVerification(roots, { path: 'svc/pkg/thing.go' }).command, 'go test ./pkg/...');
   });
+  {
+    // Ticket 1563242, live: `python -m pytest app/services/image_processor_service.py`
+    // on a machine with only python3 — exit 127 on every check, and pytest
+    // aimed at a source file, which collects nothing even when it runs.
+    const py = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-verify-py-'));
+    const pw = (rel, content = '') => {
+      const abs = path.join(py, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content);
+    };
+    pw('pytest.ini', '[pytest]\n');
+    pw('app/services/image_processor_service.py', 'def f(): pass\n');
+    pw('app/tests/test_image_processor_service.py', 'def test_f(): pass\n');
+    pw('app/models/image.py', 'class Image: pass\n');
+    pw('app/crud/image_crud.py', 'x = 1\n');
+    pw('tests/app/crud/test_image_crud.py', 'def test_x(): pass\n');
+    pw('app/core/targets.py', 'T = 1\n');
+    pw('app/core/targets_test.py', 'def test_t(): pass\n');
+    const pyRoots = [{ name: 'py', uri: { fsPath: py } }];
+    const bin = (names) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-bin-'));
+      for (const n of names) {
+        fs.writeFileSync(path.join(dir, n), '#!/bin/sh\n');
+        fs.chmodSync(path.join(dir, n), 0o755);
+      }
+      return dir;
+    };
+    const savedPath = process.env.PATH;
+    const withPath = (dir, fn) => {
+      process.env.PATH = dir;
+      try {
+        return fn();
+      } finally {
+        process.env.PATH = savedPath;
+      }
+    };
+    await t('run_checks (python): a machine with only python3 gets python3, aimed at the source file\'s tests', () => {
+      withPath(bin(['python3']), () => {
+        const plan = planVerification(pyRoots, { path: 'app/services/image_processor_service.py', kind: 'test' });
+        assert.equal(plan.command, 'python3 -m pytest app/tests/test_image_processor_service.py -q');
+        assert.equal(plan.cwd, py);
+        assert.equal(plan.template, 'python3 -m pytest {target} -q');
+      });
+      withPath(bin(['python']), () => {
+        assert.match(planVerification(pyRoots, { path: 'app/services/image_processor_service.py' }).command, /^python -m pytest /);
+      });
+    });
+    await t('run_checks (python): test files are found beside the source, under tests/, and in a mirrored tests/ tree', () => {
+      withPath(bin(['python3']), () => {
+        assert.equal(planVerification(pyRoots, { path: 'app/core/targets.py' }).target, 'app/core/targets_test.py');
+        assert.equal(planVerification(pyRoots, { path: 'app/crud/image_crud.py' }).target, 'tests/app/crud/test_image_crud.py');
+        assert.equal(planVerification(pyRoots, { path: 'app/tests/test_image_processor_service.py' }).target, 'app/tests/test_image_processor_service.py');
+      });
+    });
+    await t('run_checks (python): no tests for the file → says so instead of running pytest on the source', () => {
+      withPath(bin(['python3']), () => {
+        assert.throws(() => planVerification(pyRoots, { path: 'app/models/image.py' }), /No test file found for image\.py[\s\S]*no tests cover image\.py/);
+        assert.equal(derivableChecks(pyRoots, 'app/models/image.py').test, undefined);
+      });
+    });
+    await t('run_checks (python): the project\'s own virtualenv wins over PATH', () => {
+      pw('.venv/bin/python', '#!/bin/sh\n');
+      withPath(bin(['python3']), () => {
+        assert.equal(planVerification(pyRoots, { path: 'app/services/image_processor_service.py' }).command, '.venv/bin/python -m pytest app/tests/test_image_processor_service.py -q');
+      });
+    });
+  }
   await t('run_checks: no runner anywhere → actionable error', () => {
     w('docs/readme.md', '# hi');
     assert.throws(() => planVerification(roots, { path: 'docs/readme.md' }), /nothing to run|cannot derive a test command/);
@@ -2216,6 +2294,19 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     assert.deepEqual(computeHunks('a\nc', 'a\nb\nc'), [{ origStart: 1, origEnd: 1, curStart: 1, curEnd: 2 }]);
     assert.deepEqual(computeHunks('a\nb\nc', 'a\nc'), [{ origStart: 1, origEnd: 2, curStart: 1, curEnd: 1 }]);
     assert.deepEqual(computeHunks('a\nb', 'a\nb'), []);
+  });
+  await t('lineChangeStats: two edits far apart count as two, and CRLF is not a change', () => {
+    // Live (ticket 1563242): +180/−171 reported for a +14/−3 change — the
+    // prefix/suffix span counted every line between the two edits.
+    const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+    const before = lines.join('\r\n') + '\r\n';
+    const edited = [...lines];
+    edited[5] = 'changed 5';
+    edited.splice(190, 0, 'new a', 'new b');
+    assert.deepEqual(lineChangeStats(before, edited.join('\r\n') + '\r\n'), { added: 3, removed: 1 });
+    assert.deepEqual(lineChangeStats(before, edited.join('\n') + '\n'), { added: 3, removed: 1 });
+    assert.deepEqual(lineChangeStats(before, lines.join('\n')), { added: 0, removed: 0 });
+    assert.deepEqual(lineChangeStats('', 'a\nb\n'), { added: 2, removed: 0 });
   });
   await t('computeHunks: two separate hunks stay separate', () => {
     const hunks = computeHunks('a\nb\nc\nd\ne', 'a\nB\nc\nd\nE');

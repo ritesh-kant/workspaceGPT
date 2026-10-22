@@ -77,6 +77,23 @@ export function computeHunks(original: string, current: string): Hunk[] {
   return hunks;
 }
 
+/**
+ * Lines added/removed between two texts, as `git diff --numstat` counts them
+ * but blind to line endings: CRLF vs LF is not a changed line, and neither is
+ * a final newline. Uses computeHunks' LCS, so two edits far apart count as
+ * two edits rather than one span covering everything between them.
+ */
+export function lineChangeStats(before: string, after: string): { added: number; removed: number } {
+  const norm = (s: string) => s.replace(/\r\n?/g, '\n').replace(/\n$/, '');
+  let added = 0;
+  let removed = 0;
+  for (const h of computeHunks(norm(before), norm(after))) {
+    added += h.curEnd - h.curStart;
+    removed += h.origEnd - h.origStart;
+  }
+  return { added, removed };
+}
+
 function replaceLines(lines: string[], start: number, end: number, replacement: string[]): string[] {
   return [...lines.slice(0, start), ...replacement, ...lines.slice(end)];
 }

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { NamedRoot, WorkspaceRootRequiredError, resolveAgainstRoots } from '../codebase/codebaseTools';
+import { findOnPath } from './commandTools';
 
 /**
  * Deterministic verification (`run_checks`): the agent names a FILE and a kind
@@ -162,6 +163,51 @@ function locateTestFile(absFile: string): string | null {
   return candidates.find((c) => fs.existsSync(c)) ?? null;
 }
 
+const PY_TEST_FILE_RE = /^(test_.+|.+_test)\.py$/i;
+
+/**
+ * The pytest file for a Python source file: itself when it is one, else
+ * test_<name>.py / <name>_test.py beside it, or in a tests/ or test/ folder at
+ * any level up to the project dir — flat, or mirroring the source's path.
+ */
+function locatePythonTestFile(absFile: string, projectDir: string): string | null {
+  const name = path.basename(absFile);
+  if (PY_TEST_FILE_RE.test(name)) return absFile;
+  if (path.extname(name) !== '.py') return null;
+  const stem = path.basename(name, '.py');
+  const names = [`test_${stem}.py`, `${stem}_test.py`];
+  const fileDir = path.dirname(absFile);
+  const candidates: string[] = names.map((n) => path.join(fileDir, n));
+  for (let dir = fileDir; ; dir = path.dirname(dir)) {
+    const rel = path.relative(dir, fileDir);
+    for (const tests of ['tests', 'test']) {
+      for (const n of names) {
+        candidates.push(path.join(dir, tests, n));
+        if (rel) candidates.push(path.join(dir, tests, rel, n));
+      }
+    }
+    if (dir === projectDir || !dir.startsWith(projectDir) || path.dirname(dir) === dir) break;
+  }
+  return candidates.find((c) => fs.existsSync(c)) ?? null;
+}
+
+/**
+ * The interpreter a Python project's checks run with: its own virtualenv when
+ * it has one (that is where pytest and the deps live), else python3 when it
+ * is on PATH, else python. A hard-coded `python` exited 127 on every check on
+ * a machine with only python3 (stock macOS, Homebrew).
+ */
+function pythonInterpreter(projectDir: string, rootDir: string): string {
+  const bin = process.platform === 'win32' ? path.join('Scripts', 'python.exe') : path.join('bin', 'python');
+  for (const dir of new Set([projectDir, rootDir])) {
+    for (const env of ['.venv', 'venv', 'env']) {
+      const abs = path.join(dir, env, bin);
+      if (fs.existsSync(abs)) return shellQuote(path.relative(projectDir, abs));
+    }
+  }
+  return findOnPath('python3') ? 'python3' : 'python';
+}
+
 function shellQuote(p: string): string {
   return /^[\w./@:+=-]+$/.test(p) ? p : `'${p.replace(/'/g, `'\\''`)}'`;
 }
@@ -229,8 +275,23 @@ export function planVerification(roots: NamedRoot[], args: RunChecksArgs): Verif
     // Non-JS ecosystems: one well-known runner each.
     const py = findUp(startDir, rootDir, ['pyproject.toml', 'pytest.ini', 'setup.cfg', 'requirements.txt']);
     if (py && kind === 'test') {
-      const target = path.relative(py.dir, absPath);
-      return { kind, command: `python -m pytest ${shellQuote(target)} -q`, cwd: py.dir, displayCwd: display(py.dir), pkgName: path.basename(py.dir), rationale: `Python project (${py.name}) — pytest on the file`, template: 'python -m pytest {target} -q', target };
+      // A source file runs its tests, never itself: pytest on a module that
+      // defines no tests collects nothing and exits 5, which reads as
+      // "verified" to nobody and as noise to the model.
+      const isFile = fs.existsSync(absPath) && !fs.statSync(absPath).isDirectory();
+      const testFile = isFile ? locatePythonTestFile(absPath, py.dir) : null;
+      if (isFile && !testFile) {
+        const name = path.basename(absPath);
+        throw new Error(
+          `No test file found for ${name} (looked for test_<name>.py / <name>_test.py beside it and under tests/ and test/ folders up to ${display(py.dir)}). ` +
+            'Not running pytest on the source file itself — it would collect nothing. If this file\'s tests live elsewhere, call run_checks with that test file\'s path; ' +
+            `if none exist, say so in the report ("no tests cover ${name}").`
+        );
+      }
+      const target = path.relative(py.dir, testFile ?? absPath);
+      const template = `${pythonInterpreter(py.dir, rootDir)} -m pytest {target} -q`;
+      const scope = testFile && testFile !== absPath ? `the tests for ${path.basename(absPath)} (${target})` : 'the file';
+      return { kind, command: template.replace('{target}', shellQuote(target)), cwd: py.dir, displayCwd: display(py.dir), pkgName: path.basename(py.dir), rationale: `Python project (${py.name}) — pytest on ${scope}`, template, target };
     }
     const go = findUp(startDir, rootDir, ['go.mod']);
     if (go) {
