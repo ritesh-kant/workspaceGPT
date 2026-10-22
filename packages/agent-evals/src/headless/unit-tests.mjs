@@ -6466,7 +6466,7 @@ console.log('\ncall notes (store, search, recorder)');
 {
   const { renderCallNote, parseCallNote, writeCallNote, readCallNote, listCallNotes, deleteCallNote, renameCallNote, searchCallNotes, readCallNoteForAgent, hasCallNotes, isCallNoteId, newCallNoteId, dropEchoes } = callNotesMod;
   const { WhisperModel } = whisperModelMod;
-  const { CallRecorder } = callRecorderMod;
+  const { CallRecorder, closeInterruptedNotes } = callRecorderMod;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-callnotes-'));
   const started = Date.parse('2026-10-21T05:02:05.000Z');
   const note = {
@@ -6620,6 +6620,24 @@ process.stdin.on('data', (d) => {
     await until(events, (e) => e.type === 'recording' && e.state === 'idle');
     await settle();
     assert.equal(await readCallNote(notesDir, started.noteId), undefined);
+  });
+
+  await t('at startup, a note the app left "recording" (quit mid-call) is closed where it stopped; an empty one is removed', async () => {
+    const left = path.join(dir, 'left-recording');
+    const startedAt = Date.parse('2026-10-22T12:31:51Z');
+    await writeCallNote(left, { id: 'cut-0001', title: 'Call', startedAt, status: 'recording', turns: [{ speaker: 'others', at: 8, text: 'Over to Niraj.' }] });
+    await writeCallNote(left, { id: 'empty-0001', title: 'Call', startedAt, status: 'recording', turns: [] });
+    await writeCallNote(left, { id: 'done-0001', title: 'Call', startedAt, endedAt: startedAt + 60_000, status: 'done', turns: [{ speaker: 'you', at: 1, text: 'Hi' }] });
+    const lastWrite = new Date(startedAt + 13 * 60_000);
+    fs.utimesSync(path.join(left, 'cut-0001.md'), lastWrite, lastWrite);
+    await closeInterruptedNotes(left);
+    const cut = await readCallNote(left, 'cut-0001');
+    assert.equal(cut.status, 'done');
+    assert.equal(cut.endedAt, lastWrite.getTime(), 'ends at its last write, not now');
+    assert.match(cut.notice, /WorkspaceGPT closed during the call/);
+    assert.equal(cut.turns.length, 1);
+    assert.equal(await readCallNote(left, 'empty-0001'), undefined);
+    assert.equal((await readCallNote(left, 'done-0001')).notice, undefined, 'finished notes are left alone');
   });
 
   // createCallDetection end to end, with stand-ins for both helpers and a clock that can jump past CONFIRM_MS.

@@ -52,6 +52,33 @@ export function callNoteTitle(startedAt: number): string {
   return `Call on ${when}`;
 }
 
+/**
+ * At startup nothing records yet, so a note still marked "recording" lost its
+ * recorder: the app quit, crashed or restarted mid-call. It ends where its file
+ * was last written; with nothing heard it is removed, as a failed start is.
+ */
+export async function closeInterruptedNotes(dir: string): Promise<void> {
+  const names = await fs.promises.readdir(dir).catch(() => [] as string[]);
+  for (const name of names.filter((n) => n.endsWith('.md'))) {
+    const id = name.slice(0, -3);
+    const note = await readCallNote(dir, id);
+    if (note?.status !== 'recording') continue;
+    const file = path.join(dir, name);
+    if (note.turns.length === 0) {
+      await fs.promises.unlink(file).catch(() => undefined);
+      console.log(`[desktop] call notes: ${id} was left recording with nothing heard; removed`);
+      continue;
+    }
+    const lastWrite = (await fs.promises.stat(file).catch(() => undefined))?.mtimeMs ?? Date.now();
+    const notice = 'Notes stopped early: WorkspaceGPT closed during the call.';
+    note.status = 'done';
+    note.endedAt = Math.max(note.startedAt, lastWrite);
+    note.notice = note.notice ? `${note.notice} ${notice}` : notice;
+    await writeCallNote(dir, note).catch((err) => console.warn(`[desktop] call notes: could not close ${id}:`, err));
+    console.log(`[desktop] call notes: ${id} was left recording (the app closed); closed it`);
+  }
+}
+
 export class CallRecorder {
   private proc: cp.ChildProcess | undefined;
   private note: CallNote | undefined;

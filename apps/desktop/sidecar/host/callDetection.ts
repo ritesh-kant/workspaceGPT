@@ -29,7 +29,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ViewSurface } from './webviewHost';
-import { CallRecorder, notesHelperPath, type RecordingEvent } from './callRecorder';
+import { CallRecorder, closeInterruptedNotes, notesHelperPath, type RecordingEvent } from './callRecorder';
 import { WhisperModel, type ModelState } from './whisperModel';
 
 export type CallEvent =
@@ -253,6 +253,7 @@ export function createCallDetection(
       : undefined;
 
   const sendState = () => send({ type: 'state', inCall: tracker.inCall, since: tracker.since });
+  void closeInterruptedNotes(notesDir);
 
   const record = () => {
     recordedSince = tracker.since;
