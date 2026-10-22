@@ -212,7 +212,7 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
           {
             id: 'callNotes',
             label: 'Call notes',
-            description: 'Notice when you are in a call and ask whether to take notes. Nothing is recorded without your click.',
+            description: 'Take notes of your calls, transcribed on this Mac.',
             badge: <span className='beta-badge'>Beta</span>,
             render: () => <CallNotesSettings />,
           } as SettingsPage,

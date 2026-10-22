@@ -7,8 +7,10 @@ import StatusDot from './StatusDot';
 /**
  * Settings → Call notes (beta, desktop only). docs/design/call-notes.md.
  * Turns call detection on. When a call is detected (Teams, Zoom, Meet, in an
- * app or a browser), WorkspaceGPT shows an indicator and asks before recording;
- * "Take notes" transcribes the call on this Mac into a call note.
+ * app or a browser), WorkspaceGPT shows an indicator and asks before recording
+ * (or, with "Take notes automatically", records and shows it); "Take notes"
+ * transcribes the call on this Mac into a call note. Kept to a line per
+ * control: the privacy details are in the call prompt, where they matter.
  */
 const CallNotesSettings: React.FC = () => {
   const updateConfig = useSettingsStore((s) => s.updateConfig);
@@ -39,48 +41,24 @@ const CallNotesSettings: React.FC = () => {
     </>
   );
 
+  const percent = model?.state === 'downloading' ? Math.floor((model.received / Math.max(1, model.total)) * 100) : 0;
+
   return (
     <SectionShell storageKey='call-notes' title='Call notes' summary={summary} badge={<span className='beta-badge'>Beta</span>} defaultOpen>
       <div className='settings-form'>
-        <small className='form-text'>
-          Notices when you are in a call (Teams, Zoom, Meet or any other, in an app or a browser) and asks whether to take notes. Nothing is recorded unless you
-          choose to, and detection only looks at whether an app is using your microphone; it never listens.
-        </small>
-        <div className='form-group'>
-          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-            <span>Detect calls and ask to take notes</span>
-            <span className='toggle-switch'>
-              <input
-                type='checkbox'
-                role='switch'
-                checked={enabled}
-                aria-label='Detect calls and ask to take notes'
-                onChange={(e) => updateConfig('callNotes', 'enabled', e.target.checked)}
-              />
-              <span className='slider round' />
-            </span>
-          </label>
-        </div>
+        <ToggleRow
+          label='Detect calls'
+          hint='Asks to take notes when a call starts, in any app or browser.'
+          checked={enabled}
+          onChange={(on) => updateConfig('callNotes', 'enabled', on)}
+        />
         {enabled && capability?.canRecord && (
-          <div className='form-group'>
-            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-              <span>Take notes automatically</span>
-              <span className='toggle-switch'>
-                <input
-                  type='checkbox'
-                  role='switch'
-                  checked={autoRecord}
-                  aria-label='Take notes automatically'
-                  onChange={(e) => updateConfig('callNotes', 'autoRecord', e.target.checked)}
-                />
-                <span className='slider round' />
-              </span>
-            </label>
-            <small className='form-text'>
-              Starts taking notes as soon as a call is detected, without asking. WorkspaceGPT still shows that it is taking notes, with Stop, and notifies
-              you. Let everyone on the call know.
-            </small>
-          </div>
+          <ToggleRow
+            label='Take notes automatically'
+            hint='Skips the question. Let others on the call know.'
+            checked={autoRecord}
+            onChange={(on) => updateConfig('callNotes', 'autoRecord', on)}
+          />
         )}
         {enabled && unavailable && <small className='form-text'>{capability?.reason ?? 'Call detection is not available on this machine.'}</small>}
         {enabled && capability?.available && capability.canRecord === false && capability.recordReason && (
@@ -91,32 +69,41 @@ const CallNotesSettings: React.FC = () => {
             {model.state === 'ready' ? (
               <>
                 <StatusDot tone='ok' />
-                Speech model ready (Whisper small, 190 MB, on this Mac).
+                Transcribed on this Mac. Audio is never saved.
               </>
             ) : model.state === 'downloading' ? (
               <>
                 <StatusDot tone='warn' />
-                Downloading the speech model: {Math.floor((model.received / Math.max(1, model.total)) * 100)}% of 190 MB.
+                Downloading the speech model… {percent}%
               </>
             ) : (
               <>
                 <StatusDot tone='warn' />
-                {model.state === 'failed' ? model.error : 'The speech model is not downloaded yet.'}{' '}
+                {model.state === 'failed' ? model.error : 'Speech model not downloaded.'}{' '}
                 <button type='button' className='link-like' onClick={retryModel}>
-                  Download it
+                  Download (190 MB)
                 </button>
               </>
             )}
           </small>
         )}
-        <small className='form-text'>
-          “Take notes” transcribes your microphone (“You”) and the call’s own audio (“Others”) on this Mac with Whisper, a speech model downloaded once (190
-          MB) when you turn this on. Only the text is kept, on this machine; the audio is never saved. Notes appear under Call notes in the sidebar, and chats
-          can search them. The first time, macOS asks to allow the Microphone and System Audio Recording. If you take notes, let everyone on the call know.
-        </small>
       </div>
     </SectionShell>
   );
 };
+
+/** A switch with its label and a one-line hint under it. */
+const ToggleRow: React.FC<{ label: string; hint: string; checked: boolean; onChange: (on: boolean) => void }> = ({ label, hint, checked, onChange }) => (
+  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <span>{label}</span>
+      <small className='form-text'>{hint}</small>
+    </span>
+    <span className='toggle-switch'>
+      <input type='checkbox' role='switch' checked={checked} aria-label={label} onChange={(e) => onChange(e.target.checked)} />
+      <span className='slider round' />
+    </span>
+  </label>
+);
 
 export default CallNotesSettings;
