@@ -71,6 +71,7 @@ import { AgentWriteGate, buildReviewDiff } from './agent/agentWriteGate';
 import { decide, resolvePermission, type Permission } from './agent/permissionPolicy';
 import { answersByQuestion, normalizeQuestions } from './agent/askUser';
 import { recordOriginalContent } from './agent/agentDiffProvider';
+import { lineChangeStats } from './agent/agentHunkLens';
 import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs, derivableChecks } from './agent/verifyTools';
 import { shipChanges, ShipInput } from './agent/shipService';
 import { deriveShipTitle } from './agent/shipHelpers';
@@ -114,6 +115,8 @@ import {
   RunCommandArgs,
   CommandResult,
   describeAutonomousRefusal,
+  missingExecutableNote,
+  resolveCommandPath,
 } from './agent/commandTools';
 import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgroundJobs';
 import { browserRequest, isBrowserConnected, isPanelSession } from './browser/browserBridge';
@@ -305,6 +308,8 @@ interface SessionRun {
   turnCredits: CreditTally;
   /** File-change rollup for the current agent turn (path → cumulative counts). */
   turnFilesChanged: Map<string, TurnFileChange>;
+  /** Each turnFilesChanged path's text before this turn's first write to it — what its counts diff against. */
+  turnFileOriginals: Map<string, string>;
   /**
    * Ids this turn's tools actually returned, with what each one refers to.
    * Travels to the webview on the turn summary so the answer's `#12359` links
@@ -779,6 +784,7 @@ export class ChatService {
         turnCompletionTokens: 0,
         turnCredits: emptyCreditTally(),
         turnFilesChanged: new Map(),
+        turnFileOriginals: new Map(),
         turnRefs: [],
         seenIds: new Set(),
         turnStepsPosted: 0,
@@ -1073,6 +1079,7 @@ export class ChatService {
       run.turnCredits = emptyCreditTally();
       run.userAskedRepoWide = REPO_WIDE_REQUEST_RE.test(message);
       run.turnFilesChanged.clear();
+      run.turnFileOriginals.clear();
       run.turnRefs.length = 0;
       run.turnStepsPosted = 0;
       run.turnFirstCheckpointSha = null;
@@ -2038,12 +2045,7 @@ export class ChatService {
     if (seen === undefined) return null;
     return {
       exitCode: 127,
-      output:
-        `${seen}\n\n[not run — "${exe}" already exited 127 (command not found) earlier this turn. ` +
-        'That is this machine\'s PATH, not the code and not the workspace: retrying it, or the same ' +
-        'command through a different package manager, will fail identically. Verify what you can with ' +
-        'get_diagnostics, and in your final answer report the affected checks as NOT RUN with this ' +
-        'reason — do not claim they passed, and do not spend further steps on them.]',
+      output: `${seen}\n\n${missingExecutableNote(exe)}`,
       durationMs: 0,
       truncated: false,
       timedOut: false,
@@ -2169,6 +2171,9 @@ export class ChatService {
    * command is test/lint/typecheck for the file's own package.
    */
   private async runChecks(run: SessionRun, args: RunChecksArgs, roots: NamedRoot[], stepId?: string): Promise<unknown> {
+    // The planner picks the Python interpreter by PATH lookup; make that the
+    // PATH commands actually run with, not the host's.
+    await resolveCommandPath();
     const plan = planVerification(roots, args);
     assertCommandAllowed(plan.command);
     // Same command, same tree → same result. Replay it instead of re-running:
@@ -2651,12 +2656,16 @@ export class ChatService {
     if (write.kind !== 'delete') await this.formatIfConfigured(write.uri);
     run.writeSeq++;
     run.sessionWritesApplied++;
-    const prior = run.turnFilesChanged.get(write.displayPath);
+    // Turn-start text vs now, as a real line diff: summing each write's
+    // prefix/suffix span counted every untouched line between two edits as
+    // removed-and-added (+180/−171 for a +14/−3 change, live).
+    if (!run.turnFileOriginals.has(write.displayPath)) run.turnFileOriginals.set(write.displayPath, write.before);
+    const turnDiff = lineChangeStats(run.turnFileOriginals.get(write.displayPath) ?? '', write.after);
     run.turnFilesChanged.set(write.displayPath, {
       path: write.displayPath,
       kind: write.kind,
-      added: (prior?.added ?? 0) + diff.added,
-      removed: (prior?.removed ?? 0) + diff.removed,
+      added: turnDiff.added,
+      removed: turnDiff.removed,
     });
     return {
       applied: true,

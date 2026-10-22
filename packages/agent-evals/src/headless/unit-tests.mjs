@@ -204,6 +204,17 @@ console.log('\nbackgroundJobs (long commands outlive the call; check_command fol
     assert.equal(stopped.running, false);
     await assert.rejects(() => bg.checkBackgroundCommand({ id: 'nope' }), /No background job/);
   });
+  await t('a replayed exit 127 names the alternatives actually on PATH, and claims nothing about the rest', () => {
+    // Ticket 1563242: "a different package manager will fail identically" was
+    // read as "python3 will fail too" — it was installed.
+    const withPy3 = commandTools.missingExecutableNote('python', (n) => n === 'python3');
+    assert.match(withPy3, /"python3" is on this PATH: rerun the command with it in place of "python"/);
+    assert.doesNotMatch(withPy3, /package manager/);
+    assert.match(commandTools.missingExecutableNote('python', () => false), /"python3", "py" are not on this PATH either/);
+    const pnpm = commandTools.missingExecutableNote('pnpm', () => true);
+    assert.doesNotMatch(pnpm, /package manager|on this PATH:/);
+    assert.match(pnpm, /retrying "pnpm" will fail identically\. Verify what you can/);
+  });
   await t('a script outside the verification allowlist is not auto-run, and shell plumbing is told apart', () => {
     assert.equal(isAutonomousSafeCommand('python research/backtests/ibkr_us_history.py --port 4001'), false);
     assert.equal(hasAutonomousShellPlumbing('python research/backtests/ibkr_us_history.py --port 4001'), false);
@@ -2086,8 +2097,8 @@ This is a one-line behavioral fix in three files; I did not apply it because all
 
 // ── verification planner, hunk diff, ship helpers (round 3) ──
 {
-  const { planVerification } = await import(path.join(outDir, 'verifyTools.mjs'));
-  const { computeHunks } = await import(path.join(outDir, 'agentHunkLens.mjs'));
+  const { planVerification, derivableChecks } = await import(path.join(outDir, 'verifyTools.mjs'));
+  const { computeHunks, lineChangeStats } = await import(path.join(outDir, 'agentHunkLens.mjs'));
   const { pullRequestUrl, pullRequestUrlTemplate, slugify, reportToHtml, turnCommitType, deriveShipTitle, cutAtWord } = await import(path.join(outDir, 'shipHelpers.mjs'));
   const fs = await import('fs');
   const os = await import('os');
@@ -2210,6 +2221,73 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     assert.throws(() => planVerification(roots, { path: 'apps/api' }), /package directory/);
     assert.equal(planVerification(roots, { path: 'svc/pkg/thing.go' }).command, 'go test ./pkg/...');
   });
+  {
+    // Ticket 1563242, live: `python -m pytest app/services/image_processor_service.py`
+    // on a machine with only python3 — exit 127 on every check, and pytest
+    // aimed at a source file, which collects nothing even when it runs.
+    const py = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-verify-py-'));
+    const pw = (rel, content = '') => {
+      const abs = path.join(py, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content);
+    };
+    pw('pytest.ini', '[pytest]\n');
+    pw('app/services/image_processor_service.py', 'def f(): pass\n');
+    pw('app/tests/test_image_processor_service.py', 'def test_f(): pass\n');
+    pw('app/models/image.py', 'class Image: pass\n');
+    pw('app/crud/image_crud.py', 'x = 1\n');
+    pw('tests/app/crud/test_image_crud.py', 'def test_x(): pass\n');
+    pw('app/core/targets.py', 'T = 1\n');
+    pw('app/core/targets_test.py', 'def test_t(): pass\n');
+    const pyRoots = [{ name: 'py', uri: { fsPath: py } }];
+    const bin = (names) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-bin-'));
+      for (const n of names) {
+        fs.writeFileSync(path.join(dir, n), '#!/bin/sh\n');
+        fs.chmodSync(path.join(dir, n), 0o755);
+      }
+      return dir;
+    };
+    const savedPath = process.env.PATH;
+    const withPath = (dir, fn) => {
+      process.env.PATH = dir;
+      try {
+        return fn();
+      } finally {
+        process.env.PATH = savedPath;
+      }
+    };
+    await t('run_checks (python): a machine with only python3 gets python3, aimed at the source file\'s tests', () => {
+      withPath(bin(['python3']), () => {
+        const plan = planVerification(pyRoots, { path: 'app/services/image_processor_service.py', kind: 'test' });
+        assert.equal(plan.command, 'python3 -m pytest app/tests/test_image_processor_service.py -q');
+        assert.equal(plan.cwd, py);
+        assert.equal(plan.template, 'python3 -m pytest {target} -q');
+      });
+      withPath(bin(['python']), () => {
+        assert.match(planVerification(pyRoots, { path: 'app/services/image_processor_service.py' }).command, /^python -m pytest /);
+      });
+    });
+    await t('run_checks (python): test files are found beside the source, under tests/, and in a mirrored tests/ tree', () => {
+      withPath(bin(['python3']), () => {
+        assert.equal(planVerification(pyRoots, { path: 'app/core/targets.py' }).target, 'app/core/targets_test.py');
+        assert.equal(planVerification(pyRoots, { path: 'app/crud/image_crud.py' }).target, 'tests/app/crud/test_image_crud.py');
+        assert.equal(planVerification(pyRoots, { path: 'app/tests/test_image_processor_service.py' }).target, 'app/tests/test_image_processor_service.py');
+      });
+    });
+    await t('run_checks (python): no tests for the file → says so instead of running pytest on the source', () => {
+      withPath(bin(['python3']), () => {
+        assert.throws(() => planVerification(pyRoots, { path: 'app/models/image.py' }), /No test file found for image\.py[\s\S]*no tests cover image\.py/);
+        assert.equal(derivableChecks(pyRoots, 'app/models/image.py').test, undefined);
+      });
+    });
+    await t('run_checks (python): the project\'s own virtualenv wins over PATH', () => {
+      pw('.venv/bin/python', '#!/bin/sh\n');
+      withPath(bin(['python3']), () => {
+        assert.equal(planVerification(pyRoots, { path: 'app/services/image_processor_service.py' }).command, '.venv/bin/python -m pytest app/tests/test_image_processor_service.py -q');
+      });
+    });
+  }
   await t('run_checks: no runner anywhere → actionable error', () => {
     w('docs/readme.md', '# hi');
     assert.throws(() => planVerification(roots, { path: 'docs/readme.md' }), /nothing to run|cannot derive a test command/);
@@ -2220,6 +2298,19 @@ This is a one-line behavioral fix in three files; I did not apply it because all
     assert.deepEqual(computeHunks('a\nc', 'a\nb\nc'), [{ origStart: 1, origEnd: 1, curStart: 1, curEnd: 2 }]);
     assert.deepEqual(computeHunks('a\nb\nc', 'a\nc'), [{ origStart: 1, origEnd: 2, curStart: 1, curEnd: 1 }]);
     assert.deepEqual(computeHunks('a\nb', 'a\nb'), []);
+  });
+  await t('lineChangeStats: two edits far apart count as two, and CRLF is not a change', () => {
+    // Live (ticket 1563242): +180/−171 reported for a +14/−3 change — the
+    // prefix/suffix span counted every line between the two edits.
+    const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+    const before = lines.join('\r\n') + '\r\n';
+    const edited = [...lines];
+    edited[5] = 'changed 5';
+    edited.splice(190, 0, 'new a', 'new b');
+    assert.deepEqual(lineChangeStats(before, edited.join('\r\n') + '\r\n'), { added: 3, removed: 1 });
+    assert.deepEqual(lineChangeStats(before, edited.join('\n') + '\n'), { added: 3, removed: 1 });
+    assert.deepEqual(lineChangeStats(before, lines.join('\n')), { added: 0, removed: 0 });
+    assert.deepEqual(lineChangeStats('', 'a\nb\n'), { added: 2, removed: 0 });
   });
   await t('computeHunks: two separate hunks stay separate', () => {
     const hunks = computeHunks('a\nb\nc\nd\ne', 'a\nB\nc\nd\nE');
@@ -5611,6 +5702,127 @@ console.log('\nspike coverage reflection (built from what the run actually did)'
 
   await t('no Confluence activity at all is its own gap', () => {
     assert.match(researchCoverageReflection({ read_file: 3, search_web: 1 }), /did not look in Confluence at all/);
+  });
+}
+
+// #1563242: a Python repo where the tests could not run ended on two ⚠️ rows
+// and no step the user could take to check the change. Every report that
+// changed code or admits a ⚠️ must say how to test it.
+console.log('\n"How to test" (prompt, gate and card agree on the heading)');
+{
+  const { missingHowToTest, HOW_TO_TEST_HEADING_RE, HOW_TO_TEST_NUDGE } = await import(path.join(outDir, 'answerGates.mjs'));
+  const { FINAL_REPORT_FORMAT, SPIKE_REPORT_FORMAT, DEBUG_REPORT_FORMAT, HOW_TO_WORK } = await import(path.join(outDir, 'promptTemplates.mjs'));
+
+  const REPORT = [
+    '## ⚠️ Partially done — tests unverified · pytest not installed in the workspace',
+    '',
+    '### Acceptance criteria',
+    '| Criterion | Verdict | Evidence |',
+    '|---|---|---|',
+    '| Discount applied to bundles | ⚠️ Could not verify | `pricing/bundle.py:L40-L52` |',
+    '',
+    '### Changes',
+    '- `pricing/bundle.py` — apply the bundle discount before tax',
+    '',
+    '### Verification',
+    '- ⚠️ `pytest tests/test_bundle.py` — could not run: No module named pytest',
+  ].join('\n');
+  const HOW_TO_TEST = [
+    '',
+    '### How to test',
+    '- Setup + rerun: `python -m venv .venv && .venv/bin/pip install -r requirements.txt` then `.venv/bin/pytest tests/test_bundle.py`',
+    '- Bundle of 2 × $10 with 10% discount → `price_bundle()` return value → `18.00`',
+  ].join('\n');
+
+  await t('a report that changed code with no How to test is sent back', () => {
+    assert.equal(missingHowToTest(REPORT, { codeFilesChanged: 1 }), true);
+  });
+
+  await t('a ⚠️ alone requires it, even with nothing changed', () => {
+    const noChange = '## ✅ No change needed — already applied\n\n### Verification\n- ⚠️ `pytest` — could not run';
+    assert.equal(missingHowToTest(noChange, { codeFilesChanged: 0 }), true);
+  });
+
+  await t('the section present (any heading level, emoji or not) passes', () => {
+    assert.equal(missingHowToTest(REPORT + HOW_TO_TEST, { codeFilesChanged: 1 }), false);
+    assert.equal(missingHowToTest(REPORT + '\n\n## 🧪 How to test\n- run it', { codeFilesChanged: 1 }), false);
+  });
+
+  await t('no changes and no ⚠️ → not required', () => {
+    const clean = '## ✅ No change needed — the mapper already sends it\n\n### Verification\n- ✅ `pnpm test` — 5 passed';
+    assert.equal(missingHowToTest(clean, { codeFilesChanged: 0 }), false);
+    assert.equal(missingHowToTest('## 🚫 Blocked — needs the empty-state copy', { codeFilesChanged: 0 }), false);
+  });
+
+  await t('only a report is checked: chat prose with a ⚠️ risks heading, plan mode, and the old "Next steps" heading', () => {
+    assert.equal(missingHowToTest('**TL;DR** it retries.\n\n## ⚠️ Risks\n- none', { codeFilesChanged: 3 }), false);
+    assert.equal(missingHowToTest(REPORT, { codeFilesChanged: 1, planMode: true }), false);
+    assert.equal(missingHowToTest(REPORT + '\n\n### Next steps\n- run pytest', { codeFilesChanged: 1 }), true, '"Next steps" is not "How to test"');
+  });
+
+  await t('every report format teaches the heading the gate looks for, and none still says "Next steps"', () => {
+    for (const [name, fmt] of Object.entries({ FINAL_REPORT_FORMAT, SPIKE_REPORT_FORMAT, DEBUG_REPORT_FORMAT })) {
+      assert.ok(HOW_TO_TEST_HEADING_RE.test(fmt), `${name} has no "### How to test"`);
+      assert.ok(!/###\s*Next steps/i.test(fmt), `${name} still teaches "Next steps"`);
+    }
+    assert.match(FINAL_REPORT_FORMAT, /at most 4 bullets/);
+    assert.match(FINAL_REPORT_FORMAT, /venv/);
+    assert.match(HOW_TO_WORK, /under "How to test"/);
+  });
+
+  await t('the card folds the same heading (and the old one) into a collapsible section', () => {
+    const src = fs.readFileSync(path.join(here, '../../../../apps/vscode-extensions/webview/src/components/ChatMessage.tsx'), 'utf8');
+    const re = src.match(/const COLLAPSIBLE_SECTION_RE = (\/.+\/i);/);
+    assert.ok(re, 'COLLAPSIBLE_SECTION_RE not found in ChatMessage.tsx');
+    const collapsible = eval(re[1]);
+    assert.ok(collapsible.test('How to test') && collapsible.test('Next steps'));
+    assert.match(src, /rehypeCollapsibleSections\]/, 'the plugin must be in rehypePlugins');
+  });
+
+  // Driven through the real worker: the gate must fire once, not loop.
+  const FILE = 'pricing/bundle.py';
+  const ORIGINAL = 'def price(total):\n    return total\n';
+  const runReport = async (finalContent) => {
+    const ws = tempWorkspace({ [FILE]: ORIGINAL });
+    const mock = await startMockModel({
+      main: [
+        { toolCalls: [{ name: 'read_file', args: { path: FILE } }] },
+        { toolCalls: [{ name: 'edit_file', args: { path: FILE, oldString: 'return total', newString: 'return total * 0.9' } }] },
+        // Repeated for every later turn: a model that never adds the section.
+        { finalContent },
+      ],
+    });
+    try {
+      const record = await runAgent(ws, 'Fix the bundle discount.', () => {}, {
+        provider: 'Custom',
+        baseUrl: mock.baseUrl,
+        modelId: 'mock-model',
+        apiKey: 'MOCK',
+        apiKeys: ['MOCK'],
+        autonomous: true,
+        harnessProfile: 'strong-model',
+      });
+      const main = mock.state.requests.filter((r) => !r.subAgent && !r.preloopExplorer);
+      const nudges = main.filter((r) => (r.messages ?? []).some((m) => m.role === 'user' && m.content === HOW_TO_TEST_NUDGE));
+      const sentBack = main.filter((r) => { const msgs = r.messages ?? []; return msgs[msgs.length - 1]?.content === HOW_TO_TEST_NUDGE; });
+      return { record, nudges, sentBack };
+    } finally {
+      await mock.close();
+    }
+  };
+
+  await t('real worker: a report missing How to test goes back exactly once, then is delivered', async () => {
+    const { record, sentBack } = await runReport(REPORT);
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    assert.equal(record.metrics.writesApplied, 1, 'the run must really have written');
+    assert.equal(sentBack.length, 1, `expected one retry, got ${sentBack.length}`);
+    assert.match(record.answer ?? '', /Partially done/, 'the report is still delivered after the one retry');
+  });
+
+  await t('real worker: a report with How to test is never sent back', async () => {
+    const { record, nudges } = await runReport(REPORT + HOW_TO_TEST);
+    assert.ok(record.ok, `run failed: ${record.error}`);
+    assert.equal(nudges.length, 0);
   });
 }
 

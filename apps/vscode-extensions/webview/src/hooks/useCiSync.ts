@@ -10,9 +10,9 @@ import { useChatStore } from '../store/chatStore';
 const FAST_MS = 30_000;
 const SLOW_MS = 120_000;
 
-/** Files the on-screen chat changed that are still uncommitted — what a fix push commits. */
-const chatUncommittedFiles = (): string[] => {
-  const recorded = recordedChatFiles(useChatStore.getState().messages);
+/** Files the given turns changed that are still uncommitted — what a fix push commits. */
+const chatUncommittedFiles = (messages: Parameters<typeof recordedChatFiles>[0]): string[] => {
+  const recorded = recordedChatFiles(messages);
   return (useGitStatusStore.getState().status?.pathStats ?? []).map((p) => p.path).filter((p) => recorded.has(p));
 };
 
@@ -50,6 +50,10 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
     const startFix = (snap: CiSnapshot, manual: boolean) => {
       const ci = useCiStore.getState();
       const chat = useChatStore.getState();
+      if (manual && snap.state === 'failed' && snap.pr && !snap.failureLog) {
+        ci.setNote("Couldn't read the failing log, so there is nothing to fix from. Open the check's details link.");
+        return;
+      }
       if (snap.state !== 'failed' || !snap.pr || !snap.failureLog || ci.phase !== 'idle' || chat.isLoading || chat.isStreaming) return;
       if (!manual && (ci.handledSha === snap.pr.sha || (ci.attempts[snap.pr.number] ?? 0) >= MAX_CI_FIX_ATTEMPTS)) return;
       if ((ci.attempts[snap.pr.number] ?? 0) >= MAX_CI_FIX_ATTEMPTS) {
@@ -112,7 +116,8 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
           ci.setNote('The fix run did not finish, so nothing was pushed.');
           return;
         }
-        const files = chatUncommittedFiles();
+        // Only what the fix turn changed: earlier unshipped work in this chat is not part of the fix.
+        const files = chatUncommittedFiles(msgs.slice(fixPrompt + 1));
         if (!files.length) {
           ci.setPhase('idle');
           ci.setNote('The agent finished without changing any files, so there is nothing to push.');

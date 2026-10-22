@@ -157,8 +157,10 @@ export async function shipChanges(
   // sends one), so the client-payload fallback used after a host restart
   // would otherwise land here as undefined.
   const title = deriveShipTitle(input.title, input.report);
-  const shortTitle = cutAtWord(title.replace(/\s+/g, ' ').trim(), 72);
   const commitType = turnCommitType({ ...input, title });
+  // Conventional Commits subject, type prefix included in the 72 characters.
+  // The report is the PR body and the ticket comment; it is not the commit message.
+  const shortTitle = cutAtWord(`${commitType}: ${title.replace(/\s+/g, ' ').trim()}`, 72);
   const slug = slugify(input.ticketId ? `${input.ticketId}-${title}` : title);
   let branch = newBranch ? `${commitType}/${slug}` : baseBranch;
   const existing = newBranch ? await git(gitCwd, ['branch', '--list', branch]) : '';
@@ -177,7 +179,7 @@ export async function shipChanges(
     onStatus(`Committing ${filesFromTop.length} file${filesFromTop.length === 1 ? '' : 's'}…`);
     await git(gitCwd, ['add', '--', ...filesFromTop]);
     const trailer = input.ticketId ? `\n\n${ticketProvider?.commitTrailer(input.ticketId) ?? input.ticketId}` : '';
-    const message = `${shortTitle}\n\n${input.report.trim()}${trailer}\n\nCo-authored-by: WorkspaceGPT Agent <agent@workspacegpt.dev>`;
+    const message = `${shortTitle}${trailer}`;
     // Pathspec'd: commit these files only, never whatever else sits staged.
     await git(gitCwd, ['commit', '--quiet', '-m', message, '--', ...filesFromTop]);
   } catch (e) {
@@ -277,7 +279,8 @@ export async function shipAllChanges(
 
   // -uall so an untracked directory lands as its files, not one "dir/" entry —
   // the inferred type and subject read the individual paths.
-  const dirty = await git(gitCwd, ['status', '--porcelain', '-uall']);
+  // quotepath=false: non-ASCII names stay literal, so they work as pathspecs below.
+  const dirty = await git(gitCwd, ['-c', 'core.quotepath=false', 'status', '--porcelain', '-uall']);
   if (!dirty) throw new Error('Nothing to ship — the working tree is clean.');
 
   const { paths, hasNewFiles } = parsePorcelain(dirty);
@@ -298,7 +301,9 @@ export async function shipAllChanges(
   }
   try {
     onStatus('Staging changes…');
-    await git(gitCwd, ['add', '-A']);
+    // Exactly the paths the user was shown: a file that appeared after the
+    // prompt is left out rather than committed unseen.
+    await git(gitCwd, ['add', '-A', '--', ...paths.map((p) => `:(literal)${p}`)]);
     await git(gitCwd, ['commit', '--quiet', '-m', commitSubject]);
   } catch (e) {
     if (newBranch) {

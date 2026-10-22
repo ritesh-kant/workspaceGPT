@@ -156,7 +156,68 @@ export async function resolveCommandPath(): Promise<string | undefined> {
   const extras = (process.env.PATH ?? '')
     .split(path.delimiter)
     .filter((dir) => dir && !seen.has(dir));
-  return extras.length ? `${probed}${path.delimiter}${extras.join(path.delimiter)}` : probed;
+  lastCommandPath = extras.length ? `${probed}${path.delimiter}${extras.join(path.delimiter)}` : probed;
+  return lastCommandPath;
+}
+
+/** What resolveCommandPath() last returned, for callers that cannot await it. */
+let lastCommandPath: string | undefined;
+
+/**
+ * The executable `name` resolves to on the PATH commands run with — the login
+ * shell's once probed, the host's until then — or null. Sync because the
+ * verification planner that asks is sync.
+ */
+export function findOnPath(name: string, searchPath = lastCommandPath ?? process.env.PATH ?? ''): string | null {
+  const exts = process.platform === 'win32' ? ['', ...(process.env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';')] : [''];
+  for (const dir of searchPath.split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const abs = path.join(dir, name + ext);
+      try {
+        fs.accessSync(abs, fs.constants.X_OK);
+        if (fs.statSync(abs).isFile()) return abs;
+      } catch {
+        /* not here */
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Executables that stand in for one another. A missing one is not the end of
+ * the check when a sibling is on PATH — stock macOS has `python3` and no
+ * `python`. Package managers are deliberately absent: `npm` is on PATH far
+ * more often than it is a correct substitute for a missing `pnpm`.
+ */
+const EXECUTABLE_ALTERNATIVES: string[][] = [
+  ['python', 'python3', 'py'],
+  ['pip', 'pip3'],
+  ['pytest', 'py.test'],
+];
+
+/**
+ * The note a replayed exit-127 carries. It names the alternatives that are
+ * actually on PATH instead of claiming every alternative fails — the earlier
+ * "a different package manager will fail identically" was false for
+ * `python` → `python3`, and a run believed it and verified nothing.
+ */
+export function missingExecutableNote(exe: string, onPath: (name: string) => boolean = (n) => !!findOnPath(n)): string {
+  const family = EXECUTABLE_ALTERNATIVES.find((f) => f.includes(exe))?.filter((n) => n !== exe) ?? [];
+  const present = family.filter(onPath);
+  const quoted = (names: string[]) => names.map((n) => `"${n}"`).join(', ');
+  const alternatives = present.length
+    ? ` ${quoted(present)} ${present.length === 1 ? 'is' : 'are'} on this PATH: rerun the command with ${present.length === 1 ? 'it' : 'one of them'} in place of "${exe}". If that fails too, verify`
+    : family.length
+      ? ` ${quoted(family)} ${family.length === 1 ? 'is' : 'are'} not on this PATH either. Verify`
+      : ' Verify';
+  return (
+    `[not run — "${exe}" already exited 127 (command not found) earlier this turn. ` +
+    `That is this machine's PATH, not the code and not the workspace: retrying "${exe}" will fail identically.${alternatives} ` +
+    'what you can with get_diagnostics, and in your final answer report the affected checks as NOT RUN with this ' +
+    'reason — do not claim they passed, and do not spend further steps on them.]'
+  );
 }
 const VERIFY_COMMAND_RE = /\b(test|tests|jest|vitest|pytest|mocha|build|compile|tsc|typecheck|type-check|lint|eslint|cargo|go)\b/i;
 
