@@ -6621,6 +6621,89 @@ process.stdin.on('data', (d) => {
     await settle();
     assert.equal(await readCallNote(notesDir, started.noteId), undefined);
   });
+
+  // createCallDetection end to end, with stand-ins for both helpers and a clock that can jump past CONFIRM_MS.
+  if (process.platform === 'darwin') {
+    const { createCallDetection } = callDetection;
+    const flag = path.join(dir, 'in-call');
+    const fakeCalls = path.join(dir, 'fake-calls.mjs');
+    fs.writeFileSync(
+      fakeCalls,
+      `#!/usr/bin/env node
+import fs from 'fs';
+const timer = setInterval(() => process.stdout.write(JSON.stringify({ holders: fs.existsSync(${JSON.stringify(flag)}) ? [{ pid: 4242, name: 'Fake Meet' }] : [] }) + '\\n'), 30);
+process.stdin.on('end', () => { clearInterval(timer); process.exit(0); });
+process.stdin.resume();
+`
+    );
+    fs.chmodSync(fakeCalls, 0o755);
+    const modelDir = path.join(dir, 'detect-models');
+    fs.mkdirSync(modelDir, { recursive: true });
+    // The real model's size, sparse: "ready" is decided by size (whisperModel.ts).
+    fs.writeFileSync(path.join(modelDir, 'ggml-small-q5_1.bin'), '');
+    fs.truncateSync(path.join(modelDir, 'ggml-small-q5_1.bin'), 190_085_487);
+    const realNow = Date.now;
+    const detect = async (auto, body) => {
+      const events = [];
+      let shift = 0;
+      Date.now = () => realNow() + shift;
+      // A second at a time, so the helper's first snapshot (node starting up) is not jumped over.
+      const advance = async (pred) => {
+        for (let i = 0; i < 40 && !events.some(pred); i++) {
+          shift += 1000;
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        return until(events, pred);
+      };
+      process.env.WGPT_CALLS_BIN = fakeCalls;
+      process.env.WGPT_NOTES_BIN = fake;
+      process.env.FAKE_MODE = 'chatty';
+      const notes = [];
+      let onRequest;
+      const surface = {
+        sendControl: (frame) => events.push(frame.event),
+        attached: { event: () => {} },
+        callsRequested: { event: (h) => (onRequest = h) },
+      };
+      createCallDetection(surface, path.join(dir, 'detected'), modelDir, (title) => notes.push(title));
+      fs.writeFileSync(flag, '');
+      onRequest({ op: 'enable', auto });
+      try {
+        await advance((e) => e.type === 'state' && e.inCall);
+        await body({ events, notes, request: (r) => onRequest(r), end: async () => {
+          fs.rmSync(flag, { force: true });
+          await advance((e) => e.type === 'state' && !e.inCall);
+        } });
+      } finally {
+        onRequest({ op: 'disable' });
+        fs.rmSync(flag, { force: true });
+        Date.now = realNow;
+        delete process.env.WGPT_CALLS_BIN;
+        delete process.env.WGPT_NOTES_BIN;
+      }
+    };
+
+    await t('"take notes automatically" records a detected call without asking, and still notifies', () =>
+      detect(true, async ({ events, notes, end }) => {
+        const started = await until(events, (e) => e.type === 'recording' && e.state === 'starting');
+        assert.ok(events.indexOf(started) < events.findIndex((e) => e.type === 'state' && e.inCall), 'the recording is sent before the call, so the page does not flash the question');
+        assert.deepEqual(notes, ['Taking notes of this call']);
+        await end();
+        await until(events, (e) => e.type === 'recording' && e.state === 'idle');
+        assert.equal(events.filter((e) => e.type === 'recording' && e.state === 'starting').length, 1, 'once per call');
+      }));
+
+    await t('without it, a detected call only asks, and records on "Take notes"', () =>
+      detect(false, async ({ events, notes, request, end }) => {
+        await settle();
+        assert.equal(events.some((e) => e.type === 'recording'), false, 'nothing records unasked');
+        assert.deepEqual(notes, ['Call detected']);
+        request({ op: 'record' });
+        await until(events, (e) => e.type === 'recording' && e.state === 'starting');
+        await end();
+        await until(events, (e) => e.type === 'recording' && e.state === 'idle');
+      }));
+  }
   await t('echoes: a "you" line mostly made of what "others" said at that moment is dropped; real replies stay', () => {
     const turns = [
       { speaker: 'others', at: 10, end: 16, text: 'So the release branch gets cut on Thursday at noon.' },

@@ -14,7 +14,8 @@
  * Muted calls count: call apps keep the mic open while muted (tested on macOS).
  *
  * Recording starts only on the page's `record` frame, sent when the user
- * clicks "Take notes" (callRecorder.ts), and stops on `stop`, when the call
+ * clicks "Take notes" (callRecorder.ts), or, when the user turned on "Take
+ * notes automatically" in Settings, as soon as a call is detected. It stops on `stop`, when the call
  * ends, or when call notes are turned off. macOS only for now.
  *
  *  - macOS: native/wgpt-calls.swift prints, every few seconds, the processes
@@ -40,6 +41,8 @@ export type CallEvent =
 
 export interface CallsRequest {
   op: 'enable' | 'disable' | 'record' | 'stop';
+  /** With 'enable': Settings → "Take notes automatically", so a detected call records without asking. */
+  auto?: boolean;
 }
 
 /** Something holding the mic (and, where the OS can tell, audio output). */
@@ -229,6 +232,10 @@ export function createCallDetection(
   let lastHolders: Holder[] = [];
   /** The recording's latest state, replayed to a page that (re)attaches mid-call. */
   let recordingState: RecordingEvent | undefined;
+  /** The user turned on "Take notes automatically". */
+  let auto = false;
+  /** The call (its `since`) a recording was last started for, so auto-record starts once per call. */
+  let recordedSince: number | undefined;
   const model = new WhisperModel(modelDir, (state) => send({ type: 'model', ...state }));
   const recorder =
     notesBin && recordability.canRecord
@@ -238,12 +245,26 @@ export function createCallDetection(
           (event) => {
             if (event.type === 'recording') recordingState = event.state === 'idle' ? undefined : event;
             send(event);
+            // A call that started while the last one's transcript was still finishing.
+            if (event.type === 'recording' && event.state === 'idle') autoRecord();
           },
           model.path
         )
       : undefined;
 
   const sendState = () => send({ type: 'state', inCall: tracker.inCall, since: tracker.since });
+
+  const record = () => {
+    recordedSince = tracker.since;
+    recorder!.start(process.platform === 'darwin' ? lastHolders.map((h) => Number(h.key)) : []);
+  };
+
+  /** Records the call in progress without asking, when the user chose that; still shown on the page, with Stop. */
+  const autoRecord = (): boolean => {
+    if (!auto || !recorder || recorder.active || !tracker.inCall || recordedSince === tracker.since || model.state.state !== 'ready') return false;
+    record();
+    return true;
+  };
 
   const onSnapshot = (holders: Holder[]) => {
     if (holders.length) lastHolders = holders;
@@ -252,9 +273,12 @@ export function createCallDetection(
     // The call is over: so is its recording (the helper transcribes what is left first).
     if (change === 'end') recorder?.stop();
     console.log(`[desktop] calls: ${change === 'start' ? `call detected (${holders.map((h) => h.name).join(', ')})` : `call ended (no audio for ${END_MS / 1000} s)`}`);
+    // Before the state, so the page shows the recording rather than flashing the question first.
+    const autoStarted = change === 'start' && autoRecord();
     sendState();
     // The shell only shows this when the window isn't in front; in front, the page's indicator is the prompt.
-    if (change === 'start') notify('Call detected', 'Open WorkspaceGPT to choose whether to take notes for this call.');
+    if (autoStarted) notify('Taking notes of this call', 'WorkspaceGPT is transcribing this call on this Mac. Let everyone on the call know. Open WorkspaceGPT to stop.');
+    else if (change === 'start') notify('Call detected', 'Open WorkspaceGPT to choose whether to take notes for this call.');
   };
 
   const stop = () => {
@@ -285,15 +309,17 @@ export function createCallDetection(
     if (recordingState) send(recordingState);
   });
   surface.callsRequested.event((req) => {
-    if (req.op === 'enable') start();
-    else if (req.op === 'disable') stop();
+    if (req.op === 'enable') {
+      auto = !!req.auto;
+      start();
+    } else if (req.op === 'disable') stop();
     // Only for a call in progress: the page asks after detection, and only on the user's click.
     else if (req.op === 'record' && tracker.inCall && recorder && !recorder.active) {
       if (model.state.state !== 'ready') {
         // The page only offers "Take notes" once the model is ready; this is the race where it was not.
         send({ type: 'recording', state: 'idle', error: 'The speech model is not downloaded yet. Try again once Settings → Call notes says it is ready.' });
         void model.ensure();
-      } else recorder.start(process.platform === 'darwin' ? lastHolders.map((h) => Number(h.key)) : []);
+      } else record();
     } else if (req.op === 'stop') recorder?.stop();
   });
 }

@@ -250,7 +250,7 @@ interface UiFrame {
     },
     calls: {
       latest: () => ({ capability: callsCapability, state: callsState, recording: callsRecording, model: callsModel }),
-      request: (op: 'enable' | 'disable' | 'record' | 'stop') => send({ t: 'calls', op }),
+      request: (op: 'enable' | 'disable' | 'record' | 'stop', auto?: boolean) => send({ t: 'calls', op, auto }),
     },
   };
 

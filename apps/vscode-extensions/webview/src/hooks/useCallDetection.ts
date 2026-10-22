@@ -12,7 +12,7 @@ import { useSettingsStore } from '../store/settingsStore';
 type CallsOp = 'enable' | 'disable' | 'record' | 'stop';
 interface CallsBridge {
   latest(): { capability?: CallCapability; state?: CallState; recording?: CallRecording; model?: SpeechModel };
-  request(op: CallsOp): void;
+  request(op: CallsOp, auto?: boolean): void;
 }
 export interface CallCapability {
   available: boolean;
@@ -50,6 +50,7 @@ const bridge = (): CallsBridge | undefined => (window as { __wgptBridge?: { call
 /** `control: false` only listens: it never turns detection on or off (the note view uses it for Stop). */
 export function useCallDetection({ control = true }: { control?: boolean } = {}): {
   enabled: boolean;
+  autoRecord: boolean;
   capability: CallCapability | undefined;
   state: CallState;
   recording: CallRecording | undefined;
@@ -61,6 +62,7 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
   retryModel(): void;
 } {
   const enabled = useSettingsStore((s) => !!s.config.callNotes?.enabled);
+  const autoRecord = useSettingsStore((s) => !!s.config.callNotes?.autoRecord);
   const [capability, setCapability] = useState<CallCapability | undefined>(() => bridge()?.latest().capability);
   const [state, setState] = useState<CallState>(() => bridge()?.latest().state ?? { inCall: false });
   const [recording, setRecording] = useState<CallRecording | undefined>(() => bridge()?.latest().recording);
@@ -101,11 +103,12 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
   // The host forgets on restart; re-sent whenever the setting or the host's capability changes.
   useEffect(() => {
     if (!isDesktopHost() || !control) return;
-    bridge()?.request(enabled ? 'enable' : 'disable');
-  }, [enabled, capability?.available, control]);
+    bridge()?.request(enabled ? 'enable' : 'disable', autoRecord);
+  }, [enabled, autoRecord, capability?.available, control]);
 
   return {
     enabled,
+    autoRecord,
     capability,
     state,
     recording,

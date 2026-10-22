@@ -29,6 +29,11 @@ const CallIndicator: React.FC<{
     return () => clearInterval(timer);
   }, [recording]);
 
+  // A call being recorded has had its answer (also when it started by itself: Settings → "Take notes automatically"), so Stop does not bring the question back.
+  useEffect(() => {
+    if (recording && state.inCall && state.since !== undefined) setChoices((prev) => (prev[state.since!] ? prev : { [state.since!]: 'take-notes' }));
+  }, [recording, state.inCall, state.since]);
+
   // Saved notes the user is already looking at need no "saved" card afterwards.
   useEffect(() => {
     if (!recording && outcome?.noteId && !outcome.error && outcome.noteId === viewingNoteId) setDismissedOutcome(outcome.noteId);
@@ -86,9 +91,10 @@ const CallIndicator: React.FC<{
     );
   }
 
-  // How the last recording ended, until dismissed.
+  // How the last recording ended, until dismissed, unless the next call is waiting for its answer: that question goes first.
   const outcomeKey = outcome?.noteId;
-  if (outcome && outcomeKey && dismissedOutcome !== outcomeKey && !(outcomeKey === viewingNoteId && !outcome.error)) {
+  const callUnanswered = enabled && !!capability?.available && state.inCall && state.since !== undefined && !choices[state.since];
+  if (outcome && outcomeKey && dismissedOutcome !== outcomeKey && !(outcomeKey === viewingNoteId && !outcome.error) && !callUnanswered) {
     return (
       <div className='call-indicator' role='status' aria-live='polite'>
         <span className='call-indicator-dot call-indicator-dot--still' aria-hidden='true' />
@@ -123,7 +129,11 @@ const CallIndicator: React.FC<{
   const since = state.since;
   const choice = choices[since];
   if (choice === 'not-this-call') return null;
-  const choose = (c: Choice) => setChoices({ [since]: c });
+  const choose = (c: Choice) => {
+    setChoices({ [since]: c });
+    // The last call's "saved" card was waiting behind this question; it is in the sidebar.
+    if (outcomeKey) setDismissedOutcome(outcomeKey);
+  };
   // Asked and answered for this call: a recording that ended (Stop) does not ask again.
   if (choice === 'take-notes' && capability.canRecord) return null;
 

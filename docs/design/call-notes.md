@@ -58,9 +58,13 @@ extension code. This follows the rule that desktop must not fork extension code.
 
 ## Non-negotiables
 
-- **Nothing records without a click.** Detecting a call only ever triggers a
-  prompt. If the prompt is dismissed or ignored, nothing is recorded. There is
-  no blanket "always record" setting.
+- **Nothing records without the user's choice.** By default, detecting a call
+  only triggers a prompt; if it is dismissed or ignored, nothing is recorded.
+  Settings → Call notes → **Take notes automatically** (off by default, shown
+  only where recording works) is the user choosing in advance: a detected call
+  then records without the prompt, once per call, and a notification says so
+  ("Taking notes of this call") when the window isn't in front. Stop still
+  ends it, and it does not restart that call.
 - **It is always visible while recording.** An indicator with Stop shows the
   whole time, and recording stops by itself when the call ends.
 - **Other participants are reminded.** The prompt reminds the user to tell
@@ -78,7 +82,9 @@ extension code. This follows the rule that desktop must not fork extension code.
 1. **Detect.** A cheap poll every few seconds checks whether any app holds both
    the microphone and audio output (see "Detection"). The signal must hold for
    about 10 s before anything happens, so a mic test doesn't trigger it. Only
-   one prompt is shown per call.
+   one prompt is shown per call. A new call's prompt goes in front of the
+   last call's "Call notes saved" card, so back-to-back meetings are still
+   asked about.
 2. **Prompt.** A native notification says "Call detected. Click to take
    notes." It never names the app, so the wording is the same whether the
    call is in Teams, Zoom or a browser tab. It reuses the `notify.rs` path, which has no action buttons today.

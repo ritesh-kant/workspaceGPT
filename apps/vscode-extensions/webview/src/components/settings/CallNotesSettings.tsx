@@ -12,7 +12,7 @@ import StatusDot from './StatusDot';
  */
 const CallNotesSettings: React.FC = () => {
   const updateConfig = useSettingsStore((s) => s.updateConfig);
-  const { enabled, capability, state, recording, model, retryModel } = useCallDetection();
+  const { enabled, autoRecord, capability, state, recording, model, retryModel } = useCallDetection();
   const unavailable = capability && !capability.available;
 
   const summary = !enabled ? (
@@ -61,6 +61,27 @@ const CallNotesSettings: React.FC = () => {
             </span>
           </label>
         </div>
+        {enabled && capability?.canRecord && (
+          <div className='form-group'>
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <span>Take notes automatically</span>
+              <span className='toggle-switch'>
+                <input
+                  type='checkbox'
+                  role='switch'
+                  checked={autoRecord}
+                  aria-label='Take notes automatically'
+                  onChange={(e) => updateConfig('callNotes', 'autoRecord', e.target.checked)}
+                />
+                <span className='slider round' />
+              </span>
+            </label>
+            <small className='form-text'>
+              Starts taking notes as soon as a call is detected, without asking. WorkspaceGPT still shows that it is taking notes, with Stop, and notifies
+              you. Let everyone on the call know.
+            </small>
+          </div>
+        )}
         {enabled && unavailable && <small className='form-text'>{capability?.reason ?? 'Call detection is not available on this machine.'}</small>}
         {enabled && capability?.available && capability.canRecord === false && capability.recordReason && (
           <small className='form-text'>{capability.recordReason}</small>

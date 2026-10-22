@@ -194,6 +194,8 @@ export interface VectorStoreConfig {
 /** Call notes (beta, desktop only): detect calls and ask before recording. docs/design/call-notes.md. */
 export interface CallNotesConfig {
   enabled: boolean;
+  /** Record a detected call without asking (still shown, with Stop). */
+  autoRecord?: boolean;
 }
 
 export interface WebSearchConfig {
