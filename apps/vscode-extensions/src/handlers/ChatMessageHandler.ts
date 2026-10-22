@@ -26,6 +26,8 @@ import type { ImportSource } from '../services/import/types';
 
 /** Quiet period after the last file event before the bar's `git status` re-runs. */
 const GIT_STATUS_DEBOUNCE_MS = 500;
+/** Files named in the Create PR confirm before "and N more"; the commit takes exactly the paths listed there. */
+const SHIP_ALL_LISTED_PATHS = 30;
 
 const fileExists = async (absPath: string): Promise<boolean> => {
   try {
@@ -498,9 +500,11 @@ export class ChatMessageHandler {
       if (cwd && snapshot.state === 'failed' && snapshot.pr) {
         if (this.ciLog?.sha !== snapshot.pr.sha) {
           const log = (target && (await getFailureLogViaHost(snapshot.checks, target))) || (await getFailureLog(cwd, snapshot.checks));
-          this.ciLog = { sha: snapshot.pr.sha, log };
+          // No readable log: nothing cached (the next poll tries again) and no
+          // failureLog, so the webview starts no fix it could only guess at.
+          this.ciLog = log ? { sha: snapshot.pr.sha, log } : undefined;
         }
-        snapshot.failureLog = this.ciLog.log;
+        snapshot.failureLog = this.ciLog?.log;
       }
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.CI_STATUS, sessionId: sid, ...snapshot });
     } catch (error) {
@@ -606,6 +610,12 @@ export class ChatMessageHandler {
   private async handleShipAll(requestId?: string): Promise<void> {
     const reply = (payload: Record<string, unknown>) =>
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.AGENT_SHIP_ALL_DONE, requestId, ...payload });
+    // A running chat is still writing files: the list the user confirms would
+    // not be what lands in the commit, and the branch would move under the run.
+    if (this.chatService?.hasRunInFlight()) {
+      reply({ ok: false, error: 'A chat is still running. Stop it or let it finish first.' });
+      return;
+    }
     try {
       const roots = this.viewedRoots();
       const result = await shipAllChanges(roots, () => undefined, (suggestion, paths) =>
@@ -616,7 +626,7 @@ export class ChatMessageHandler {
             // file, whichever chat (or editor) changed it.
             prompt:
               `Commits all ${paths.length} uncommitted file${paths.length === 1 ? '' : 's'} in the working tree, from any chat or editor: ` +
-              `${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ` and ${paths.length - 3} more` : ''}. ` +
+              `${paths.slice(0, SHIP_ALL_LISTED_PATHS).join(', ')}${paths.length > SHIP_ALL_LISTED_PATHS ? ` and ${paths.length - SHIP_ALL_LISTED_PATHS} more` : ''}. ` +
               'Commit subject, Conventional Commits style — it names the branch too.',
             value: suggestion,
             // Preselect just the subject, so Enter accepts and typing replaces

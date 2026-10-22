@@ -155,8 +155,11 @@ export async function getFailureLogViaHost(checks: CiCheck[], target: { host: Co
   return `${head}\n\n${log.length > LOG_MAX_CHARS ? log.slice(-LOG_MAX_CHARS) : log}`;
 }
 
-/** Last lines of the failing GitHub Actions jobs' logs, capped — enough to see the error, not the whole run. */
-export async function getFailureLog(cwd: string, checks: CiCheck[]): Promise<string> {
+/**
+ * Last lines of the failing GitHub Actions jobs' logs, capped — enough to see the error, not the whole run.
+ * Undefined when no log could be read: a fix needs the real log, and a placeholder is not one.
+ */
+export async function getFailureLog(cwd: string, checks: CiCheck[]): Promise<string | undefined> {
   const runIds = [...new Set(checks.filter((c) => c.state === 'fail').map((c) => /\/actions\/runs\/(\d+)/.exec(c.url ?? '')?.[1]).filter((x): x is string => !!x))].slice(0, MAX_LOG_RUNS);
   const parts: string[] = [];
   for (const id of runIds) {
@@ -168,14 +171,14 @@ export async function getFailureLog(cwd: string, checks: CiCheck[]): Promise<str
         .map((l) => l.replace(/^[^\t]*\t[^\t]*\t/, '').replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z\s?/, ''))
         .filter((l) => l.trim());
       parts.push(lines.slice(-LOG_TAIL_LINES).join('\n'));
-    } catch (e) {
-      parts.push(`(could not read the log of run ${id}: ${(e as Error).message.split('\n')[0]})`);
+    } catch {
+      /* unreadable: left out — an error message is not a log */
     }
   }
   const names = checks.filter((c) => c.state === 'fail').map((c) => c.name);
   const head = `Failing checks: ${names.join(', ')}`;
-  const log = parts.join('\n\n---\n\n');
-  return log ? `${head}\n\n${log.length > LOG_MAX_CHARS ? log.slice(-LOG_MAX_CHARS) : log}` : `${head}\n\n(no log available — these checks are not GitHub Actions jobs; open their details link)`;
+  const log = parts.filter(Boolean).join('\n\n---\n\n');
+  return log ? `${head}\n\n${log.length > LOG_MAX_CHARS ? log.slice(-LOG_MAX_CHARS) : log}` : undefined;
 }
 
 export interface CiPushResult {
@@ -206,9 +209,8 @@ export async function pushCiFix(roots: NamedRoot[], files: string[], prBranch: s
     if (!branch || branch !== prBranch) return { pushed: false, error: `Checked-out branch (${branch || 'detached'}) is not the PR's branch (${prBranch}); not pushing.` };
     const fromTop = rel.map((f) => path.relative(top, path.join(cwd, f)));
     await run('git', ['add', '--', ...fromTop], top, 30_000);
-    const message = `${subject}\n\nCo-authored-by: WorkspaceGPT Agent <agent@workspacegpt.dev>`;
     // Pathspec'd: only these files, never whatever else sits staged.
-    await run('git', ['commit', '--quiet', '-m', message, '--', ...fromTop], top, 60_000);
+    await run('git', ['commit', '--quiet', '-m', subject, '--', ...fromTop], top, 60_000);
     const commitSha = (await run('git', ['rev-parse', 'HEAD'], top, 15_000)).trim();
     await run('git', ['push', '--quiet', 'origin', branch], top, 90_000);
     return { pushed: true, commitSha };

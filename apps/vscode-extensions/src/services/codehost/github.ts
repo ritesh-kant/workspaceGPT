@@ -80,8 +80,8 @@ export class GitHubHost implements CodeHost {
       try {
         // The API answers with a redirect to the log blob; fetch drops the auth header across origins.
         parts.push(logTail(await (await this.fetch(`${PRS(repo)}/actions/jobs/${id}/logs`)).text()));
-      } catch (e) {
-        parts.push(`(could not read the log of job ${id}: ${e instanceof Error ? e.message : 'unknown error'})`);
+      } catch {
+        /* unreadable: left out — an error message is not a log, and an empty result is "no log" */
       }
     }
     return parts.join('\n\n---\n\n');

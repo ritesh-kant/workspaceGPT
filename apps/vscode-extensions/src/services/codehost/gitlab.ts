@@ -70,8 +70,8 @@ export class GitLabHost implements CodeHost {
     for (const id of ids) {
       try {
         parts.push(logTail(await (await this.fetch(`${proj(repo)}/jobs/${id}/trace`, { headers: { Accept: 'text/plain' } })).text()));
-      } catch (e) {
-        parts.push(`(could not read the log of job ${id}: ${e instanceof Error ? e.message : 'unknown error'})`);
+      } catch {
+        /* unreadable: left out — an error message is not a log, and an empty result is "no log" */
       }
     }
     return parts.join('\n\n---\n\n');
