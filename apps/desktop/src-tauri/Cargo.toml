@@ -1,6 +1,6 @@
 [package]
 name = "workspacegpt-desktop"
-version = "0.0.44"
+version = "0.0.45"
 description = "WorkspaceGPT Desktop — thin Tauri shell around the Node sidecar"
 edition = "2021"
 publish = false
