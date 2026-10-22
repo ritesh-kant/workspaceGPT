@@ -752,7 +752,7 @@ const TOOL_DEFS = [
     function: {
       name: 'search_call_notes',
       description:
-        'The user\'s call notes: transcripts of calls (Teams, Zoom, Meet…) they chose to record with WorkspaceGPT, kept on this machine. ' +
+        'The user\'s call notes: transcripts of calls (Teams, Zoom, Meet…) they chose to take notes of with WorkspaceGPT, kept on this machine. Text only: no audio is kept, so call them notes or transcripts, never recordings. ' +
         'Lists calls newest first; with a query, only calls whose transcript holds every word of it, with the matching lines. ' +
         'Use it when the user asks about a call or meeting ("what did we decide in Tuesday\'s call"), then read_call_note for the full transcript.',
       parameters: {

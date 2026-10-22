@@ -151,11 +151,11 @@ export class CallRecorder {
       }
     });
     proc.on('error', (err) => {
-      failure = `Could not start recording: ${err.message}`;
+      failure = `Could not start taking notes: ${err.message}`;
     });
     proc.on('close', (code, signal) => {
       if (this.proc === proc) this.proc = undefined;
-      if (!failure && code !== 0) failure = `Recording stopped unexpectedly (${code ?? signal}).`;
+      if (!failure && code !== 0) failure = `Taking notes stopped unexpectedly (${code ?? signal}).`;
       // Nothing recorded and it failed: the note would only say so, and the indicator already does.
       if (failure && note.turns.length === 0) {
         this.discarded = true;

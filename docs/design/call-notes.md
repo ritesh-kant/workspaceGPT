@@ -65,6 +65,10 @@ extension code. This follows the rule that desktop must not fork extension code.
   then records without the prompt, once per call, and a notification says so
   ("Taking notes of this call") when the window isn't in front. Stop still
   ends it, and it does not restart that call.
+- **Say "taking notes", not "recording".** Only text is kept; the audio is
+  transcribed in memory and never saved. The UI, notifications, errors and the
+  agent's tool descriptions say "taking notes" or "transcript". (macOS's own
+  permission is named "System Audio Recording"; that name is Apple's.)
 - **It is always visible while recording.** An indicator with Stop shows the
   whole time, and recording stops by itself when the call ends.
 - **Other participants are reminded.** The prompt reminds the user to tell

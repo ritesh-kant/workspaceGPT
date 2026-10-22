@@ -702,7 +702,7 @@ export class SessionsHtmlTemplate {
       const named = n.title && !DEFAULT_NOTE_TITLE.test(n.title);
       const main = named ? n.title : span;
       const length = n.endedAt ? callLength(n.endedAt - n.startedAt) : '';
-      const meta = rec ? 'Recording' : named ? clock(n.startedAt || 0) + (length ? ' · ' + length : '') : length;
+      const meta = rec ? 'Taking notes' : named ? clock(n.startedAt || 0) + (length ? ' · ' + length : '') : length;
       const tip = (n.title || 'Call') + (named ? ' (' + span + ')' : '') + (n.preview ? '\\n' + n.preview : '');
       return '<button class="row note' + (rec ? ' recording' : '') + (n.id === activeNoteId ? ' active' : '') +
         '" type="button" title="' + escapeHtml(tip) + '" data-note-id="' + escapeHtml(n.id) + '">' +

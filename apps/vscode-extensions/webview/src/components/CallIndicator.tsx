@@ -168,7 +168,7 @@ const CallIndicator: React.FC<{
         <div className='call-indicator-body'>
           <strong>Call detected · notes requested</strong>
           <span className='call-indicator-text'>
-            {capability.recordReason ?? 'Taking notes is not available in this build.'} Nothing is being recorded.
+            {capability.recordReason ?? 'Taking notes is not available in this build.'} No notes are being taken.
           </span>
           <div className='call-indicator-actions'>
             <button type='button' className='call-indicator-button' onClick={() => choose('not-this-call')}>
@@ -180,7 +180,7 @@ const CallIndicator: React.FC<{
         <div className='call-indicator-body'>
           <strong>Call detected. Take notes for this call?</strong>
           <span className='call-indicator-text'>
-            Nothing is recorded unless you choose to. If you do, let everyone on the call know. {copyLink}
+            Notes are only taken if you choose to. If you do, let everyone on the call know. {copyLink}
           </span>
           <div className='call-indicator-actions'>
             <button

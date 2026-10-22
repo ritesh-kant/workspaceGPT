@@ -38,7 +38,7 @@ function when(note: CallNote): string {
   const start = new Date(note.startedAt);
   const day = start.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
   const clock = (d: Date) => d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  if (!note.endedAt) return `${day} · ${clock(start)} · recording`;
+  if (!note.endedAt) return `${day} · ${clock(start)} · taking notes`;
   const minutes = Math.max(1, Math.round((note.endedAt - note.startedAt) / 60_000));
   const length = minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
   return `${day} · ${clock(start)} – ${clock(new Date(note.endedAt))} · ${length}`;
@@ -110,7 +110,7 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
           <div className='call-note-actions'>
             {liveHere && liveHere.state !== 'finishing' && (
               <button type='button' className='call-note-button call-note-button--stop' onClick={stop}>
-                Stop recording
+                Stop taking notes
               </button>
             )}
             <button
@@ -150,7 +150,7 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
             {note.notice && <p className='call-note-notice'>{note.notice}</p>}
             {note.turns.length === 0 ? (
               <p className='call-note-empty'>
-                {recording ? 'Listening. Lines appear here every few seconds as they are transcribed.' : 'Nothing was transcribed in this call.'}
+                {recording ? 'Taking notes. Lines appear here every few seconds as they are transcribed.' : 'Nothing was transcribed in this call.'}
               </p>
             ) : (
               <ol className='call-note-transcript'>

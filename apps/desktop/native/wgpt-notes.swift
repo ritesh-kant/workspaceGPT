@@ -422,7 +422,7 @@ final class Recorder {
     } else {
       warn("call-audio-unavailable", "Hearing the other side of the call needs macOS 14.2 or later. Only your side will be transcribed.")
     }
-    if running == 0 { fail("nothing-to-record", "Neither the microphone nor the call's audio could be recorded.") }
+    if running == 0 { fail("nothing-to-record", "Neither the microphone nor the call's audio could be heard.") }
     emit(["type": "state", "state": "recording"])
   }
 

@@ -247,7 +247,7 @@ export async function searchCallNotes(dir: string, args: { query?: unknown; days
   for (const summary of summaries) {
     if (found.length >= MAX_LISTED) break;
     const when = new Date(summary.startedAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const length = summary.endedAt ? `${Math.max(1, Math.round((summary.endedAt - summary.startedAt) / 60_000))} min` : 'still recording';
+    const length = summary.endedAt ? `${Math.max(1, Math.round((summary.endedAt - summary.startedAt) / 60_000))} min` : 'in progress';
     const head = `- ${summary.id}: "${summary.title}", ${when}, ${length}, ${summary.turnCount} turns`;
     if (!words.length) {
       found.push(summary.preview ? `${head}\n  starts: ${summary.preview}` : head);
@@ -267,7 +267,7 @@ export async function searchCallNotes(dir: string, args: { query?: unknown; days
   return {
     ok: true,
     message:
-      'Call notes (transcripts of calls the user recorded; "You" is the user, "Others" everyone else on the call). Read one in full with read_call_note.\n' +
+      'Call notes (transcripts of calls the user took notes of; "You" is the user, "Others" everyone else on the call). Read one in full with read_call_note.\n' +
       found.join('\n'),
   };
 }

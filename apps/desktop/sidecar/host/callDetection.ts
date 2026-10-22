@@ -216,7 +216,7 @@ export function createCallDetection(
               ? 'Taking notes on Windows comes in a later beta. This build only detects calls.'
               : macOld
                 ? 'Taking notes needs macOS 14 or later.'
-                : 'The call-notes recorder is missing from this build.',
+                : 'The call-notes helper is missing from this build.',
         };
   let capability: Extract<CallEvent, { type: 'capability' }> =
     process.platform === 'win32'
