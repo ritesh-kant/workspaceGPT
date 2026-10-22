@@ -84,8 +84,8 @@ export class BitbucketHost implements CodeHost {
         for (const step of steps.values.filter((s) => s.state?.result?.name === 'FAILED').slice(0, 2)) {
           parts.push(`${step.name ?? 'step'}\n${logTail(await (await this.fetch(`${repoPath(repo)}/pipelines/${build}/steps/${encodeURIComponent(step.uuid)}/log`, { headers: { Accept: 'application/octet-stream' } })).text())}`);
         }
-      } catch (e) {
-        parts.push(`(could not read the log of pipeline ${build}: ${e instanceof Error ? e.message : 'unknown error'})`);
+      } catch {
+        /* unreadable: left out — an error message is not a log, and an empty result is "no log" */
       }
     }
     return parts.length ? parts.join('\n\n---\n\n') : undefined;
