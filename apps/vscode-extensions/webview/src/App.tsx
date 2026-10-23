@@ -3393,6 +3393,7 @@ const App: React.FC = () => {
                     <div
                       className={`chat-mode-selector chat-mode-selector--${chatMode}`}
                       data-tooltip={CHAT_MODE_META[chatMode].title}
+                      data-tooltip-align='start'
                     >
                       <SearchableDropdown
                         value={chatMode}

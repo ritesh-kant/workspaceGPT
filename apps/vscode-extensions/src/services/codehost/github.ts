@@ -40,6 +40,11 @@ export class GitHubHost implements CodeHost {
     return { login: user.login, warning };
   }
 
+  /** Whether this credential can read `repo` (a private repo answers 404 to an account outside it). */
+  async canSee(repo: RepoRef): Promise<boolean> {
+    return this.fetch(PRS(repo)).then(() => true, () => false);
+  }
+
   parseRemote(remote: string): RepoRef | undefined {
     const m = /^(?:https?:\/\/(?:[^@/]+@)?|git@|ssh:\/\/git@)([^/:]+)(?::\d+)?[/:]([^/]+)\/(.+?)(?:\.git)?\/?$/.exec(remote.trim());
     return m && m[1].toLowerCase() === this.host ? { owner: m[2], repo: m[3] } : undefined;

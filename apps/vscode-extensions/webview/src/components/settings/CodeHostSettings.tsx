@@ -155,7 +155,7 @@ const CodeHostSettings: React.FC = () => {
 
         {detected && ghAccounts.length > 1 && (
           <div className='form-group'>
-            <label>GitHub account for Home</label>
+            <label>GitHub account</label>
             <select className='settings-select' value={ghAccount ?? ''} onChange={(e) => vscode.postMessage({ type: MESSAGE_TYPES.CODEHOST_SET_GH_ACCOUNT, login: e.target.value })}>
               {ghAccounts.map((login) => (
                 <option key={login} value={login}>
@@ -163,7 +163,7 @@ const CodeHostSettings: React.FC = () => {
                 </option>
               ))}
             </select>
-            <p className='description-text'>Home lists pull requests for this account. Your other repositories and the GitHub CLI's own active account are not changed.</p>
+            <p className='description-text'>Home lists pull requests for this account, and it is tried first for a repository's CI and pull requests; if it can't see the repository, your other signed-in accounts are tried. The GitHub CLI's own active account is not changed.</p>
           </div>
         )}
 

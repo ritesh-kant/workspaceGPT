@@ -41,6 +41,10 @@ function build(conn: CodeHostConnection, token: string): CodeHost {
   }
 }
 
+/** Which `gh` account last read a repo, so a repo behind a non-active account isn't probed on every poll. */
+const repoAccounts = new Map<string, { login: string; at: number }>();
+const REPO_ACCOUNT_TTL_MS = 10 * 60_000;
+
 function originOf(cwd: string): Promise<string> {
   return new Promise((resolve) =>
     execFile('git', ['remote', 'get-url', 'origin'], { cwd, timeout: 5_000, windowsHide: true }, (e, out) => resolve(e ? '' : out.trim())));
@@ -99,7 +103,34 @@ export class CodeHostConnections {
     if (!token) return null;
     const host = new GitHubHost(hostname, token);
     const repo = host.parseRemote(remote);
-    return repo ? { host, repo } : null;
+    if (!repo) return null;
+    return { host: (await this.ghAccountThatSees(hostname, repo)) ?? host, repo };
+  }
+
+  /**
+   * With several `gh` accounts on a host, the one that can read `repo`: the
+   * user's pick first, then gh's other accounts. Undefined with a single
+   * account or when none can see it, so the caller keeps gh's active account
+   * and the host's own error. A repo's account is remembered for a while so
+   * polling doesn't probe on every tick.
+   */
+  private async ghAccountThatSees(hostname: string, repo: RepoRef): Promise<GitHubHost | undefined> {
+    const accounts = (await ghAccounts(hostname)).map((a) => a.login);
+    if (accounts.length < 2) return undefined;
+    const key = `${hostname}/${repo.owner}/${repo.repo}`.toLowerCase();
+    const known = repoAccounts.get(key);
+    const pinned = hostname === GITHUB_COM ? (await this.ghAccountChoice()).selected : undefined;
+    const order = [...new Set([known && Date.now() - known.at < REPO_ACCOUNT_TTL_MS ? known.login : undefined, pinned, ...accounts])].filter((l): l is string => !!l && accounts.includes(l));
+    for (const login of order) {
+      const token = await ghToken(hostname, login);
+      if (!token) continue;
+      const host = new GitHubHost(hostname, token, login);
+      if (await host.canSee(repo)) {
+        repoAccounts.set(key, { login, at: Date.now() });
+        return host;
+      }
+    }
+    return undefined;
   }
 
   /**
