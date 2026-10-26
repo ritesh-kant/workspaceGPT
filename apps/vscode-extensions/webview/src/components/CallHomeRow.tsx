@@ -4,7 +4,6 @@ import { useUiStore } from '../store/uiStore';
 import { callClock } from './CallIndicator';
 import './CallIndicator.css';
 
-const clockTime = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
 /**
  * Call notes on Your work (desktop): the call notes are being taken of, with
@@ -43,22 +42,8 @@ const CallHomeRow: React.FC = () => {
     );
   }
 
-  if (!outcome?.noteId || outcome.error || !outcome.endedAt) return null;
-  const noteId = outcome.noteId;
-  const minutes = outcome.startedAt ? Math.max(1, Math.round((outcome.endedAt - outcome.startedAt) / 60_000)) : undefined;
-  return (
-    <div className='call-home-row'>
-      <span className='call-indicator-dot call-indicator-dot--still' aria-hidden='true' />
-      <strong>Last call notes</strong>
-      <span className='call-home-row-meta'>
-        · {clockTime(outcome.startedAt ?? outcome.endedAt)}
-        {minutes !== undefined && ` · ${minutes} min`}
-      </span>
-      <button type='button' className='call-indicator-link' onClick={() => open(noteId)}>
-        Open notes
-      </button>
-    </div>
-  );
+  // Once the call ends, "From your recent calls" (CallActionsPanel) carries its notes.
+  return null;
 };
 
 export default CallHomeRow;

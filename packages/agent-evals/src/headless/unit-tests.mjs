@@ -47,6 +47,7 @@ const callDetection = await import(path.join(outDir, 'callDetection.mjs'));
 const callRecorderMod = await import(path.join(outDir, 'callRecorder.mjs'));
 const callNotesMod = await import(path.join(outDir, 'callNotes.mjs'));
 const whisperModelMod = await import(path.join(outDir, 'whisperModel.mjs'));
+const callSummaryMod = await import(path.join(outDir, 'callNoteSummary.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -6986,6 +6987,116 @@ process.stdin.resume();
     assert.equal(fs.existsSync(`${m.path}.part`), false);
   });
   delete process.env.FAKE_MODE;
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ═══ Call summaries: parse, skip quiet calls, open action items ═══
+console.log('\ncall summaries');
+{
+  const { parseSummaryReply, summarizeCallNote, readCallSummary, listOpenActions, setActionState, notesNeedingSummary } = callSummaryMod;
+  const { writeCallNote, readCallNote, deleteCallNote } = callNotesMod;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-callsummary-'));
+  const now = Date.now();
+  const talk = (n) => Array.from({ length: n }, (_, i) => ({ speaker: i % 2 ? 'you' : 'others', at: i * 20, text: 'We should check ticket 1563242 before the release goes out on Friday, agreed.' }));
+  const mk = (id, over = {}) => ({ id, title: 'Call on Mon 1 Jan, 10:00', startedAt: now - 3600_000, endedAt: now - 1800_000, status: 'done', turns: talk(8), ...over });
+  const reply = JSON.stringify({
+    title: 'Release check for Friday',
+    tldr: 'Agreed to verify ticket 1563242 before Friday.',
+    decisions: ['Release stays on Friday.'],
+    highlights: ['Release stays on Friday', 'Verify 1563242 first', 'x', 'a fourth is cut'],
+    actions: [
+      { text: 'Verify ticket 1563242', owner: 'you', at: '00:20', ticket: '1563242', dueDate: '2026-10-30' },
+      { text: 'Share the config doc', owner: 'unclear', dueDate: 'next week' },
+      { text: 'Update the runbook', owner: 'other', who: 'Rahul', ticket: '999999' },
+      { text: '', owner: 'you' },
+    ],
+    topics: ['release'],
+  });
+
+  await t('a reply with fences around it parses; an invented ticket id is dropped, an empty action too', () => {
+    const parsed = parseSummaryReply('Here you go:\n```json\n' + reply + '\n```', mk('p1'));
+    assert.equal(parsed.title, 'Release check for Friday');
+    assert.equal(parsed.doc.actions.length, 3);
+    assert.equal(parsed.doc.actions[0].dueDate, '2026-10-30');
+    assert.equal(parsed.doc.actions[1].owner, 'unclear');
+    assert.equal(parsed.doc.actions[1].dueDate, undefined, 'only a calendar date is kept');
+    assert.equal(parsed.doc.highlights.length, 3);
+    assert.equal(parsed.doc.actions[0].ticket, '1563242');
+    assert.equal(parsed.doc.actions[0].at, 20);
+    assert.equal(parsed.doc.actions[2].ticket, undefined, 'not in the transcript');
+    assert.equal(parsed.doc.actions[2].owner, 'other');
+  });
+
+  await t('no usable JSON, or {"empty": true}, is no summary', () => {
+    assert.equal(parseSummaryReply('sorry', mk('p2')), undefined);
+    assert.equal(parseSummaryReply('{"empty": true}', mk('p2')), undefined);
+  });
+
+  await t('a quiet call is skipped without asking the model; a real one is summarized and retitled', async () => {
+    await writeCallNote(dir, mk('2026-10-01-1000-aaaa', { turns: talk(2) }));
+    let calls = 0;
+    const complete = async () => (calls++, reply);
+    const skipped = await summarizeCallNote(dir, '2026-10-01-1000-aaaa', complete);
+    assert.equal(skipped.status, 'skipped');
+    assert.equal(calls, 0);
+    await writeCallNote(dir, mk('2026-10-01-1100-bbbb'));
+    const done = await summarizeCallNote(dir, '2026-10-01-1100-bbbb', complete);
+    assert.equal(done.status, 'done');
+    assert.equal(calls, 1);
+    assert.equal((await readCallNote(dir, '2026-10-01-1100-bbbb')).title, 'Release check for Friday');
+    await summarizeCallNote(dir, '2026-10-01-1100-bbbb', complete);
+    assert.equal(calls, 1, 'already summarized: not asked again');
+    assert.deepEqual((await notesNeedingSummary(dir, 14)).map((n) => n.id), []);
+  });
+
+  await t('a title the user chose is kept', async () => {
+    await writeCallNote(dir, mk('2026-10-01-1200-cccc', { title: 'Standup with Priya' }));
+    await summarizeCallNote(dir, '2026-10-01-1200-cccc', async () => reply);
+    assert.equal((await readCallNote(dir, '2026-10-01-1200-cccc')).title, 'Standup with Priya');
+  });
+
+  await t('a model failure saves nothing, so a later try starts clean', async () => {
+    await writeCallNote(dir, mk('2026-10-01-1300-dddd'));
+    await assert.rejects(() => summarizeCallNote(dir, '2026-10-01-1300-dddd', async () => { throw new Error('no model'); }), /no model/);
+    assert.equal(await readCallSummary(dir, '2026-10-01-1300-dddd'), undefined);
+  });
+
+  await t('open items are the user\'s own; done, dismissed and closed-ticket items drop out', async () => {
+    let open = await listOpenActions(dir, 14);
+    assert.ok(open.actions.length >= 2 && open.actions.every((a) => a.owner === 'you'));
+    assert.ok(open.latest?.tldr);
+    const first = open.actions[0];
+    // An unreadable ticket keeps its item (and is asked again); a closed one clears it.
+    const unreadable = await listOpenActions(dir, 14, async () => undefined);
+    assert.equal(unreadable.actions.length, open.actions.length);
+    const closed = await listOpenActions(dir, 14, async (id) => (id === '1563242' ? 'Closed' : undefined));
+    assert.equal(closed.actions.filter((a) => a.ticket === '1563242').length, 0);
+    await setActionState(dir, first.noteId, first.id, 'done');
+    open = await listOpenActions(dir, 14);
+    assert.ok(!open.actions.some((a) => a.noteId === first.noteId && a.id === first.id));
+  });
+
+  await t('unclear items are suggestions, not tasks, until the user takes them; highlights cite their call', async () => {
+    const open = await listOpenActions(dir, 14);
+    assert.ok(open.suggested.length >= 1 && open.suggested.every((a) => a.owner === 'unclear'));
+    assert.ok(!open.actions.some((a) => a.owner === 'unclear'));
+    assert.ok(open.highlights.length > 0 && open.highlights.length <= 3 && open.highlights.every((h) => h.noteId && h.noteTitle));
+    assert.ok(open.calls >= 1);
+    const s0 = open.suggested[0];
+    await setActionState(dir, s0.noteId, s0.id, 'mine');
+    const after = await listOpenActions(dir, 14);
+    assert.ok(after.actions.some((a) => a.noteId === s0.noteId && a.id === s0.id), 'now the user\'s');
+    assert.ok(!after.suggested.some((a) => a.noteId === s0.noteId && a.id === s0.id));
+  });
+
+  await t('a call older than the window is not listed; deleting a note deletes its summary', async () => {
+    await writeCallNote(dir, mk('2026-09-01-1000-eeee', { startedAt: now - 30 * 86_400_000, endedAt: now - 30 * 86_400_000 + 600_000 }));
+    await summarizeCallNote(dir, '2026-09-01-1000-eeee', async () => reply);
+    assert.ok(!(await listOpenActions(dir, 14)).actions.some((a) => a.noteId === '2026-09-01-1000-eeee'));
+    await deleteCallNote(dir, '2026-09-01-1000-eeee');
+    assert.equal(await readCallSummary(dir, '2026-09-01-1000-eeee'), undefined);
+  });
+
   fs.rmSync(dir, { recursive: true, force: true });
 }
 

@@ -16,6 +16,8 @@ import {
 } from './utils/chatMaximizeLayout';
 import { SessionsViewProvider } from './sessionsViewProvider';
 import { callNotesDir, deleteCallNote, readCallNote } from './services/callNotes';
+import { readCallSummary } from './services/callNoteSummary';
+import { handleCallNoteMessage } from './services/callNoteActions';
 
 const SNAPSHOT_TIMEOUT_MS = 1500;
 
@@ -362,7 +364,16 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     }
     if (data?.type === MESSAGE_TYPES.GET_CALL_NOTE) {
       const note = await readCallNote(callNotesDir(this._context.globalStorageUri.fsPath), data.id);
-      await this.hub.postTo(surface, { type: MESSAGE_TYPES.CALL_NOTE, id: data.id, note: note ?? null });
+      const summary = note ? await readCallSummary(callNotesDir(this._context.globalStorageUri.fsPath), note.id) : undefined;
+      await this.hub.postTo(surface, { type: MESSAGE_TYPES.CALL_NOTE, id: data.id, note: note ?? null, summary: summary ?? null });
+      return;
+    }
+    if (
+      data?.type === MESSAGE_TYPES.GET_CALL_ACTIONS ||
+      data?.type === MESSAGE_TYPES.SET_CALL_ACTION ||
+      data?.type === MESSAGE_TYPES.SUMMARIZE_CALL_NOTE
+    ) {
+      await handleCallNoteMessage(this._context, data, async (message) => void (await this.hub.postTo(surface, message)), () => void this.sessionsView?.refresh());
       return;
     }
     if (data?.type === MESSAGE_TYPES.DELETE_CALL_NOTE) {

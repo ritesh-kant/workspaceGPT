@@ -72,13 +72,9 @@ html[data-wgpt-desktop="chat"] .input-container--question {
   background-color: var(--wgpt-d-card);
   box-shadow: var(--wgpt-d-shadow);
 }
-/* New-chat folder + branch chips: above the composer, in its column. */
-html[data-wgpt-desktop="chat"] .workspace-controls {
-  margin: 0 var(--wgpt-gutter) 10px;
-}
-html[data-wgpt-desktop="chat"] .workspace-chip {
-  background-color: var(--wgpt-d-card);
-  border-color: var(--wgpt-d-border-strong);
+html[data-wgpt-desktop="chat"] .workspace-project-selector .workspace-chip {
+  background: transparent;
+  border-color: transparent;
 }
 html[data-wgpt-desktop="chat"] .composer-card:focus-within {
   transform: none;

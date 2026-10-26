@@ -48,6 +48,8 @@ interface SearchableDropdownProps {
   emptyLabel?: string;
   /** A quiet row under the list that runs a command rather than picking a value. */
   footer?: { label: string; onClick: () => void };
+  /** Additional controls below the options, inside the same popover. */
+  menuContent?: React.ReactNode;
   /**
    * Multi-select: `value` is a comma-joined list, a pick toggles its row and
    * the menu stays open. `exclusiveValue` (e.g. 'Auto') is the "no narrowing"
@@ -76,6 +78,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   clearLabel = '-- Clear selection --',
   emptyLabel = 'No matches found...',
   footer,
+  menuContent,
   multiple = false,
   exclusiveValue,
 }) => {
@@ -217,7 +220,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
         className={`searchable-dropdown-trigger${disabled ? ' disabled' : ''}`}
         role="button"
         tabIndex={disabled ? -1 : 0}
-        aria-haspopup="listbox"
+        aria-haspopup={menuContent ? "dialog" : "listbox"}
         aria-expanded={isOpen}
         aria-disabled={disabled}
       >
@@ -238,7 +241,8 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
       {isOpen && !disabled && (
         <div
           className="searchable-dropdown-menu"
-          role="listbox"
+          role={menuContent ? "dialog" : "listbox"}
+          aria-label={menuContent ? "Model and reasoning effort" : undefined}
           ref={menuRef}
           tabIndex={-1}
           onKeyDown={handleMenuKeyDown}
@@ -254,7 +258,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
               onClick={(e) => e.stopPropagation()}
             />
           )}
-          <ul className="searchable-dropdown-list">
+          <ul className="searchable-dropdown-list" role={menuContent ? 'listbox' : undefined} aria-label={menuContent ? 'Models' : undefined}>
             {clearable && (
               <li
                 onClick={() => choose('')}
@@ -321,6 +325,14 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
             })}
             {filtered.length === 0 && <li className="searchable-dropdown-empty">{emptyLabel}</li>}
           </ul>
+          {menuContent && (
+            <div className="searchable-dropdown-content" onKeyDown={(event) => {
+              // Native controls own their arrow/Enter keys; Escape still closes the menu.
+              if (event.key !== 'Escape') event.stopPropagation();
+            }}>
+              {menuContent}
+            </div>
+          )}
           {footer && (
             <button
               type="button"

@@ -10,6 +10,7 @@ import { HOME_ACTIVITY_MESSAGES } from '../../../src/services/home/types';
 import type { HomeActivity, HomeMention, HomePullRequest } from '../../../src/services/home/types';
 import './WorkHome.css';
 import CallHomeRow from './CallHomeRow';
+import CallActionsPanel from './CallActionsPanel';
 
 interface Props {
   items: WorkItemSummary[];
@@ -94,6 +95,15 @@ export default function WorkHome(props: Props) {
   const overview = useRef<HTMLDivElement>(null);
   const [sideFit, setSideFit] = useState(2);
   const [size, setSize] = useState({ height: 360, width: 900 });
+  // The call panel below the board takes the board's spare height; the row fit below must follow.
+  const [boardHeight, setBoardHeight] = useState(0);
+  useEffect(() => {
+    const element = overview.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => setBoardHeight(Math.round(entry.contentRect.height)));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [layout]);
   const [dialog, setDialog] = useState<Tab | 'connect' | 'github' | WorkItemSummary | null>(null);
   const hostConnected = useCodeHostConnected();
   const [page, setPage] = useState(0);
@@ -186,7 +196,7 @@ export default function WorkHome(props: Props) {
   // Pull requests and mentions show two rows each when they fit. When they would spill out of the board, mentions
   // drop to one row first, then pull requests. Start from two again whenever the space or the content changes;
   // the check below steps down before paint.
-  useLayoutEffect(() => { setSideFit(2); }, [size.height, size.width, layout, filter, prTab, activity, homeMentions.length, props.error, narrow]);
+  useLayoutEffect(() => { setSideFit(2); }, [size.height, size.width, boardHeight, layout, filter, prTab, activity, homeMentions.length, props.error, narrow]);
   useLayoutEffect(() => {
     const board = overview.current;
     if (sideFit < 1 || !board) return;
@@ -289,7 +299,7 @@ export default function WorkHome(props: Props) {
     <p className='work-home-intro'>{tracker || confluence ? 'Pick up a ticket. Move a review forward.' : 'Connect your Knowledge to bring your work here.'}</p>
     <CallHomeRow />
     {(layout === 'inbox' || narrow) && <div className='work-home-filters' role='group' aria-label='Work categories'>{(['all', 'tickets', 'prs', 'mentions'] as const).filter((tab) => !narrow || layout === 'inbox' || tab !== 'all').map((tab) => <button type='button' key={tab} aria-pressed={filter === tab} className={filter === tab ? 'is-active' : ''} onClick={() => setFilter(tab)}>{tab === 'all' ? 'Overview' : tab === 'tickets' ? tracker ? `Tickets · ${ticketItems.length}` : 'Tickets' : tab === 'prs' ? tracker ? `PRs · ${activity.pullRequests.items.length}` : 'PRs' : tracker || confluence ? `Mentions · ${unreadMentions}` : 'Mentions'}</button>)}</div>}
-    {layout === 'board' ? <div className='work-home-board' ref={overview}>{(!narrow || filter === 'tickets' || filter === 'all') && ticketSection}{(!narrow || filter === 'prs') && prSection}{(!narrow || filter === 'mentions') && mentionsSection}</div> : <div className='work-home-inbox' ref={overview}>{entries.length ? entries.slice(0, inboxLimit).map(renderEntry) : !tracker && !confluence ? <div className='work-home-inbox-setup'>{skeleton(2)}<p className='work-home-empty'>Your tickets, PR reviews, and mentions will appear here.</p><button className='work-home-link' type='button' onClick={() => setDialog('connect')}>Choose your Knowledge sources →</button></div> : <p className='work-home-empty' role='status'>{pending.length ? 'Loading recent work…' : 'No items in this view.'}</p>}{entries.length > inboxLimit && <button className='work-home-link work-home-more' type='button' onClick={() => openList(filter === 'all' ? 'tickets' : filter)}>View {filter === 'all' ? 'all tickets' : `all ${entries.length} items`} →</button>}</div>}
+    {layout === 'board' ? <div className='work-home-board' ref={overview}>{(!narrow || filter === 'tickets' || filter === 'all') && <div className='work-home-left'>{ticketSection}<CallActionsPanel /></div>}{(!narrow || filter === 'prs') && prSection}{(!narrow || filter === 'mentions') && mentionsSection}</div> : <div className='work-home-inbox' ref={overview}>{entries.length ? entries.slice(0, inboxLimit).map(renderEntry) : !tracker && !confluence ? <div className='work-home-inbox-setup'>{skeleton(2)}<p className='work-home-empty'>Your tickets, PR reviews, and mentions will appear here.</p><button className='work-home-link' type='button' onClick={() => setDialog('connect')}>Choose your Knowledge sources →</button></div> : <p className='work-home-empty' role='status'>{pending.length ? 'Loading recent work…' : 'No items in this view.'}</p>}{entries.length > inboxLimit && <button className='work-home-link work-home-more' type='button' onClick={() => openList(filter === 'all' ? 'tickets' : filter)}>View {filter === 'all' ? 'all tickets' : `all ${entries.length} items`} →</button>}</div>}
     {sourcesNeedAttention && <footer className='work-home-footer'>
       <div className='work-home-sources'>
         <button className='work-home-link' type='button' onClick={() => props.onOpenSettings('knowledge')}>Knowledge</button>

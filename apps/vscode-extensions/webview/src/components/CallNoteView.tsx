@@ -25,6 +25,14 @@ interface CallNote {
   turns: CallNoteTurn[];
 }
 
+interface CallSummary {
+  status: 'done' | 'skipped';
+  tldr?: string;
+  decisions: string[];
+  actions: { id: string; text: string; owner: 'you' | 'other'; who?: string; due?: string; at?: number; state?: 'done' | 'dismissed' }[];
+  topics: string[];
+}
+
 const REFRESH_MS = 4000;
 
 function offset(seconds: number): string {
@@ -56,6 +64,11 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
   // undefined: still loading; null: no such note (deleted, or never was).
   const [note, setNote] = useState<CallNote | null | undefined>(undefined);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // undefined: not asked yet; null: none yet.
+  const [summary, setSummary] = useState<CallSummary | null | undefined>(undefined);
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | undefined>();
+  const [showTranscript, setShowTranscript] = useState(false);
   // The desktop's recording state: while this note is the one being recorded, Stop is here
   // (the floating indicator steps aside for this view).
   const { recording: live, stop } = useCallDetection({ control: false });
@@ -64,9 +77,20 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
   useEffect(() => {
     setNote(undefined);
     setConfirmDelete(false);
+    setSummary(undefined);
+    setSummarizing(false);
+    setSummaryError(undefined);
+    setShowTranscript(false);
     const onMessage = (e: MessageEvent) => {
       const msg = e.data;
-      if (msg?.type === MESSAGE_TYPES.CALL_NOTE && msg.id === noteId) setNote(msg.note ?? null);
+      if (msg?.type === MESSAGE_TYPES.CALL_NOTE && msg.id === noteId) {
+        setNote(msg.note ?? null);
+        setSummary(msg.summary ?? null);
+      } else if (msg?.type === MESSAGE_TYPES.CALL_SUMMARY && msg.id === noteId) {
+        setSummary(msg.summary ?? null);
+        setSummarizing(!!msg.summarizing);
+        setSummaryError(typeof msg.error === 'string' ? msg.error : undefined);
+      }
     };
     window.addEventListener('message', onMessage);
     vscode.postMessage({ type: MESSAGE_TYPES.GET_CALL_NOTE, id: noteId });
@@ -83,6 +107,19 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
     const timer = setInterval(() => vscode.postMessage({ type: MESSAGE_TYPES.GET_CALL_NOTE, id: noteId }), REFRESH_MS);
     return () => clearInterval(timer);
   }, [recording, noteId]);
+
+  const summarize = (force = false) => vscode.postMessage({ type: MESSAGE_TYPES.SUMMARIZE_CALL_NOTE, id: noteId, force });
+  // A finished call with something said and no summary yet: make one (once per opening).
+  const asked = React.useRef('');
+  useEffect(() => {
+    if (note?.status !== 'done' || note.turns.length === 0 || summary !== null || asked.current === noteId) return;
+    asked.current = noteId;
+    summarize();
+  }, [note?.status, note?.turns.length, summary, noteId]);
+  const markAction = (id: string, state: 'done' | 'open') => {
+    setSummary((s) => (s ? { ...s, actions: s.actions.map((a) => (a.id === id ? { ...a, state: state === 'open' ? undefined : state } : a)) } : s));
+    vscode.postMessage({ type: MESSAGE_TYPES.SET_CALL_ACTION, noteId, actionId: id, state });
+  };
 
   const remove = () => {
     vscode.postMessage({ type: MESSAGE_TYPES.DELETE_CALL_NOTE, id: noteId });
@@ -148,11 +185,70 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
         ) : (
           <>
             {note.notice && <p className='call-note-notice'>{note.notice}</p>}
+            {summarizing && !summary?.tldr && <p className='call-note-empty'>Summarizing this call…</p>}
+            {summaryError && (
+              <p className='call-note-notice'>
+                {summaryError}{' '}
+                <button type='button' className='call-note-link' onClick={() => summarize()}>
+                  Try again
+                </button>
+              </p>
+            )}
+            {summary?.status === 'done' && (
+              <section className='call-note-summary'>
+                {summary.tldr && <p className='call-note-tldr'>{summary.tldr}</p>}
+                {summary.decisions.length > 0 && (
+                  <>
+                    <h3>Decisions</h3>
+                    <ul>
+                      {summary.decisions.map((d, i) => (
+                        <li key={i}>{d}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {summary.actions.length > 0 && (
+                  <>
+                    <h3>Action items</h3>
+                    <ul className='call-note-actions-list'>
+                      {summary.actions.map((a) => (
+                        <li key={a.id} className={a.state ? 'is-done' : ''}>
+                          {a.owner === 'you' ? (
+                            <input type='checkbox' checked={a.state === 'done'} onChange={() => markAction(a.id, a.state === 'done' ? 'open' : 'done')} aria-label={`Done: ${a.text}`} />
+                          ) : (
+                            <span className='call-note-owner' aria-hidden='true' />
+                          )}
+                          <span>
+                            {a.text}
+                            <small>
+                              {a.owner === 'you' ? 'You' : a.who || 'Someone else'}
+                              {a.due && ` · due ${a.due}`}
+                              {a.at !== undefined && ` · ${offset(a.at)}`}
+                            </small>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                <p className='call-note-summary-foot'>
+                  Written by the model from the transcript below; check anything that matters.{' '}
+                  <button type='button' className='call-note-link' onClick={() => summarize(true)} disabled={summarizing}>
+                    Regenerate
+                  </button>
+                </p>
+              </section>
+            )}
+            {summary?.status === 'done' && note.turns.length > 0 && (
+              <button type='button' className='call-note-link call-note-transcript-toggle' onClick={() => setShowTranscript(!showTranscript)} aria-expanded={showTranscript}>
+                {showTranscript ? 'Hide transcript' : `Show transcript (${note.turns.length} lines)`}
+              </button>
+            )}
             {note.turns.length === 0 ? (
               <p className='call-note-empty'>
                 {recording ? 'Taking notes. Lines appear here every few seconds as they are transcribed.' : 'Nothing was transcribed in this call.'}
               </p>
-            ) : (
+            ) : summary?.status === 'done' && !showTranscript ? null : (
               <ol className='call-note-transcript'>
                 {[...note.turns]
                   .sort((a, b) => a.at - b.at)

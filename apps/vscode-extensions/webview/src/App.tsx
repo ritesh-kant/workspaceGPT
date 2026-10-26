@@ -23,7 +23,8 @@ import CallNoteView from './components/CallNoteView';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
 import CiChip from './components/CiChip';
-import WorkspaceControls from './components/WorkspaceControls';
+import EffortMenu from './components/EffortMenu';
+import { useWorkspaceControls } from './components/WorkspaceControls';
 import FolderSwitchDialog from './components/FolderSwitchDialog';
 import { folderName, sameFolder, useWorkspaceFolders } from './hooks/useWorkspaceFolders';
 import UsageLimitBar from './components/UsageLimitBar';
@@ -2749,6 +2750,10 @@ const App: React.FC = () => {
   // the connect-your-docs tip, the composer's context and autonomy pickers —
   // has nothing to offer and is left out.
   const isWorkMode = assistantMode === 'work';
+  const { projectControl, workspaceSettings } = useWorkspaceControls({
+    enabled: isWorkMode && isDesktopHost() && messages.length === 0 && hasWorkspaceFolder !== null,
+    busy: allRunningSessionIds.size > 0,
+  });
   const showWorkHome = isDesktopHost() && isWorkMode && showTips && messages.length === 0;
   // On the empty Work home the composer carries the tip, as a prompt to try.
   const askPlaceholder = !showWorkHome || !isTrackerConnected ? 'Ask WorkspaceGPT...'
@@ -3119,9 +3124,6 @@ const App: React.FC = () => {
             </div>
           </div>
         )}
-        {isWorkMode && isDesktopHost() && messages.length === 0 && hasWorkspaceFolder !== null && (
-          <WorkspaceControls busy={allRunningSessionIds.size > 0} />
-        )}
         <div className='composer-status-bars'>
           {undoNotice && (
             <div className='composer-run-status' role='status'>
@@ -3152,7 +3154,7 @@ const App: React.FC = () => {
           {mode === 'remote' && remoteSignedIn && remoteUsage && (
             <UsageLimitBar used={remoteUsage.used} limit={remoteUsage.limit} />
           )}
-          {isWorkMode && hasWorkspaceFolder && <GitStatusBar />}
+          {isWorkMode && hasWorkspaceFolder && <GitStatusBar compact={isDesktopHost() && messages.length === 0} />}
           {isWorkMode && hasWorkspaceFolder && <CiChip onFixNow={fixCiNow} />}
         </div>
         <div
@@ -3366,6 +3368,7 @@ const App: React.FC = () => {
                   debugOn={debugOn}
                   onToggleDebug={isWorkMode ? () => setDebugOn((on) => !on) : undefined}
                 />
+                {projectControl}
                 <button
                   type='button'
                   className='mode-chip'
@@ -3435,15 +3438,24 @@ const App: React.FC = () => {
                   </>
                 )}
               </div>
-              {/* Bottom-right, under the card: model, effort, then the context indicator. */}
+              {/* Model includes effort; workspace settings holds branch and worktree. */}
               <div className='input-selectors-right'>
                 {mode === 'local' && (
                   <div className='model-selector-bottom'>
                     <SearchableDropdown
                       value={`model:${selectedModelProvider?.selectedModel ?? ''}`}
+                      menuContent={effortLevels.length > 0 ? (
+                        <EffortMenu
+                          value={selectedModelProvider.reasoningEffort ?? ''}
+                          levels={effortLevels}
+                          onChange={(value) => setReasoningEffort(value || undefined)}
+                        />
+                      ) : undefined}
                       searchPlaceholder='Search models...'
                       emptyLabel='No matching models'
-                      triggerLabel={selectedModelProvider?.selectedModel || 'Select Model'}
+                      triggerLabel={`${selectedModelProvider?.selectedModel || 'Select Model'}${effortLevels.length > 0
+                        ? ` · ${selectedModelProvider.reasoningEffort ? effortLabel(selectedModelProvider.reasoningEffort) : 'Default'}`
+                        : ''}`}
                       onChange={(value) => {
                         if (value === 'selectModel' || value === 'none') {
                           setActiveView('settings');
@@ -3484,23 +3496,7 @@ const App: React.FC = () => {
                     />
                   </div>
                 )}
-                {/* Only providers the effort is sent to offer levels (see effortLevelsFor). */}
-                {mode === 'local' && effortLevels.length > 0 && (
-                  <div
-                    className='model-selector-bottom effort-selector-bottom'
-                    data-tooltip='How long the model thinks before it answers. Higher is slower and uses more tokens.'
-                  >
-                    <SearchableDropdown
-                      value={selectedModelProvider.reasoningEffort ?? ''}
-                      searchable={false}
-                      onChange={(value) => setReasoningEffort(value || undefined)}
-                      options={[
-                        { value: '', label: 'Default effort' },
-                        ...effortLevels.map((level) => ({ value: level, label: `${effortLabel(level)} effort` })),
-                      ]}
-                    />
-                  </div>
-                )}
+                {workspaceSettings}
                 <ContextMeter
                   usage={contextUsage}
                   modelId={mode === 'local' ? selectedModelProvider?.selectedModel : 'glm-5.3-flash'}

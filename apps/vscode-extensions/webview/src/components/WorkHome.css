@@ -21,6 +21,8 @@
 .work-home-refresh { background: transparent; border: 0; color: var(--vscode-descriptionForeground); padding: 3px 5px; font-size: 21px; }
 .work-home-board { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); gap: 18px 26px; align-content: start; min-height: 0; flex: 1; }
 .work-home-tickets { grid-column: 1; grid-row: 1 / 3; }
+.work-home-left { grid-column: 1; grid-row: 1 / 3; min-width: 0; }
+.work-home-left > .work-home-tickets { grid-column: auto; grid-row: auto; }
 .work-home-prs { grid-column: 2; grid-row: 1; }
 .work-home-mentions { grid-column: 2; grid-row: 2; }
 .work-home-section-head { padding-bottom: 8px; border-bottom: 1px solid var(--wgpt-border); min-height: 27px; }

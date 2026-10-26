@@ -4,7 +4,7 @@ import { MESSAGE_TYPES } from '../constants';
 import { useGitStatusStore } from '../store/gitStatusStore';
 
 /**
- * Folder and branch chips under the composer on the new-chat screen (desktop
+ * Project selector and workspace settings in the composer footer (desktop
  * only — in VS Code the editor owns both). The folder chip lists the folders
  * this app has opened, takes a typed path, or opens the system picker; the
  * branch chip checks out a local branch or creates one. The host refuses both
@@ -175,9 +175,10 @@ export const looksLikePath = (s: string) => /^(~|\/|[a-zA-Z]:[\\/]|\\\\)/.test(s
 interface WorkspaceControlsProps {
   /** A chat is running somewhere: switching now would change the files under it. */
   busy: boolean;
+  enabled: boolean;
 }
 
-const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
+export const useWorkspaceControls = ({ busy, enabled }: WorkspaceControlsProps) => {
   const status = useGitStatusStore((s) => s.status);
   const [current, setCurrent] = useState('');
   const [recent, setRecent] = useState<string[]>([]);
@@ -187,8 +188,23 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
   const [error, setError] = useState<string | null>(null);
   const [closeSignal, setCloseSignal] = useState(0);
   const [useWorktree, setUseWorktree] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    if (!settingsOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (!settingsRef.current?.contains(event.target as Node)) setSettingsOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [settingsOpen]);
+
+  useEffect(() => setSettingsOpen(false), [closeSignal, enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
     const vscode = VSCodeAPI();
     const onMessage = (event: MessageEvent) => {
       const m = event.data;
@@ -215,7 +231,7 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
     window.addEventListener('message', onMessage);
     vscode.postMessage({ type: MESSAGE_TYPES.GET_RECENT_FOLDERS });
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [enabled]);
 
   const tilde = (p: string) => (home && p.startsWith(home) ? `~${p.slice(home.length)}` : p);
   const send = (action: string, message: Record<string, unknown>) => {
@@ -278,63 +294,92 @@ const WorkspaceControls: React.FC<WorkspaceControlsProps> = ({ busy }) => {
   const busyTitle = 'Wait for the running chat to finish';
   const disabled = busy || pending !== null;
 
-  return (
-    <div className='workspace-controls'>
-      <div className='workspace-controls-row'>
-        <ChipMenu
-          icon={<FolderIcon />}
-          label={pending === 'set-folder' ? 'Opening…' : current ? baseName(current) : 'Open a folder'}
-          title={current ? tilde(current) : 'Pick the folder the agent works in'}
-          disabled={pending !== null}
-          searchPlaceholder='Search folders, or type a path'
-          rows={folderRows}
-          emptyLabel='No folders yet. Type a path or use Open folder…'
-          footer={{ label: 'Open folder…', onClick: () => openFolder(undefined) }}
-          onOpen={() => {
-            setError(null);
-            VSCodeAPI().postMessage({ type: MESSAGE_TYPES.GET_RECENT_FOLDERS });
-          }}
-          closeSignal={closeSignal}
-        />
-        {status?.isRepo && (
-          <ChipMenu
-            icon={<BranchIcon />}
-            label={pending === 'switch-branch' ? 'Switching…' : pending === 'open-folder' ? 'Opening…' : status.branch || 'detached'}
-            title={busy ? busyTitle : `Branch: ${status.branch || 'detached HEAD'}`}
-            disabled={disabled}
-            searchPlaceholder='Search or create a branch'
-            rows={branchRows}
-            emptyLabel={branches === null ? 'Loading…' : 'No branches'}
-            onOpen={() => {
-              setError(null);
-              setBranches(null);
-              VSCodeAPI().postMessage({ type: MESSAGE_TYPES.LIST_GIT_BRANCHES });
-            }}
-            closeSignal={closeSignal}
-          />
-        )}
-        {status?.isRepo && (
-          <label
-            className='workspace-worktree-toggle'
-            title='Pick or create a branch in its own git worktree, so this folder is left as it is'
-          >
-            <input
-              type='checkbox'
-              checked={useWorktree}
-              disabled={disabled}
-              onChange={(e) => setUseWorktree(e.target.checked)}
-            />
-            worktree
-          </label>
-        )}
-      </div>
-      {error && (
-        <div className='workspace-controls-error' role='alert'>
-          {error}
+  const project = enabled ? (
+    <div className='workspace-project-selector'>
+      <ChipMenu
+        icon={<FolderIcon />}
+        label={pending === 'set-folder' ? 'Opening…' : current ? baseName(current) : 'Open a folder'}
+        title={current ? tilde(current) : 'Pick the folder the agent works in'}
+        disabled={pending !== null}
+        searchPlaceholder='Search folders, or type a path'
+        rows={folderRows}
+        emptyLabel='No folders yet. Type a path or use Open folder…'
+        footer={{ label: 'Open folder…', onClick: () => openFolder(undefined) }}
+        onOpen={() => {
+          setError(null);
+          VSCodeAPI().postMessage({ type: MESSAGE_TYPES.GET_RECENT_FOLDERS });
+        }}
+        closeSignal={closeSignal}
+      />
+    </div>
+  ) : null;
+
+  const settings = enabled ? (
+    <div className='workspace-settings' ref={settingsRef} onKeyDown={(event) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        setSettingsOpen(false);
+        settingsButtonRef.current?.focus();
+      }
+    }}>
+      <button
+        ref={settingsButtonRef}
+        type='button'
+        className='workspace-settings-trigger'
+        title='Workspace settings'
+        aria-label='Workspace settings'
+        aria-haspopup='dialog'
+        aria-expanded={settingsOpen}
+        onClick={() => setSettingsOpen((open) => !open)}
+      >
+        <svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='1.7' aria-hidden='true'>
+          <path d='m9 3-.6 2.4-2 .9L4.1 5.5 2 9.1l1.8 1.7v2.4L2 14.9l2.1 3.6 2.3-.8 2 .9L9 21h6l.6-2.4 2-.9 2.3.8 2.1-3.6-1.8-1.7v-2.4L22 9.1l-2.1-3.6-2.3.8-2-.9L15 3z' />
+          <circle cx='12' cy='12' r='3' />
+        </svg>
+      </button>
+      {settingsOpen && (
+        <div className='workspace-settings-menu' role='dialog' aria-label='Workspace settings'>
+          <h3>Workspace settings</h3>
+          {status?.isRepo ? (
+            <>
+              <label className='workspace-settings-row'>
+                <span>New worktree</span>
+                <input
+                  type='checkbox'
+                  role='switch'
+                  checked={useWorktree}
+                  disabled={disabled}
+                  onChange={(event) => setUseWorktree(event.target.checked)}
+                  title='Pick or create a branch in its own worktree; uncommitted changes stay here'
+                />
+              </label>
+              <div className='workspace-settings-row workspace-settings-branch'>
+                <span>Branch</span>
+                <ChipMenu
+                  icon={<BranchIcon />}
+                  label={pending === 'switch-branch' ? 'Switching…' : pending === 'open-folder' ? 'Opening…' : status.branch || 'detached'}
+                  title={busy ? busyTitle : `Branch: ${status.branch || 'detached HEAD'}`}
+                  disabled={disabled}
+                  searchPlaceholder='Search or create a branch'
+                  rows={branchRows}
+                  emptyLabel={branches === null ? 'Loading…' : 'No branches'}
+                  onOpen={() => {
+                    setError(null);
+                    setBranches(null);
+                    VSCodeAPI().postMessage({ type: MESSAGE_TYPES.LIST_GIT_BRANCHES });
+                  }}
+                  closeSignal={closeSignal}
+                />
+              </div>
+              <p>Applies to this project</p>
+            </>
+          ) : <p>Open a Git repository to configure branches and worktrees.</p>}
+          {error && <div className='workspace-controls-error' role='alert'>{error}</div>}
         </div>
       )}
+      {error && !settingsOpen && <div className='workspace-settings-error' role='alert'>{error}</div>}
     </div>
-  );
-};
+  ) : null;
 
-export default WorkspaceControls;
+  return { projectControl: project, workspaceSettings: settings };
+};

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ConfluenceService, ConfluenceConfig } from './confluenceService';
-import { ConfluenceAuthService } from './confluenceAuthService';
+import { ConfluenceAuthService, ConfluenceAuthExpiredError } from './confluenceAuthService';
 import { ConfluenceEmbeddingService } from './confluenceEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
@@ -244,8 +244,8 @@ export class ConfluenceSyncScheduler {
    * webview open, so a console.error here is invisible and the user has no idea
    * their content has stopped syncing until they notice stale search results. */
   private notifyIfAuthFailure(error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/refresh access token|refresh_token|not authenticated with confluence/i.test(message)) {
+    // Only a dead token warrants this; network errors and 5xx are retried next tick.
+    if (!(error instanceof ConfluenceAuthExpiredError)) {
       return;
     }
     if (this.authFailureNotified) {

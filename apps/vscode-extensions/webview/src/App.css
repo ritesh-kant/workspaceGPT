@@ -2177,11 +2177,6 @@ button:disabled {
   flex-shrink: 1;
 }
 
-/* A short label ("High effort"); the model name beside it is what ellipsizes. */
-.effort-selector-bottom {
-  flex-shrink: 0;
-}
-
 /* SearchableDropdown replaces the native <select> here — the popup portion
    of a native select is drawn entirely by the OS and looks inconsistent
    across platforms (plain, unthemed list on Windows vs. a rounded native
@@ -2623,19 +2618,224 @@ button:disabled {
   display: none;
 }
 
-/* New-chat folder + branch chips above the composer (WorkspaceControls.tsx, desktop only). */
-.workspace-controls {
-  margin: 0.25rem 0.5rem 0.35rem;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+/* Project and workspace settings share the composer's compact footer. */
+.workspace-project-selector {
+  min-width: 0;
+  flex: 0 1 180px;
 }
 
-.workspace-controls-row {
+.workspace-project-selector .workspace-chip {
+  height: 24px;
+  padding: 0 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.75rem;
+}
+
+.workspace-project-selector .workspace-chip::after {
+  content: '▾';
+  flex-shrink: 0;
+  font-size: 0.65rem;
+}
+
+.workspace-settings {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.workspace-settings-trigger {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.workspace-settings-trigger:hover,
+.workspace-settings-trigger[aria-expanded='true'] {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.workspace-settings-trigger:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.workspace-settings-menu,
+.workspace-settings-error {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 1000;
+  box-sizing: border-box;
+  width: min(340px, calc(100vw - 24px));
+  padding: 12px;
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, var(--vscode-dropdown-background));
+  box-shadow: 0 4px 16px var(--vscode-widget-shadow, #0005);
+  color: var(--vscode-foreground);
+  font-size: 0.8rem;
+}
+
+.workspace-settings-menu h3 {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.workspace-settings-menu p {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--wgpt-border, var(--vscode-panel-border));
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.72rem;
+}
+
+.workspace-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+}
+
+.workspace-settings-row > span {
+  flex-shrink: 0;
+}
+
+.workspace-settings-row input[role='switch'] {
+  appearance: none;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 18px;
+  border: 1px solid var(--vscode-descriptionForeground);
+  border-radius: 12px;
+  padding: 2px;
+  margin: 0;
+  background: var(--vscode-input-background);
+  cursor: pointer;
+}
+
+.workspace-settings-row input[role='switch']::before {
+  content: '';
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--vscode-foreground);
+}
+
+.workspace-settings-row input[role='switch']:checked {
+  background: var(--vscode-button-background);
+}
+
+.workspace-settings-row input[role='switch']:checked::before {
+  transform: translateX(12px);
+  background: var(--vscode-button-foreground);
+}
+
+.workspace-settings-row input[role='switch']:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.workspace-settings-branch .workspace-chip {
+  height: 26px;
+  padding: 0 6px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 0.75rem;
+}
+
+.workspace-settings-branch .workspace-chip-container .workspace-chip-menu {
+  left: auto;
+  right: 0;
+  min-width: min(240px, calc(100vw - 48px));
+}
+
+.workspace-settings-error {
+  color: var(--vscode-errorForeground);
+}
+
+.model-selector-bottom .searchable-dropdown-menu {
+  left: auto;
+  right: 0;
+}
+
+.model-effort-menu {
+  border-top: 1px solid var(--wgpt-border, var(--vscode-panel-border));
+  margin: 4px 0;
+  padding: 4px;
+}
+
+.model-effort-trigger,
+.model-effort-submenu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-effort-trigger:hover,
+.model-effort-trigger[aria-expanded='true'],
+.model-effort-submenu button:hover,
+.model-effort-submenu button:focus-visible {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.model-effort-value {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground);
+}
+
+.model-effort-submenu {
+  position: fixed;
+  z-index: 1001;
+  box-sizing: border-box;
+  width: min(300px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, var(--vscode-dropdown-background));
+  box-shadow: 0 4px 16px var(--vscode-widget-shadow, #0005);
+}
+
+.model-effort-submenu p {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.model-effort-check {
+  margin-left: auto;
+  color: var(--vscode-textLink-foreground);
+}
+
+@media (max-width: 480px) {
+  .input-controls { flex-wrap: wrap; }
+  .input-controls .input-selectors { flex-basis: 100%; flex-wrap: nowrap; }
+  .workspace-project-selector { flex-basis: 120px; }
+  .input-selectors-right { margin-left: auto; }
 }
 
 .workspace-chip-container {
@@ -4562,7 +4762,7 @@ button:disabled {
   opacity: 0.8;
 }
 
-/* Bottom-right of the composer, beneath the card: model, effort, context indicator. */
+/* Bottom-right: model (including effort), workspace settings, context indicator. */
 .input-selectors-right {
   display: flex;
   align-items: center;

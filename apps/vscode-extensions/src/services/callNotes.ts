@@ -203,6 +203,8 @@ export async function deleteCallNote(dir: string, id: unknown): Promise<boolean>
   if (!isCallNoteId(id)) return false;
   try {
     await fsp.unlink(path.join(dir, `${id}.md`));
+    // Its summary (callNoteSummary.ts) goes with it.
+    await fsp.unlink(path.join(dir, `${id}.summary.json`)).catch(() => undefined);
     return true;
   } catch {
     return false;

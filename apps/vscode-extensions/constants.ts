@@ -238,6 +238,14 @@ export const MESSAGE_TYPES = {
   SHOW_CALL_NOTE: 'show-call-note',
   GET_CALL_NOTE: 'get-call-note',
   CALL_NOTE: 'call-note',
+  // Call summaries and action items (services/callNoteActions.ts). Webview → host: GET_CALL_ACTIONS,
+  // SET_CALL_ACTION {noteId, actionId, state}, SUMMARIZE_CALL_NOTE {id, force?}.
+  // Host → webview: CALL_ACTIONS {actions, latest, summarizing, error?}, CALL_SUMMARY {id, summary, summarizing, error?}.
+  GET_CALL_ACTIONS: 'get-call-actions',
+  SET_CALL_ACTION: 'set-call-action',
+  SUMMARIZE_CALL_NOTE: 'summarize-call-note',
+  CALL_ACTIONS: 'call-actions',
+  CALL_SUMMARY: 'call-summary',
 
   UPDATE_SETTINGS: 'update-settings',
   UPDATE_GLOBAL_STATE: 'update-global-state',

@@ -26,7 +26,11 @@ export interface ConfluenceSpace {
   status: string;
 }
 
+/** The refresh token is dead (revoked, rotated away, expired): only a reconnect fixes it. */
+export class ConfluenceAuthExpiredError extends Error {}
+
 export class ConfluenceAuthService {
+  private refreshInFlight: Promise<OAuthTokens> | null = null;
   private context: vscode.ExtensionContext;
   private server: http.Server | null = null;
   private pendingReject: ((reason?: any) => void) | null = null;
@@ -221,9 +225,20 @@ export class ConfluenceAuthService {
    * Refresh the access token using the refresh token
    */
   async refreshAccessToken(): Promise<OAuthTokens> {
+    // Atlassian rotates refresh tokens, so two concurrent refreshes with the same
+    // token make the second fail as reuse. Share one request per process.
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = this.doRefresh().finally(() => {
+        this.refreshInFlight = null;
+      });
+    }
+    return this.refreshInFlight;
+  }
+
+  private async doRefresh(): Promise<OAuthTokens> {
     const tokens = await this.getStoredTokens();
     if (!tokens?.refreshToken) {
-      throw new Error('No refresh token available. Please re-authenticate with Confluence.');
+      throw new ConfluenceAuthExpiredError('No refresh token available. Please re-authenticate with Confluence.');
     }
 
     try {
@@ -238,7 +253,18 @@ export class ConfluenceAuthService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Token refresh failed (${response.status}): ${errorText}`);
+        // Another process (desktop app / second window) may have rotated the token
+        // and saved a newer one since we read it; use that instead of failing.
+        const latest = await this.getStoredTokens();
+        if (latest && latest.refreshToken !== tokens.refreshToken && latest.expiresAt > Date.now() + 60 * 1000) {
+          return latest;
+        }
+        const dead = response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429;
+        const detail = `Token refresh failed (${response.status}): ${errorText}`;
+        if (dead) {
+          throw new ConfluenceAuthExpiredError(detail);
+        }
+        throw new Error(detail);
       }
 
       const data = await response.json();
@@ -254,7 +280,8 @@ export class ConfluenceAuthService {
       return newTokens;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to refresh access token: ${msg}`);
+      const wrapped = `Failed to refresh access token: ${msg}`;
+      throw error instanceof ConfluenceAuthExpiredError ? new ConfluenceAuthExpiredError(wrapped) : new Error(wrapped);
     }
   }
 
@@ -264,7 +291,7 @@ export class ConfluenceAuthService {
   async getValidAccessToken(): Promise<string> {
     let tokens = await this.getStoredTokens();
     if (!tokens) {
-      throw new Error('Not authenticated with Confluence. Please connect first.');
+      throw new ConfluenceAuthExpiredError('Not authenticated with Confluence. Please connect first.');
     }
 
     // Refresh if token expires within 5 minutes

@@ -14,7 +14,7 @@ import CreatePrButton from './CreatePrButton';
  * reading, so the pushed branch and its pull-request link survive the tree
  * going clean underneath it.
  */
-const GitStatusBar: React.FC = () => {
+const GitStatusBar: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const status = useGitStatusStore((s) => s.status);
   const ship = useGitStatusStore((s) => s.ship);
   const dismissedSignature = useGitStatusStore((s) => s.dismissedSignature);
@@ -43,7 +43,7 @@ const GitStatusBar: React.FC = () => {
   return (
     <div className='git-status-bar'>
       <div className='git-status-row'>
-        <span className='git-status-branch' title='Current branch'>
+        <span className='git-status-branch' title={`Current branch: ${status?.branch || 'detached'}`}>
           <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
             <path
               d='M6 3v12M18 9a3 3 0 1 0-3-3M6 21a3 3 0 1 0 0-6M9 6a9 9 0 0 0 9 9'
@@ -53,7 +53,7 @@ const GitStatusBar: React.FC = () => {
               strokeLinejoin='round'
             />
           </svg>
-          {status?.branch || 'detached'}
+          {compact ? `${shown.files} file${shown.files === 1 ? '' : 's'} changed` : status?.branch || 'detached'}
         </span>
         {showChanges && (
           <span
@@ -66,11 +66,13 @@ const GitStatusBar: React.FC = () => {
           >
             <span className='git-status-stats-scope'>{ownScope ? 'this chat' : 'working tree'}</span>
             {shown.added === 0 && shown.removed === 0 ? (
-              // New files only: git reports no insertions for a path it has
-              // never seen, so the file count is all there is to say.
-              <span className='git-status-stats-count'>
-                {shown.files} file{shown.files === 1 ? '' : 's'}
-              </span>
+              compact ? null : (
+                // New files only: git reports no insertions for a path it has
+                // never seen, so the file count is all there is to say.
+                <span className='git-status-stats-count'>
+                  {shown.files} file{shown.files === 1 ? '' : 's'}
+                </span>
+              )
             ) : (
               <>
                 {shown.added > 0 && <span className='stat-added'>+{shown.added}</span>}

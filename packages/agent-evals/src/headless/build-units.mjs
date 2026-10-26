@@ -75,6 +75,7 @@ const UNITS = [
   '../desktop/sidecar/host/callRecorder.ts',
   '../desktop/sidecar/host/whisperModel.ts',
   'src/services/callNotes.ts',
+  'src/services/callNoteSummary.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',
   'webview/src/utils/ticketRefs.ts',
