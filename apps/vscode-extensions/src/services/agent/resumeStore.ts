@@ -56,6 +56,8 @@ export interface ResumeRecord {
   writesApplied?: number;
   /** The work item it was working on, when there was one. */
   ticketId?: string;
+  /** Screenshots the user attached to the run's first turn, which `transcript` no longer carries. */
+  images?: { name: string; dataUrl: string }[];
 }
 
 /** The subset of `fs/promises` this module uses, injectable for tests. */

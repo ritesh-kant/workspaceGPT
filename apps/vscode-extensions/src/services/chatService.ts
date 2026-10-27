@@ -434,6 +434,13 @@ interface SessionRun {
    */
   agentTranscript: unknown[] | null;
   /**
+   * The user's own image attachments from the turn that began the held run.
+   * stripTranscriptImages drops them from `agentTranscript`, so without this a
+   * "continue" resumes a run that has lost the screenshot the question was
+   * about. Re-attached to the continuation turn.
+   */
+  resumeImages?: { name: string; dataUrl: string }[];
+  /**
    * Whether the last delivered answer was stall-shaped with zero writes, as
    * judged by the worker (which knows writesApplied) when it sent 'done'.
    * Drives the autonomous auto-resume in sendMessage: a stall on a fresh
@@ -715,6 +722,7 @@ export class ChatService {
         reason,
         writesApplied: run.sessionWritesApplied,
         ticketId: run.lastTicketId ?? undefined,
+        images: run.resumeImages?.length ? run.resumeImages : undefined,
       });
     });
   }
@@ -737,6 +745,7 @@ export class ChatService {
       this.resumeSaveTimers.delete(run.sessionId);
     }
     run.agentTranscript = null;
+    run.resumeImages = undefined;
   }
 
   /**
@@ -750,6 +759,7 @@ export class ChatService {
       this.resumeSaveTimers.delete(run.sessionId);
     }
     run.agentTranscript = null;
+    run.resumeImages = undefined;
     void this.queueResumeIO(run.sessionId, () => clearResumeRecord(this.resumeDir, run.sessionId));
   }
 
@@ -765,6 +775,7 @@ export class ChatService {
     const record = await loadResumeRecord(this.resumeDir, run.sessionId);
     if (!record) return null;
     run.agentTranscript = record.transcript;
+    run.resumeImages = record.images;
     return { steps: record.transcript.length, age: describeAge(record.savedAt) };
   }
 
@@ -3473,6 +3484,11 @@ Query: "${query}"`;
       // basic discovery.
       const resumeTranscript =
         codebaseRoots?.length && run.agentTranscript?.length ? run.agentTranscript : undefined;
+      // The held run's own screenshots: remembered when a run starts, handed
+      // back when a bare "continue" resumes it.
+      const ownImages = attachments.filter((a) => a.kind === 'image').map((a) => ({ name: a.name, dataUrl: a.content }));
+      if (!resumeTranscript?.length) run.resumeImages = ownImages.length ? ownImages : undefined;
+      const imagesForTurn = ownImages.length ? ownImages : (resumeTranscript?.length ? run.resumeImages ?? [] : []);
       const shouldIncludeRepoOrientation =
         !!codebaseRoots?.length && resolvedMentions.length === 0 && !resumeTranscript?.length;
       let repoOrientation: string | undefined;
@@ -3549,9 +3565,7 @@ Query: "${query}"`;
             .filter((a) => a.kind === 'text')
             .map((a) => ({ name: a.name, content: a.content })),
           imageAttachments: [
-            ...attachments
-              .filter((a) => a.kind === 'image')
-              .map((a) => ({ name: a.name, dataUrl: a.content })),
+            ...imagesForTurn,
             // The pre-fetched ticket's screenshots — often the clearest
             // statement of the bug. Capped: description images can be numerous
             // and each is base64 megabytes.
