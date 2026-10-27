@@ -867,9 +867,7 @@ export class SessionsHtmlTemplate {
           '<div class="ws-header">' +
           '<button class="ws-toggle" type="button" data-ws="' + escapeHtml(key) + '" aria-expanded="' + open +
           '" title="' + escapeHtml(tip) + '"><span class="ws-name">' + escapeHtml(label) + '</span>' + CHEVRON + '</button>' +
-          (current
-            ? '<button class="ws-new" type="button" title="' + escapeHtml(newTip) + '" aria-label="' + escapeHtml(newTip) + '">' + PLUS + '</button>'
-            : '') +
+          '<button class="ws-new" type="button" title="' + escapeHtml(newTip) + '" aria-label="' + escapeHtml(newTip) + '">' + PLUS + '</button>' +
           '</div><div class="ws-rows">' +
           (inGroup.length ? rowsHtml('ws:' + key, inGroup, now) : '<div class="ws-empty">No sessions yet</div>') +
           '</div></div>';

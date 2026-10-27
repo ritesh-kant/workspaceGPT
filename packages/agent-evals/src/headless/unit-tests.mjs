@@ -1301,6 +1301,14 @@ console.log('\npromptTemplates (operating norms — ticket #1534774 read-forever
     assert.match(HOW_TO_WORK, /next tool call is an EDIT/);
     assert.match(HOW_TO_WORK, /Then stop investigating/);
   });
+  await t('a stated placement is a requirement, checked before the final answer (notes-panel-in-watchlist miss)', () => {
+    assert.match(HOW_TO_WORK, /requirements before you search/);
+    assert.match(HOW_TO_WORK, /not a default you may settle/);
+    assert.match(HOW_TO_WORK, /ONE plan line before the first edit/);
+    assert.match(HOW_TO_WORK, /for fixing a defect/);
+    assert.match(HOW_TO_WORK, /check the result against each requirement/);
+    assert.match(HOW_TO_WORK, /Open the final answer with the outcome/);
+  });
   await t('Blocked still requires a quotable conflict', () => {
     assert.match(HOW_TO_WORK, /QUOTE the words that conflict/);
   });
