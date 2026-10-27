@@ -105,6 +105,31 @@ if (link) {
   const running = ours();
   const node = running.find((p) => /node(\.exe)?$/i.test(p.path) || /[\\/]runtime[\\/]node(\.exe)?\b/i.test(p.cmd));
   check('the sidecar runs on the bundled Node', !!node, node ? node.path || node.cmd.slice(0, 120) : running.map((p) => p.path).join(', '));
+  if (win && node?.path) {
+    // Windows dictation: the mic helper is installed and the recognizer's addon loads in the bundled Node.
+    const find = (dir, name, depth = 0) => {
+      if (depth > 6) return undefined;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!e.isDirectory()) continue;
+        const p = path.join(dir, e.name);
+        if (e.name === 'node_modules') {
+          const hit = path.join(p, name);
+          if (fs.existsSync(hit)) return hit;
+        } else {
+          const hit = find(p, name, depth + 1);
+          if (hit) return hit;
+        }
+      }
+    };
+    const sherpa = find(installRoot, 'sherpa-onnx-node');
+    const hasFile = (dir, file, depth = 0) =>
+      depth <= 6 && fs.readdirSync(dir, { withFileTypes: true }).some((e) => (e.isFile() ? e.name === file : e.isDirectory() && e.name !== 'node_modules' && hasFile(path.join(dir, e.name), file, depth + 1)));
+    check('the dictation mic helper is installed', hasFile(installRoot, 'wgpt-mic.exe'));
+    const load = sherpa
+      ? spawnSync(node.path, ['-e', `const s=require(${JSON.stringify(sherpa)});if(typeof s.OnlineRecognizer!=='function')throw new Error('no OnlineRecognizer');console.log('ok')`], { encoding: 'utf8' })
+      : undefined;
+    check('the dictation recognizer loads in the bundled Node', load?.status === 0 && /ok/.test(load.stdout), load ? (load.stderr || load.stdout).slice(0, 300) : 'sherpa-onnx-node not installed');
+  }
   const cmd = running.find((p) => isTestCommand(p.cmd));
   check('the test command is running', !!cmd, cmd ? `pid ${cmd.pid}` : 'not found');
 }

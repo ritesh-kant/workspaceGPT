@@ -404,7 +404,7 @@ async function main(): Promise<void> {
   });
 
   // The composer's mic button → the system's speech recognition (macOS builds).
-  createDictation(surface);
+  createDictation(surface, path.join(paths.root, 'models'));
 
   // Call notes (beta): detect a call and let the page ask before anything records.
   // `visible: true` → the shell notifies only when the window isn't in front.

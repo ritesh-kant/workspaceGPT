@@ -156,6 +156,20 @@ if (platform === 'darwin') {
   }
 }
 
+// Windows dictation: the mic helper (native/win-mic) beside the sidecar, and the on-device
+// recognizer's addon with its onnxruntime DLL (sherpa-onnx-node + this target's binary package).
+if (platform === 'win32') {
+  run('node', ['scripts/build-native.mjs', '--target', target, '--require'], root);
+  fs.mkdirSync(path.join(out, 'bin'), { recursive: true });
+  fs.copyFileSync(path.join(root, 'dist/bin/wgpt-mic.exe'), path.join(out, 'bin/wgpt-mic.exe'));
+}
+if (platform === 'win32') {
+  const sherpaDir = pkgDir(root, 'sherpa-onnx-node');
+  const sherpaBinary = `sherpa-onnx-win-${arch}`;
+  copy(sherpaDir, path.join(modules, 'sherpa-onnx-node'));
+  copy(pkgDir(sherpaDir, sherpaBinary), path.join(modules, sherpaBinary));
+}
+
 const extOut = path.join(out, 'extension');
 fs.mkdirSync(path.join(extOut, 'dist'), { recursive: true });
 fs.copyFileSync(path.join(extDir, 'package.json'), path.join(extOut, 'package.json'));

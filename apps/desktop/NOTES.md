@@ -957,3 +957,9 @@ macOS's own speech recognition, on the machine.
 - **Next:** macOS 26+ `SpeechAnalyzer`; contextual strings (ticket keys,
   identifiers) to bias recognition; Windows (no native equivalent: local
   Parakeet/Whisper).
+
+### Dictation on Windows (built 2026-10-27, uncommitted)
+
+Same mic button and events; different engine. `native/win-mic` (Rust, cpal/WASAPI, static CRT) prints the default mic as 16 kHz mono s16le on stdout; `sidecar/host/dictationWin.ts` feeds it to a sherpa-onnx streaming recognizer (`sherpa-onnx-node`, an esbuild external staged for win32 by `stage-runtime.mjs`, 22 MB with onnxruntime). Model: streaming zipformer en 2023-06-26, int8 (73 MB, four files, pinned revision + SHA-256, `host/speechModel.ts`), downloaded to `<root>/models/` when the page attaches. Output is capitals with no punctuation, so it is sentence-cased.
+
+Verified on macOS only: the recognizer + session with a fake mic playing a WAV in real time (partials, stop, final, idle; 183 ms to decode 6.9 s), the Rust crate's resampler tests, and `cargo check --target x86_64-pc-windows-msvc`. NOT run on Windows: the mic capture, the win-x64 addon loading, the packaged installer. CI's smoke test (`smoke-installed.mjs`) now checks `wgpt-mic.exe` is installed and the addon loads in the bundled Node. Failures reach the page as `engine-missing` (with the load error), `no-microphone`, `mic-denied`, `model-download`. Known limits: English only; accuracy on accents untested.

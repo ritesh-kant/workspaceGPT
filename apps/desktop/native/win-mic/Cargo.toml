@@ -1,0 +1,16 @@
+[package]
+name = "wgpt-mic"
+version = "0.1.0"
+edition = "2021"
+description = "Windows microphone capture for desktop dictation: 16 kHz mono s16le PCM on stdout"
+
+# Not part of src-tauri's build: built on its own by scripts/build-native.mjs.
+[workspace]
+
+[dependencies]
+cpal = "0.15"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

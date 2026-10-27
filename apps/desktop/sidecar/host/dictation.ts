@@ -9,13 +9,18 @@
  * page goes away, or when the helper does. Audio stays on the machine — the
  * helper refuses to fall back to a server.
  *
- * `capability` tells the page whether to draw the mic at all: only where the
- * helper exists (macOS builds), so other platforms show nothing rather than a
- * button that cannot work.
+ * On Windows the same events come from host/dictationWin.ts (an on-device
+ * recognizer fed by native/win-mic).
+ *
+ * `capability` tells the page whether to draw the mic at all: only where a
+ * helper exists (macOS and Windows builds), so other platforms show nothing
+ * rather than a button that cannot work.
  */
 import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { micHelperPath, startWindowsDictation, type WindowsDictation } from './dictationWin';
+import { SpeechModel } from './speechModel';
 import type { ViewSurface } from './webviewHost';
 
 export type DictationEvent =
@@ -39,17 +44,25 @@ function helperPath(): string | undefined {
   return fs.existsSync(bin) ? bin : undefined;
 }
 
-export function createDictation(surface: ViewSurface): void {
+export function createDictation(surface: ViewSurface, modelsDir?: string): void {
   const bin = helperPath();
+  const winMic = micHelperPath();
+  const model = winMic && modelsDir ? new SpeechModel(modelsDir) : undefined;
+  let winSession: WindowsDictation | undefined;
   const send = (event: DictationEvent) => surface.sendControl({ t: 'dictation', event });
   let child: cp.ChildProcess | undefined;
   /** Helpers asked to cancel: their exit without a result is the answer, not a crash. */
   const cancelled = new WeakSet<cp.ChildProcess>();
 
-  surface.attached.event(() => send({ type: 'capability', available: !!bin }));
+  surface.attached.event(() => {
+    send({ type: 'capability', available: !!bin || !!model });
+    // Fetched ahead of the first click, so the mic works at once (a click before it lands waits for it).
+    void model?.ensure();
+  });
 
   /** Ends the helper: it delivers what it heard on "stop", nothing on "cancel". */
   const tell = (word: 'stop' | 'cancel') => {
+    if (winSession) return winSession[word]();
     const proc = child;
     if (!proc) return;
     try {
@@ -65,6 +78,19 @@ export function createDictation(surface: ViewSurface): void {
   };
 
   const start = (locale: string) => {
+    if (model && winMic) {
+      if (winSession) return;
+      const session = startWindowsDictation({
+        mic: winMic,
+        model,
+        emit: (event) => {
+          if (event.type === 'state' && event.state === 'idle' && winSession === session) winSession = undefined;
+          send(event);
+        },
+      });
+      winSession = session;
+      return;
+    }
     if (!bin || child) return;
     const proc = cp.spawn(bin, ['--locale', locale], { stdio: ['pipe', 'pipe', 'inherit'] });
     child = proc;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Compiles the desktop's native helpers (macOS only) into dist/bin/.
+ * Compiles the desktop's native helpers (macOS; on Windows the dictation mic) into dist/bin/.
  *
  *   node scripts/build-native.mjs [--target darwin-arm64] [--require]
  *
@@ -36,10 +36,21 @@ const skip = (why) => {
   console.log(`[native] skipped: ${why}`);
   process.exit(0);
 };
+const out = path.join(root, 'dist/bin');
+
+// Windows: wgpt-mic.exe (native/win-mic, Rust) streams the microphone to the dictation
+// recognizer (sidecar/host/dictationWin.ts). Built where the target is: Windows.
+if (platform === 'win32') {
+  if (process.platform !== 'win32') skip('the Windows helper is built on Windows');
+  fs.mkdirSync(out, { recursive: true });
+  const cargo = spawnSync('cargo', ['build', '--release', '--manifest-path', 'native/win-mic/Cargo.toml'], { cwd: root, stdio: 'inherit', shell: true });
+  if (cargo.error || cargo.status !== 0) skip('cargo could not build native/win-mic');
+  fs.copyFileSync(path.join(root, 'native/win-mic/target/release/wgpt-mic.exe'), path.join(out, 'wgpt-mic.exe'));
+  console.log('[native] dist/bin/wgpt-mic.exe');
+  process.exit(0);
+}
 if (platform !== 'darwin') skip(`nothing to build for ${target}`);
 if (process.platform !== 'darwin') skip('macOS helpers are built on macOS');
-
-const out = path.join(root, 'dist/bin');
 fs.mkdirSync(out, { recursive: true });
 
 // whisper.cpp's prebuilt Apple framework (universal, Metal source embedded), for wgpt-notes.
