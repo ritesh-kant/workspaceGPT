@@ -76,6 +76,9 @@ const UNITS = [
   '../desktop/sidecar/host/whisperModel.ts',
   'src/services/callNotes.ts',
   'src/services/callNoteSummary.ts',
+  // Copilot on desktop: Chat Completions ⇄ Responses, and the bridge route that uses it (fetch mocked).
+  'src/services/copilotResponses.ts',
+  'src/services/copilotDirect.ts',
   'constants.ts', // pure data — MODEL_PROVIDERS base URLs for the judge
   'webview/src/utils/filePathDisplay.ts',
   'webview/src/utils/ticketRefs.ts',

@@ -16,6 +16,7 @@ import * as os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { buildUnits } from './build-units.mjs';
+import { createRequire } from 'module';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../../..');
@@ -7210,6 +7211,290 @@ console.log('\ncall summaries');
   });
 
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ── Copilot /responses-only models (desktop) ──
+console.log('\ncopilot /responses translation');
+{
+  const cr = await import(path.join(outDir, 'copilotResponses.mjs'));
+  const kinds = (input) => input.map((i) => i.type ?? i.role);
+  const ev = (o) => `event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`;
+  /** Reads Chat Completions SSE back into what a caller ends up with. */
+  const readChatSse = (text) => {
+    const out = { content: '', reasoning: '', calls: [], finish: null, usage: null, done: false, error: null };
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6);
+      if (data === '[DONE]') { out.done = true; continue; }
+      const c = JSON.parse(data);
+      if (c.error) { out.error = c.error.message; continue; }
+      if (c.usage) out.usage = c.usage;
+      for (const ch of c.choices ?? []) {
+        if (ch.delta?.content) out.content += ch.delta.content;
+        if (ch.delta?.reasoning_content) out.reasoning += ch.delta.reasoning_content;
+        for (const tc of ch.delta?.tool_calls ?? []) {
+          const slot = (out.calls[tc.index] ??= { id: '', name: '', arguments: '' });
+          if (tc.id) slot.id = tc.id;
+          if (tc.function?.name) slot.name = tc.function.name;
+          slot.arguments += tc.function?.arguments ?? '';
+        }
+        if (ch.finish_reason) out.finish = ch.finish_reason;
+      }
+    }
+    return out;
+  };
+
+  await t('a Chat Completions request maps to a Responses request', () => {
+    const req = cr.chatToResponsesRequest({
+      model: 'gpt-x', stream: true, max_tokens: 8, temperature: 0.3, reasoning_effort: 'low', prompt_cache_key: 'k', tool_choice: 'auto',
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } }] },
+        { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'read', arguments: '{"p":1}' } }] },
+        { role: 'tool', tool_call_id: 'c1', content: 'file text' },
+      ],
+      tools: [{ type: 'function', function: { name: 'read', description: 'd', parameters: { type: 'object', properties: { p: { type: 'number' } } } } }],
+    });
+    assert.deepEqual(req.input[0], { role: 'developer', content: 'sys' });
+    assert.deepEqual(req.input[1].content, [{ type: 'input_text', text: 'hi' }, { type: 'input_image', image_url: 'data:image/png;base64,AA', detail: 'auto' }]);
+    assert.deepEqual(req.input[2], { type: 'function_call', call_id: 'c1', name: 'read', arguments: '{"p":1}' });
+    assert.deepEqual(req.input[3], { type: 'function_call_output', call_id: 'c1', output: 'file text' });
+    assert.deepEqual(req.tools[0], { type: 'function', name: 'read', description: 'd', parameters: { type: 'object', properties: { p: { type: 'number' } } }, strict: false });
+    assert.equal(req.tool_choice, 'auto');
+    assert.equal(req.max_output_tokens, 16, 'raised to the Responses floor');
+    assert.equal(req.temperature, undefined, 'reasoning models refuse sampling parameters');
+    assert.deepEqual(req.reasoning, { effort: 'low' });
+    assert.equal(req.store, false);
+    assert.equal(req.stream, true);
+    assert.equal(req.prompt_cache_key, 'k');
+  });
+
+  await t('a finished response maps back, and its reasoning rides the next round', () => {
+    const out = cr.responsesToChatCompletion({
+      id: 'r1', status: 'completed',
+      output: [
+        { type: 'reasoning', id: 'rs1', summary: [{ type: 'summary_text', text: 'thought' }], encrypted_content: 'ENC' },
+        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Reading.' }] },
+        { type: 'function_call', call_id: 'c9', name: 'read', arguments: '{}' },
+      ],
+      usage: { input_tokens: 100, output_tokens: 5, total_tokens: 105, input_tokens_details: { cached_tokens: 60 } },
+    }, 'gpt-x');
+    const choice = out.choices[0];
+    assert.equal(choice.finish_reason, 'tool_calls');
+    assert.equal(choice.message.content, 'Reading.');
+    assert.deepEqual(choice.message.tool_calls, [{ id: 'c9', type: 'function', function: { name: 'read', arguments: '{}' } }]);
+    assert.equal(choice.message.reasoning_content, 'thought');
+    assert.equal(out.usage.prompt_tokens, 100);
+    assert.equal(out.usage.prompt_tokens_details.cached_tokens, 60);
+    const next = cr.chatToResponsesRequest({ model: 'gpt-x', messages: [{ role: 'user', content: 'go' }, choice.message, { role: 'tool', tool_call_id: 'c9', content: 'ok' }] });
+    assert.deepEqual(kinds(next.input), ['user', 'assistant', 'reasoning', 'function_call', 'function_call_output']);
+    assert.equal(next.input[2].encrypted_content, 'ENC');
+    assert.ok(cr.hasExtras(next));
+    const bare = cr.withoutExtras(next);
+    assert.deepEqual(kinds(bare.input), ['user', 'assistant', 'function_call', 'function_call_output']);
+    assert.equal(bare.include, undefined);
+    assert.ok(!cr.hasExtras(bare));
+  });
+
+  await t('an incomplete response finishes as length', () => {
+    const out = cr.responsesToChatCompletion({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] }, 'gpt-x');
+    assert.equal(out.choices[0].finish_reason, 'length');
+    assert.equal(out.choices[0].message.content, null);
+  });
+
+  const streamed = [
+    ev({ type: 'response.created', response: { id: 'r2' } }),
+    ev({ type: 'response.reasoning_summary_text.delta', output_index: 0, delta: 'plan' }),
+    ev({ type: 'response.output_item.added', output_index: 1, item: { type: 'message' } }),
+    ev({ type: 'response.output_text.delta', output_index: 1, delta: 'Hel' }),
+    ev({ type: 'response.output_text.delta', output_index: 1, delta: 'lo ✓' }),
+    ev({ type: 'response.output_item.added', output_index: 2, item: { type: 'function_call', call_id: 'a', name: 'read', arguments: '' } }),
+    ev({ type: 'response.function_call_arguments.delta', output_index: 2, delta: '{"p":' }),
+    ev({ type: 'response.function_call_arguments.delta', output_index: 2, delta: '1}' }),
+    ev({ type: 'response.output_item.done', output_index: 2, item: { type: 'function_call', call_id: 'a', name: 'read', arguments: '{"p":1}' } }),
+    ev({ type: 'response.output_item.added', output_index: 3, item: { type: 'function_call', call_id: 'b', name: 'grep', arguments: '' } }),
+    ev({ type: 'response.output_item.done', output_index: 3, item: { type: 'function_call', call_id: 'b', name: 'grep', arguments: '{"q":"x"}' } }),
+    ev({ type: 'response.completed', response: { id: 'r2', status: 'completed', output: [], usage: { input_tokens: 10, output_tokens: 3 } } }),
+  ].join('');
+
+  await t('a Responses stream becomes Chat Completions chunks, however the bytes are split', () => {
+    for (const size of [1, 7, 64, streamed.length]) {
+      const tr = new cr.ResponsesStreamTranslator('gpt-x', true);
+      let text = '';
+      for (let i = 0; i < streamed.length; i += size) text += tr.push(streamed.slice(i, i + size));
+      text += tr.end();
+      const got = readChatSse(text);
+      assert.equal(got.content, 'Hello ✓', `size ${size}`);
+      assert.equal(got.reasoning, 'plan');
+      assert.deepEqual(got.calls, [{ id: 'a', name: 'read', arguments: '{"p":1}' }, { id: 'b', name: 'grep', arguments: '{"q":"x"}' }]);
+      assert.equal(got.finish, 'tool_calls');
+      assert.equal(got.usage.completion_tokens, 3);
+      assert.ok(got.done);
+      assert.equal(got.error, null);
+    }
+  });
+
+  await t('a stream cut short or failed upstream ends with an error the caller sees', () => {
+    const tr = new cr.ResponsesStreamTranslator('gpt-x', false);
+    const cut = readChatSse(tr.push(streamed.slice(0, streamed.indexOf('response.output_item.added'))) + tr.end());
+    assert.match(cut.error, /ended the response before it finished/);
+    const tr2 = new cr.ResponsesStreamTranslator('gpt-x', false);
+    const failed = readChatSse(tr2.push(ev({ type: 'response.failed', response: { error: { code: 'server_error', message: 'boom' } } })) + tr2.end());
+    assert.equal(failed.error, 'boom');
+    assert.ok(!failed.done);
+  });
+
+  // The bridge route end to end: the OpenAI SDK (what every caller uses) → a
+  // loopback server running forwardToCopilot → a mocked Copilot.
+  const cd = await import(path.join(outDir, 'copilotDirect.mjs'));
+  const extRequire = createRequire(path.join(repoRoot, 'apps/vscode-extensions/package.json'));
+  const OpenAIMod = extRequire('openai');
+  const OpenAI = OpenAIMod.default ?? OpenAIMod;
+  const http = await import('http');
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  let refuseInclude = false;
+  const model = (id, endpoints) => ({
+    id, model_picker_enabled: true, supported_endpoints: endpoints,
+    capabilities: { type: 'chat', supports: { tool_calls: true }, limits: { max_prompt_tokens: 200000 } },
+  });
+  const sseBody = (text) => {
+    const bytes = new TextEncoder().encode(text);
+    // Odd-sized pieces, so a multi-byte character is split across reads.
+    return new ReadableStream({ start(c) { for (let i = 0; i < bytes.length; i += 5) c.enqueue(bytes.slice(i, i + 5)); c.close(); } });
+  };
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if (url.startsWith('http://127.0.0.1')) return realFetch(url, init);
+    if (url.includes('copilot_internal')) return Response.json({ token: 't', expires_at: Date.now() / 1000 + 3600, endpoints: { api: 'https://copilot.mock' } });
+    if (url.endsWith('/models')) return Response.json({ data: [model('gpt-5.6-luna', ['/responses']), model('claude-x', ['/chat/completions']), model('gpt-messages', ['/v1/messages'])] });
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    seen.push({ path: new URL(url).pathname, body, initiator: init.headers?.['x-initiator'] });
+    if (url.endsWith('/chat/completions')) {
+      if (body.model === 'claude-x') return Response.json({ id: 'x', object: 'chat.completion', created: 1, model: 'claude-x', choices: [{ index: 0, message: { role: 'assistant', content: 'chat ok' }, finish_reason: 'stop' }] });
+      return new Response(JSON.stringify({ error: { code: 'unsupported_api_for_model', message: 'model is not accessible via the /chat/completions endpoint' } }), { status: 400 });
+    }
+    if (refuseInclude && body.include) return new Response(JSON.stringify({ error: { message: "Unsupported parameter: 'include'" } }), { status: 400 });
+    const toolRound = !body.input.some((i) => i.type === 'function_call_output');
+    const output = toolRound
+      ? [{ type: 'reasoning', id: 'rs', summary: [], encrypted_content: 'ENC-1' }, { type: 'function_call', id: 'fc', call_id: 'call_1', name: 'read_file', arguments: '{"path":"a.ts"}' }]
+      : [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done — café ✓' }] }];
+    const usage = { input_tokens: 50, output_tokens: 7, total_tokens: 57, input_tokens_details: { cached_tokens: 20 } };
+    if (!body.stream) return Response.json({ id: 'resp', status: 'completed', output, usage });
+    const events = [ev({ type: 'response.created', response: { id: 'resp' } })];
+    output.forEach((o, i) => {
+      events.push(ev({ type: 'response.output_item.added', output_index: i, item: { ...o, arguments: '' } }));
+      if (o.type === 'function_call') events.push(ev({ type: 'response.function_call_arguments.delta', output_index: i, delta: o.arguments }));
+      if (o.type === 'message') for (const ch of ['Done — ', 'café ✓']) events.push(ev({ type: 'response.output_text.delta', output_index: i, delta: ch }));
+      events.push(ev({ type: 'response.output_item.done', output_index: i, item: o }));
+    });
+    events.push(ev({ type: 'response.completed', response: { id: 'resp', status: 'completed', output, usage } }));
+    return new Response(sseBody(events.join('')), { headers: { 'content-type': 'text/event-stream' } });
+  };
+  cd.initDirectCopilot({ secrets: { get: async () => 'gh-token', delete: async () => {} }, globalState: { get: () => undefined } });
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => cd.forwardToCopilot(req.url.slice('/v1'.length), raw, res).catch((e) => { res.writeHead(500); res.end(JSON.stringify({ error: { message: String(e) } })); }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const client = new OpenAI({ apiKey: 'bridge', baseURL: `http://127.0.0.1:${server.address().port}/v1`, maxRetries: 0 });
+  const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read', parameters: { type: 'object', properties: { path: { type: 'string' } } } } }];
+  const ask = [{ role: 'system', content: 'You are an agent.' }, { role: 'user', content: 'Fix a.ts' }];
+
+  try {
+    await t('bridge: the picker lists /responses-only models, not ones served on neither endpoint', async () => {
+      const ids = (await client.models.list()).data.map((m) => m.id);
+      assert.deepEqual(ids, ['gpt-5.6-luna', 'claude-x']);
+    });
+
+    await t('bridge: a non-streamed agent round trip on a /responses-only model, reasoning carried', async () => {
+      seen.length = 0;
+      const r1 = await client.chat.completions.create({ model: 'gpt-5.6-luna', messages: ask, tools, tool_choice: 'auto', temperature: 0.3, max_tokens: 8192, stream: false });
+      const call = r1.choices[0].message.tool_calls[0];
+      assert.equal(r1.choices[0].finish_reason, 'tool_calls');
+      assert.equal(call.function.name, 'read_file');
+      assert.equal(call.function.arguments, '{"path":"a.ts"}');
+      const r2 = await client.chat.completions.create({
+        model: 'gpt-5.6-luna', tools, stream: false,
+        messages: [...ask, r1.choices[0].message, { role: 'tool', tool_call_id: call.id, content: 'export const a = 1;' }],
+      });
+      assert.equal(r2.choices[0].message.content, 'Done — café ✓');
+      assert.equal(r2.choices[0].finish_reason, 'stop');
+      assert.equal(r2.usage.prompt_tokens_details.cached_tokens, 20);
+      assert.deepEqual(seen.map((s) => s.path), ['/responses', '/responses'], 'never tried /chat/completions');
+      const second = seen[1].body;
+      assert.deepEqual(kinds(second.input), ['developer', 'user', 'reasoning', 'function_call', 'function_call_output']);
+      assert.equal(second.input[2].encrypted_content, 'ENC-1');
+      assert.deepEqual(second.include, ['reasoning.encrypted_content']);
+    });
+
+    await t('bridge: a streamed round arrives as SDK chunks with usage', async () => {
+      seen.length = 0;
+      const stream = await client.chat.completions.create({
+        model: 'gpt-5.6-luna', stream: true, stream_options: { include_usage: true },
+        messages: [...ask, { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{}' } }] }, { role: 'tool', tool_call_id: 'call_1', content: 'x' }],
+      });
+      let text = '';
+      let usage;
+      let finish;
+      for await (const chunk of stream) {
+        text += chunk.choices[0]?.delta?.content ?? '';
+        finish = chunk.choices[0]?.finish_reason ?? finish;
+        if (chunk.usage) usage = chunk.usage;
+      }
+      assert.equal(text, 'Done — café ✓');
+      assert.equal(finish, 'stop');
+      assert.equal(usage.total_tokens, 57);
+      assert.equal(seen[0].body.stream, true);
+    });
+
+    await t('bridge: a streamed tool call reassembles in the SDK', async () => {
+      const stream = await client.chat.completions.create({ model: 'gpt-5.6-luna', messages: ask, tools, stream: true });
+      const calls = [];
+      for await (const chunk of stream) {
+        for (const tc of chunk.choices[0]?.delta?.tool_calls ?? []) {
+          const slot = (calls[tc.index] ??= { id: '', name: '', args: '' });
+          if (tc.id) slot.id = tc.id;
+          if (tc.function?.name) slot.name = tc.function.name;
+          slot.args += tc.function?.arguments ?? '';
+        }
+      }
+      assert.deepEqual(calls, [{ id: 'call_1', name: 'read_file', args: '{"path":"a.ts"}' }]);
+    });
+
+    await t('bridge: a model Copilot refuses on /chat/completions is retried on /responses', async () => {
+      seen.length = 0;
+      const r = await client.chat.completions.create({ model: 'gpt-unlisted', messages: [...ask, { role: 'assistant', content: null, tool_calls: [{ id: 'z', type: 'function', function: { name: 'read_file', arguments: '{}' } }] }, { role: 'tool', tool_call_id: 'z', content: 'x' }] });
+      assert.equal(r.choices[0].message.content, 'Done — café ✓');
+      assert.deepEqual(seen.map((s) => s.path), ['/chat/completions', '/responses']);
+      assert.equal(seen[0].initiator, seen[1].initiator, 'the retry keeps the billing initiator');
+      const again = await client.chat.completions.create({ model: 'gpt-unlisted', messages: ask });
+      assert.ok(again.choices[0].message.tool_calls);
+      assert.equal(seen.at(-1).path, '/responses', 'remembered: no second refusal');
+      assert.equal(seen.filter((s) => s.path === '/chat/completions').length, 1);
+    });
+
+    await t('bridge: Copilot refusing carried reasoning sends the turn without it', async () => {
+      seen.length = 0;
+      refuseInclude = true;
+      const r = await client.chat.completions.create({ model: 'gpt-5.6-luna', messages: ask, tools });
+      assert.equal(r.choices[0].message.tool_calls[0].id, 'call_1');
+      assert.equal(seen.length, 2);
+      assert.ok(seen[0].body.include && !seen[1].body.include);
+    });
+
+    await t('bridge: a chat-served model still goes straight through', async () => {
+      seen.length = 0;
+      refuseInclude = false;
+      const r = await client.chat.completions.create({ model: 'claude-x', messages: ask });
+      assert.equal(r.choices[0].message.content, 'chat ok');
+      assert.deepEqual(seen.map((s) => s.path), ['/chat/completions']);
+    });
+  } finally {
+    server.close();
+    globalThis.fetch = realFetch;
+  }
 }
 
 // ── summary ──

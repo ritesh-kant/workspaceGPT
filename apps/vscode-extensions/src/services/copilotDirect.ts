@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type * as http from 'http';
 import { randomUUID } from 'crypto';
 import { COPILOT_PROVIDER, STORAGE_KEYS } from '../../constants';
+import { ResponsesStreamTranslator, chatToResponsesRequest, hasExtras, responsesToChatCompletion, withoutExtras } from './copilotResponses';
 
 /**
  * GitHub Copilot on hosts without `vscode.lm` — the desktop app. UNOFFICIAL.
@@ -112,6 +113,7 @@ export async function listDirectCopilotModels(): Promise<DirectCopilotModel[]> {
   const res = await fetch(`${api}/models`, { headers: { ...copilotApiHeaders(), authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`GitHub Copilot model list failed (${res.status}).`);
   const body: any = await res.json();
+  recordEndpoints(body.data);
   return (body.data ?? [])
     .filter(isUsableModel)
     .map((m: any) => ({ id: m.id, maxInputTokens: m.capabilities.limits.max_prompt_tokens }));
@@ -122,8 +124,8 @@ const isUsableModel = (m: any): boolean =>
   m.capabilities?.type === 'chat' &&
   !!m.capabilities?.supports?.tool_calls &&
   m.model_picker_enabled !== false &&
-  (!m.supported_endpoints || m.supported_endpoints.includes('/chat/completions')) &&
-  !chatUnsupported.has(m.id) &&
+  // A /responses-only model is translated to and from Chat Completions; see copilotResponses.ts.
+  (!m.supported_endpoints || m.supported_endpoints.includes('/chat/completions') || m.supported_endpoints.includes('/responses')) &&
   (m.capabilities?.limits?.max_prompt_tokens ?? 0) >= MIN_INPUT_TOKENS;
 
 /**
@@ -148,9 +150,26 @@ export function markUserTurn(): void {
 /**
  * Models Copilot has refused on /chat/completions (`unsupported_api_for_model`,
  * e.g. a /responses-only model). Its model list doesn't always say so up front,
- * so the refusal is the fact; the model is then left out of the picker.
+ * so the refusal is the fact; the model's requests then go to /responses.
  */
 const chatUnsupported = new Set<string>();
+
+/** Each model's `supported_endpoints` from Copilot's model list, as last seen. */
+const modelEndpoints = new Map<string, string[]>();
+
+function recordEndpoints(data: any): void {
+  for (const m of Array.isArray(data) ? data : []) {
+    if (m?.id && Array.isArray(m.supported_endpoints)) modelEndpoints.set(m.id, m.supported_endpoints);
+  }
+}
+
+/** Copilot serves this model on /responses and not on /chat/completions. */
+async function servedOnlyOnResponses(model: string): Promise<boolean> {
+  if (chatUnsupported.has(model)) return true;
+  if (!modelEndpoints.size) await listDirectCopilotModels().catch(() => undefined);
+  const endpoints = modelEndpoints.get(model);
+  return !!endpoints && endpoints.includes('/responses') && !endpoints.includes('/chat/completions');
+}
 
 /** Bridge route: forward an OpenAI request to Copilot and stream its answer back unchanged. */
 export async function forwardToCopilot(path: string, raw: string, res: http.ServerResponse): Promise<void> {
@@ -164,34 +183,33 @@ export async function forwardToCopilot(path: string, raw: string, res: http.Serv
   });
   // One request per user action is the user's; see markUserTurn.
   const initiator = raw && pendingUserTurns > 0 ? (pendingUserTurns--, 'user') : 'agent';
-  const upstream = await fetch(`${api}${path}`, {
-    method: raw ? 'POST' : 'GET',
-    headers: {
-      ...copilotApiHeaders(),
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      // What VS Code sends: a turn the user typed is user-initiated; tool
-      // follow-ups inside a run are the agent's.
-      'x-initiator': initiator,
-      // Copilot routes a request carrying images to a vision-capable backend only when told.
-      ...(raw.includes('"image_url"') ? { 'copilot-vision-request': 'true' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: abort.signal,
-  });
-  if (upstream.status === 401) session = undefined;
+  const send = async (to: string, payload: unknown) => {
+    const r = await fetch(`${api}${to}`, {
+      method: raw ? 'POST' : 'GET',
+      headers: {
+        ...copilotApiHeaders(),
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        // What VS Code sends: a turn the user typed is user-initiated; tool
+        // follow-ups inside a run are the agent's.
+        'x-initiator': initiator,
+        // Copilot routes a request carrying images to a vision-capable backend only when told.
+        ...(raw.includes('"image_url"') ? { 'copilot-vision-request': 'true' } : {}),
+      },
+      body: payload ? JSON.stringify(payload) : undefined,
+      signal: abort.signal,
+    });
+    if (r.status === 401) session = undefined;
+    return r;
+  };
+  const chat = path === '/chat/completions' && !!body?.model;
+  if (chat && (await servedOnlyOnResponses(body.model))) return forwardViaResponses(body, send, res);
+  const upstream = await send(path, body);
   if (upstream.status === 400 && body?.model) {
     const text = await upstream.text();
-    if (text.includes('unsupported_api_for_model') || text.includes('is not accessible via the /chat/completions')) {
+    if (chat && (text.includes('unsupported_api_for_model') || text.includes('is not accessible via the /chat/completions'))) {
       chatUnsupported.add(body.model);
-      res.writeHead(400, { 'content-type': 'application/json' });
-      return void res.end(
-        JSON.stringify({
-          error: {
-            message: `GitHub Copilot does not serve "${body.model}" through the chat API WorkspaceGPT uses. Pick another model in Settings → Model.`,
-          },
-        })
-      );
+      return forwardViaResponses(body, send, res);
     }
     res.writeHead(400, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
     return void res.end(text);
@@ -200,6 +218,7 @@ export async function forwardToCopilot(path: string, raw: string, res: http.Serv
   // (a /responses-only model would 400 on its first request).
   if (!raw && path === '/models' && upstream.ok) {
     const list: any = await upstream.json();
+    recordEndpoints(list.data);
     res.writeHead(200, { 'content-type': 'application/json' });
     return void res.end(JSON.stringify({ ...list, data: (list.data ?? []).filter(isUsableModel) }));
   }
@@ -207,6 +226,51 @@ export async function forwardToCopilot(path: string, raw: string, res: http.Serv
   if (!upstream.body) return void res.end();
   for await (const chunk of upstream.body as any) res.write(chunk);
   res.end();
+}
+
+/**
+ * A Chat Completions request for a model Copilot serves only on /responses:
+ * sent there, and its answer handed back as Chat Completions, streamed or not.
+ */
+async function forwardViaResponses(
+  body: any,
+  send: (path: string, payload: unknown) => Promise<Response>,
+  res: http.ServerResponse
+): Promise<void> {
+  let req = chatToResponsesRequest(body);
+  let upstream = await send('/responses', req);
+  if (upstream.status === 400 && hasExtras(req)) {
+    // Carried reasoning is an optimisation; if Copilot refuses it, the turn goes without.
+    const text = await upstream.text();
+    if (!/include|reasoning|encrypted/i.test(text)) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      return void res.end(text);
+    }
+    console.warn('[copilot] /responses refused carried reasoning, sending without it:', text.slice(0, 300));
+    req = withoutExtras(req);
+    upstream = await send('/responses', req);
+  }
+  if (!upstream.ok || !upstream.body) {
+    res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
+    return void res.end(await upstream.text());
+  }
+  if (!body.stream) {
+    const resp: any = await upstream.json();
+    if (resp.error) {
+      res.writeHead(502, { 'content-type': 'application/json' });
+      return void res.end(JSON.stringify({ error: { message: resp.error.message ?? 'GitHub Copilot could not finish the response.' } }));
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return void res.end(JSON.stringify(responsesToChatCompletion(resp, body.model)));
+  }
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+  const translator = new ResponsesStreamTranslator(body.model, !!body.stream_options?.include_usage);
+  const decoder = new TextDecoder();
+  for await (const chunk of upstream.body as any) {
+    const out = translator.push(decoder.decode(chunk, { stream: true }));
+    if (out) res.write(out);
+  }
+  res.end(translator.end());
 }
 
 /** Anthropic's floor for a thinking budget; a call capped below it (the intent classifier's 60) has no room to think. */
