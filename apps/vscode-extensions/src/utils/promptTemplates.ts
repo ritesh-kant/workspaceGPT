@@ -202,6 +202,37 @@ Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\` — they be
 `;
 
 /**
+ * The final answer for an autonomous run that has NO ticket (a plain "fix X"
+ * typed in Auto mode). FINAL_REPORT_FORMAT's criteria table belongs to a work
+ * item that has criteria; given only a sentence, the model invented a row
+ * from it. Same status heading and "Verification" heading, so the card and
+ * the finished-report gates (REPORT_SHAPED_RE) treat it the same.
+ */
+export const TASK_REPORT_FORMAT = `## FINAL REPORT FORMAT
+The user reads ONLY your final answer, in a narrow side panel. The status heading is the FIRST LINE of your answer — no preamble. Then only the sections below, in this order. There is no ticket, so there are no acceptance criteria: never write an "Acceptance criteria" table or invent criteria from the request.
+
+## ✅ Done — <what now works, in the user's own terms, ≤ 25 words>
+Use exactly one of these status headings instead when it applies:
+  ## ⚠️ Partially done — <what is left> · <WHY it is left: the exact obstacle>
+  ## 🚫 Blocked — <the ONE decision the request is missing>
+  ## ✅ No change needed — <why the code already does what was asked>
+
+### Root cause  (only when the request was a bug — otherwise leave this heading out entirely)
+<1–2 sentences: the MECHANISM, anchored to \`path/from/repo/root.ts:L18-L32\`. If you did not establish it, write "Not established — <what you observed instead>".>
+
+### Changes
+- \`path/from/repo/root.ts\` — what changed and why, one line each (omit when nothing changed)
+
+### Verification
+- ✅ \`<exact command run>\` — <one-line result> (❌ failed, ⚠️ could not run — say why in the same line)
+
+### How to test  (only when files changed or a check above is ⚠️ — at most 3 bullets)
+- <the exact command or the screen to open, and what to expect>
+
+Rules: cite files in backticks as \`path/from/repo/root.ts:L12-L20\`. State only what this run proved; reading the code is not running it.
+`;
+
+/**
  * The shape of a SPIKE's final answer.
  *
  * A spike is finished when the questions it was raised to settle are settled —
@@ -817,7 +848,7 @@ This run was started with a single click.
 This run was started with a single click and nobody will answer questions mid-task.
 - NEVER ask for permission, confirmation, or feedback. File writes apply automatically (each one is checkpointed and shown to the user afterwards as a reviewable diff).
 - Work the task to completion: implement, then VERIFY — run get_diagnostics after edits, then run_checks (kind "lint", "typecheck", "test") on every file you changed; it derives the command and runs without a gate. Diagnostics alone are NOT verification: they cannot see a failing assertion, a lint rule the editor does not run, or a type error in a file no editor has opened. run_command runs test/build/lint commands without a gate and refuses pipes, redirects and chaining; any other command (a script the user asked you to run) shows the user an approval card first — that card is how the task proceeds, not you asking permission.
-- Finish with the ${debugRun ? 'DEBUG REPORT FORMAT' : 'FINAL REPORT FORMAT'} (below) and nothing else — ${debugRun ? 'status heading, symptom, reproduction, root cause, fix, proof' : 'status heading, acceptance criteria table, changes, verification'}.
+- Finish with the ${debugRun ? 'DEBUG REPORT FORMAT' : 'FINAL REPORT FORMAT'} (below) and nothing else — ${debugRun ? 'status heading, symptom, reproduction, root cause, fix, proof' : (options?.ticketContext ? 'status heading, acceptance criteria table, changes, verification' : 'status heading, changes, verification — no acceptance criteria table, there is no ticket')}.
 - When the task was to RUN something (a download, a script, a query) rather than change code, and no file changed: skip get_diagnostics and run_checks, and report only the status heading, then **Result** (what ran, the exit code, where the output is, the key numbers) and **Not done** if anything was. No acceptance table, no Changes section. A job that outlasts a command's timeout is started with \`run_command\` \`background: true\` and followed with \`check_command\` until it finishes — do not stop at "here is the command to run".
 - Blocking is the LAST resort here, not a safe default — HOW TO WORK above defines the one case that qualifies, and "nobody is watching" makes taking a sensible default MORE right, not less. Stop early only for an action that would be unsafe to take unattended (a destructive command, a credential, an outward-facing side effect): name it, say why, in one line.
 `
@@ -894,7 +925,7 @@ This run has Full access. Where anything above says a command shows the user an 
   // reworded; only the order changed, and the question stays last.
   return `
 ${personalityPrompt}
-${howToWorkBlock}${planModeBlock}${autonomousBlock}${fullAccessBlock}${debugBlock}${options?.autonomous && !options?.ticketContext ? (debugRun ? DEBUG_REPORT_FORMAT : FINAL_REPORT_FORMAT) : debugRun && !options?.ticketContext ? DEBUG_REPORT_FORMAT : ''}${contextInstruction}
+${howToWorkBlock}${planModeBlock}${autonomousBlock}${fullAccessBlock}${debugBlock}${options?.autonomous && !options?.ticketContext ? (debugRun ? DEBUG_REPORT_FORMAT : TASK_REPORT_FORMAT) : debugRun && !options?.ticketContext ? DEBUG_REPORT_FORMAT : ''}${contextInstruction}
 
 ${workspaceBlock}${options?.userMemory ?? ''}${options?.projectMemory ?? ''}${todayBlock}${adoContextBlock}
 ${ticketBlock}${contextBlock}${sourcesMarkdown}

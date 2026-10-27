@@ -32,7 +32,8 @@ export function useWorkspaceFolders(): WorkspaceFolders {
       const m = event.data;
       if (m?.type !== MESSAGE_TYPES.RECENT_FOLDERS) return;
       setFolders({
-        current: m.current ?? '',
+        // The folder the chat on screen works in (set by the bottom-left chip), else the window's.
+        current: m.viewed || m.current || '',
         recent: Array.isArray(m.recent) ? m.recent : [],
         home: m.home ?? '',
         defaultFolder: m.defaultFolder ?? '',
