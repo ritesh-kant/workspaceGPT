@@ -8,11 +8,21 @@ Status: 2026-10-21. **Built (beta, desktop):**
 - "You" lines that are the call's own audio heard through the speakers are dropped;
 - **Call notes** in the sidebar's Sessions list, grouped by day, plus a note view
   (rename, delete, "Ask about this call");
-- agent tools `search_call_notes` and `read_call_note`.
+- agent tools `search_call_notes` and `read_call_note`;
+- call summaries with source-linked decisions and actions, ownership review and editable deadlines;
+- Overview / Transcript tabs, local transcript search, speaker filters and source navigation;
+- unfinished actions on Home across all saved calls; only highlights use a 14-day window.
+
+Summaries use the configured chat model, whose endpoint receives transcript text.
+The note shows its processing provider separately from local transcription and
+storage. Long transcripts are summarized in overlapping sections without dropping
+the middle. Regeneration reconciles actions with saved completion, dismissal,
+ownership and deadline overrides, including edits made during generation.
+Short captures remain accessible in a collapsed sidebar group; nothing is deleted
+by grouping.
 
 **Not built:**
 - Windows recording and transcription (whisper.cpp); Windows only detects;
-- a summary per call;
 - embedding notes into the on-device index (search is by words, not meaning);
 - matching a call to its calendar meeting.
 
@@ -77,9 +87,18 @@ extension code. This follows the rule that desktop must not fork extension code.
   Laws differ: several US states require all-party consent, and under GDPR a
   voice is personal data. Employer and client policies also apply.
 - **It stays on the device.** Audio is deleted after transcription unless the
-  user chooses to keep it. Transcripts can be deleted call by call. Nothing is
-  uploaded. Analytics carry no content: only events like
+  user chooses to keep it. Transcripts can be deleted call by call. Summarization sends transcript text
+  to the configured model endpoint; a local model keeps this processing on-device. Analytics carry no content: only events like
   `call_notes_started` and `call_notes_stopped` with a duration.
+
+## First-use introduction
+
+After desktop setup (and sign-in in Remote mode), supported builds show a
+one-time “Enable Call notes?” message. Enable turns on detection with per-call
+confirmation, starts the speech-model download, and leaves automatic note-taking
+off. “Not now” dismisses the introduction; the choice is persisted on this
+installation, with the feature still available in Settings → Call notes.
+Already-enabled and unsupported installations do not show the introduction.
 
 ## Flow
 

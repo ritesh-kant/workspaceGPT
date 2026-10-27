@@ -215,3 +215,56 @@
 .call-note-link { padding: 0; border: 0; background: transparent; color: var(--vscode-textLink-foreground); font: inherit; cursor: pointer; }
 .call-note-link:disabled { opacity: 0.5; cursor: default; }
 .call-note-transcript-toggle { display: block; margin: 0 0 10px; font-size: 12px; }
+
+.call-note-tabs {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.call-note-tabs button {
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  cursor: pointer;
+}
+.call-note-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--vscode-focusBorder);
+  color: var(--vscode-foreground);
+}
+.call-note-overview { max-width: 1000px; }
+.call-note-summary { padding: 16px 20px; }
+.call-note-summary h3 { margin-top: 22px; }
+.call-note-action-group:first-child h3 { margin-top: 0; }
+.call-note-action-group h3 span { margin-left: 6px; color: var(--vscode-descriptionForeground); }
+.call-note-actions-list li { padding: 10px 0; border-bottom: 1px solid var(--vscode-panel-border); }
+.call-note-action-content { min-width: 0; flex: 1; line-height: 1.5; }
+.call-note-actions-list li.is-done .call-note-action-content > span { text-decoration: line-through; opacity: 0.6; }
+.call-note-action-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 6px; font-size: 11px; }
+.call-note-action-controls label { display: flex; align-items: center; gap: 5px; color: var(--vscode-descriptionForeground); }
+.call-note-action-controls input[type='date'] {
+  width: 125px; flex: none; padding: 2px 4px; font: inherit; color: var(--vscode-foreground);
+  background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px;
+}
+.call-note-muted { color: var(--vscode-descriptionForeground); font-size: 12px; }
+.call-note-context { margin-top: 10px; }
+.call-note-context summary, .call-note-action-group details summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-size: 12px; padding: 6px 0; }
+.call-note-source { white-space: nowrap; margin-left: 4px; font-size: 11px; }
+.call-note-more { position: relative; }
+.call-note-more > summary { list-style: none; padding: 6px 12px; cursor: pointer; }
+.call-note-more > summary::-webkit-details-marker { display: none; }
+.call-note-more > div {
+  position: absolute; top: 100%; right: 0; z-index: 2; display: flex; gap: 8px;
+  padding: 8px; border-radius: 6px; background: var(--vscode-editorWidget-background, var(--vscode-dropdown-background));
+  border: 1px solid var(--vscode-panel-border); box-shadow: 0 4px 12px #0004;
+}
+.call-note-search { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: 760px; margin-bottom: 16px; }
+.call-note-search input { min-width: 100px; flex: 1; padding: 7px 10px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 6px; color: var(--vscode-input-foreground); }
+.call-note-search select { max-width: 125px; padding: 6px; background: var(--vscode-dropdown-background); color: var(--vscode-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 4px; }
+.call-note-search [role='status'] { font-size: 11px; color: var(--vscode-descriptionForeground); }
+.call-note-turn { padding: 8px; border: 1px solid transparent; border-radius: 6px; scroll-margin-block: 16px; }
+.call-note-turn--focused { border-color: var(--vscode-focusBorder); background: var(--vscode-editor-selectionHighlightBackground, #80808018); }
+.call-note-turn mark { background: var(--vscode-editor-findMatchHighlightBackground, #b8950066); color: inherit; }

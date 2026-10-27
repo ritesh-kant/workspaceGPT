@@ -266,7 +266,7 @@ export class SessionsHtmlTemplate {
       text-overflow: ellipsis;
     }
     .ws-chevron { flex-shrink: 0; opacity: 0.7; transition: transform 0.12s ease; }
-    .ws-group.open .ws-chevron { transform: rotate(90deg); }
+    .ws-group.open > .ws-header .ws-chevron { transform: rotate(90deg); }
     .ws-new {
       display: flex;
       align-items: center;
@@ -287,7 +287,7 @@ export class SessionsHtmlTemplate {
       color: var(--vscode-foreground);
     }
     .ws-rows { display: none; }
-    .ws-group.open .ws-rows { display: block; }
+    .ws-group.open > .ws-rows { display: block; }
     .ws-empty {
       padding: 4px 8px 6px 32px;
       font-size: 12px;
@@ -671,13 +671,15 @@ export class SessionsHtmlTemplate {
         : callNotes;
       if (!notes.length) return '';
       const key = 'notes:';
+      const short = needle ? [] : notes.filter((n) => n.status !== 'recording' && (!n.turnCount || (n.endedAt && n.endedAt - n.startedAt < 60000)));
+      const primary = notes.filter((n) => !short.includes(n));
       const recording = notes.some((n) => n.status === 'recording');
       const open = !!needle || recording || !(key in wsOpen) || !!wsOpen[key];
-      const activeAt = notes.findIndex((n) => n.id === activeNoteId);
-      const limit = needle ? notes.length : Math.max(shown[key] || NOTES_PAGE, activeAt + 1);
+      const activeAt = primary.findIndex((n) => n.id === activeNoteId);
+      const limit = needle ? primary.length : Math.max(shown[key] || NOTES_PAGE, activeAt + 1);
       let body = '';
       let day = '';
-      for (const n of notes.slice(0, limit)) {
+      for (const n of primary.slice(0, limit)) {
         const label = noteDayLabel(n.startedAt || 0, now);
         if (label !== day) {
           day = label;
@@ -685,10 +687,24 @@ export class SessionsHtmlTemplate {
         }
         body += noteRowHtml(n);
       }
-      const left = notes.length - limit;
+      const left = primary.length - limit;
       if (left > 0) {
         body += '<button class="show-more" type="button" data-more="' + key + '" data-shown="' + limit + '">Show ' +
           Math.min(PAGE_SIZE, left) + ' more</button>';
+      }
+      if (short.length) {
+        const shortKey = 'notes:short';
+        const shortOpen = !!wsOpen[shortKey] || short.some((n) => n.id === activeNoteId);
+        const shortLimit = Math.max(shown[shortKey] || NOTES_PAGE, short.findIndex((n) => n.id === activeNoteId) + 1);
+        let rows = '';
+        let shortDay = '';
+        for (const note of short.slice(0, shortLimit)) {
+          const label = noteDayLabel(note.startedAt || 0, now);
+          if (label !== shortDay) { shortDay = label; rows += '<div class="note-day">' + escapeHtml(label) + '</div>'; }
+          rows += noteRowHtml(note);
+        }
+        if (short.length > shortLimit) rows += '<button class="show-more" type="button" data-more="' + shortKey + '" data-shown="' + shortLimit + '">Show more</button>';
+        body += '<div class="ws-group' + (shortOpen ? ' open' : '') + '"><div class="ws-header"><button class="ws-toggle" type="button" data-ws="' + shortKey + '" aria-expanded="' + shortOpen + '"><span class="ws-name">Short captures</span><span class="ws-count">' + short.length + '</span>' + CHEVRON + '</button></div><div class="ws-rows">' + rows + '</div></div>';
       }
       return '<div class="ws-group notes' + (open ? ' open' : '') + '"><div class="ws-header">' +
         '<button class="ws-toggle" type="button" data-ws="' + key + '" aria-expanded="' + open + '">' +
@@ -700,9 +716,9 @@ export class SessionsHtmlTemplate {
       const rec = n.status === 'recording';
       const span = clock(n.startedAt || 0) + (n.endedAt ? ' – ' + clock(n.endedAt) : '');
       const named = n.title && !DEFAULT_NOTE_TITLE.test(n.title);
-      const main = named ? n.title : span;
+      const main = named ? n.title : (n.preview ? n.preview.slice(0, 70) : 'Call at ' + clock(n.startedAt || 0));
       const length = n.endedAt ? callLength(n.endedAt - n.startedAt) : '';
-      const meta = rec ? 'Taking notes' : named ? clock(n.startedAt || 0) + (length ? ' · ' + length : '') : length;
+      const meta = rec ? 'Taking notes' : clock(n.startedAt || 0) + (length ? ' · ' + length : '');
       const tip = (n.title || 'Call') + (named ? ' (' + span + ')' : '') + (n.preview ? '\\n' + n.preview : '');
       return '<button class="row note' + (rec ? ' recording' : '') + (n.id === activeNoteId ? ' active' : '') +
         '" type="button" title="' + escapeHtml(tip) + '" data-note-id="' + escapeHtml(n.id) + '">' +

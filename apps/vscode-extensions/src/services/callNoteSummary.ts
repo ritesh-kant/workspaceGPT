@@ -11,7 +11,8 @@
  */
 import * as fsp from 'fs/promises';
 import * as path from 'path';
-import { CallNote, CallNoteSummary, formatOffset, listCallNotes, readCallNote, renameCallNote } from './callNotes';
+import { randomUUID } from 'crypto';
+import { CallNote, CallNoteSummary, formatOffset, isCallNoteId, listCallNotes, readCallNote, renameCallNote } from './callNotes';
 
 /** `unclear`: the call did not say who; the panel offers it to the user as a suggestion, never as their task. */
 export type ActionOwner = 'you' | 'other' | 'unclear';
@@ -32,6 +33,7 @@ export interface CallAction {
   /** A tracker id the transcript names for this item. */
   ticket?: string;
   state?: ActionState;
+  overrides?: { owner?: ActionOwner; dueDate?: string };
 }
 
 export interface CallSummaryDoc {
@@ -39,6 +41,8 @@ export interface CallSummaryDoc {
   /** `skipped`: too little was said to be worth a summary; not retried. */
   status: 'done' | 'skipped';
   generatedAt: number;
+  processedBy?: string;
+  decisionSources?: { text: string; at: number }[];
   tldr?: string;
   /** What matters from this call, a few short lines. */
   highlights?: string[];
@@ -72,7 +76,7 @@ const SUFFIX = '.summary.json';
 /** Turns and words below which a call is noise or a dropped connection, not a conversation. */
 const MIN_TURNS = 4;
 const MIN_WORDS = 60;
-/** Characters of transcript sent to the model: head and tail are kept past this. */
+/** Each summary request covers a bounded, overlapping section of the transcript. */
 const MAX_TRANSCRIPT_CHARS = 40_000;
 const DEFAULT_TITLE = /^Call on /;
 const CLOSED_STATE = /^(closed|done|resolved|removed|completed|cancell?ed)$/i;
@@ -85,6 +89,7 @@ export type TicketState = (id: string) => Promise<string | undefined>;
 const summaryFile = (dir: string, id: string) => path.join(dir, `${id}${SUFFIX}`);
 
 export async function readCallSummary(dir: string, id: string): Promise<CallSummaryDoc | undefined> {
+  if (!isCallNoteId(id)) return undefined;
   try {
     const doc = JSON.parse(await fsp.readFile(summaryFile(dir, id), 'utf8')) as CallSummaryDoc;
     return doc?.v === 1 ? doc : undefined;
@@ -95,21 +100,47 @@ export async function readCallSummary(dir: string, id: string): Promise<CallSumm
 
 async function writeCallSummary(dir: string, id: string, doc: CallSummaryDoc): Promise<void> {
   const file = summaryFile(dir, id);
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${randomUUID()}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(doc, null, 2), 'utf8');
   await fsp.rename(tmp, file);
 }
 
 export async function deleteCallSummary(dir: string, id: string): Promise<void> {
+  if (!isCallNoteId(id)) return;
   await fsp.unlink(summaryFile(dir, id)).catch(() => undefined);
 }
 
+/** Keep complete turns and their original timestamps; overlap one turn between sections. */
+export function summarySections(note: CallNote): CallNote[] {
+  const turns = [...note.turns].sort((a, b) => a.at - b.at);
+  const sections: CallNote[] = [];
+  let section: typeof turns = [];
+  let size = 0;
+  for (const turn of turns) {
+    const length = turn.text.length + 32;
+    if (size + length > MAX_TRANSCRIPT_CHARS && section.length) {
+      sections.push({ ...note, turns: section });
+      section = section.length > 1 ? [section[section.length - 1]] : [];
+      size = section.reduce((n, t) => n + t.text.length + 32, 0);
+    }
+    // A single unusually long segment is split too, without losing its text.
+    for (let start = 0; start < turn.text.length; start += MAX_TRANSCRIPT_CHARS - 64) {
+      const part = { ...turn, text: turn.text.slice(start, start + MAX_TRANSCRIPT_CHARS - 64) };
+      if (size + part.text.length + 32 > MAX_TRANSCRIPT_CHARS && section.length) {
+        sections.push({ ...note, turns: section });
+        section = [];
+        size = 0;
+      }
+      section.push(part);
+      size += part.text.length + 32;
+    }
+  }
+  if (section.length) sections.push({ ...note, turns: section });
+  return sections;
+}
+
 function transcriptOf(note: CallNote): string {
-  const lines = [...note.turns].sort((a, b) => a.at - b.at).map((t) => `[${formatOffset(t.at)}] ${t.speaker === 'you' ? 'You' : 'Others'}: ${t.text}`);
-  const text = lines.join('\n');
-  if (text.length <= MAX_TRANSCRIPT_CHARS) return text;
-  const half = MAX_TRANSCRIPT_CHARS / 2;
-  return `${text.slice(0, half)}\n[… the middle of the call is omitted …]\n${text.slice(-half)}`;
+  return note.turns.map((t) => `[${formatOffset(t.at)}] ${t.speaker === 'you' ? 'You' : 'Others'}: ${t.text}`).join('\n');
 }
 
 export function buildSummaryPrompt(note: CallNote): string {
@@ -122,7 +153,7 @@ Return one JSON object and nothing else (no markdown):
   "title": "4-8 words naming what the call was about",
   "tldr": "2-3 sentences: what was discussed and where it ended up",
   "highlights": ["up to 3 things that matter most, each under 14 words, each a fact or a decision from the call"],
-  "decisions": ["a decision that was made, one sentence each"],
+  "decisions": [{"text": "a decision that was made, one sentence", "at": "mm:ss of its supporting line"}],
   "actions": [
     {"text": "what has to be done, starting with a verb", "owner": "you" or "other" or "unclear", "who": "name if owner is other and a name was said, else empty", "due": "when, if said, else empty", "dueDate": "that day as YYYY-MM-DD, worked out from the call date above, else empty", "at": "mm:ss of the line where it was agreed", "ticket": "a ticket or work item number if one was named for this, else empty"}
   ],
@@ -130,7 +161,7 @@ Return one JSON object and nothing else (no markdown):
 }
 "owner" is "you" only when "You" took it on, or Others asked "You" to do it; "other" when someone else took it; "unclear" when it was agreed but not who owns it. Empty arrays are fine. If there is no real conversation (noise, a test, one person talking to themselves), return {"empty": true}.
 
-Call date: ${new Date(note.startedAt).toDateString()} (${new Date(note.startedAt).toISOString().slice(0, 10)}).
+Call date (local): ${new Date(note.startedAt).toDateString()}. All timestamps are offsets from the original call start, including when this is one section of a longer call.
 
 Transcript:
 ${transcriptOf(note)}`;
@@ -165,12 +196,13 @@ export function parseSummaryReply(raw: string, note: CallNote): { title?: string
       const ticket = text(a?.ticket, 40).replace(/^#/, '');
       const who = text(a?.who, 60);
       const due = text(a?.due, 60);
-      const at = parseOffset(a?.at);
-      const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(text(a?.dueDate, 10)) ? text(a?.dueDate, 10) : '';
+      const parsedAt = parseOffset(a?.at);
+      const at = parsedAt !== undefined && note.turns.some((t) => Math.abs(t.at - parsedAt) <= 30) ? parsedAt : undefined;
+      const dueDate = validDate(text(a?.dueDate, 10)) ? text(a?.dueDate, 10) : '';
       return {
         id: '',
         text: body,
-        owner: a?.owner === 'you' ? 'you' : a?.owner === 'unclear' ? 'unclear' : 'other',
+        owner: a?.owner === 'you' ? 'you' : a?.owner === 'other' ? 'other' : 'unclear',
         ...(who ? { who } : {}),
         ...(due ? { due } : {}),
         ...(dueDate ? { dueDate } : {}),
@@ -185,7 +217,55 @@ export function parseSummaryReply(raw: string, note: CallNote): { title?: string
   const tldr = text(json.tldr, 600);
   if (!tldr && !actions.length) return undefined;
   const title = text(json.title, 90);
-  return { ...(title ? { title } : {}), doc: { tldr, highlights: list(json.highlights, 3, 140), decisions: list(json.decisions, 8, 240), actions, topics: list(json.topics, 4, 40) } };
+  const decisions = (Array.isArray(json.decisions) ? json.decisions : []).slice(0, 8)
+    .map((d: any) => ({ text: text(typeof d === 'string' ? d : d?.text, 240), at: parseOffset(d?.at) }))
+    .filter((d: { text: string }) => d.text);
+  const decisionSources = decisions.filter((d: { at?: number }) => d.at !== undefined && note.turns.some((t) => Math.abs(t.at - d.at!) <= 30));
+  return { ...(title ? { title } : {}), doc: { tldr, highlights: list(json.highlights, 3, 140), decisions: decisions.map((d: { text: string }) => d.text), decisionSources, actions, topics: list(json.topics, 4, 40) } };
+}
+
+function validDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+}
+
+const normalized = (value: string) => value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+/** User state wins, including edits made while regeneration was running. */
+function reconcileActions(next: CallAction[], previous: CallAction[]): CallAction[] {
+  const remaining = [...previous];
+  let number = Math.max(0, ...previous.map((a) => Number(a.id.replace(/^a/, '')) || 0));
+  const result = next.map((action) => {
+    let index = remaining.findIndex((a) => normalized(a.text) === normalized(action.text) && (!a.ticket || !action.ticket || a.ticket === action.ticket));
+    if (index < 0 && action.at !== undefined && next.filter((a) => a.at === action.at).length === 1) {
+      const sameMoment = remaining.filter((a) => a.at === action.at);
+      if (sameMoment.length === 1) {
+        const words = new Set(normalized(action.text).split(' '));
+        const oldWords = new Set(normalized(sameMoment[0].text).split(' '));
+        const shared = [...words].filter((word) => oldWords.has(word)).length;
+        const compatible = !sameMoment[0].ticket || !action.ticket || sameMoment[0].ticket === action.ticket;
+        if (compatible && shared / new Set([...words, ...oldWords]).size >= 0.5) index = remaining.indexOf(sameMoment[0]);
+      }
+    }
+    if (index < 0) return { ...action, id: `a${++number}` };
+    const old = remaining.splice(index, 1)[0];
+    const merged = { ...action, id: old.id, state: old.state, overrides: old.overrides };
+    if (old.overrides?.owner) merged.owner = old.overrides.owner;
+    if (old.overrides?.dueDate !== undefined) {
+      merged.dueDate = old.overrides.dueDate || undefined;
+      merged.due = undefined;
+    }
+    return merged;
+  });
+  return [...result, ...remaining.filter((a) => a.state || a.overrides)];
+}
+
+const writes = new Map<string, Promise<unknown>>();
+async function updateSummary<T>(dir: string, id: string, change: () => Promise<T>): Promise<T> {
+  const key = summaryFile(dir, id);
+  const next = (writes.get(key) ?? Promise.resolve()).catch(() => undefined).then(change);
+  writes.set(key, next);
+  try { return await next; }
+  finally { if (writes.get(key) === next) writes.delete(key); }
 }
 
 const inFlight = new Set<string>();
@@ -196,27 +276,55 @@ const inFlight = new Set<string>();
  * call throws (no model chosen, rate limit): nothing is saved, so a later try
  * starts clean.
  */
-export async function summarizeCallNote(dir: string, id: string, complete: Complete, opts: { force?: boolean } = {}): Promise<CallSummaryDoc | undefined> {
+export async function summarizeCallNote(dir: string, id: string, complete: Complete, opts: { force?: boolean; processedBy?: string } = {}): Promise<CallSummaryDoc | undefined> {
   if (inFlight.has(id)) return undefined;
-  const note = await readCallNote(dir, id);
-  if (!note || note.status !== 'done') return undefined;
-  const existing = await readCallSummary(dir, id);
-  if (existing && !opts.force) return existing;
-  const words = note.turns.reduce((n, t) => n + t.text.split(/\s+/).filter(Boolean).length, 0);
-  if (note.turns.length < MIN_TURNS || words < MIN_WORDS) {
-    const skipped: CallSummaryDoc = { v: 1, status: 'skipped', generatedAt: Date.now(), decisions: [], actions: [], topics: [] };
-    await writeCallSummary(dir, id, skipped);
-    return skipped;
-  }
   inFlight.add(id);
   try {
-    const parsed = parseSummaryReply(await complete(buildSummaryPrompt(note)), note);
-    const doc: CallSummaryDoc = parsed
-      ? { v: 1, status: 'done', generatedAt: Date.now(), ...parsed.doc }
-      : { v: 1, status: 'skipped', generatedAt: Date.now(), decisions: [], actions: [], topics: [] };
-    await writeCallSummary(dir, id, doc);
-    // The user's own title wins: only the default "Call on …" is replaced.
-    if (parsed?.title && DEFAULT_TITLE.test(note.title)) await renameCallNote(dir, id, parsed.title);
+    const note = await readCallNote(dir, id);
+    if (!note || note.status !== 'done') return undefined;
+    const existing = await readCallSummary(dir, id);
+    if (existing && !opts.force) return existing;
+    const words = note.turns.reduce((n, t) => n + t.text.split(/\s+/).filter(Boolean).length, 0);
+    if (!opts.force && (note.turns.length < MIN_TURNS || words < MIN_WORDS)) {
+      if (existing) return existing;
+      const skipped: CallSummaryDoc = { v: 1, status: 'skipped', generatedAt: Date.now(), decisions: [], actions: [], topics: [] };
+      await writeCallSummary(dir, id, skipped);
+      return skipped;
+    }
+    const parts: NonNullable<ReturnType<typeof parseSummaryReply>>[] = [];
+    for (const section of summarySections(note)) {
+      const raw = await complete(buildSummaryPrompt(section));
+      const parsed = parseSummaryReply(raw, section);
+      if (parsed) parts.push(parsed);
+      else {
+        let empty = false;
+        try { empty = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1))?.empty === true; } catch { /* retryable response */ }
+        if (!empty) throw new Error('The model returned an unreadable summary. Try again.');
+      }
+    }
+    if (!parts.length && existing?.status === 'done') return existing;
+    const unique = <T>(values: T[], key: (value: T) => string): T[] => [...new Map(values.map((value) => [key(value), value])).values()];
+    const combined = parts.length ? {
+      tldr: parts.map((p) => p.doc.tldr).filter(Boolean).join(' '),
+      highlights: unique(parts.flatMap((p) => p.doc.highlights ?? []), normalized),
+      decisions: unique(parts.flatMap((p) => p.doc.decisions), normalized),
+      decisionSources: unique(parts.flatMap((p) => p.doc.decisionSources ?? []), (d) => normalized(d.text)),
+      actions: unique(parts.flatMap((p) => p.doc.actions), (a) => `${normalized(a.text)}:${a.ticket ?? ''}`),
+      topics: unique(parts.flatMap((p) => p.doc.topics), normalized),
+    } : { decisions: [], actions: [], topics: [] };
+    const doc = await updateSummary(dir, id, async () => {
+      // A deleted note must not be recreated by an in-flight model response.
+      if (!(await readCallNote(dir, id))) return undefined;
+      const latest = await readCallSummary(dir, id);
+      const saved: CallSummaryDoc = {
+        v: 1, status: parts.length ? 'done' : 'skipped', generatedAt: Date.now(),
+        ...combined, processedBy: opts.processedBy,
+        actions: reconcileActions(combined.actions, latest?.actions ?? []),
+      };
+      await writeCallSummary(dir, id, saved);
+      return saved;
+    });
+    if (parts[0]?.title && DEFAULT_TITLE.test(note.title)) await renameCallNote(dir, id, parts[0].title);
     return doc;
   } finally {
     inFlight.delete(id);
@@ -234,17 +342,26 @@ export async function notesNeedingSummary(dir: string, days: number): Promise<Ca
   return missing;
 }
 
-export async function setActionState(dir: string, id: string, actionId: string, state: ActionState): Promise<boolean> {
-  const doc = await readCallSummary(dir, id);
-  const action = doc?.actions.find((a) => a.id === actionId);
-  if (!doc || !action) return false;
-  if (state === 'mine') {
-    action.owner = 'you';
-    delete action.state;
-  } else if (state === 'open') delete action.state;
-  else action.state = state;
-  await writeCallSummary(dir, id, doc);
-  return true;
+export async function setActionState(dir: string, id: string, actionId: string, state?: ActionState, edits: { dueDate?: string } = {}): Promise<boolean> {
+  if (edits.dueDate !== undefined && edits.dueDate !== '' && !validDate(edits.dueDate)) throw new Error('Choose a valid due date.');
+  return updateSummary(dir, id, async () => {
+    const doc = await readCallSummary(dir, id);
+    const action = doc?.actions.find((a) => a.id === actionId);
+    if (!doc || !action) return false;
+    if (state === 'mine') {
+      action.owner = 'you';
+      action.overrides = { ...action.overrides, owner: 'you' };
+      delete action.state;
+    } else if (state === 'open') delete action.state;
+    else if (state) action.state = state;
+    if (edits.dueDate !== undefined) {
+      action.overrides = { ...action.overrides, dueDate: edits.dueDate };
+      action.dueDate = edits.dueDate || undefined;
+      delete action.due;
+    }
+    await writeCallSummary(dir, id, doc);
+    return true;
+  });
 }
 
 const stateCache = new Map<string, { at: number; state: string }>();
@@ -263,13 +380,13 @@ export interface OpenActions {
 }
 
 /**
- * The user's open action items from calls in the last `days`, newest call
- * first. An item whose ticket is now closed in the tracker is not open any
+ * All unresolved user action items, ordered by due date. Only highlights and
+ * call counts use the recent `days` window. An item whose ticket is now closed in the tracker is not open any
  * more; when the tracker cannot say, it stays.
  */
 export async function listOpenActions(dir: string, days: number, ticketState?: TicketState): Promise<OpenActions> {
   const since = Date.now() - days * 86_400_000;
-  const notes = (await listCallNotes(dir)).filter((n) => n.status === 'done' && n.startedAt >= since);
+  const notes = (await listCallNotes(dir)).filter((n) => n.status === 'done');
   const actions: PendingAction[] = [];
   const suggested: PendingAction[] = [];
   const highlights: CallHighlight[] = [];
@@ -278,10 +395,11 @@ export async function listOpenActions(dir: string, days: number, ticketState?: T
   for (const n of notes) {
     const doc = await readCallSummary(dir, n.id);
     if (doc?.status !== 'done') continue;
-    calls++;
-    if (!latest && doc.tldr) latest = { id: n.id, title: n.title, startedAt: n.startedAt, ...(n.endedAt ? { endedAt: n.endedAt } : {}), tldr: doc.tldr };
+    const recent = n.startedAt >= since;
+    if (recent) calls++;
+    if (recent && !latest && doc.tldr) latest = { id: n.id, title: n.title, startedAt: n.startedAt, ...(n.endedAt ? { endedAt: n.endedAt } : {}), tldr: doc.tldr };
     // Two from a call at most, so one long call does not fill the list.
-    for (const text of (doc.highlights ?? []).slice(0, 2)) {
+    for (const text of (recent ? doc.highlights ?? [] : []).slice(0, 2)) {
       if (highlights.length < MAX_HIGHLIGHTS) highlights.push({ text, noteId: n.id, noteTitle: n.title, startedAt: n.startedAt });
     }
     for (const a of doc.actions) {
@@ -291,7 +409,8 @@ export async function listOpenActions(dir: string, days: number, ticketState?: T
       else if (a.owner === 'unclear') suggested.push(item);
     }
   }
-  const base = { suggested, highlights, calls, ...(notes.length ? { newest: notes[0].startedAt } : {}), latest };
+  actions.sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999') || b.startedAt - a.startedAt);
+  const base = { suggested, highlights, calls, ...(latest ? { newest: latest.startedAt } : {}), latest };
   if (!ticketState) return { actions, ...base };
   const open = await Promise.all(
     actions.map(async (a) => {

@@ -69,7 +69,7 @@ const CallNotesSettings: React.FC = () => {
             {model.state === 'ready' ? (
               <>
                 <StatusDot tone='ok' />
-                Transcribed on this Mac. Audio is never saved.
+                Transcribed on this Mac. Audio is never saved. Summaries use your selected chat model; its endpoint receives transcript text.
               </>
             ) : model.state === 'downloading' ? (
               <>

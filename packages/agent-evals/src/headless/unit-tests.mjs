@@ -7089,12 +7089,123 @@ console.log('\ncall summaries');
     assert.ok(!after.suggested.some((a) => a.noteId === s0.noteId && a.id === s0.id));
   });
 
-  await t('a call older than the window is not listed; deleting a note deletes its summary', async () => {
+  await t('old unfinished actions remain pending while highlights stay recent; deleting a note deletes its summary', async () => {
     await writeCallNote(dir, mk('2026-09-01-1000-eeee', { startedAt: now - 30 * 86_400_000, endedAt: now - 30 * 86_400_000 + 600_000 }));
     await summarizeCallNote(dir, '2026-09-01-1000-eeee', async () => reply);
-    assert.ok(!(await listOpenActions(dir, 14)).actions.some((a) => a.noteId === '2026-09-01-1000-eeee'));
+    const pending = await listOpenActions(dir, 14);
+    assert.ok(pending.actions.some((a) => a.noteId === '2026-09-01-1000-eeee'));
+    assert.ok(!pending.highlights.some((a) => a.noteId === '2026-09-01-1000-eeee'));
+    assert.ok(!pending.latest || pending.latest.startedAt >= now - 14 * 86_400_000);
     await deleteCallNote(dir, '2026-09-01-1000-eeee');
     assert.equal(await readCallSummary(dir, '2026-09-01-1000-eeee'), undefined);
+  });
+
+  await t('regeneration keeps completion, claimed ownership and date edits made while the model runs', async () => {
+    const id = '2026-10-26-regenerate';
+    await writeCallNote(dir, mk(id));
+    await summarizeCallNote(dir, id, async () => reply);
+    let release;
+    let started;
+    const entered = new Promise((resolve) => { started = resolve; });
+    const waiting = new Promise((resolve) => { release = resolve; });
+    const regenerate = summarizeCallNote(dir, id, async () => { started(); await waiting; return reply; }, { force: true });
+    await entered;
+    await Promise.all([
+      setActionState(dir, id, 'a1', 'done'),
+      setActionState(dir, id, 'a2', 'mine', { dueDate: '2026-11-04' }),
+      setActionState(dir, id, 'a3', 'dismissed'),
+    ]);
+    release();
+    const result = await regenerate;
+    assert.equal(result.actions.find((a) => a.id === 'a1').state, 'done');
+    const claimed = result.actions.find((a) => a.id === 'a2');
+    assert.equal(claimed.owner, 'you');
+    assert.equal(claimed.dueDate, '2026-11-04');
+    assert.equal(result.actions.find((a) => a.id === 'a3').state, 'dismissed');
+    await assert.rejects(() => setActionState(dir, id, 'a2', undefined, { dueDate: '2026-02-30' }), /valid due date/);
+    await setActionState(dir, id, 'a2', undefined, { dueDate: '' });
+    const after = await summarizeCallNote(dir, id, async () => reply, { force: true });
+    assert.equal(after.actions.find((a) => a.id === 'a2').dueDate, undefined);
+  });
+
+  await t('reordered and omitted actions do not steal or erase user progress', async () => {
+    const id = '2026-10-26-reorder';
+    await writeCallNote(dir, mk(id));
+    await summarizeCallNote(dir, id, async () => reply);
+    await setActionState(dir, id, 'a1', 'done');
+    await setActionState(dir, id, 'a2', 'mine');
+    const next = JSON.parse(reply);
+    next.actions = [next.actions[2], { text: 'Review a new requirement', owner: 'you', at: '02:00' }];
+    const result = await summarizeCallNote(dir, id, async () => JSON.stringify(next), { force: true });
+    assert.equal(result.actions.find((a) => a.id === 'a1').state, 'done');
+    assert.equal(result.actions.find((a) => a.id === 'a2').owner, 'you');
+    assert.equal(result.actions.find((a) => a.text === 'Review a new requirement').state, undefined);
+    assert.equal(new Set(result.actions.map((a) => a.id)).size, result.actions.length);
+  });
+
+  await t('a different task at the same timestamp does not inherit completed state', async () => {
+    const id = '2026-10-26-different';
+    await writeCallNote(dir, mk(id));
+    await summarizeCallNote(dir, id, async () => reply);
+    await setActionState(dir, id, 'a1', 'done');
+    const next = JSON.parse(reply);
+    next.actions = [{ text: 'Schedule a design workshop', owner: 'you', at: '00:20' }];
+    const result = await summarizeCallNote(dir, id, async () => JSON.stringify(next), { force: true });
+    assert.equal(result.actions.find((a) => a.text === 'Schedule a design workshop').state, undefined);
+    assert.equal(result.actions.find((a) => a.id === 'a1').state, 'done');
+  });
+
+  await t('long-call summaries cover the middle and preserve source timestamps in every section', async () => {
+    const id = '2026-10-26-long';
+    const turns = Array.from({ length: 120 }, (_, i) => ({ speaker: 'you', at: i * 30, text: `SEGMENT_${i} ` + 'Detailed release discussion '.repeat(35) }));
+    await writeCallNote(dir, mk(id, { turns }));
+    const prompts = [];
+    const result = await summarizeCallNote(dir, id, async (prompt) => {
+      prompts.push(prompt);
+      return JSON.stringify({ tldr: 'Discussed release requirements.', decisions: [{text:'Validate the middle requirement',at:'30:00'}], actions: prompt.includes('SEGMENT_60 ') ? [{text:'Validate the middle requirement',owner:'you',at:'30:00'}] : [] });
+    }, { processedBy: 'Preview model' });
+    assert.ok(prompts.length > 1);
+    for (let i = 0; i < 120; i++) assert.ok(prompts.some((prompt) => prompt.includes(`SEGMENT_${i} `)), `missing segment ${i}`);
+    assert.equal(result.actions.filter((a) => a.text === 'Validate the middle requirement').length, 1);
+    assert.equal(result.actions[0].at, 1800);
+    assert.ok(result.decisionSources.some((d) => d.at === 1800));
+    assert.equal(result.processedBy, 'Preview model');
+  });
+
+  await t('simultaneous summary requests share one generation', async () => {
+    const id = '2026-10-26-concurrent';
+    await writeCallNote(dir, mk(id));
+    let requests = 0;
+    const complete = async () => { requests++; return reply; };
+    await Promise.all([summarizeCallNote(dir, id, complete), summarizeCallNote(dir, id, complete)]);
+    assert.equal(requests, 1);
+  });
+
+  await t('explicit summary generation can cover a short call', async () => {
+    const id = '2026-10-26-short';
+    await writeCallNote(dir, mk(id, {turns: talk(2)}));
+    await summarizeCallNote(dir, id, async () => reply);
+    const result = await summarizeCallNote(dir, id, async () => reply, {force:true});
+    assert.equal(result.status, 'done');
+  });
+
+  await t('deleting a note during generation does not recreate its summary', async () => {
+    const id = '2026-10-26-delete';
+    await writeCallNote(dir, mk(id));
+    const result = await summarizeCallNote(dir, id, async () => { await deleteCallNote(dir, id); return reply; });
+    assert.equal(result, undefined);
+    assert.equal(await readCallSummary(dir, id), undefined);
+  });
+
+  await t('malformed summaries are retryable and regeneration failure preserves the existing summary', async () => {
+    const id = '2026-10-26-retry';
+    await writeCallNote(dir, mk(id));
+    await assert.rejects(() => summarizeCallNote(dir, id, async () => 'incomplete response'), /unreadable summary/);
+    assert.equal(await readCallSummary(dir, id), undefined);
+    await summarizeCallNote(dir, id, async () => reply);
+    await setActionState(dir, id, 'a1', 'done');
+    await assert.rejects(() => summarizeCallNote(dir, id, async () => '{', { force: true }), /unreadable summary/);
+    assert.equal((await readCallSummary(dir, id)).actions[0].state, 'done');
   });
 
   fs.rmSync(dir, { recursive: true, force: true });

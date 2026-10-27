@@ -19,6 +19,7 @@ import HomeGreeting from './components/HomeGreeting';
 import WorkHome from './components/WorkHome';
 import { KNOWLEDGE_SOURCES, prepareToConnect } from './components/settings/knowledgeSources';
 import CallIndicator from './components/CallIndicator';
+import CallNotesWelcome from './components/CallNotesWelcome';
 import CallNoteView from './components/CallNoteView';
 import QuickTipsSection from './components/QuickTipsSection';
 import GitStatusBar from './components/GitStatusBar';
@@ -2792,6 +2793,7 @@ const App: React.FC = () => {
         />
       )}
       <div className={`chat-container${showWorkHome ? ' chat-container--work-home' : ''}`}>
+        {isDesktopHost() && <CallNotesWelcome visible={activeView === 'chat' && config.onboardingCompleted && (mode !== 'remote' || remoteSignedIn)} />}
         {showTips && messages.length === 0 && !isDesktopHost() && <div className='mode-bar'>{modeSwitch}</div>}
         {showWorkHome ? (
           <WorkHome

@@ -17,7 +17,7 @@ import {
 import { SessionsViewProvider } from './sessionsViewProvider';
 import { callNotesDir, deleteCallNote, readCallNote } from './services/callNotes';
 import { readCallSummary } from './services/callNoteSummary';
-import { handleCallNoteMessage } from './services/callNoteActions';
+import { callSummaryProcessor, handleCallNoteMessage } from './services/callNoteActions';
 
 const SNAPSHOT_TIMEOUT_MS = 1500;
 
@@ -365,7 +365,7 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
     if (data?.type === MESSAGE_TYPES.GET_CALL_NOTE) {
       const note = await readCallNote(callNotesDir(this._context.globalStorageUri.fsPath), data.id);
       const summary = note ? await readCallSummary(callNotesDir(this._context.globalStorageUri.fsPath), note.id) : undefined;
-      await this.hub.postTo(surface, { type: MESSAGE_TYPES.CALL_NOTE, id: data.id, note: note ?? null, summary: summary ?? null });
+      await this.hub.postTo(surface, { type: MESSAGE_TYPES.CALL_NOTE, id: data.id, note: note ?? null, summary: summary ?? null, summaryProcessor: callSummaryProcessor(this._context) });
       return;
     }
     if (

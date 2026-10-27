@@ -1,0 +1,37 @@
+.call-notes-welcome {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: calc(100% - 32px);
+  max-width: 1124px;
+  margin: 16px auto 0;
+  padding: 16px 20px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 10px;
+  background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  color: var(--vscode-foreground);
+}
+.call-notes-welcome h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.call-notes-welcome p { margin: 0 0 6px; font-size: 13px; line-height: 1.5; }
+.call-notes-welcome small { color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.5; }
+.call-notes-welcome-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 230px; }
+.call-notes-welcome-actions button {
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.call-notes-welcome-actions .call-notes-welcome-enable { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.call-notes-welcome-actions button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.call-notes-welcome-actions button:hover { filter: brightness(1.1); }
+.call-notes-welcome-actions small { flex-basis: 100%; }
+@media (max-width: 620px) {
+  .call-notes-welcome { flex-direction: column; align-items: stretch; gap: 12px; }
+  .call-notes-welcome-actions { flex-basis: auto; }
+}
