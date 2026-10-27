@@ -2543,6 +2543,7 @@ console.log('\napiKeyFailover (overload retry — regression for the turn-18 run
     assert.ok(isTransientServerError(err(502)));
     assert.ok(isTransientServerError(err(500)));
     assert.ok(isTransientServerError(err(408)));
+    assert.ok(isTransientServerError(err(499, '499 status code (no body)')), '499 (gateway dropped the connection) must be retryable');
     // Status-less, message-only — OpenRouter's HTTP 200 + error payload route.
     assert.ok(isTransientServerError(new Error('502 Bad gateway')));
     assert.ok(isTransientServerError(new Error('No healthy upstream')));

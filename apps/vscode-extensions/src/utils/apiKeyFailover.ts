@@ -105,7 +105,8 @@ export function isRateLimitError(err: any): boolean {
 
 /**
  * True when an error looks like a transient provider-side failure worth
- * waiting out: a 5xx, a request timeout, or one of the capacity messages
+ * waiting out: a 5xx, a request timeout, a 499 (a gateway reporting the connection
+ * dropped mid-request, which says nothing about the request or the key), or one of the capacity messages
  * providers return.
  *
  * The numeric text match is anchored to the START of the message on purpose.
@@ -120,9 +121,9 @@ export function isRateLimitError(err: any): boolean {
 export function isTransientServerError(err: any): boolean {
   if (isRateLimitError(err)) return false;
   const status = err?.status ?? err?.statusCode ?? err?.response?.status;
-  if (typeof status === 'number' && ((status >= 500 && status < 600) || status === 408)) return true;
+  if (typeof status === 'number' && ((status >= 500 && status < 600) || status === 408 || status === 499)) return true;
   const msg = String(err?.message ?? '');
-  if (/^\s*(408|5\d\d)\b/.test(msg)) return true;
+  if (/^\s*(408|499|5\d\d)\b/.test(msg)) return true;
   const lower = msg.toLowerCase();
   return (
     lower.includes('overloaded') ||
