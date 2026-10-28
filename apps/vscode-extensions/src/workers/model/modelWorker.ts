@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'worker_threads';
 import { randomUUID } from 'crypto';
 import { createStructuredPrompt, createContinuationPrompt, isResearchWorkItem, TicketPromptContext } from '../../utils/promptTemplates';
 import { MODEL_PROVIDERS, REMOTE_MODEL } from '../../../constants';
+import { describeError, isCertError } from '../../utils/networkError';
 import OpenAI from 'openai';
 import { EmbeddingSearchResult } from 'src/types/types';
 import { withKeyFailover } from '../../utils/apiKeyFailover';
@@ -1931,7 +1932,7 @@ async function compactChatHistory(
  * imply, and leave every other error (and every local-mode provider) alone.
  */
 function describeLlmFailure(error: any, provider?: string): string {
-  const raw = error instanceof Error ? error.message : String(error);
+  const raw = describeError(error);
   if (provider !== REMOTE_MODEL.PROVIDER) return raw;
 
   const status = error?.status ?? error?.statusCode ?? error?.response?.status;

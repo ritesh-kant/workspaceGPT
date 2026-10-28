@@ -8,6 +8,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { describeError } from '../../../vscode-extensions/src/utils/networkError';
 
 const REVISION = '672fbf1b30579d6585301139bb363f42a0ad4a24';
 const CHUNK = 'epoch-99-avg-1-chunk-16-left-128.int8.onnx';
@@ -80,7 +81,7 @@ export class SpeechModel {
       console.log(`[desktop] dictation: speech model ready (${this.spec.dir})`);
       return this.dir;
     } catch (err) {
-      this.error = `Could not download the speech model: ${err instanceof Error ? err.message : String(err)}`;
+      this.error = `Could not download the speech model: ${describeError(err)}`;
       console.warn(`[desktop] dictation: ${this.error}`);
       return undefined;
     }

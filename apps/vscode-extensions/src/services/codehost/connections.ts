@@ -9,6 +9,7 @@ import { GhLogin, ghAccounts, ghInstalled, ghToken, startGhLogin } from './ghCli
 import { GitLabHost } from './gitlab';
 import type { CodeHost, CodeHostConnection, CodeHostConnectionSummary, CodeHostKind, RepoRef } from './types';
 import { KIND_LABEL } from './types';
+import { describeError, isCertError } from '../../utils/networkError';
 
 /**
  * The user's code-host connections (GitHub, GitLab, Bitbucket Cloud), one per
@@ -190,6 +191,7 @@ export class CodeHostConnections {
     const adapter = build(conn, token);
     const { login, warning } = await adapter.verify().catch((e) => {
       if (e instanceof Error && /^(GitHub|GitLab|Bitbucket|This |Not found)/.test(e.message)) throw e;
+      if (isCertError(e)) throw new Error(`Could not reach ${host}. ${describeError(e)}`);
       throw new Error(`Could not reach ${host}. Check the host name and your network.`);
     });
     conn.login = login;

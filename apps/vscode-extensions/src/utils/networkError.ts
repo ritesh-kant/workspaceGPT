@@ -20,6 +20,11 @@ function causeCode(error: unknown): string | undefined {
   return undefined;
 }
 
+export function isCertError(error: unknown): boolean {
+  const code = causeCode(error);
+  return !!code && CERT_CODES.has(code);
+}
+
 /** The error's message, plus a hint when it is really an untrusted-certificate failure. */
 export function describeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);

@@ -8,6 +8,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { describeError } from '../../../vscode-extensions/src/utils/networkError';
 
 export const WHISPER_MODEL = {
   file: 'ggml-small-q5_1.bin',
@@ -101,7 +102,7 @@ export class WhisperModel {
       this.set({ state: 'ready' });
     } catch (err) {
       fs.rmSync(part, { force: true });
-      const error = `Could not download the speech model: ${err instanceof Error ? err.message : String(err)}`;
+      const error = `Could not download the speech model: ${describeError(err)}`;
       console.warn(`[desktop] call notes: ${error}`);
       this.set({ state: 'failed', error });
     }

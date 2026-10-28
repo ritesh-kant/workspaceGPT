@@ -4,6 +4,7 @@ import type { NamedRoot } from '../codebase/codebaseTools';
 import { resolveAgainstRoots } from '../codebase/codebaseTools';
 import { CodeHostRequestError } from '../codehost/http';
 import { ghEnv } from '../codehost/ghCli';
+import { describeError, isCertError } from '../../utils/networkError';
 import type { CiCheck as HostCiCheck, CodeHost, PrRef, RepoRef } from '../codehost/types';
 
 /**
@@ -143,7 +144,7 @@ export async function getCiSnapshotViaHost(cwd: string, target: { host: CodeHost
     if (checks.some((c) => c.state === 'pending')) return { state: 'pending', pr, checks };
     return { state: checks.some((c) => c.state === 'fail') ? 'failed' : 'passed', pr, checks };
   } catch (e) {
-    return { state: 'unavailable', reason: e instanceof CodeHostRequestError ? e.message : 'Could not reach the code host.', checks: [] };
+    return { state: 'unavailable', reason: e instanceof CodeHostRequestError ? e.message : isCertError(e) ? describeError(e) : 'Could not reach the code host.', checks: [] };
   }
 }
 

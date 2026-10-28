@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { getProviderDefaultHeaders } from './anthropicHeaders';
 import { REASONING_EFFORT_LEVELS } from '../../constants';
+import { describeError, isCertError } from './networkError';
 
 // Model catalogs (OpenAI, Gemini, and router/aggregator providers like
 // OpenRouter, Requesty, NVIDIA) mix chat-completion models in with
@@ -41,6 +42,7 @@ export async function fetchAvailableModels(baseURL: string, apiKey: string) {
     // wrong base URL, offline) — "Invalid API Key" would send an Ollama user
     // hunting for a key they don't have.
     if (error instanceof OpenAI.APIConnectionError) {
+      if (isCertError(error)) throw new Error(`Could not reach ${baseURL}. ${describeError(error)}`);
       throw new Error(`Could not reach ${baseURL} — is the server running?`);
     }
     throw new Error('Invalid API Key');
