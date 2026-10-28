@@ -2580,6 +2580,9 @@ button:disabled {
   color: var(--vscode-foreground);
 }
 .agent-command-prompt { color: var(--vscode-descriptionForeground); }
+.agent-command-code { font-family: var(--vscode-editor-font-family, monospace); color: var(--hljs-string, #a5e075); }
+.agent-command-bin { color: var(--hljs-keyword, #61afef); }
+.agent-write-card.kind-command > .code-block { margin: 0; border: 0; border-radius: 0; }
 
 /* ── Messages pane ──────────────────────────────────────────────────────
    Flex:1 wrapper around the transcript so "jump to latest" can float over
@@ -4142,9 +4145,19 @@ button:disabled {
   margin: 14px 0 0;
   max-height: 220px;
   overflow-y: auto;
+  overflow-x: hidden;
+  /* Room for the row's border and focus outline on both sides, which a scroll
+     container would clip. The gutter keeps a scrollbar from eating the right edge. */
+  padding: 3px;
+  scrollbar-gutter: stable both-edges;
+  box-sizing: border-box;
 }
 
 .folder-choice {
+  width: 100%;
+  max-width: 100%;
+  position: relative;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 10px;

@@ -206,6 +206,37 @@ export async function pruneResumeRecords(
   return removed;
 }
 
+/**
+ * A stored chat whose process died while a card was waiting on the user: every
+ * undecided review in it is a dead gate (the host promise that would have
+ * answered it went down with the process). Closes them as 'stopped' and, when
+ * there were any, ends the transcript with a bubble that says what happened
+ * and — when `held` says a resume record still exists — carries `resumable`
+ * so the Resume button appears. Callers must only use this when the session
+ * has no live worker.
+ */
+export function settleStrandedReviews<T extends { writeReview?: { decision?: string; applying?: boolean } }>(
+  messages: T[],
+  held: { steps: number; writesApplied?: number } | null
+): T[] {
+  let settled = 0;
+  const closed = messages.map((m) => {
+    const review = m?.writeReview;
+    if (!review || review.decision || review.applying) return m;
+    settled++;
+    return { ...m, writeReview: { ...review, decision: 'stopped' } };
+  });
+  if (!settled) return messages;
+  const notice = {
+    content: 'WorkspaceGPT was closed while this run was waiting for your review, so nothing was applied.',
+    isUser: false,
+    isError: true,
+    timestamp: Date.now(),
+    ...(held ? { resumable: held } : {}),
+  };
+  return [...closed, notice as unknown as T];
+}
+
 /** Human-readable age, for the message that offers the resume. */
 export function describeAge(savedAt: number, now: number = Date.now()): string {
   const ms = Math.max(0, now - savedAt);

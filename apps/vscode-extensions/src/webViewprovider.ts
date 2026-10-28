@@ -353,6 +353,10 @@ export class WebViewProvider implements vscode.WebviewViewProvider {
       await this.onChatWebviewReady(data.layout);
       return;
     }
+    if (data?.type === MESSAGE_TYPES.CALL_NOTE_VIEWED) {
+      this.sessionsView?.setActiveNote(typeof data.id === 'string' ? data.id : null);
+      return;
+    }
     if (data?.type === MESSAGE_TYPES.SESSION_CHANGED) {
       if (surface === 'editor') {
         this._editorSessionId = data.sessionId ?? null;

@@ -114,6 +114,28 @@ export function suggestShipSubject(paths: string[], hasNewFiles: boolean): strin
   return shared ? `${verb} ${basename(shared)}` : `${verb} ${paths.length} files`;
 }
 
+/** Lockfiles and generated output: noise in a diff, and they say nothing about intent. */
+export const NOISY_DIFF_PATH_RE = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock|[^/]*\.min\.(js|css)|[^/]*\.map)$/;
+
+/** Prompt asking a model for one Conventional Commits subject describing a working-tree diff. */
+export function buildCommitSubjectPrompt(paths: string[], diff: string): string {
+  return (
+    'Write a git commit subject for these changes.\n' +
+    'Rules: Conventional Commits "type: subject" (type one of ' + CONVENTIONAL_TYPES.join(', ') + '), ' +
+    'imperative mood, lowercase, no trailing period, at most 72 characters. ' +
+    'Say what changed and why it matters, not which files. If only dependency or lockfiles changed, say which dependencies. ' +
+    'Reply with the subject line only.\n\n' +
+    `Changed files:\n${paths.join('\n')}\n\nDiff (may be truncated):\n${diff}`
+  );
+}
+
+/** A usable "type: subject" out of a model reply, or undefined when it is not one. */
+export function parseCommitSubjectReply(raw: string): string | undefined {
+  const line = raw.split('\n').map((l) => l.trim()).find(Boolean)?.replace(/^[`"'*\s]+|[`"'*.\s]+$/g, '');
+  const parsed = line ? parseConventionalSubject(line) : undefined;
+  return parsed ? `${parsed.type}: ${cutAtWord(parsed.subject, 72 - parsed.type.length - 2)}` : undefined;
+}
+
 /** Paths (and whether any are new) out of `git status --porcelain` output. */
 export function parsePorcelain(porcelain: string): { paths: string[]; hasNewFiles: boolean } {
   const paths: string[] = [];

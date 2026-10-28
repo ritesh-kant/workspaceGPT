@@ -14,6 +14,7 @@ import { openAgentDiff } from '../services/agent/agentDiffProvider';
 import { searchMentionTargets } from '../services/codebase/mentionSearch';
 import { getGitStatus } from '../services/agent/gitStatusService';
 import { shipAllChanges } from '../services/agent/shipService';
+import { completer } from '../services/callNoteActions';
 import { getCiSnapshot, getCiSnapshotViaHost, getFailureLog, getFailureLogViaHost, pushCiFix } from '../services/agent/ciService';
 import { CodeHostConnections } from '../services/codehost/connections';
 import { isPermission } from '../services/agent/permissionPolicy';
@@ -663,7 +664,8 @@ export class ChatMessageHandler {
             validateInput: (v) => (v.trim() ? undefined : 'Enter a short description of the change.'),
           })
         ),
-        new CodeHostConnections(this.context)
+        new CodeHostConnections(this.context),
+        completer(this.context)
       );
       if (!result) {
         reply({ ok: false, cancelled: true });
@@ -817,12 +819,13 @@ export class ChatMessageHandler {
   private async handleGetChatSession(data: any): Promise<void> {
     try {
       const session = await this.historyService.getChatSession(data.sessionId);
-      const messages = session?.messages ?? null;
+      let messages = session?.messages ?? null;
       // Seed the opened session's model-facing context from its transcript.
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
       this.chatService.loadHistory(data.sessionId, messages as any[], session?.workspaceFolder);
+      if (messages) messages = (await this.chatService.settleStoredSession(data.sessionId, messages as any[])) as typeof messages;
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.GET_CHAT_SESSION_RESPONSE,
         sessionId: data.sessionId,

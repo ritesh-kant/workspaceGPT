@@ -6,10 +6,13 @@ import { NamedRoot, resolveAgainstRoots } from '../codebase/codebaseTools';
 import { getActiveTicketProvider } from '../tickets/registry';
 import { CodeHostConnections } from '../codehost/connections';
 import {
+  buildCommitSubjectPrompt,
   cutAtWord,
   deriveShipTitle,
   turnCommitType,
   inferConventionalType,
+  NOISY_DIFF_PATH_RE,
+  parseCommitSubjectReply,
   parseConventionalSubject,
   parsePorcelain,
   pullRequestUrl,
@@ -60,11 +63,14 @@ export interface ShipResult {
 }
 
 const GIT_TIMEOUT_MS = 60_000;
+/** A push runs the repo's pre-push hooks (lint, tests) before it uploads, so it gets far longer than a local command. */
+const GIT_PUSH_TIMEOUT_MS = 600_000;
 
-function git(cwd: string, args: string[]): Promise<string> {
+function git(cwd: string, args: string[], timeout = GIT_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) reject(new Error(`git ${args[0]} failed: ${(stderr || err.message).trim()}`));
+    execFile('git', args, { cwd, timeout, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && (err as { killed?: boolean }).killed) reject(new Error(`git ${args[0]} timed out after ${Math.round(timeout / 1000)}s — a pre-push hook or a slow connection. ${stderr.trim()}`.trim()));
+      else if (err) reject(new Error(`git ${args[0]} failed: ${(stderr || err.message).trim()}`));
       // trimEnd, not trim: porcelain's first line starts with its status
       // column (" M path"), and parsePorcelain reads the path at offset 3.
       else resolve(stdout.trimEnd());
@@ -198,7 +204,7 @@ export async function shipChanges(
   if (remote) {
     onStatus(`Pushing ${branch} to origin…`);
     try {
-      await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch]);
+      await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch], GIT_PUSH_TIMEOUT_MS);
       pushed = true;
       prUrl = codeHost
         ? await codeHost.host.createPr(codeHost.repo, { base: targetBranch, head: branch, title: shortTitle, body: input.report }).catch((e) => {
@@ -246,6 +252,31 @@ export interface ShipAllResult {
   warnings: string[];
 }
 
+const COMMIT_SUBJECT_TIMEOUT_MS = 20_000;
+const COMMIT_DIFF_MAX_CHARS = 12_000;
+
+/** A model-written subject from the tree's diff, or undefined on any failure, timeout or unusable reply. */
+async function modelSubject(gitCwd: string, paths: string[], complete: (prompt: string) => Promise<string>): Promise<string | undefined> {
+  try {
+    const tracked = new Set((await git(gitCwd, ['ls-files', '-z', '--', ...paths.map((p) => `:(literal)${p}`)])).split('\0'));
+    const readable = paths.filter((p) => tracked.has(p) && !NOISY_DIFF_PATH_RE.test(p));
+    const stat = await git(gitCwd, ['diff', 'HEAD', '--stat=120', '--', ...paths.map((p) => `:(literal)${p}`)]).catch(() => '');
+    const patch = readable.length
+      ? await git(gitCwd, ['diff', 'HEAD', '-U1', '--', ...readable.map((p) => `:(literal)${p}`)]).catch(() => '')
+      : '';
+    // Dependency files are summarised by their stat; their patch is thousands of lines of hashes.
+    const added = paths.filter((p) => !tracked.has(p)).map((p) => `new file: ${p}`).join('\n');
+    const diff = [stat, added, patch].filter(Boolean).join('\n\n').slice(0, COMMIT_DIFF_MAX_CHARS);
+    const reply = await Promise.race([
+      complete(buildCommitSubjectPrompt(paths, diff)),
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timed out')), COMMIT_SUBJECT_TIMEOUT_MS)),
+    ]);
+    return parseCommitSubjectReply(reply);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * "Create PR" from the always-on git status bar: branch off HEAD, stage and
  * commit EVERYTHING dirty in the working tree — tracked changes, new files,
@@ -262,7 +293,9 @@ export async function shipAllChanges(
   roots: NamedRoot[],
   onStatus: (text: string) => void,
   askTitle: (suggestion: string, paths: string[]) => Promise<string | undefined>,
-  connections?: CodeHostConnections
+  connections?: CodeHostConnections,
+  /** Writes the commit subject from the diff; any failure or a slow model falls back to the path-based suggestion. */
+  complete?: (prompt: string) => Promise<string>
 ): Promise<ShipAllResult | null> {
   if (!roots.length) throw new Error('No workspace folder is open.');
   const cwd = roots[0].uri.fsPath;
@@ -286,7 +319,12 @@ export async function shipAllChanges(
   const { paths, hasNewFiles } = parsePorcelain(dirty);
   await assertNoProbes(gitCwd, paths);
   const inferredType = inferConventionalType(paths, hasNewFiles);
-  const answer = await askTitle(`${inferredType}: ${suggestShipSubject(paths, hasNewFiles)}`, paths);
+  let suggestion = `${inferredType}: ${suggestShipSubject(paths, hasNewFiles)}`;
+  if (complete) {
+    onStatus('Writing the commit message…');
+    suggestion = (await modelSubject(gitCwd, paths, complete)) ?? suggestion;
+  }
+  const answer = await askTitle(suggestion, paths);
   if (answer === undefined) return null; // cancelled
   const parsed = parseConventionalSubject(answer) ?? { type: inferredType, subject: answer.trim() };
   const commitSubject = `${parsed.type}: ${parsed.subject}`;
@@ -320,7 +358,7 @@ export async function shipAllChanges(
   if (remote) {
     onStatus(`Pushing ${branch} to origin…`);
     try {
-      await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch]);
+      await git(gitCwd, ['push', '--quiet', '-u', 'origin', branch], GIT_PUSH_TIMEOUT_MS);
       pushed = true;
       const codeHost = await connections?.forRepo(gitCwd).catch(() => null);
       prUrl = codeHost

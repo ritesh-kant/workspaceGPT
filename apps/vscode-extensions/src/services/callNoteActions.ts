@@ -33,7 +33,8 @@ export function callSummaryProcessor(context: vscode.ExtensionContext): string {
   return s.provider ? `${s.provider}${s.model ? ` · ${s.model}` : ''}` : 'your configured model';
 }
 
-function completer(context: vscode.ExtensionContext): Complete {
+/** One-shot completion on the configured chat model; also used to write commit subjects. */
+export function completer(context: vscode.ExtensionContext): Complete {
   const s = getLlmSettings(context);
   return async (prompt) => {
     if (!s.provider || !s.baseUrl || !s.model) throw new Error('Select a chat model (Settings → Model) to summarize calls.');

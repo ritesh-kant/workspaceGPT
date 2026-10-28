@@ -12,6 +12,7 @@ const WATCH_DEBOUNCE_MS = 200;
 export class SessionsViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private activeSessionId: string | null = null;
+  private activeNoteId: string | null = null;
   /** Sessions with a run currently in flight — drives the row status dot. */
   private runningSessionIds: string[] = [];
   /** Sessions that finished a run in the background and haven't been opened since. */
@@ -60,6 +61,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((data) => {
       if (data?.type === MESSAGE_TYPES.NEW_CHAT) {
         this.activeSessionId = null;
+        this.activeNoteId = null;
         this.onNewSession(typeof data.folder === 'string' && data.folder ? data.folder : undefined);
         void this.postList();
         return;
@@ -73,6 +75,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       }
       if (data?.type === MESSAGE_TYPES.LOAD_CHAT_SESSION && data.sessionId) {
         this.activeSessionId = data.sessionId;
+        this.activeNoteId = null;
         this.onSelectSession(data.sessionId);
         void this.postList();
       }
@@ -108,12 +111,20 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       if (webviewView.visible) void this.refresh();
     });
 
+    const foldersWatcher = vscode.workspace.onDidChangeWorkspaceFolders(() => void this.postList());
+
     webviewView.onDidDispose(() => {
+      foldersWatcher.dispose();
       this._view = undefined;
       this.disposeWatcher();
     });
 
     void this.refresh().then(() => this.watchHistoryDir());
+  }
+
+  public setActiveNote(noteId: string | null): void {
+    this.activeNoteId = noteId;
+    void this.postList();
   }
 
   public setActiveSession(sessionId: string | null): void {
@@ -188,8 +199,13 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       // Work sessions are listed under the folder they were started in, and
       // the open one's group is where a new session lands.
       assistantMode: this.assistantMode,
-      currentWorkspace: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
+      // The active session's own folder wins: it can differ from the host's open folder.
+      currentWorkspace:
+        all.find((session) => session.id === this.activeSessionId)?.workspaceFolder ||
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+        '',
       activeSessionId: this.activeSessionId,
+      activeNoteId: this.activeNoteId,
       runningSessionIds: this.runningSessionIds,
       completedSessionIds: this.completedSessionIds,
       erroredSessionIds: this.erroredSessionIds,

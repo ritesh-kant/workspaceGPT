@@ -420,6 +420,11 @@ const App: React.FC = () => {
 
   const { activeView, setActiveView, openSettings, settingsHydrated, setSettingsHydrated, callNoteId } = useUiStore();
 
+  // Keep the Sessions list's highlight on the call note being viewed, however it was opened.
+  useEffect(() => {
+    vscode.postMessage({ type: MESSAGE_TYPES.CALL_NOTE_VIEWED, id: activeView === 'callNote' ? callNoteId : null });
+  }, [activeView, callNoteId]);
+
   // The desktop shell hides its sessions sidebar for onboarding and Settings.
   // It can read this frame's DOM to notice, but a message does not depend on that.
   useEffect(() => {
@@ -1529,6 +1534,16 @@ const App: React.FC = () => {
     restoredMessagesRef.current = useChatStore.getState().messages;
 
     window.addEventListener('message', handleMessage);
+    // A restored chat that was parked on a review when the app closed holds a
+    // dead card. The host knows whether the run is really gone; asking for the
+    // stored session gets it back with those cards closed and Resume offered.
+    const booted = useChatStore.getState();
+    if (
+      booted.currentSessionId &&
+      booted.messages.some((m) => m.writeReview && !m.writeReview.decision && !m.writeReview.applying)
+    ) {
+      vscode.postMessage({ type: MESSAGE_TYPES.GET_CHAT_SESSION, sessionId: booted.currentSessionId });
+    }
     vscode.postMessage({
       type: MESSAGE_TYPES.CHAT_WEBVIEW_READY,
       layout: initialChatLayout(),
@@ -1620,6 +1635,15 @@ const App: React.FC = () => {
     return null;
   }, [messages]);
   const inListIndicatorShown = isLoading || (isStreaming && !!statusText);
+  // Where the live step timeline sits: just above the review card(s) parked at
+  // the end of the transcript, since those steps ran before the card asked.
+  // -1 = at the end, below the messages (the normal case).
+  let liveTimelineIndex = -1;
+  if (inListIndicatorShown && agentSteps.length > 0) {
+    for (let i = messages.length - 1; i >= 0 && messages[i].writeReview; i--) {
+      if (!(pendingQuestion && messages[i].writeReview?.id === pendingQuestion.id)) liveTimelineIndex = i;
+    }
+  }
   // Only while the model has the turn (no tool label up): "last: Searched
   // Confluence Venmo (12s ago)". turnElapsedSec's tick keeps the age fresh.
   const lastStep = !statusText && isLoading ? lastStepLabel(agentSteps) : '';
@@ -2948,7 +2972,10 @@ const App: React.FC = () => {
               // The active question lives beside the input; its answered
               // summary returns to this position in the transcript.
               if (pendingQuestion && message.writeReview?.id === pendingQuestion.id) return null;
-              return message.writeReview ? (
+              return (
+              <React.Fragment key={message.writeReview?.id ?? index}>
+              {index === liveTimelineIndex && <AgentTimeline steps={agentSteps} live />}
+              {message.writeReview ? (
                 message.writeReview.kind === 'question' ? (
                   <AgentQuestionCard
                     key={message.writeReview.id}
@@ -3021,6 +3048,8 @@ const App: React.FC = () => {
                   }
                   isLive={!message.isUser && isStreaming && index === messages.length - 1}
                 />
+              )}
+              </React.Fragment>
               );
             })}
             {/*
@@ -3035,7 +3064,7 @@ const App: React.FC = () => {
             */}
             {(isLoading || (isStreaming && statusText)) && (
               <div className='loading-indicator'>
-                {agentSteps.length > 0 && <AgentTimeline steps={agentSteps} live />}
+                {agentSteps.length > 0 && liveTimelineIndex < 0 && <AgentTimeline steps={agentSteps} live />}
                 <div className='loading-indicator-row'>
                   <span className='loading-pulse' />
                   <span>

@@ -215,6 +215,8 @@ export const MESSAGE_TYPES = {
   SESSION_DELETED: 'session-deleted',
   // Chat webview → host: the visible session id changed (Sessions panel highlight).
   SESSION_CHANGED: 'session-changed',
+  // Chat webview → host: the call note on screen ({id}, or null once it is left), so the Sessions list can highlight it.
+  CALL_NOTE_VIEWED: 'call-note-viewed',
   // Host → Sessions webview.
   SESSIONS_LIST: 'sessions-list',
   SESSIONS_TOGGLE_SEARCH: 'sessions-toggle-search',

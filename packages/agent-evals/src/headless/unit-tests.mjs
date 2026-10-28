@@ -2973,6 +2973,22 @@ console.log('\nresumeStore (an interrupted run survives a reload)');
     ...over,
   });
 
+  await t('a chat closed mid-review reopens with dead cards closed and Resume offered', () => {
+    const msgs = [
+      { content: 'go', isUser: true },
+      { content: '', isUser: false, writeReview: { id: 'w1', kind: 'command' } },
+      { content: '', isUser: false, writeReview: { id: 'w2', kind: 'edit', decision: 'approved' } },
+    ];
+    const out = resumeStore.settleStrandedReviews(msgs, { steps: 7, writesApplied: 1 });
+    assert.equal(out[1].writeReview.decision, 'stopped');
+    assert.equal(out[2].writeReview.decision, 'approved', 'a decided card is left alone');
+    const last = out[out.length - 1];
+    assert.ok(last.isError && last.resumable.steps === 7, 'ends on a Resume-bearing bubble');
+    assert.equal(resumeStore.settleStrandedReviews(msgs, null).at(-1).resumable, undefined, 'no record, no Resume');
+    const clean = [{ content: 'hi', isUser: true }];
+    assert.equal(resumeStore.settleStrandedReviews(clean, null), clean, 'nothing pending: untouched');
+  });
+
   await t('a saved record comes back with everything the resume needs', async () => {
     const dir = freshDir();
     assert.equal(await saveResumeRecord(dir, rec()), true);

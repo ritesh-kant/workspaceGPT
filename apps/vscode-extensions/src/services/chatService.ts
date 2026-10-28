@@ -32,6 +32,7 @@ import {
   pruneResumeRecords,
   isAutoResumableFailure,
   describeAge,
+  settleStrandedReviews,
 } from './agent/resumeStore';
 import { normalizeModelId } from 'src/utils/normalizeModelId';
 import { getProviderDefaultHeaders } from 'src/utils/anthropicHeaders';
@@ -890,6 +891,25 @@ export class ChatService {
       type: MESSAGE_TYPES.RETRIEVAL_STATUS,
       text,
     });
+  }
+
+  /**
+   * A chat reopened after the app quit mid-review: its approval cards are dead
+   * gates. Closes them and, when the interrupted run is still parked on disk,
+   * offers Resume. Left alone while the session has a live worker — its
+   * cards are real.
+   */
+  public async settleStoredSession<T extends { writeReview?: { decision?: string; applying?: boolean } }>(
+    sessionId: string,
+    messages: T[]
+  ): Promise<T[]> {
+    if (this.runFor(sessionId).worker) return messages;
+    if (!messages.some((m) => m?.writeReview && !m.writeReview.decision && !m.writeReview.applying)) return messages;
+    const record = await loadResumeRecord(this.resumeDir, sessionId);
+    return settleStrandedReviews(
+      messages,
+      record ? { steps: record.transcript.length, writesApplied: record.writesApplied } : null
+    );
   }
 
   /**

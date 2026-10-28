@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
 import { WriteReview } from '../store/chatStore';
+import { copyToClipboard } from '../utils/clipboard';
 
 /**
  * In-chat review card for one proposed agent write: colored diff + Approve /
@@ -74,66 +75,8 @@ const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) =>
     ? review.kind === 'confluence-create' ? 'Open parent page in Confluence' : 'Open page in Confluence'
     : 'Open file in editor';
 
-  return (
-    <div className={`agent-write-card kind-${review.kind}`} data-review-id={review.id}>
-      <div className='agent-write-header'>
-        <button
-          type='button'
-          className='agent-write-collapse'
-          aria-label={expanded ? 'Collapse diff' : 'Expand diff'}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-        >
-          <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg' style={{ transform: expanded ? 'rotate(90deg)' : 'none' }}>
-            <path d='M9 6L15 12L9 18' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-          </svg>
-        </button>
-        {review.kind === 'command' ? (
-          <code className='agent-command-line' title={review.command ?? review.summary}>
-            <span className='agent-command-prompt'>$</span> {review.command ?? review.summary}
-          </code>
-        ) : (
-          <>
-            <span className={`agent-write-kind kind-${review.kind}`}>{KIND_LABEL[review.kind]}</span>
-            <code className='agent-write-path'>{review.path}</code>
-          </>
-        )}
-        {review.kind !== 'command' && (!isConfluence || !!review.url) && (
-          <button type='button' className='agent-write-open' aria-label={openLabel} title={openLabel} onClick={openInEditor}>
-            <svg width='13' height='13' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-              <path d='M18 13V19C18 19.5304 17.7893 20.0391 17.4142 20.4142C17.0391 20.7893 16.5304 21 16 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V8C3 7.46957 3.21071 6.96086 3.58579 6.58579C3.96086 6.21071 4.46957 6 5 6H11' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-              <path d='M15 3H21V9' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-              <path d='M10 14L21 3' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
-            </svg>
-          </button>
-        )}
-        <span className='agent-write-stats'>
-          {review.diff.added > 0 && <span className='stat-added'>+{review.diff.added}</span>}
-          {review.diff.removed > 0 && <span className='stat-removed'>−{review.diff.removed}</span>}
-        </span>
-      </div>
-
-      {expanded && (review.kind === 'command' ? (
-        <pre className='agent-write-diff agent-command-text'>
-          <div className='diff-line-context'>$ {review.command ?? review.summary}</div>
-        </pre>
-      ) : (
-        review.diff.text && (
-          <pre className='agent-write-diff'>
-            {review.diff.text.split('\n').map((line, i) => (
-              <div
-                key={i}
-                className={
-                  line.startsWith('+') ? 'diff-line-added' : line.startsWith('-') ? 'diff-line-removed' : 'diff-line-context'
-                }
-              >
-                {line || ' '}
-              </div>
-            ))}
-          </pre>
-        )
-      ))}
-
+  const renderDecision = () => (
+    <>
       {review.decision ? (
         <div className={`agent-write-decision ${review.decision}`}>
           {DECISION_LABEL[review.decision]}
@@ -179,6 +122,82 @@ const AgentWriteCard: React.FC<AgentWriteCardProps> = ({ review, onDecided }) =>
           </button>
         </div>
       )}
+    </>
+  );
+
+  if (review.kind === 'command') {
+    const command = (review.command ?? review.summary ?? '').trim();
+    const [bin, ...args] = command.split(/(\s+)/);
+    return (
+      <div className='agent-write-card kind-command' data-review-id={review.id}>
+        <div className='code-block code-block--wrap'>
+          <div className='code-block-header'>
+            <button
+              type='button'
+              className='code-block-copy'
+              title='Copy'
+              aria-label='Copy'
+              onClick={() => void copyToClipboard(command)}
+            >
+              <svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'><rect x='9' y='9' width='11' height='11' rx='2' /><path d='M5 15V6a2 2 0 0 1 2-2h9' /></svg>
+            </button>
+          </div>
+          <pre><code className='agent-command-code'><span className='agent-command-bin'>{bin}</span>{args.join('')}</code></pre>
+        </div>
+        {renderDecision()}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`agent-write-card kind-${review.kind}`} data-review-id={review.id}>
+      <div className='agent-write-header'>
+        <button
+          type='button'
+          className='agent-write-collapse'
+          aria-label={expanded ? 'Collapse diff' : 'Expand diff'}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <svg width='12' height='12' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg' style={{ transform: expanded ? 'rotate(90deg)' : 'none' }}>
+            <path d='M9 6L15 12L9 18' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+          </svg>
+        </button>
+        <span className={`agent-write-kind kind-${review.kind}`}>{KIND_LABEL[review.kind]}</span>
+        <code className='agent-write-path'>{review.path}</code>
+        {(!isConfluence || !!review.url) && (
+          <button type='button' className='agent-write-open' aria-label={openLabel} title={openLabel} onClick={openInEditor}>
+            <svg width='13' height='13' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+              <path d='M18 13V19C18 19.5304 17.7893 20.0391 17.4142 20.4142C17.0391 20.7893 16.5304 21 16 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V8C3 7.46957 3.21071 6.96086 3.58579 6.58579C3.96086 6.21071 4.46957 6 5 6H11' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+              <path d='M15 3H21V9' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+              <path d='M10 14L21 3' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' />
+            </svg>
+          </button>
+        )}
+        <span className='agent-write-stats'>
+          {review.diff.added > 0 && <span className='stat-added'>+{review.diff.added}</span>}
+          {review.diff.removed > 0 && <span className='stat-removed'>−{review.diff.removed}</span>}
+        </span>
+      </div>
+
+      {expanded && (
+        review.diff.text && (
+          <pre className='agent-write-diff'>
+            {review.diff.text.split('\n').map((line, i) => (
+              <div
+                key={i}
+                className={
+                  line.startsWith('+') ? 'diff-line-added' : line.startsWith('-') ? 'diff-line-removed' : 'diff-line-context'
+                }
+              >
+                {line || ' '}
+              </div>
+            ))}
+          </pre>
+        )
+      )}
+
+      {renderDecision()}
     </div>
   );
 };

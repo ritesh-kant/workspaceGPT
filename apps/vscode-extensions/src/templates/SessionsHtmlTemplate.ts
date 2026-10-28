@@ -362,6 +362,12 @@ export class SessionsHtmlTemplate {
     .ws-group > .ws-header > .ws-toggle { height: 34px; }
     .list > .ws-group { margin-bottom: 4px; }
     .row:not(.note) { min-height: 0; margin: 1px 0; padding: 7px 10px; align-items: center; }
+    .row.active:not(.note) {
+      background: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, transparent);
+      border-color: color-mix(in srgb, var(--vscode-textLink-foreground) 35%, transparent);
+      box-shadow: none;
+    }
+    .row.active:not(.note) .title { color: var(--vscode-textLink-foreground); }
     .row:not(.note) .row-content { padding-right: 0; gap: 0; }
     .row:not(.note) .title { -webkit-line-clamp: 1; font-size: 13px; font-weight: 400; line-height: 1.4; }
     .row:not(.note) .meta { display: none; }
@@ -560,6 +566,7 @@ export class SessionsHtmlTemplate {
         sessions = Array.isArray(msg.sessions) ? msg.sessions : [];
         callNotes = Array.isArray(msg.callNotes) ? msg.callNotes : [];
         if (msg.activeSessionId !== undefined) activeId = msg.activeSessionId || null;
+        if (msg.activeNoteId !== undefined) activeNoteId = msg.activeNoteId || null;
         runningIds = new Set(Array.isArray(msg.runningSessionIds) ? msg.runningSessionIds : []);
         completedIds = new Set(Array.isArray(msg.completedSessionIds) ? msg.completedSessionIds : []);
         erroredIds = new Set(Array.isArray(msg.erroredSessionIds) ? msg.erroredSessionIds : []);
@@ -939,7 +946,7 @@ export class SessionsHtmlTemplate {
         const label = key ? labels.get(key) : 'Other';
         const tip = key || 'No recorded folder: started with no folder open, or before folders were recorded';
         const newTip = key ? 'New session in ' + label : 'New session';
-        html += '<div class="ws-group' + (open ? ' open' : '') + (current ? ' current' : '') + '">' +
+        html += '<div class="ws-group' + (open ? ' open' : '') + (current && !activeId && !activeNoteId ? ' current' : '') + '">' +
           '<div class="ws-header">' +
           '<button class="ws-toggle" type="button" data-ws="' + escapeHtml(key) + '" aria-expanded="' + open +
           '" title="' + escapeHtml(tip) + '">' + FOLDER + '<span class="ws-name">' + escapeHtml(label) + '</span>' + CHEVRON + '</button>' +
