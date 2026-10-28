@@ -2,6 +2,13 @@ import { useSettingsStore } from './settingsStore';
 import { MESSAGE_TYPES } from '../constants';
 import { clearStatusMessageAfterDelay } from './statusMessage';
 
+// The host sends the real reason; only an untrusted-certificate failure (TLS-inspecting
+// proxy) is shown verbatim, because the user can act on it. Everything else keeps the generic text.
+function syncErrorText(message: any): string {
+  const reason = typeof message?.message === 'string' ? message.message : '';
+  return reason.includes('certificate is not trusted') ? `Sync error: ${reason}` : 'Sync error: Please verify your connection and try again.';
+}
+
 /**
  * Host → webview handling for the Confluence and Azure DevOps integrations.
  *
@@ -114,7 +121,7 @@ function handleConfluenceMessage(message: any): void {
       batchUpdateConfig('confluence', {
         isSyncing: false,
         messageType: 'error',
-        statusMessage: 'Sync error: Please verify your connection and try again.',
+        statusMessage: syncErrorText(message),
         canResume: true,
       });
       break;
@@ -339,7 +346,7 @@ function handleAdoMessage(message: any): void {
       batchUpdateConfig('ado', {
         isSyncing: false,
         messageType: 'error',
-        statusMessage: 'Sync error: Please verify your connection and try again.',
+        statusMessage: syncErrorText(message),
         canResume: true,
       });
       break;
@@ -493,7 +500,7 @@ function handleJiraMessage(message: any): void {
       batchUpdateConfig('jira', {
         isSyncing: false,
         messageType: 'error',
-        statusMessage: 'Sync error: Please verify your connection and try again.',
+        statusMessage: syncErrorText(message),
         canResume: true,
       });
       break;

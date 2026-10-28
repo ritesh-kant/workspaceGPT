@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { WORKER_STATUS } from '../../../constants';
+import { describeError } from '../../utils/networkError';
 import type { LocalSyncedFile } from '../../utils/syncedFilePrune';
 import { adfToText } from '../../services/jira/adf';
 
@@ -375,7 +376,7 @@ async function fetchAndProcessJiraItems() {
   } catch (error) {
     parentPort?.postMessage({
       type: WORKER_STATUS.ERROR,
-      message: `Error in Jira worker: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Error in Jira worker: ${describeError(error)}`,
     });
   }
 }

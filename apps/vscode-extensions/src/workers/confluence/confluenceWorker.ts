@@ -2,6 +2,7 @@
 import type { ConfluencePage } from '@workspace-gpt/confluence-utils';
 import { parentPort, workerData } from 'worker_threads';
 import { WORKER_STATUS } from '../../../constants';
+import { describeError } from '../../utils/networkError';
 // Import path for dynamic import
 import {
   ConfluencePageFetcher,
@@ -77,7 +78,7 @@ async function fetchAndProcessPages() {
   } catch (error) {
     parentPort?.postMessage({
       type: WORKER_STATUS.ERROR,
-      message: `Error in worker: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Error in worker: ${describeError(error)}`,
     });
   }
 }
@@ -171,7 +172,7 @@ async function doIncrementalSync(
   } catch (error) {
     parentPort?.postMessage({
       type: WORKER_STATUS.ERROR,
-      message: `Error processing incremental sync page: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Error processing incremental sync page: ${describeError(error)}`,
     });
     throw error;
   }
@@ -257,7 +258,7 @@ async function doFullSync(
   } catch (error) {
     parentPort?.postMessage({
       type: WORKER_STATUS.ERROR,
-      message: `Error processing full sync page: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Error processing full sync page: ${describeError(error)}`,
     });
     throw error;
   }

@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import { WORKER_STATUS } from '../../../constants';
+import { describeError } from '../../utils/networkError';
 import type { LocalSyncedFile } from '../../utils/syncedFilePrune';
 
 interface WorkerData {
@@ -396,7 +397,7 @@ async function fetchAndProcessAdoItems() {
   } catch (error) {
     parentPort?.postMessage({
       type: WORKER_STATUS.ERROR,
-      message: `Error in ADO worker: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Error in ADO worker: ${describeError(error)}`,
     });
   }
 }
