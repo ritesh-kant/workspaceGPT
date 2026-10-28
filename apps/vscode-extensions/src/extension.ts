@@ -87,8 +87,11 @@ export async function activate(context: vscode.ExtensionContext) {
   const sessionsViewProvider = new SessionsViewProvider(
     context.extensionUri,
     new HistoryService(context),
-    () => {
-      void vscode.commands.executeCommand(EXTENSION.COMMAND_NEW_CHAT);
+    (folder) => {
+      void vscode.commands.executeCommand(EXTENSION.COMMAND_NEW_CHAT).then(() => {
+        // The project's "+": the fresh chat starts in that project's folder.
+        if (folder) void webViewProvider.sendMessage({ type: MESSAGE_TYPES.SET_NEW_CHAT_FOLDER, path: folder, forNewChat: true });
+      });
     },
     (sessionId) => {
       webViewProvider.loadSession(sessionId);

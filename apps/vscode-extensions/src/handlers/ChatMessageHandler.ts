@@ -235,7 +235,7 @@ export class ChatMessageHandler {
         return true;
       case MESSAGE_TYPES.SET_NEW_CHAT_FOLDER:
         this.analyticsService.trackEvent('workspace_folder_switch', { picker: typeof data.path !== 'string', perChat: true });
-        await this.handleSetNewChatFolder(data.path);
+        await this.handleSetNewChatFolder(data.path, !!data.forNewChat);
         return true;
       case MESSAGE_TYPES.LIST_GIT_BRANCHES:
         await this.handleListGitBranches();
@@ -468,7 +468,7 @@ export class ChatMessageHandler {
    * from its first message. Nothing restarts, so other chats keep running in
    * theirs. With no path the system picker asks first.
    */
-  private async handleSetNewChatFolder(requested: unknown): Promise<void> {
+  private async handleSetNewChatFolder(requested: unknown, forNewChat = false): Promise<void> {
     const reply = (ok: boolean, error?: string) =>
       this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.WORKSPACE_ACTION_RESULT, action: 'set-folder', ok, error });
     try {
@@ -479,7 +479,9 @@ export class ChatMessageHandler {
       }
       const folder = resolveFolder(picked);
       const open = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      const sessionId = this.viewedSessionId;
+      // forNewChat: the Sessions panel just opened a fresh chat; the viewed id may not have caught up yet.
+      const sessionId = forNewChat ? null : this.viewedSessionId;
+      if (forNewChat) this.viewedSessionId = null;
       if (sessionId) {
         if (!this.service().setSessionFolder(sessionId, folder)) {
           reply(false, 'This chat has already started, so its folder is fixed.');

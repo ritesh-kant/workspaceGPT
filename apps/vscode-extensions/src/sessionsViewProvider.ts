@@ -34,7 +34,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly historyService: HistoryService,
-    private readonly onNewSession: () => void,
+    private readonly onNewSession: (folder?: string) => void,
     private readonly onSelectSession: (sessionId: string) => void,
     private readonly onDeleteSession: (sessionId: string) => void,
     private readonly onSetAssistantMode: (mode: 'chat' | 'work') => void,
@@ -60,7 +60,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((data) => {
       if (data?.type === MESSAGE_TYPES.NEW_CHAT) {
         this.activeSessionId = null;
-        this.onNewSession();
+        this.onNewSession(typeof data.folder === 'string' && data.folder ? data.folder : undefined);
         void this.postList();
         return;
       }

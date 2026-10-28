@@ -140,9 +140,11 @@ export class SessionsHtmlTemplate {
       font-size: 12px;
     }
     .group-header {
-      padding: 12px 8px 4px;
-      font-size: 11px;
-      font-weight: 600;
+      padding: 26px 18px 12px;
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       color: var(--vscode-descriptionForeground);
       opacity: 0.9;
     }
@@ -286,20 +288,91 @@ export class SessionsHtmlTemplate {
       background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
       color: var(--vscode-foreground);
     }
-    .ws-rows { display: none; }
+    .ws-folder { flex: none; opacity: 0.8; }
+    .ws-rows { display: none; padding-left: 12px; }
     .ws-group.open > .ws-rows { display: block; }
     .ws-empty {
       padding: 4px 8px 6px 32px;
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
     }
-    /* Call notes (recorded by the desktop app): one group above the chats, a line per day. */
-    .note-day {
-      padding: 6px 8px 2px 32px;
-      font-size: 11px;
+    /* Shared sidebar rhythm: notes and chats use the same two-line rows. */
+    .list { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .list > .ws-group { margin: 0 2px 12px; }
+    .ws-group > .ws-header { margin-top: 8px; }
+    .ws-group > .ws-header > .ws-toggle {
+      height: 46px;
+      padding: 0 8px;
+      gap: 8px;
+      border-radius: 8px;
+      color: var(--vscode-foreground);
+      font-size: 14px;
       font-weight: 600;
+    }
+    .ws-group.current > .ws-header > .ws-toggle {
+      color: var(--vscode-textLink-foreground);
+      background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
+    }
+    .note-icon { flex: none; }
+    .ws-group > .ws-header .ws-count { margin-left: auto; font-size: 13px; font-weight: 600; opacity: 1; }
+    .ws-group > .ws-header .ws-chevron { margin-left: auto; }
+    .ws-group > .ws-header .ws-count + .ws-chevron { margin-left: 0; }
+    .ws-group > .ws-header:hover { background: transparent; }
+    .ws-group > .ws-header > .ws-toggle:hover { background: var(--vscode-list-hoverBackground); }
+    .note-day {
+      padding: 10px 10px 4px;
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       color: var(--vscode-descriptionForeground);
     }
+    .row {
+      position: relative;
+      align-items: flex-start;
+      min-height: 66px;
+      margin: 4px 0;
+      padding: 12px 10px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+    }
+    .row.active {
+      background: var(--vscode-editor-background);
+      color: var(--vscode-foreground);
+      border-color: var(--vscode-panel-border, rgba(128,128,128,0.2));
+      box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+    }
+    .row-content { display: flex; flex-direction: column; gap: 6px; min-width: 0; width: 100%; padding-right: 16px; }
+    .row .title {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.45;
+    }
+    /* Project chats are compact single-line rows; time and diffs stay on call notes. */
+    .row.note { min-height: 0; margin: 1px 0; padding: 7px 10px; }
+    .row.note .row-content { gap: 2px; }
+    .row.note .title { font-size: 13px; line-height: 1.35; -webkit-line-clamp: 1; }
+    .row.note .meta { font-size: 11px; line-height: 1.3; }
+    .row.note .row-delete { bottom: 6px; }
+    .ws-group > .ws-header > .ws-toggle { height: 34px; }
+    .list > .ws-group { margin-bottom: 4px; }
+    .row:not(.note) { min-height: 0; margin: 1px 0; padding: 7px 10px; align-items: center; }
+    .row:not(.note) .row-content { padding-right: 0; gap: 0; }
+    .row:not(.note) .title { -webkit-line-clamp: 1; font-size: 13px; font-weight: 400; line-height: 1.4; }
+    .row:not(.note) .meta { display: none; }
+    .row:not(.note) .row-delete { bottom: auto; top: 50%; transform: translateY(-50%); }
+    .row .meta { flex-wrap: wrap; font-size: 12px; line-height: 1.4; opacity: 1; color: var(--vscode-descriptionForeground); }
+    .row .dot { display: none; }
+    .row:is(.recording, .running, .completed, .errored) .dot { display: flex; position: absolute; right: 6px; top: 6px; }
+    .row .row-delete { position: absolute; right: 5px; bottom: 8px; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); }
+    .row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .row:focus-within .row-delete { display: flex; }
+    .list .show-more { padding: 8px 10px; }
     .ws-count {
       flex-shrink: 0;
       font-size: 11px;
@@ -658,9 +731,9 @@ export class SessionsHtmlTemplate {
 
     function callLength(ms) {
       const m = Math.round(ms / 60000);
-      if (m < 1) return '<1m';
-      if (m < 60) return m + 'm';
-      return Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+      if (m < 1) return '<1 min';
+      if (m < 60) return m + ' min';
+      return Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
     }
 
     /** Every call note, in one collapsible group with a line per day; nothing when there are none. */
@@ -706,8 +779,9 @@ export class SessionsHtmlTemplate {
         if (short.length > shortLimit) rows += '<button class="show-more" type="button" data-more="' + shortKey + '" data-shown="' + shortLimit + '">Show more</button>';
         body += '<div class="ws-group' + (shortOpen ? ' open' : '') + '"><div class="ws-header"><button class="ws-toggle" type="button" data-ws="' + shortKey + '" aria-expanded="' + shortOpen + '"><span class="ws-name">Short captures</span><span class="ws-count">' + short.length + '</span>' + CHEVRON + '</button></div><div class="ws-rows">' + rows + '</div></div>';
       }
-      return '<div class="ws-group notes' + (open ? ' open' : '') + '"><div class="ws-header">' +
+      return '<div class="ws-group notes' + (open ? ' open' : '') + (notes.some((n) => n.id === activeNoteId) ? ' current' : '') + '"><div class="ws-header">' +
         '<button class="ws-toggle" type="button" data-ws="' + key + '" aria-expanded="' + open + '">' +
+        '<svg class="note-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M2 8h4M2 12h4M2 16h4M16 3l5 5M11 13l1-5 6-6a2 2 0 0 1 3 3l-6 6-4 2Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
         '<span class="ws-name">Call notes</span><span class="ws-count">' + notes.length + '</span>' + CHEVRON + '</button></div>' +
         '<div class="ws-rows">' + body + '</div></div>';
     }
@@ -721,10 +795,10 @@ export class SessionsHtmlTemplate {
       const meta = rec ? 'Taking notes' : clock(n.startedAt || 0) + (length ? ' · ' + length : '');
       const tip = (n.title || 'Call') + (named ? ' (' + span + ')' : '') + (n.preview ? '\\n' + n.preview : '');
       return '<button class="row note' + (rec ? ' recording' : '') + (n.id === activeNoteId ? ' active' : '') +
-        '" type="button" title="' + escapeHtml(tip) + '" data-note-id="' + escapeHtml(n.id) + '">' +
+        '" type="button" title="' + escapeHtml(tip) + '" data-note-id="' + escapeHtml(n.id) + '" aria-current="' + (n.id === activeNoteId ? 'true' : 'false') + '">' +
         '<span class="dot"></span>' +
-        '<span class="title">' + escapeHtml(main) + '</span>' +
-        '<span class="meta"><span class="age">' + escapeHtml(meta) + '</span></span>' +
+        '<span class="row-content"><span class="title">' + escapeHtml(main) + '</span>' +
+        '<span class="meta"><span class="age">' + escapeHtml(meta) + '</span></span></span>' +
         '<span class="row-delete" data-delete-note="' + escapeHtml(n.id) + '" title="' + (rec ? 'Stop and delete' : 'Delete call note') +
         '" role="button" aria-label="Delete call note">' +
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
@@ -795,7 +869,7 @@ export class SessionsHtmlTemplate {
     }
 
     function rowHtml(session, now) {
-      const active = session.id === activeId ? ' active' : '';
+      const active = !activeNoteId && session.id === activeId ? ' active' : '';
       const running = runningIds.has(session.id) ? ' running' : '';
       const errored = !running && erroredIds.has(session.id) ? ' errored' : '';
       const completed = !running && !errored && completedIds.has(session.id) ? ' completed' : '';
@@ -815,8 +889,8 @@ export class SessionsHtmlTemplate {
         title + escapeHtml(statusLabel) + '" data-id="' +
         escapeHtml(session.id) + '">' +
         '<span class="dot"></span>' +
-        '<span class="title">' + (session.pinned ? '📌 ' : '') + title + '</span>' +
-        '<span class="meta">' + diffs + '<span class="age">' + age + '</span></span>' +
+        '<span class="row-content"><span class="title">' + (session.pinned ? '📌 ' : '') + title + '</span>' +
+        '<span class="meta"><span class="age">' + age + '</span>' + diffs + '</span></span>' +
         '<span class="row-delete" data-delete-id="' + escapeHtml(session.id) + '" title="Delete chat" role="button" aria-label="Delete chat">' +
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
         '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
@@ -826,6 +900,8 @@ export class SessionsHtmlTemplate {
 
     const CHEVRON = '<svg class="ws-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
       '<path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const FOLDER = '<svg class="ws-folder" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
     const PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
       '<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 
@@ -866,8 +942,8 @@ export class SessionsHtmlTemplate {
         html += '<div class="ws-group' + (open ? ' open' : '') + (current ? ' current' : '') + '">' +
           '<div class="ws-header">' +
           '<button class="ws-toggle" type="button" data-ws="' + escapeHtml(key) + '" aria-expanded="' + open +
-          '" title="' + escapeHtml(tip) + '"><span class="ws-name">' + escapeHtml(label) + '</span>' + CHEVRON + '</button>' +
-          '<button class="ws-new" type="button" title="' + escapeHtml(newTip) + '" aria-label="' + escapeHtml(newTip) + '">' + PLUS + '</button>' +
+          '" title="' + escapeHtml(tip) + '">' + FOLDER + '<span class="ws-name">' + escapeHtml(label) + '</span>' + CHEVRON + '</button>' +
+          '<button class="ws-new" type="button" data-ws="' + escapeHtml(key) + '" title="' + escapeHtml(newTip) + '" aria-label="' + escapeHtml(newTip) + '">' + PLUS + '</button>' +
           '</div><div class="ws-rows">' +
           (inGroup.length ? rowsHtml('ws:' + key, inGroup, now) : '<div class="ws-empty">No sessions yet</div>') +
           '</div></div>';
@@ -1034,8 +1110,9 @@ export class SessionsHtmlTemplate {
         render();
         return;
       }
-      if (event.target.closest('.ws-new')) {
-        vscode.postMessage({ type: MESSAGE_TYPES.NEW_CHAT });
+      const wsNew = event.target.closest('.ws-new');
+      if (wsNew) {
+        vscode.postMessage({ type: MESSAGE_TYPES.NEW_CHAT, folder: wsNew.getAttribute('data-ws') || undefined });
         return;
       }
       const noteDelete = event.target.closest('[data-delete-note]');
@@ -1061,7 +1138,9 @@ export class SessionsHtmlTemplate {
       const id = row.getAttribute('data-id');
       if (id) {
         activeNoteId = null;
+        activeId = id;
         vscode.postMessage({ type: MESSAGE_TYPES.LOAD_CHAT_SESSION, sessionId: id });
+        render();
       }
     });
   </script>

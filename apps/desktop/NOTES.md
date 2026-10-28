@@ -986,3 +986,18 @@ of generated speech on macOS. The full agent unit suite has one unrelated
 failure in “the trimmed report format keeps every honesty rule”. No live Windows
 call or Windows installer was available for local validation. Device/process
 switches during a call still require stopping and starting notes again.
+
+## Corporate TLS inspection (Zscaler)
+
+Zscaler and similar proxies re-sign HTTPS with a corporate root CA that IT puts
+in the OS trust store; Node uses its own CA list, so every request failed with
+`unable to get local issuer certificate`. The shell now starts the sidecar with
+`NODE_USE_SYSTEM_CA=1` (Node 24 reads the macOS keychain / Windows store), unless
+the variable is already set. Worker threads and `fetch` inherit it. If the CA is
+only available as a file, set `NODE_EXTRA_CA_CERTS=/path/to/zscaler.pem` before
+launching (a GUI launch on macOS needs `launchctl setenv`). We deliberately do
+not disable certificate verification. Not tested behind a real Zscaler.
+
+When `HTTPS_PROXY`/`HTTP_PROXY` is set the shell also sets `NODE_USE_ENV_PROXY=1`
+so Node's fetch honours it. PAC-file proxies are not handled. The updater needs
+nothing: reqwest uses rustls-platform-verifier, i.e. the OS trust store.

@@ -10,7 +10,7 @@ Status: 2026-10-28. **Built (beta, desktop):**
   (rename, delete, "Ask about this call");
 - agent tools `search_call_notes` and `read_call_note`;
 - call summaries with source-linked decisions and actions, ownership review and editable deadlines;
-- Overview / Transcript tabs, local transcript search, speaker filters and source navigation;
+- brief-first Overview / Transcript tabs, local transcript search, speaker filters and source navigation. The compact Overview places the meeting brief, decisions and key takeaways in a reading column, alongside a follow-ups panel grouped by owner with an open count. Narrow panels stack these sections. Ownership and deadline controls stay available under each follow-up's Manage disclosure;
 - unfinished actions on Home across all saved calls; only highlights use a 14-day window.
 
 Summaries use the configured chat model, whose endpoint receives transcript text.

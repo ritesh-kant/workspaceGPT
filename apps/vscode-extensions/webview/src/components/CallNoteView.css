@@ -7,6 +7,10 @@
   flex-direction: column;
   box-sizing: border-box;
   min-width: var(--wgpt-sidebar-min-width);
+  container: call-note / inline-size;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
   color: var(--vscode-foreground);
 }
@@ -15,7 +19,7 @@
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 14px 16px 12px;
+  padding: 26px max(24px, calc((100% - 1240px) / 2)) 18px;
   border-bottom: 1px solid var(--vscode-editor-lineHighlightBorder, rgba(128, 128, 128, 0.25));
   flex-wrap: wrap;
 }
@@ -45,13 +49,15 @@
   min-width: 180px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 10px;
 }
 
 .call-note-heading h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 25px;
   font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.6px;
   overflow-wrap: anywhere;
 }
 
@@ -130,8 +136,9 @@
 
 .call-note-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 12px 16px 24px;
+  padding: 18px max(24px, calc((100% - 1240px) / 2)) 28px;
 }
 
 .call-note-notice {
@@ -200,26 +207,20 @@
   color: var(--vscode-descriptionForeground);
 }
 
-.call-note-summary { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35)); border-radius: 10px; }
-.call-note-tldr { margin: 0 0 8px; font-size: 14px; line-height: 1.55; }
-.call-note-summary h3 { margin: 12px 0 4px; font-size: 12px; font-weight: 600; color: var(--vscode-descriptionForeground); text-transform: uppercase; letter-spacing: 0.04em; }
-.call-note-summary ul { margin: 0; padding-left: 18px; }
-.call-note-summary li { margin: 3px 0; }
 .call-note-actions-list { list-style: none; padding-left: 0 !important; }
 .call-note-actions-list li { display: flex; gap: 8px; align-items: flex-start; }
 .call-note-actions-list li.is-done > span { text-decoration: line-through; opacity: 0.6; }
 .call-note-actions-list input { margin: 4px 0 0; flex-shrink: 0; }
 .call-note-owner { width: 13px; height: 13px; margin-top: 3px; flex-shrink: 0; border-radius: 50%; border: 1px dashed var(--vscode-descriptionForeground); }
 .call-note-actions-list small { display: block; font-size: 11px; color: var(--vscode-descriptionForeground); }
-.call-note-summary-foot { margin: 12px 0 0; font-size: 11px; color: var(--vscode-descriptionForeground); }
 .call-note-link { padding: 0; border: 0; background: transparent; color: var(--vscode-textLink-foreground); font: inherit; cursor: pointer; }
 .call-note-link:disabled { opacity: 0.5; cursor: default; }
 .call-note-transcript-toggle { display: block; margin: 0 0 10px; font-size: 12px; }
 
 .call-note-tabs {
   display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 24px;
+  margin-bottom: 24px;
   border-bottom: 1px solid var(--vscode-panel-border);
 }
 .call-note-tabs button {
@@ -229,29 +230,141 @@
   background: transparent;
   color: var(--vscode-descriptionForeground);
   font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 .call-note-tabs button[aria-selected='true'] {
   border-bottom-color: var(--vscode-focusBorder);
   color: var(--vscode-foreground);
+  font-weight: 600;
 }
-.call-note-overview { max-width: 1000px; }
-.call-note-summary { padding: 16px 20px; }
-.call-note-summary h3 { margin-top: 22px; }
-.call-note-action-group:first-child h3 { margin-top: 0; }
-.call-note-action-group h3 span { margin-left: 6px; color: var(--vscode-descriptionForeground); }
-.call-note-actions-list li { padding: 10px 0; border-bottom: 1px solid var(--vscode-panel-border); }
+.call-note-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 32px;
+  align-items: start;
+}
+.call-note-reading { min-width: 0; }
+.call-note-brief {
+  margin-bottom: 22px;
+}
+.call-note-eyebrow {
+  margin: 0 0 8px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.call-note-brief h3 {
+  margin: 0;
+  max-width: 75ch;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+.call-note-follow-ups {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 9px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+}
+.call-note-follow-ups-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.call-note-follow-ups-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.call-note-count {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.call-note-tabs .call-note-count { margin-left: 4px; }
+.call-note-action-group + .call-note-action-group {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+.call-note-action-group h3,
+.call-note-outcome h3 {
+  margin: 0 0 10px;
+  color: var(--vscode-foreground);
+  font-size: 14px;
+  font-weight: 600;
+}
+.call-note-action-group h3 span { margin-left: 8px; color: var(--vscode-descriptionForeground); font-weight: 400; }
+.call-note-action-group h3 { color: var(--vscode-descriptionForeground); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+.call-note-actions-list { margin: 0; }
+.call-note-actions-list li { padding: 7px 0; }
+.call-note-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: 10px;
+}
 .call-note-action-content { min-width: 0; flex: 1; line-height: 1.5; }
+.call-note-action-content > span { display: block; font-size: 13px; }
 .call-note-actions-list li.is-done .call-note-action-content > span { text-decoration: line-through; opacity: 0.6; }
-.call-note-action-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 6px; font-size: 11px; }
+.call-note-actions-list small { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 8px; font-size: 11px; line-height: 1.45; }
+.call-note-action-manage { margin-top: 6px; }
+.call-note-action-manage summary {
+  width: fit-content;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  list-style: none;
+}
+.call-note-action-manage summary::-webkit-details-marker { display: none; }
+.call-note-action-manage summary::marker { content: ''; }
+.call-note-action-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 9px; font-size: 12px; }
 .call-note-action-controls label { display: flex; align-items: center; gap: 5px; color: var(--vscode-descriptionForeground); }
 .call-note-action-controls input[type='date'] {
   width: 125px; flex: none; padding: 2px 4px; font: inherit; color: var(--vscode-foreground);
   background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px;
 }
 .call-note-muted { color: var(--vscode-descriptionForeground); font-size: 12px; }
-.call-note-context { margin-top: 10px; }
-.call-note-context summary, .call-note-action-group details summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-size: 12px; padding: 6px 0; }
+.call-note-action-group > details > summary {
+  padding-top: 10px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  font-size: 12px;
+}
+.call-note-outcomes {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 0 0;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+.call-note-outcome ul { margin: 0; padding-left: 18px; }
+.call-note-outcome li { margin: 7px 0; font-size: 13px; line-height: 1.5; }
+.call-note-summary-details {
+  padding-top: 18px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+.call-note-summary-details summary { cursor: pointer; }
+.call-note-summary-details p { margin: 9px 0 0; line-height: 1.5; }
 .call-note-source { white-space: nowrap; margin-left: 4px; font-size: 11px; }
 .call-note-more { position: relative; }
 .call-note-more > summary { list-style: none; padding: 6px 12px; cursor: pointer; }
@@ -268,3 +381,31 @@
 .call-note-turn { padding: 8px; border: 1px solid transparent; border-radius: 6px; scroll-margin-block: 16px; }
 .call-note-turn--focused { border-color: var(--vscode-focusBorder); background: var(--vscode-editor-selectionHighlightBackground, #80808018); }
 .call-note-turn mark { background: var(--vscode-editor-findMatchHighlightBackground, #b8950066); color: inherit; }
+
+.call-note-bottom-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+}
+.call-note-bottom-actions .call-note-button { padding: 9px 14px; }
+.call-note-bottom-actions > span { font-size: 11px; color: var(--vscode-descriptionForeground); }
+.call-note-action-content { overflow-wrap: anywhere; }
+.call-note-view :is(button, input, select, summary):focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 3px; }
+
+@container call-note (max-width: 760px) {
+  .call-note-overview-grid { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .call-note-header { padding: 20px 18px 16px; }
+  .call-note-body { padding: 18px 20px 24px; }
+  .call-note-heading h2 { font-size: 22px; }
+}
+@container call-note (max-width: 420px) {
+  .call-note-header { gap: 6px; padding: 16px 12px; }
+  .call-note-body { padding: 14px 16px 24px; }
+  .call-note-heading { min-width: 0; flex-basis: calc(100% - 40px); }
+  .call-note-heading h2 { font-size: 20px; }
+  .call-note-when { font-size: 11px; line-height: 1.5; }
+  .call-note-actions { margin-left: 32px; }
+}

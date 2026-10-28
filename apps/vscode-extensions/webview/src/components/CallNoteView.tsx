@@ -185,19 +185,32 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
   };
   const actionGroup = (owner: 'you' | 'other' | 'unclear', title: string) => {
     const actions = summary?.actions.filter((a) => a.owner === owner) ?? [];
+    const formatDueDate = (dueDate: string) => {
+      const [year, month, day] = dueDate.split('-').map(Number);
+      if (!year || !month || !day) return dueDate;
+      return new Date(year, month - 1, day).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    };
     const renderAction = (a: CallSummary['actions'][number]) => (
       <li key={a.id} className={a.state ? 'is-done' : ''}>
         {owner === 'you' && <input type='checkbox' checked={a.state === 'done'} disabled={pendingAction !== null} onChange={() => updateAction(a.id, a.state === 'done' ? 'open' : 'done')} aria-label={`Done: ${a.text}`} />}
         <div className='call-note-action-content'>
           <span>{a.text}</span>
-          <small>{owner === 'you' ? 'You' : owner === 'unclear' ? 'No owner confirmed' : a.who || 'Team member'}{a.due && !a.dueDate && ` · due ${a.due}`} {a.at !== undefined && source(a.at)}</small>
-          <div className='call-note-action-controls'>
-            {a.state ? <button type='button' className='call-note-link' disabled={pendingAction !== null} onClick={() => updateAction(a.id, 'open')}>Reopen</button> : <>
-              {owner !== 'you' && <button type='button' className='call-note-link' disabled={pendingAction !== null} onClick={() => updateAction(a.id, 'mine')}>Mine</button>}
-              <button type='button' className='call-note-link' disabled={pendingAction !== null} onClick={() => updateAction(a.id, 'dismissed')}>{owner === 'other' ? 'Dismiss' : 'Not mine'}</button>
-              <label>Due <input type='date' value={a.dueDate ?? ''} disabled={pendingAction !== null} aria-label={`Due date: ${a.text}`} onChange={(event) => updateAction(a.id, undefined, event.target.value)} /></label>
-            </>}
-          </div>
+          <small>
+            <span className='call-note-avatar' aria-hidden='true'>{owner === 'you' ? 'Y' : owner === 'unclear' ? '?' : (a.who || 'Team member').charAt(0).toLocaleUpperCase()}</span>
+            {owner === 'you' ? 'You' : owner === 'unclear' ? 'No owner confirmed' : a.who || 'Team member'}
+            {a.dueDate ? ` · Due ${formatDueDate(a.dueDate)}` : a.due ? ` · Due ${a.due}` : ''}
+            {a.at !== undefined && source(a.at)}
+          </small>
+          <details className='call-note-action-manage'>
+            <summary>Manage</summary>
+            <div className='call-note-action-controls'>
+              {a.state ? <button type='button' className='call-note-link' disabled={pendingAction !== null} onClick={() => updateAction(a.id, 'open')}>Reopen</button> : <>
+                {owner !== 'you' && <button type='button' className='call-note-link' disabled={pendingAction !== null} onClick={() => updateAction(a.id, 'mine')}>Mine</button>}
+                <button type='button' className='call-note-link' disabled={pendingAction !== null} onClick={() => updateAction(a.id, 'dismissed')}>{owner === 'other' ? 'Dismiss' : 'Not mine'}</button>
+                <label>Due <input type='date' value={a.dueDate ?? ''} disabled={pendingAction !== null} aria-label={`Due date: ${a.text}`} onChange={(event) => updateAction(a.id, undefined, event.target.value)} /></label>
+              </>}
+            </div>
+          </details>
         </div>
       </li>
     );
@@ -211,6 +224,27 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
       {closed.length > 0 && <details><summary>Completed / dismissed ({closed.length})</summary><ul className='call-note-actions-list'>{closed.map(renderAction)}</ul></details>}
     </section>;
   };
+
+  const callFooter = note ? (
+    <>
+      <div className='call-note-bottom-actions'>
+        <button
+          type='button'
+          className='call-note-button call-note-button--primary'
+          onClick={() => onAsk({ id: note.id, title: note.title })}
+          disabled={note.turns.length === 0}
+          title={note.turns.length === 0 ? 'Nothing was transcribed yet' : 'Start a chat that can read this call'}
+        >
+          Ask about this call
+        </button>
+        <span>Audio is not retained</span>
+      </div>
+      <p className='call-note-footer'>
+        Transcribed locally · Stored locally · {summary?.processedBy ? `Summary processed by ${summary.processedBy}` : `Summaries use ${processor}; transcript text is sent to its endpoint.`}
+        <br />“You” is your microphone; “Others” is everyone else on the call. Audio is not retained.
+      </p>
+    </>
+  ) : null;
 
   const remove = () => {
     vscode.postMessage({ type: MESSAGE_TYPES.DELETE_CALL_NOTE, id: noteId });
@@ -241,15 +275,6 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
                 Stop taking notes
               </button>
             )}
-            <button
-              type='button'
-              className='call-note-button call-note-button--primary'
-              onClick={() => onAsk({ id: note.id, title: note.title })}
-              disabled={note.turns.length === 0}
-              title={note.turns.length === 0 ? 'Nothing was transcribed yet' : 'Start a chat that can read this call'}
-            >
-              Ask about this call
-            </button>
             <details className='call-note-more'><summary aria-label='More call options'>•••</summary><div>
             {confirmDelete ? (
               <>
@@ -296,32 +321,51 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
               }
             }}>
               <button type='button' role='tab' tabIndex={tab === 'overview' ? 0 : -1} id='call-overview-tab' aria-selected={tab === 'overview'} aria-controls='call-overview-panel' onClick={() => setTab('overview')}>Overview</button>
-              <button type='button' role='tab' tabIndex={tab === 'transcript' ? 0 : -1} id='call-transcript-tab' aria-selected={tab === 'transcript'} aria-controls='call-transcript-panel' onClick={() => setTab('transcript')}>Transcript · {note.turns.length} lines</button>
+              <button type='button' role='tab' tabIndex={tab === 'transcript' ? 0 : -1} id='call-transcript-tab' aria-selected={tab === 'transcript'} aria-controls='call-transcript-panel' onClick={() => setTab('transcript')}>Transcript <span className='call-note-count'>{note.turns.length}</span></button>
             </div>
             {actionError && <p className='call-note-notice' role='alert'>{actionError}</p>}
             {tab === 'overview' ? (
               <div id='call-overview-panel' role='tabpanel' aria-labelledby='call-overview-tab' className='call-note-overview'>
                 {summary?.status === 'done' ? <>
-                  <section className='call-note-summary'>
-                    {actionGroup('you', 'Your actions')}
-                    {(summary.highlights?.length ?? 0) > 0 ? <>
-                      <h3>What matters</h3>
-                      <ul>{summary.highlights!.slice(0, 3).map((line, i) => <li key={i}>{line}</li>)}</ul>
-                      {summary.tldr && <details className='call-note-context'><summary>Read more</summary><p className='call-note-tldr'>{summary.tldr}</p></details>}
-                    </> : summary.tldr && <p className='call-note-tldr'>{summary.tldr}</p>}
-                    {summary.decisions.length > 0 && <>
-                      <h3>Decisions</h3>
-                      <ul>{summary.decisions.map((decision, i) => {
-                        const evidence = summary.decisionSources?.find((d) => d.text === decision);
-                        return <li key={i}>{decision} {evidence && source(evidence.at)}</li>;
-                      })}</ul>
-                    </>}
-                    {actionGroup('other', 'Team actions')}
-                    {actionGroup('unclear', 'Unassigned')}
-                    <p className='call-note-summary-foot'>Generated from the transcript. Verify details using the source links.{' '}
-                      <button type='button' className='call-note-link' onClick={() => summarize(true)} disabled={summarizing}>{summarizing ? 'Regenerating…' : 'Regenerate'}</button>
-                    </p>
-                  </section>
+                  <div className='call-note-overview-grid'>
+                    <div className='call-note-reading'>
+                      <section className='call-note-brief' aria-labelledby='call-note-brief-heading'>
+                        <p className='call-note-eyebrow'>Meeting brief</p>
+                        <h3 id='call-note-brief-heading'>{summary.tldr ?? 'This call has no written brief yet.'}</h3>
+                      </section>
+                      {((summary.decisions?.length ?? 0) > 0 || (summary.highlights?.length ?? 0) > 0) && (
+                        <section className='call-note-outcomes' aria-label='Call outcomes'>
+                          {summary.decisions.length > 0 && <div className='call-note-outcome'>
+                            <h3>Decisions</h3>
+                            <ul>{summary.decisions.map((decision, i) => {
+                              const evidence = summary.decisionSources?.find((d) => d.text === decision);
+                              return <li key={i}>{decision} {evidence && source(evidence.at)}</li>;
+                            })}</ul>
+                          </div>}
+                          {(summary.highlights?.length ?? 0) > 0 && <div className='call-note-outcome'>
+                            <h3>Key takeaways</h3>
+                            <ul>{summary.highlights!.slice(0, 3).map((line, i) => <li key={i}>{line}</li>)}</ul>
+                          </div>}
+                        </section>
+                      )}
+                      <details className='call-note-summary-details'>
+                        <summary>About this overview</summary>
+                        <p>Generated from the transcript. Verify details using the source links.{' '}
+                          <button type='button' className='call-note-link' onClick={() => summarize(true)} disabled={summarizing}>{summarizing ? 'Regenerating…' : 'Regenerate'}</button>
+                        </p>
+                      </details>
+                      {callFooter}
+                    </div>
+                    <aside className='call-note-follow-ups' aria-labelledby='call-note-follow-ups-heading'>
+                      <div className='call-note-follow-ups-header'>
+                        <h3 id='call-note-follow-ups-heading'>Follow-ups</h3>
+                        <span className='call-note-count' role='status'>{summary.actions.filter((a) => !a.state).length} open</span>
+                      </div>
+                      {actionGroup('you', 'Yours')}
+                      {actionGroup('other', 'Team')}
+                      {actionGroup('unclear', 'Unassigned')}
+                    </aside>
+                  </div>
                 </> : <p className='call-note-empty'>
                   {recording ? 'Taking notes. Open Transcript to follow along.' : summarizing ? 'Preparing your overview…' : 'No summary yet.'}
                   {!recording && !summarizing && note.turns.length > 0 && <> <button type='button' className='call-note-link' onClick={() => summarize(true)}>Generate summary</button></>}
@@ -352,10 +396,7 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
                 </ol>
               </div>
             )}
-            <p className='call-note-footer'>
-              Transcribed locally · Stored locally · {summary?.processedBy ? `Summary processed by ${summary.processedBy}` : `Summaries use ${processor}; transcript text is sent to its endpoint.`}
-              <br />“You” is your microphone; “Others” is everyone else on the call. Audio is not retained.
-            </p>
+            {(tab !== 'overview' || summary?.status !== 'done') && callFooter}
           </>
         )}
       </div>

@@ -181,6 +181,19 @@ impl Supervisor {
             cmd.arg("--workspace").arg(ws);
         }
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+        // TLS-inspecting proxies (Zscaler and similar) re-sign HTTPS with a corporate
+        // root CA that IT installs in the OS trust store. Node ships its own CA list,
+        // so without this every request fails with "unable to get local issuer
+        // certificate". Trust the OS store too, unless the user already chose.
+        if std::env::var_os("NODE_USE_SYSTEM_CA").is_none() {
+            cmd.env("NODE_USE_SYSTEM_CA", "1");
+        }
+        // Node's fetch ignores HTTP(S)_PROXY unless asked. Only when a proxy is
+        // already configured, so machines without one are unaffected.
+        let has_proxy = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].iter().any(|k| std::env::var_os(k).is_some());
+        if has_proxy && std::env::var_os("NODE_USE_ENV_PROXY").is_none() {
+            cmd.env("NODE_USE_ENV_PROXY", "1");
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
