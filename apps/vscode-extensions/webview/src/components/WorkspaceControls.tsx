@@ -299,7 +299,7 @@ export const useWorkspaceControls = ({ busy, enabled }: WorkspaceControlsProps) 
       <ChipMenu
         icon={<FolderIcon />}
         label={pending === 'set-folder' ? 'Opening…' : current ? baseName(current) : 'Open a folder'}
-        title={current ? tilde(current) : 'Pick the folder the agent works in'}
+        title={current ? `Change project: ${tilde(current)}` : 'Select a project folder'}
         disabled={pending !== null}
         searchPlaceholder='Search folders, or type a path'
         rows={folderRows}

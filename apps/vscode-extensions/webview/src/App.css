@@ -662,6 +662,9 @@
   margin-left: 0;
 }
 .input-wrapper .composer-card textarea {
+  min-height: 2.7em;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
   padding-right: 4.5rem;
 }
 
@@ -689,7 +692,7 @@
   gap: 6px;
   width: 100%;
   /* Beneath the card, outside its border. */
-  padding: 0.25rem 0.25rem 0;
+  padding: 0.5rem 0.25rem 0.125rem;
   box-sizing: border-box;
 }
 
@@ -2624,22 +2627,39 @@ button:disabled {
 /* Project and workspace settings share the composer's compact footer. */
 .workspace-project-selector {
   min-width: 0;
-  flex: 0 1 180px;
+  max-width: 100%;
+  flex: 0 1 auto;
 }
 
 .workspace-project-selector .workspace-chip {
-  height: 24px;
-  padding: 0 6px;
+  min-height: 30px;
+  height: auto;
+  padding: 4px 6px;
   border-color: transparent;
-  background: transparent;
-  color: var(--vscode-descriptionForeground);
-  font-size: 0.75rem;
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 8%, transparent);
+  color: var(--vscode-textLink-foreground);
 }
 
-.workspace-project-selector .workspace-chip::after {
-  content: '▾';
-  flex-shrink: 0;
-  font-size: 0.65rem;
+.workspace-project-selector .workspace-chip:hover:not(:disabled),
+.workspace-project-selector .workspace-chip[aria-expanded='true'] {
+  border-color: var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 18%, var(--vscode-input-background));
+}
+
+.workspace-project-selector .workspace-chip svg {
+  width: 20px;
+  height: 20px;
+  opacity: 1;
+}
+
+.workspace-project-selector .workspace-chip-label {
+  min-width: 0;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  color: var(--vscode-foreground);
 }
 
 .workspace-settings {
@@ -2837,7 +2857,6 @@ button:disabled {
 @media (max-width: 480px) {
   .input-controls { flex-wrap: wrap; }
   .input-controls .input-selectors { flex-basis: 100%; flex-wrap: nowrap; }
-  .workspace-project-selector { flex-basis: 120px; }
   .input-selectors-right { margin-left: auto; }
 }
 
