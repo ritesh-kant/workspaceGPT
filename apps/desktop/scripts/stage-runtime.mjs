@@ -162,6 +162,7 @@ if (platform === 'win32') {
   run('node', ['scripts/build-native.mjs', '--target', target, '--require'], root);
   fs.mkdirSync(path.join(out, 'bin'), { recursive: true });
   fs.copyFileSync(path.join(root, 'dist/bin/wgpt-mic.exe'), path.join(out, 'bin/wgpt-mic.exe'));
+  fs.copyFileSync(path.join(root, 'dist/bin/wgpt-calls.exe'), path.join(out, 'bin/wgpt-calls.exe'));
 }
 if (platform === 'win32') {
   const sherpaDir = pkgDir(root, 'sherpa-onnx-node');

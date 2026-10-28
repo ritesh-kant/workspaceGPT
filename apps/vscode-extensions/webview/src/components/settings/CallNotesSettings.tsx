@@ -9,7 +9,7 @@ import StatusDot from './StatusDot';
  * Turns call detection on. When a call is detected (Teams, Zoom, Meet, in an
  * app or a browser), WorkspaceGPT shows an indicator and asks before recording
  * (or, with "Take notes automatically", records and shows it); "Take notes"
- * transcribes the call on this Mac into a call note. Kept to a line per
+ * transcribes the call on this device into a call note. Kept to a line per
  * control: the privacy details are in the call prompt, where they matter.
  */
 const CallNotesSettings: React.FC = () => {
@@ -69,7 +69,7 @@ const CallNotesSettings: React.FC = () => {
             {model.state === 'ready' ? (
               <>
                 <StatusDot tone='ok' />
-                Transcribed on this Mac. Audio is never saved. Summaries use your selected chat model; its endpoint receives transcript text.
+                Transcribed on this device. Audio is never saved. Summaries use your selected chat model; its endpoint receives transcript text.
               </>
             ) : model.state === 'downloading' ? (
               <>

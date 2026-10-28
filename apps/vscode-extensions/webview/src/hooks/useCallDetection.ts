@@ -17,7 +17,7 @@ interface CallsBridge {
 export interface CallCapability {
   available: boolean;
   reason?: string;
-  /** Whether "Take notes" can record here (macOS today); `recordReason` says why not. */
+  /** Whether "Take notes" can record here; `recordReason` says why not. */
   canRecord?: boolean;
   recordReason?: string;
 }

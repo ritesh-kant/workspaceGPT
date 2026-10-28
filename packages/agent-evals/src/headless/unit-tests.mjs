@@ -6622,7 +6622,7 @@ console.log('\nsyncedFilePrune');
 // ═══ Call notes: call detection (desktop) ═══
 console.log('\ncall detection (call notes, desktop)');
 {
-  const { CallTracker, parseWindowsMicUsers, CONFIRM_MS, END_MS } = callDetection;
+  const { CallTracker, startNativeSource, CONFIRM_MS, END_MS } = callDetection;
   const chrome = [{ key: '5516', name: 'Google Chrome' }];
 
   await t('a call needs the mic + output held for CONFIRM_MS, and starts once', () => {
@@ -6656,31 +6656,33 @@ console.log('\ncall detection (call notes, desktop)');
     assert.equal(tr.since, undefined);
   });
 
-  await t('Windows: apps using the mic now are read from reg query output', () => {
-    const out = [
-      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone',
-      '    Value    REG_SZ    Allow',
-      '',
-      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\MSTeams_8wekyb3d8bbwe',
-      '    Value    REG_SZ    Allow',
-      '    LastUsedTimeStart    REG_QWORD    0x1dc41a2b3c4d5e6',
-      '    LastUsedTimeStop    REG_QWORD    0x0',
-      '',
-      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged',
-      '',
-      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\C:#Users#ada#AppData#Roaming#Zoom#bin#Zoom.exe',
-      '    LastUsedTimeStart    REG_QWORD    0x1dc41a2b3c4d5e6',
-      '    LastUsedTimeStop    REG_QWORD    0x1dc41a2b3c4d5f0',
-      '',
-      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\C:#Program Files#Google#Chrome#Application#chrome.exe',
-      '    LastUsedTimeStart    REG_QWORD    0x1dc41a2b3c4d5e6',
-      '    LastUsedTimeStop    REG_QWORD    0x0',
-      '',
-      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\C:#Tools#never-used.exe',
-      '    LastUsedTimeStart    REG_QWORD    0x0',
-      '    LastUsedTimeStop    REG_QWORD    0x0',
-    ].join('\r\n');
-    assert.deepEqual(parseWindowsMicUsers(out).map((h) => h.name), ['MSTeams_8wekyb3d8bbwe', 'chrome.exe'], 'Zoom stopped; never-used has no start');
+  await t('native call detection forwards snapshots and reports helper errors once', async () => {
+    const script = `process.stdout.write(JSON.stringify({holders:[{pid:42,name:'Browser'}]})+'\\n');
+      setTimeout(() => process.stdout.write(JSON.stringify({type:'error',message:'Audio sessions unavailable'})+'\\n'), 20);`;
+    const snapshots = [], errors = [];
+    const source = startNativeSource(process.execPath, (h) => snapshots.push(h), (e) => errors.push(e), ['-e', script]);
+    try {
+      for (let i = 0; i < 100 && !errors.length; i++) await new Promise((r) => setTimeout(r, 20));
+      assert.deepEqual(snapshots, [[{key:'42',name:'Browser'}]]);
+      assert.deepEqual(errors, ['Audio sessions unavailable']);
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(errors.length, 1, 'the subsequent process exit must not report a second failure');
+    } finally { source.stop(); }
+  });
+
+  await t('native call detection reports unexpected exits, but an intentional stop stays quiet', async () => {
+    const errors = [];
+    const source = startNativeSource(process.execPath, () => {}, (e) => errors.push(e), ['-e', 'process.exit(2)']);
+    try {
+      for (let i = 0; i < 100 && !errors.length; i++) await new Promise((r) => setTimeout(r, 20));
+      assert.equal(errors.length, 1);
+      assert.match(errors[0], /stopped unexpectedly/);
+    } finally { source.stop(); }
+    const stoppedErrors = [];
+    const stopped = startNativeSource(process.execPath, () => {}, (e) => stoppedErrors.push(e), ['-e', 'process.stdin.resume()']);
+    stopped.stop();
+    await new Promise((r) => setTimeout(r, 150));
+    assert.deepEqual(stoppedErrors, []);
   });
 }
 
@@ -6932,6 +6934,18 @@ process.stdin.resume();
         await end();
         await until(events, (e) => e.type === 'recording' && e.state === 'idle');
         assert.equal(events.filter((e) => e.type === 'recording' && e.state === 'starting').length, 1, 'once per call');
+      }));
+
+    await t('turning automatic notes on during a call starts once and notifies', () =>
+      detect(false, async ({ events, notes, request, end }) => {
+        assert.equal(events.some((e) => e.type === 'recording'), false);
+        request({ op: 'enable', auto: true });
+        await until(events, (e) => e.type === 'recording' && e.state === 'starting');
+        request({ op: 'enable', auto: true });
+        assert.equal(events.filter((e) => e.type === 'recording' && e.state === 'starting').length, 1);
+        assert.deepEqual(notes, ['Call detected', 'Taking notes of this call']);
+        await end();
+        await until(events, (e) => e.type === 'recording' && e.state === 'idle');
       }));
 
     await t('without it, a detected call only asks, and records on "Take notes"', () =>

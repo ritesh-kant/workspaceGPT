@@ -125,6 +125,21 @@ if (link) {
     const hasFile = (dir, file, depth = 0) =>
       depth <= 6 && fs.readdirSync(dir, { withFileTypes: true }).some((e) => (e.isFile() ? e.name === file : e.isDirectory() && e.name !== 'node_modules' && hasFile(path.join(dir, e.name), file, depth + 1)));
     check('the dictation mic helper is installed', hasFile(installRoot, 'wgpt-mic.exe'));
+    const findFile = (dir, name, depth = 0) => {
+      if (depth > 6) return undefined;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isFile() && e.name === name) return p;
+        if (e.isDirectory() && e.name !== 'node_modules') {
+          const hit = findFile(p, name, depth + 1);
+          if (hit) return hit;
+        }
+      }
+    };
+    const callsBin = findFile(installRoot, 'wgpt-calls.exe');
+    check('the call detection and notes helper is installed', !!callsBin);
+    const calls = callsBin ? spawnSync(callsBin, ['--version'], { encoding: 'utf8', timeout: 15_000, windowsHide: true }) : undefined;
+    check('the call helper starts with transcription support', calls?.status === 0 && /"transcription":true/.test(calls.stdout), calls ? (calls.stderr || calls.stdout).slice(0, 300) : 'wgpt-calls.exe not installed');
     const load = sherpa
       ? spawnSync(node.path, ['-e', `const s=require(${JSON.stringify(sherpa)});if(typeof s.OnlineRecognizer!=='function')throw new Error('no OnlineRecognizer');console.log('ok')`], { encoding: 'utf8' })
       : undefined;

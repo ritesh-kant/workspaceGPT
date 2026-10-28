@@ -36,8 +36,8 @@ const STOP_GRACE_MS = 20_000;
 
 /** Beside the sidecar, in dev (dist/bin) and packaged (runtime/bin) alike. */
 export function notesHelperPath(): string | undefined {
-  if (process.platform !== 'darwin') return undefined;
-  const bin = process.env.WGPT_NOTES_BIN ?? path.join(__dirname, '..', 'bin', 'wgpt-notes');
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return undefined;
+  const bin = process.env.WGPT_NOTES_BIN ?? path.join(__dirname, '..', 'bin', process.platform === 'win32' ? 'wgpt-calls.exe' : 'wgpt-notes');
   return fs.existsSync(bin) ? bin : undefined;
 }
 
@@ -108,7 +108,7 @@ export class CallRecorder {
     /** Everything heard; the note shows it less the echoes. */
     const heard: HeardTurn[] = [];
     const argv = ['--model', this.modelPath, ...pids.filter((p) => Number.isInteger(p) && p > 0).flatMap((p) => ['--pid', String(p)])];
-    const proc = cp.spawn(this.bin, argv, { stdio: ['pipe', 'pipe', 'inherit'] });
+    const proc = cp.spawn(this.bin, argv, { windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'] });
     this.proc = proc;
     this.send({ type: 'recording', state: 'starting', noteId: note.id, startedAt });
     this.save(note, { first: true });

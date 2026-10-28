@@ -121,7 +121,7 @@ const CallIndicator: React.FC<{
               {title}
             </strong>
             <span className='call-indicator-text'>
-              {recording.state === 'finishing' ? 'Transcribing the last few seconds on this Mac.' : 'On this Mac. Stops when the call ends.'}
+              {recording.state === 'finishing' ? 'Transcribing the last few seconds on this device.' : 'On this device. Stops when the call ends.'}
             </span>
             {notices.map((n, i) => (
               <span key={i} className='call-indicator-text call-indicator-warning'>
@@ -202,7 +202,7 @@ const CallIndicator: React.FC<{
   // Asked and answered for this call: a recording that ended (Stop) does not ask again.
   if (choice === 'take-notes' && capability.canRecord) return null;
 
-  // Recording works here, but the speech model is not on this Mac yet: say so rather than offer a button that fails.
+  // Recording works here, but the speech model is not on this device yet: say so rather than offer a button that fails.
   const modelReady = !capability.canRecord || model?.state === 'ready';
   const modelLine =
     model?.state === 'downloading'

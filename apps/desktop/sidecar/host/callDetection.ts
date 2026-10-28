@@ -16,12 +16,12 @@
  * Recording starts only on the page's `record` frame, sent when the user
  * clicks "Take notes" (callRecorder.ts), or, when the user turned on "Take
  * notes automatically" in Settings, as soon as a call is detected. It stops on `stop`, when the call
- * ends, or when call notes are turned off. macOS only for now.
+ * ends, or when call notes are turned off.
  *
  *  - macOS: native/wgpt-calls.swift prints, every few seconds, the processes
  *    holding mic + output (Core Audio per-process state, macOS 14+; no prompt).
- *  - Windows: Windows' own "who is using the microphone" record in the user's
- *    registry (no admin rights). It has no output side, so mic only for now.
+ *  - Windows: native/win-calls enumerates active WASAPI capture and render
+ *    sessions, grouping browser helper processes under the same app.
  *  - Elsewhere: unavailable.
  */
 import * as cp from 'node:child_process';
@@ -54,8 +54,6 @@ export interface Holder {
 export const CONFIRM_MS = 10_000;
 /** Short enough that a note closes soon after hanging up; long enough to ride out a device switch (AirPods connecting) mid-call. */
 export const END_MS = 8_000;
-/** Windows: how often `reg query` runs (a process spawn). macOS's helper reports every second on its own. */
-const POLL_MS = 2_000;
 
 /**
  * The rule over a stream of snapshots, without any I/O, so it can be tested.
@@ -93,49 +91,10 @@ export class CallTracker {
   }
 }
 
-const MIC_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone';
-
-/**
- * `reg query <MIC_KEY> /s` output → apps using the mic now: a key whose
- * LastUsedTimeStart is set and LastUsedTimeStop is 0. Packaged apps are direct
- * subkeys (MSTeams_8wekyb3d8bbwe); desktop apps are under NonPackaged, named by
- * exe path with '#' for '\'.
- */
-export function parseWindowsMicUsers(output: string): Holder[] {
-  const holders: Holder[] = [];
-  let key: string | undefined;
-  let start = 0n;
-  let stop = 1n;
-  const flush = () => {
-    if (key && start !== 0n && stop === 0n) {
-      const leaf = key.slice(key.lastIndexOf('\\') + 1);
-      const name = leaf.replace(/#/g, '\\').split('\\').pop() ?? leaf;
-      holders.push({ key: leaf, name });
-    }
-  };
-  for (const raw of output.split(/\r?\n/)) {
-    const line = raw.trimEnd();
-    if (/^HKEY_/i.test(line)) {
-      flush();
-      key = line;
-      start = 0n;
-      stop = 1n;
-      continue;
-    }
-    const m = /^\s+(LastUsedTimeStart|LastUsedTimeStop)\s+REG_QWORD\s+(0x[0-9a-f]+)/i.exec(line);
-    if (!m) continue;
-    const value = BigInt(m[2]);
-    if (m[1].toLowerCase() === 'lastusedtimestart') start = value;
-    else stop = value;
-  }
-  flush();
-  return holders;
-}
-
 /** Beside the sidecar, in dev (dist/bin) and packaged (runtime/bin) alike. */
-function macHelperPath(): string | undefined {
-  if (process.platform !== 'darwin') return undefined;
-  const bin = process.env.WGPT_CALLS_BIN ?? path.join(__dirname, '..', 'bin', 'wgpt-calls');
+function callsHelperPath(): string | undefined {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return undefined;
+  const bin = process.env.WGPT_CALLS_BIN ?? path.join(__dirname, '..', 'bin', process.platform === 'win32' ? 'wgpt-calls.exe' : 'wgpt-calls');
   return fs.existsSync(bin) ? bin : undefined;
 }
 
@@ -144,8 +103,16 @@ interface Source {
   stop(): void;
 }
 
-function startMacSource(bin: string, onSnapshot: (h: Holder[]) => void, onUnsupported: () => void): Source {
-  const proc = cp.spawn(bin, [], { stdio: ['pipe', 'pipe', 'inherit'] });
+export function startNativeSource(bin: string, onSnapshot: (h: Holder[]) => void, onFailure: (reason: string) => void, args = process.platform === 'win32' ? ['--detect'] : []): Source {
+  const proc = cp.spawn(bin, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'inherit'] });
+  let stopped = false;
+  let failed = false;
+  const fail = (reason: string) => {
+    if (stopped || failed) return;
+    failed = true;
+    console.warn(`[desktop] calls: ${reason}`);
+    onFailure(reason);
+  };
   let buffered = '';
   proc.stdout!.setEncoding('utf8');
   proc.stdout!.on('data', (chunk: string) => {
@@ -156,17 +123,21 @@ function startMacSource(bin: string, onSnapshot: (h: Holder[]) => void, onUnsupp
       buffered = buffered.slice(nl + 1);
       if (!line) continue;
       try {
-        const msg = JSON.parse(line) as { unsupported?: boolean; holders?: { pid: number; name: string }[] };
-        if (msg.unsupported) onUnsupported();
+        const msg = JSON.parse(line) as { unsupported?: boolean; type?: string; message?: string; holders?: { pid: number; name: string }[] };
+        if (stopped || failed) continue;
+        if (msg.unsupported) fail('Call notes needs macOS 14 or later.');
+        else if (msg.type === 'error') fail(msg.message ?? 'Could not read active audio sessions.');
         else onSnapshot((msg.holders ?? []).map((h) => ({ key: String(h.pid), name: h.name })));
       } catch {
         console.warn(`[desktop] calls: unreadable line from the helper: ${line.slice(0, 200)}`);
       }
     }
   });
-  proc.on('error', (err) => console.warn('[desktop] calls: could not start the helper:', err.message));
+  proc.on('error', (err) => fail(`Could not start call detection: ${err.message}`));
+  proc.on('close', (code, signal) => fail(`Call detection stopped unexpectedly (${code ?? signal}). Turn Detect calls off and on to retry.`));
   return {
     stop: () => {
+      stopped = true;
       try {
         proc.stdin?.end();
       } catch {
@@ -177,53 +148,34 @@ function startMacSource(bin: string, onSnapshot: (h: Holder[]) => void, onUnsupp
   };
 }
 
-function startWindowsSource(onSnapshot: (h: Holder[]) => void): Source {
-  let stopped = false;
-  const poll = () => {
-    cp.execFile('reg', ['query', MIC_KEY, '/s'], { windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
-      if (stopped) return;
-      // Our own process would hold the mic while dictating, once dictation exists on Windows.
-      onSnapshot(err ? [] : parseWindowsMicUsers(stdout).filter((h) => !/^wgpt-/i.test(h.name)));
-    });
-  };
-  poll();
-  const timer = setInterval(poll, POLL_MS);
-  return {
-    stop: () => {
-      stopped = true;
-      clearInterval(timer);
-    },
-  };
-}
-
 export function createCallDetection(
   surface: ViewSurface,
   notesDir: string,
   modelDir: string,
   notify: (title: string, body: string) => void
 ): void {
-  const macBin = macHelperPath();
+  const callsBin = callsHelperPath();
   const notesBin = notesHelperPath();
   // macOS 14 = Darwin 23: the first that can tap a call app's audio (and the recorder needs 13.3).
   const macOld = process.platform === 'darwin' && Number(os.release().split('.')[0]) < 23;
+  // Process loopback capture is available from Windows build 20348. Detection still works on older builds.
+  const windowsOld = process.platform === 'win32' && Number(os.release().split('.')[2] ?? 0) < 20348;
   const recordability =
-    notesBin && !macOld
+    notesBin && !macOld && !windowsOld
       ? { canRecord: true }
       : {
           canRecord: false,
           recordReason:
-            process.platform === 'win32'
-              ? 'Taking notes on Windows comes in a later beta. This build only detects calls.'
+            windowsOld
+              ? 'Taking notes needs Windows build 20348 or later (Windows 11 or Windows Server 2022).'
               : macOld
                 ? 'Taking notes needs macOS 14 or later.'
                 : 'The call-notes helper is missing from this build.',
         };
-  let capability: Extract<CallEvent, { type: 'capability' }> =
-    process.platform === 'win32'
-      ? { type: 'capability', available: true, ...recordability }
-      : macBin
-        ? { type: 'capability', available: true, ...recordability }
-        : { type: 'capability', available: false, reason: process.platform === 'darwin' ? 'The call-detection helper is missing from this build.' : 'Call notes is available on macOS and Windows.' };
+  const initialCapability: Extract<CallEvent, { type: 'capability' }> = callsBin
+    ? { type: 'capability', available: true, ...recordability }
+    : { type: 'capability', available: false, reason: ['darwin', 'win32'].includes(process.platform) ? 'The call-detection helper is missing from this build.' : 'Call notes is available on macOS and Windows.' };
+  let capability = initialCapability;
 
   const send = (event: CallEvent) => surface.sendControl({ t: 'calls', event });
   const tracker = new CallTracker();
@@ -236,7 +188,10 @@ export function createCallDetection(
   let auto = false;
   /** The call (its `since`) a recording was last started for, so auto-record starts once per call. */
   let recordedSince: number | undefined;
-  const model = new WhisperModel(modelDir, (state) => send({ type: 'model', ...state }));
+  const model = new WhisperModel(modelDir, (state) => {
+    send({ type: 'model', ...state });
+    if (state.state === 'ready') autoRecord();
+  });
   const recorder =
     notesBin && recordability.canRecord
       ? new CallRecorder(
@@ -257,13 +212,14 @@ export function createCallDetection(
 
   const record = () => {
     recordedSince = tracker.since;
-    recorder!.start(process.platform === 'darwin' ? lastHolders.map((h) => Number(h.key)) : []);
+    recorder!.start(lastHolders.map((h) => Number(h.key)));
   };
 
   /** Records the call in progress without asking, when the user chose that; still shown on the page, with Stop. */
   const autoRecord = (): boolean => {
     if (!auto || !recorder || recorder.active || !tracker.inCall || recordedSince === tracker.since || model.state.state !== 'ready') return false;
     record();
+    notify('Taking notes of this call', 'WorkspaceGPT is transcribing this call on this device. Let everyone on the call know. Open WorkspaceGPT to stop.');
     return true;
   };
 
@@ -278,8 +234,7 @@ export function createCallDetection(
     const autoStarted = change === 'start' && autoRecord();
     sendState();
     // The shell only shows this when the window isn't in front; in front, the page's indicator is the prompt.
-    if (autoStarted) notify('Taking notes of this call', 'WorkspaceGPT is transcribing this call on this Mac. Let everyone on the call know. Open WorkspaceGPT to stop.');
-    else if (change === 'start') notify('Call detected', 'Open WorkspaceGPT to choose whether to take notes for this call.');
+    if (change === 'start' && !autoStarted) notify('Call detected', 'Open WorkspaceGPT to choose whether to take notes for this call.');
   };
 
   const stop = () => {
@@ -294,13 +249,11 @@ export function createCallDetection(
     // Turning call notes on is when the model comes down, so "Take notes" works on the first call.
     if (recorder) void model.ensure();
     if (source || !capability.available) return;
-    if (process.platform === 'win32') source = startWindowsSource(onSnapshot);
-    else if (macBin)
-      source = startMacSource(macBin, onSnapshot, () => {
-        capability = { type: 'capability', available: false, reason: 'Call notes needs macOS 14 or later.' };
-        send(capability);
-        stop();
-      });
+    if (callsBin) source = startNativeSource(callsBin, onSnapshot, (reason) => {
+      capability = { type: 'capability', available: false, reason };
+      send(capability);
+      stop();
+    });
   };
 
   surface.attached.event(() => {
@@ -313,7 +266,12 @@ export function createCallDetection(
     if (req.op === 'enable') {
       auto = !!req.auto;
       start();
-    } else if (req.op === 'disable') stop();
+      autoRecord();
+    } else if (req.op === 'disable') {
+      stop();
+      capability = initialCapability;
+      send(capability);
+    }
     // Only for a call in progress: the page asks after detection, and only on the user's click.
     else if (req.op === 'record' && tracker.inCall && recorder && !recorder.active) {
       if (model.state.state !== 'ready') {

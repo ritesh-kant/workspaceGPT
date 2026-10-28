@@ -16,7 +16,7 @@ const CallNotesWelcome: React.FC<{ visible: boolean }> = ({ visible }) => {
       <div>
         <h2 id='call-notes-welcome-title'>Enable Call notes?</h2>
         <p>Get call transcripts, decisions, and follow-ups. WorkspaceGPT detects calls and asks before taking notes.</p>
-        <small>Transcribed on this Mac; audio is never saved. Summaries use your selected model. Enabling downloads a 190 MB speech model.</small>
+        <small>Transcribed on this device; audio is never saved. Summaries use your selected model. Enabling downloads a 190 MB speech model.</small>
       </div>
       <div className='call-notes-welcome-actions'>
         <button type='button' className='call-notes-welcome-enable' onClick={() => batchUpdateConfig('callNotes', {

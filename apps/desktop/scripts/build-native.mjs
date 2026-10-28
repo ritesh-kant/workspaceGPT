@@ -47,6 +47,17 @@ if (platform === 'win32') {
   if (cargo.error || cargo.status !== 0) skip('cargo could not build native/win-mic');
   fs.copyFileSync(path.join(root, 'native/win-mic/target/release/wgpt-mic.exe'), path.join(out, 'wgpt-mic.exe'));
   console.log('[native] dist/bin/wgpt-mic.exe');
+  // WASAPI session detection + process loopback and microphone capture, with
+  // whisper.cpp linked statically by whisper-rs. CMake and LLVM ship on CI's
+  // Windows image; LLVM generates bindings for the Windows ABI.
+  const llvm = path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'LLVM', 'bin');
+  const calls = spawnSync('cargo', ['build', '--release', '--locked', '--manifest-path', 'native/win-calls/Cargo.toml'], {
+    cwd: root, stdio: 'inherit', shell: true,
+    env: { ...process.env, GGML_NATIVE: 'OFF', ...(fs.existsSync(llvm) && !process.env.LIBCLANG_PATH ? { LIBCLANG_PATH: llvm } : {}) },
+  });
+  if (calls.error || calls.status !== 0) skip('cargo could not build native/win-calls (requires CMake and LLVM)');
+  fs.copyFileSync(path.join(root, 'native/win-calls/target/release/wgpt-calls.exe'), path.join(out, 'wgpt-calls.exe'));
+  console.log('[native] dist/bin/wgpt-calls.exe');
   process.exit(0);
 }
 if (platform !== 'darwin') skip(`nothing to build for ${target}`);

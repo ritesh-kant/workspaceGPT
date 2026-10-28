@@ -963,3 +963,26 @@ macOS's own speech recognition, on the machine.
 Same mic button and events; different engine. `native/win-mic` (Rust, cpal/WASAPI, static CRT) prints the default mic as 16 kHz mono s16le on stdout; `sidecar/host/dictationWin.ts` feeds it to a sherpa-onnx streaming recognizer (`sherpa-onnx-node`, an esbuild external staged for win32 by `stage-runtime.mjs`, 22 MB with onnxruntime). Model: streaming zipformer en 2023-06-26, int8 (73 MB, four files, pinned revision + SHA-256, `host/speechModel.ts`), downloaded to `<root>/models/` when the page attaches. Output is capitals with no punctuation, so it is sentence-cased.
 
 Verified on macOS only: the recognizer + session with a fake mic playing a WAV in real time (partials, stop, final, idle; 183 ms to decode 6.9 s), the Rust crate's resampler tests, and `cargo check --target x86_64-pc-windows-msvc`. NOT run on Windows: the mic capture, the win-x64 addon loading, the packaged installer. CI's smoke test (`smoke-installed.mjs`) now checks `wgpt-mic.exe` is installed and the addon loads in the bundled Node. Failures reach the page as `engine-missing` (with the load error), `no-microphone`, `mic-denied`, `model-download`. Known limits: English only; accuracy on accents untested.
+
+
+### Call notes on Windows (2026-10-28)
+
+Replaced the silent microphone-registry poll with `native/win-calls`:
+`wgpt-calls.exe --detect` matches active WASAPI input/output sessions, including
+same-executable browser helper processes. The same binary takes `--model` and
+`--pid` to capture the detected app trees and the call's microphone, transcribing
+both tracks locally with whisper-rs/whisper.cpp. Audio stays in memory, with a
+bounded decode queue and silence filtering. Process loopback needs Windows build
+20348+ (Windows 11 / Server 2022); older builds offer detection only. A helper
+error reaches Settings instead of becoming “no call”. Supported Windows builds
+now get the existing opt-in introduction and automatic note-taking setting.
+
+Build needs CMake and LLVM/libclang in addition to Rust (present on Windows CI).
+The release stage requires the helper; the installed smoke check executes
+`--version` and checks transcription is compiled in. Native tests run in Windows
+CI. Locally passed Windows audio-layer cross-check, four native tests, host
+call-notes tests, desktop/webview type checks, and actual decoder transcription
+of generated speech on macOS. The full agent unit suite has one unrelated
+failure in “the trimmed report format keeps every honesty rule”. No live Windows
+call or Windows installer was available for local validation. Device/process
+switches during a call still require stopping and starting notes again.

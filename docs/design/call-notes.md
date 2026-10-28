@@ -1,8 +1,8 @@
 # Call notes (desktop app only)
 
-Status: 2026-10-21. **Built (beta, desktop):**
+Status: 2026-10-28. **Built (beta, desktop):**
 - call detection, the "Call detected" prompt, and Settings → Call notes (off by default);
-- **macOS:** "Take notes" records and transcribes on the device with Whisper
+- **macOS and Windows 11 / Windows Server 2022 (build 20348+):** "Take notes" records and transcribes on the device with Whisper
   (whisper.cpp, the `small` model), writes a call note as it goes, and stops on
   Stop or when the call ends;
 - "You" lines that are the call's own audio heard through the speakers are dropped;
@@ -22,7 +22,6 @@ Short captures remain accessible in a collapsed sidebar group; nothing is delete
 by grouping.
 
 **Not built:**
-- Windows recording and transcription (whisper.cpp); Windows only detects;
 - embedding notes into the on-device index (search is by words, not meaning);
 - matching a call to its calendar meeting.
 
@@ -31,9 +30,15 @@ See "Results: recording" for what was tested.
 Code:
 - `apps/desktop/native/wgpt-calls.swift`: the macOS helper. Every second it
   prints the processes holding mic + output.
-- `apps/desktop/sidecar/host/callDetection.ts`: the rule (`CallTracker`), the
-  Windows registry reader, and the page and notification events. It starts and
+- `apps/desktop/sidecar/host/callDetection.ts`: the rule (`CallTracker`), native
+  helper supervision, and the page and notification events. It starts and
   stops the recorder.
+- `apps/desktop/native/win-calls`: the Windows helper (`wgpt-calls.exe`).
+  `--detect` reads active WASAPI capture and render sessions across all devices,
+  grouping same-executable browser child processes. `--model` captures the call
+  app process trees plus the microphone the call is using, and transcribes with
+  statically linked whisper.cpp (whisper-rs 0.16.0, Cargo.lock pins dependencies).
+  No system-wide output capture or audio files.
 - `apps/desktop/native/wgpt-notes.swift`: the macOS recorder. It taps the call's
   processes and the mic, transcribes both with whisper.cpp, and prints segments.
   It links `libwhisper.dylib`: whisper.cpp v1.9.2's prebuilt Apple framework,
@@ -154,21 +159,20 @@ each process, whether it is running input and whether it is running output.
 No permission is needed. The check goes in a small Swift helper next to
 `wgpt-dictate`.
 
-**Windows.** For the mic, Windows records which app is using the microphone;
-this record drives the taskbar mic icon. It lives in the user's own registry,
-readable without admin rights:
+**Windows.** The native helper enumerates active WASAPI audio sessions on all
+capture and rendering endpoints once per second. A process tree must have both
+input and output active. Same-executable browser children share a root, so
+separate audio helpers still match without grouping unrelated applications.
+Our mic and call helpers are excluded. Session activity, rather than audio
+volume, allows muted calls to remain detectable when the call app keeps its
+streams open. Apps that release their microphone while muted cannot be detected
+by this signal.
 
-```
-HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone
-```
-
-- Packaged apps, such as new Teams, are direct subkeys of that key.
-- Desktop apps (`zoom.exe`, `chrome.exe` and so on) are under `NonPackaged`.
-- An app is using the mic while its `LastUsedTimeStop` is 0.
-
-For output, enumerating WASAPI audio sessions per process says whether the
-same process is playing audio. That needs native code, which the Windows
-capture helper has anyway. The PowerShell probe can only check the mic.
+The old registry poll and PowerShell probe were a microphone-only prototype.
+They are no longer the production detector. A missing native helper or an error
+now reports detection as unavailable with the reason in Settings. Toggle Detect
+calls off and on to retry. Taking notes requires process loopback capture
+(Windows build 20348+); earlier Windows builds can still detect calls.
 
 **Rejected:**
 - Reading window titles: macOS requires Screen Recording permission.
@@ -185,7 +189,7 @@ capture helper has anyway. The PowerShell probe can only check the mic.
 | | Microphone ("You") | Call app output ("Others") |
 |---|---|---|
 | **macOS** | AVAudioEngine input. Uses the microphone permission, which dictation already prompts for. | Core Audio process tap on the detected process (macOS 14.2+). Needs a one-time "System Audio Recording" permission (`NSAudioCaptureUsageDescription`). |
-| **Windows** | WASAPI capture. Subject to the Windows mic privacy toggle for desktop apps. | WASAPI process loopback for the detected process (Windows 10 2004+). No prompt. |
+| **Windows** | WASAPI capture on the call's microphone endpoint. Subject to the Windows mic privacy toggle for desktop apps. | WASAPI process loopback for the detected process (Windows build 20348+). No prompt. |
 
 When the call is in a browser, the detected process is the browser's audio
 helper, so a video playing in another tab during the call would be captured
@@ -403,3 +407,20 @@ Recording is allowed, the tap delivers silence rather than failing.
 - **Not tested yet:** a real Teams or Zoom call with Whisper, and the installable
   build. Packaging now carries `libwhisper.dylib`, which is ad-hoc signed like the
   other helpers.
+
+## Windows implementation validation, 2026-10-28
+
+- Windows audio APIs cross-checked with `cargo check --target
+  x86_64-pc-windows-msvc --no-default-features` (the audio layer, without linking
+  the Windows Whisper library from macOS).
+- Native tests cover bounded silent/speech chunks, pause offsets, stop flushing,
+  and browser process grouping. The real Whisper decoder transcribed a generated
+  meeting sentence correctly on macOS with the same quantized small model.
+- Host tests cover snapshots, helper errors, unexpected exits, and intentional
+  stop. Desktop and webview type checks pass.
+- Release staging requires `wgpt-calls.exe`; the installed Windows smoke check
+  runs it and verifies transcription support. Windows CI runs the native tests.
+- Still requires live Windows validation: Teams/Zoom/browser calls, muted calls,
+  microphone permissions, headset changes, CPU throughput, and the installer.
+  A device removal stops notes with an error; the current capture does not follow
+  a call that moves to another microphone or application process mid-call.
