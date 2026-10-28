@@ -753,8 +753,9 @@ export class SessionsHtmlTemplate {
       const key = 'notes:';
       const short = needle ? [] : notes.filter((n) => n.status !== 'recording' && (!n.turnCount || (n.endedAt && n.endedAt - n.startedAt < 60000)));
       const primary = notes.filter((n) => !short.includes(n));
-      const recording = notes.some((n) => n.status === 'recording');
-      const open = !!needle || recording || !(key in wsOpen) || !!wsOpen[key];
+      // Search may reveal matches, but redraws must preserve a manual collapse,
+      // including while a call is recording.
+      const open = !!needle || !(key in wsOpen) || !!wsOpen[key];
       const activeAt = primary.findIndex((n) => n.id === activeNoteId);
       const limit = needle ? primary.length : Math.max(shown[key] || NOTES_PAGE, activeAt + 1);
       let body = '';
@@ -774,7 +775,7 @@ export class SessionsHtmlTemplate {
       }
       if (short.length) {
         const shortKey = 'notes:short';
-        const shortOpen = !!wsOpen[shortKey] || short.some((n) => n.id === activeNoteId);
+        const shortOpen = shortKey in wsOpen ? !!wsOpen[shortKey] : short.some((n) => n.id === activeNoteId);
         const shortLimit = Math.max(shown[shortKey] || NOTES_PAGE, short.findIndex((n) => n.id === activeNoteId) + 1);
         let rows = '';
         let shortDay = '';
