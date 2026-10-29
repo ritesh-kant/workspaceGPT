@@ -67,8 +67,12 @@ export function workspaceStateFile(paths: AppPaths, folder: string | undefined):
 
 function writeAtomic(file: string, data: string): void {
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, data, { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  try {
+    fs.writeFileSync(tmp, data, { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* renamed, or preserve the original write error */ }
+  }
 }
 
 /**
@@ -81,9 +85,10 @@ function writeAtomic(file: string, data: string): void {
 export class JsonStore {
   private data: Record<string, unknown>;
   private timer: NodeJS.Timeout | undefined;
-  private waiters: (() => void)[] = [];
+  private waiters: { resolve(): void; reject(error: unknown): void }[] = [];
+  private writeFailed = false;
 
-  constructor(readonly file: string) {
+  constructor(readonly file: string, private readonly onWriteStatus?: (file: string, error?: unknown) => void) {
     try {
       this.data = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch (err: any) {
@@ -125,23 +130,37 @@ export class JsonStore {
   }
 
   private scheduleWrite(): Promise<void> {
-    return new Promise((resolve) => {
-      this.waiters.push(resolve);
-      this.timer ??= setTimeout(() => this.flushSync(), 50);
+    const pending = new Promise<void>((resolve, reject) => {
+      this.waiters.push({ resolve, reject });
+      this.timer ??= setTimeout(() => {
+        try { this.flushSync(); } catch { /* callers are rejected; flushSync reports the failure */ }
+      }, 50);
     });
+    // VS Code callers often ignore the Thenable. Report through the host too,
+    // without an unhandled rejection; awaiting this original promise still fails.
+    void pending.catch(() => undefined);
+    return pending;
   }
 
   flushSync(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+    const waiters = this.waiters;
+    this.waiters = [];
     try {
       writeAtomic(this.file, JSON.stringify(this.data, null, 1));
     } catch (err) {
       console.error(`[desktop] could not write ${this.file}:`, err);
+      this.writeFailed = true;
+      waiters.forEach((w) => w.reject(err));
+      this.onWriteStatus?.(this.file, err);
+      throw err;
     }
-    const waiters = this.waiters;
-    this.waiters = [];
-    waiters.forEach((w) => w());
+    waiters.forEach((w) => w.resolve());
+    if (this.writeFailed) {
+      this.writeFailed = false;
+      this.onWriteStatus?.(this.file);
+    }
   }
 }
 

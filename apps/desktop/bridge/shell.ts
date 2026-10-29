@@ -32,7 +32,7 @@ interface SessionPreview {
   workspaceFolder?: string;
 }
 
-(() => {
+(async () => {
   const w = window as any;
   const CHAT_VIEW = 'workspacegpt.chatView';
   const SESSIONS_VIEW = 'workspacegpt.sessionsView';
@@ -190,6 +190,30 @@ interface SessionPreview {
     });
     return f;
   };
+  // The server's port changes across launches. Restore from the local profile
+  // before any webview store hydrates, rather than using that origin's storage.
+  const restoreController = new AbortController();
+  const restoreTimeout = setTimeout(() => restoreController.abort(), 10_000);
+  try {
+    const response = await fetch('/__desktop/webview-state', {
+      headers: { Authorization: `Bearer ${token ?? ''}` },
+      cache: 'no-store',
+      signal: restoreController.signal,
+    });
+    if (!response.ok) throw new Error(`State restore failed (${response.status})`);
+    hooks.webviewState = await response.json();
+  } catch {
+    // Starting with defaults here would overwrite the draft we failed to read.
+    const note = document.createElement('p');
+    note.textContent = 'Could not restore your workspace. Reload to try again.';
+    const reload = document.createElement('button');
+    reload.textContent = 'Reload';
+    reload.onclick = () => location.reload();
+    $('mainBody').append(note, reload);
+    return;
+  } finally {
+    clearTimeout(restoreTimeout);
+  }
   const chatFrame = frame(CHAT_VIEW, 'Chat');
   $('mainBody').appendChild(chatFrame);
   chatFrame.addEventListener('load', () => {

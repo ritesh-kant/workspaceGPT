@@ -35,6 +35,8 @@ interface DesktopConfig {
 /** What the shell page exposes to the views it frames (bridge/shell.ts). */
 export interface ShellHooks {
   token?: string;
+  /** Restored before the frames load, so acquireVsCodeApi.getState stays synchronous. */
+  webviewState?: Record<string, unknown>;
   hostMessage(viewType: string, message: unknown): void;
   /** A message the view posted to the host (after it was sent). */
   viewMessage?(viewType: string, message: unknown): void;
@@ -181,6 +183,10 @@ interface UiFrame {
       else if (frame.t === 'diff') showDiff(frame as DiffFrame);
       else if (frame.t === 'dictation') onDictation(frame.event);
       else if (frame.t === 'calls') onCalls(frame.event);
+      else if (frame.t === 'storage-status') {
+        storageFailed = frame.failed === true;
+        renderBanner();
+      }
       else if (frame.t === 'toolbar') {
         const hooks = shell();
         if (hooks) hooks.toolbar(viewType, frame.items ?? []);
@@ -257,6 +263,7 @@ interface UiFrame {
   // ── acquireVsCodeApi ─────────────────────────────────────────────────────
 
   let acquired = false;
+  let savedState = shell()?.webviewState?.[viewType];
   w.acquireVsCodeApi = () => {
     if (acquired) throw new Error('An instance of the VS Code API has already been acquired');
     acquired = true;
@@ -273,6 +280,7 @@ interface UiFrame {
         if (held && (message as { type?: string } | null)?.type === READY_SIGNAL[viewType]) setTimeout(release, 0);
       },
       getState: () => {
+        if (shell()?.webviewState) return savedState ?? undefined;
         try {
           return JSON.parse(localStorage.getItem(STATE_KEY) ?? 'null') ?? undefined;
         } catch {
@@ -280,10 +288,16 @@ interface UiFrame {
         }
       },
       setState: (state: unknown) => {
-        try {
-          localStorage.setItem(STATE_KEY, JSON.stringify(state));
-        } catch {
-          /* ignore */
+        savedState = state;
+        const states = shell()?.webviewState;
+        if (states) states[viewType] = state;
+        send({ t: 'state', d: state ?? null });
+        if (!states) {
+          try {
+            localStorage.setItem(STATE_KEY, JSON.stringify(state));
+          } catch {
+            /* ignore */
+          }
         }
         return state;
       },
@@ -362,6 +376,9 @@ interface UiFrame {
 
   let layer: HTMLElement | undefined;
   let bannerEl: HTMLElement | undefined;
+  let storageFailed = false;
+  let connectionNotice: string | null = null;
+  let connectionLevel: 'warning' | 'error' = 'warning';
   function ensureDom(): void {
     if (layer) return;
     const style = document.createElement('style');
@@ -375,8 +392,18 @@ interface UiFrame {
     document.body ? fn() : document.addEventListener('DOMContentLoaded', fn, { once: true });
 
   function banner(text: string | null, level: 'warning' | 'error' = 'warning'): void {
+    connectionNotice = text;
+    connectionLevel = level;
+    renderBanner();
+  }
+
+  function renderBanner(): void {
     whenBody(() => {
       ensureDom();
+      const text = connectionNotice ?? (storageFailed
+        ? 'Could not save local data. Recent changes may be lost if you quit. Check disk space and folder permissions.'
+        : null);
+      const level = connectionNotice ? connectionLevel : 'error';
       if (!text) {
         bannerEl?.remove();
         bannerEl = undefined;
@@ -384,6 +411,7 @@ interface UiFrame {
       }
       bannerEl ??= document.body.appendChild(document.createElement('div'));
       bannerEl.className = 'wgpt-banner';
+      bannerEl.setAttribute('role', 'alert');
       bannerEl.style.background = level === 'error' ? '#b3261e' : '#8a6d00';
       bannerEl.textContent = text;
     });

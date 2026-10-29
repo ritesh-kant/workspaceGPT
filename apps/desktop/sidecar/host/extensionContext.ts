@@ -30,10 +30,11 @@ export function createExtensionContext(opts: {
   workspaceFolder?: string;
   /** --secrets-service: tests only; otherwise derived from the data root. */
   secretsService?: string;
+  onWriteStatus?: (file: string, error?: unknown) => void;
 }): DesktopContext {
   const { paths, extensionDir } = opts;
-  const globalState = new JsonStore(paths.stateFile);
-  const workspaceState = new JsonStore(workspaceStateFile(paths, opts.workspaceFolder));
+  const globalState = new JsonStore(paths.stateFile, opts.onWriteStatus);
+  const workspaceState = new JsonStore(workspaceStateFile(paths, opts.workspaceFolder), opts.onWriteStatus);
   const secrets = createSecretStorage(opts.secretsService ?? secretServiceFor(paths.root));
   const subscriptions: { dispose(): any }[] = [];
   const workspaceStorage = path.join(paths.root, 'workspace-storage', path.basename(workspaceStateFile(paths, opts.workspaceFolder), '.json'));
@@ -85,8 +86,7 @@ export function createExtensionContext(opts: {
           console.error('[desktop] disposing a subscription threw:', err);
         }
       }
-      globalState.flushSync();
-      workspaceState.flushSync();
+      try { globalState.flushSync(); } finally { workspaceState.flushSync(); }
     },
   };
 }

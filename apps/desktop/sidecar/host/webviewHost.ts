@@ -32,9 +32,11 @@ export type HostToPage =
   | { t: 'toolbar'; items: unknown[] }
   | { t: 'dictation'; event: DictationEvent }
   | { t: 'calls'; event: CallEvent }
+  | { t: 'storage-status'; failed: boolean }
   | DiffFrame;
 export type PageToHost =
   | { t: 'msg'; d: unknown }
+  | { t: 'state'; d: unknown }
   | { t: 'ui-result'; id: number; value: unknown }
   | { t: 'command'; id: string }
   | { t: 'page-log'; level: 'error' | 'info'; text: string }
@@ -48,6 +50,8 @@ const ASK_WAIT_MS = 30_000;
 
 export class ViewSurface {
   html = '';
+  /** Desktop profile storage, scoped to this workspace and view. */
+  state?: { get(): unknown; set(value: unknown): void };
   options: Record<string, unknown> = {};
   private socket: WebSocket | undefined;
   private queue: string[] = [];
@@ -188,7 +192,10 @@ export class ViewSurface {
     if (previous && previous !== socket) {
       previous.close(WS_CLOSE_SUPERSEDED, 'superseded by a newer window');
     }
-    socket.on('message', (raw) => this.onFrame(String(raw)));
+    socket.on('message', (raw) => {
+      // A superseded page must not overwrite the new owner's state.
+      if (this.socket === socket) this.onFrame(String(raw));
+    });
     socket.on('close', () => {
       if (this.socket !== socket) return;
       this.socket = undefined;
@@ -224,7 +231,9 @@ export class ViewSurface {
       console.warn('[desktop] ignoring a non-JSON frame from the page');
       return;
     }
-    if (frame.t === 'msg') {
+    if (frame.t === 'state') {
+      this.state?.set(frame.d);
+    } else if (frame.t === 'msg') {
       this.stats.fromPage++;
       this.received.fire(frame.d);
     } else if (frame.t === 'ui-result') {

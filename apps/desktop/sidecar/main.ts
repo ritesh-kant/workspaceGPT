@@ -224,7 +224,15 @@ async function main(): Promise<void> {
     );
     process.exit(75);
   }
-  const desktopPrefs = new JsonStore(path.join(paths.root, 'desktop.json'));
+  const failedStores = new Set<string>();
+  let storageSurface: ViewSurface | undefined;
+  const pushStorageStatus = () => storageSurface?.sendControl({ t: 'storage-status', failed: failedStores.size > 0 });
+  const onWriteStatus = (file: string, error?: unknown) => {
+    if (error !== undefined) failedStores.add(file);
+    else failedStores.delete(file);
+    pushStorageStatus();
+  };
+  const desktopPrefs = new JsonStore(path.join(paths.root, 'desktop.json'), onWriteStatus);
 
   // Before anything spawns: Finder-launched apps have a bare PATH. A slow rc
   // file (nvm, conda) can take seconds, so the first launch waits for the
@@ -269,7 +277,7 @@ async function main(): Promise<void> {
   const folders = workspace && fs.existsSync(workspace) ? [workspace] : [];
   if (folders[0]) void desktopPrefs.update('lastWorkspace', folders[0]);
 
-  const settings = new JsonStore(paths.settingsFile);
+  const settings = new JsonStore(paths.settingsFile, onWriteStatus);
   // Starts typescript-language-server on first use, not here.
   const languageService = createLanguageService({ nodePath: process.execPath, workspaceFolders: () => runtime.workspaceFolders });
   onDidChangeWorkspaceFolders(() => languageService.restart());
@@ -303,6 +311,8 @@ async function main(): Promise<void> {
   let server: DesktopServer | undefined;
   const origin = () => server?.origin ?? 'http://127.0.0.1';
   const surface = createViewSurface(CHAT_VIEW_ID, origin, () => [extensionDir]);
+  storageSurface = surface;
+  surface.attached.event(pushStorageStatus);
   const sessionsSurface = createViewSurface(SESSIONS_VIEW_ID, origin, () => [extensionDir]);
   const surfaces = new Map<string, ViewSurface>([
     [CHAT_VIEW_ID, surface],
@@ -332,7 +342,14 @@ async function main(): Promise<void> {
     log: (l) => console.log(l),
   });
 
-  const ctx = createExtensionContext({ paths, extensionDir, workspaceFolder: folders[0], secretsService: args.secretsService });
+  const ctx = createExtensionContext({ paths, extensionDir, workspaceFolder: folders[0], secretsService: args.secretsService, onWriteStatus });
+  for (const [id, view] of surfaces) {
+    const key = `desktop.webviewState:${id}`;
+    view.state = {
+      get: () => ctx.workspaceState.get(key),
+      set: (value) => { void ctx.workspaceState.update(key, value); },
+    };
+  }
   const secretsWhere = ctx.secretsBackend === 'keychain' ? `keychain (service "${ctx.secretsService}")` : ctx.secretsBackend;
   console.log(`[desktop] data dir ${paths.root}; secrets in ${secretsWhere}; workspace ${folders[0] ?? '(none)'}`);
   // McpUiManager's first-run toast offers "Connect MCP", which writes the host
@@ -467,8 +484,9 @@ async function main(): Promise<void> {
     } catch {
       /* best effort */
     }
-    desktopPrefs.flushSync();
-    settings.flushSync();
+    for (const store of [desktopPrefs, settings]) {
+      try { store.flushSync(); } catch { /* already reported; continue cleanup and flush the other store */ }
+    }
     await server?.close();
     process.exit(0);
   };

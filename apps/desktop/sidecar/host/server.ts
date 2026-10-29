@@ -136,6 +136,20 @@ export function startServer(opts: ServerOptions): Promise<DesktopServer> {
       return;
     }
 
+    // Drafts can contain private content. Unlike static assets, this bootstrap
+    // requires the launch token, carried in a header rather than a URL or log.
+    if (url.pathname === '/__desktop/webview-state') {
+      if (req.method !== 'GET' || !tokenMatches(req.headers.authorization?.replace(/^Bearer /, '') ?? null, opts.token) ||
+          (req.headers.origin && !origins().has(req.headers.origin))) {
+        send(403, 'forbidden');
+        return;
+      }
+      send(200, JSON.stringify(Object.fromEntries(
+        [...opts.surfaces].map(([id, surface]) => [id, surface.state?.get() ?? null])
+      )), MIME['.json'], { 'Cache-Control': 'no-store' });
+      return;
+    }
+
     if (url.pathname === '/__desktop/appearance' && req.method === 'POST') {
       if (!opts.appearance || !origins().has(req.headers.origin ?? '')) {
         send(403, 'forbidden');

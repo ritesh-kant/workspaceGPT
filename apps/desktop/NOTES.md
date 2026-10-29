@@ -1,5 +1,44 @@
 # WorkspaceGPT Desktop — build notes
 
+## Save failures (2026-10-29)
+
+`JsonStore` rejects every pending update when a coalesced write fails; explicit
+flushes and synchronous settings replacements throw too. The last saved file
+stays intact, temporary files are cleaned up, and the latest in-memory changes
+remain available for a later save. Ignored update promises are reported through
+logging and the host's storage status without creating unhandled rejections.
+The chat shows an accessible warning while any profile store has a failed
+save, including after a view reconnect; a successful save of each failed store
+clears it. Shutdown still attempts the other stores if one flush fails.
+
+Verified: `node apps/desktop/scripts/json-store-test.mjs` covers injected
+ENOSPC/EACCES, a real missing-directory failure, coalesced rejection,
+synchronous errors, atomic-file preservation and recovery. The restart tests
+still pass. A headless Chrome check with the real chat store and desktop bridge
+verified the warning, reconnect, recovery and preservation of unsaved edits.
+Desktop bundle, type check and compat usage check passed; packaged Tauri was
+not run.
+
+## Webview state across restarts (2026-10-29)
+
+`acquireVsCodeApi().setState()` now saves through the authenticated bridge to
+the profile's existing workspace-state store, under a key per view. The shell
+reads that state with a token-authenticated, uncached bootstrap before loading
+the frames, so `getState()` remains synchronous and the unchanged chat store
+restores its draft and selected conversation even when the loopback port changes.
+The parent also keeps the latest state for iframe reloads. A failed bootstrap
+offers Reload without opening an empty chat that could overwrite saved work.
+Superseded sockets cannot write state. Standalone view pages retain their
+previous localStorage fallback; normal desktop and headless shell pages use
+the profile store. This does not resume an interrupted agent run.
+
+Verified: `node apps/desktop/scripts/webview-state-test.mjs` covers a killed
+host/new port, clear, workspace/profile isolation, superseded writes, bootstrap
+authorization and cache headers. A headless Chrome check with the actual chat
+store, shell and bridge covered typing, iframe reload, a new server port,
+idle hydration of interrupted runs, and bootstrap failure. Desktop bundle,
+type check and compat usage check passed. Packaged Tauri was not run.
+
 Phase 0 (headless spike) and Phase 1 (Tauri shell) of `docs/design/desktop.md`,
 built 2026-09-24 on branch `desktop/phase-0`. Everything lives in
 `apps/desktop/`; `apps/vscode-extensions/src` and `webview/src` are untouched.
