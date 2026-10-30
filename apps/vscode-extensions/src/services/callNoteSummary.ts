@@ -12,6 +12,7 @@
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+import { acceptCorrections, collapseLoops, correctionCandidates, type Candidate, type Correction, type OrgVocabulary } from './callNoteCorrect';
 import { CallNote, CallNoteSummary, formatOffset, isCallNoteId, listCallNotes, readCallNote, renameCallNote } from './callNotes';
 
 /** `unclear`: the call did not say who; the panel offers it to the user as a suggestion, never as their task. */
@@ -49,6 +50,8 @@ export interface CallSummaryDoc {
   decisions: string[];
   actions: CallAction[];
   topics: string[];
+  /** Words the speech model misheard, as the summary model corrected them; the transcript itself is untouched. */
+  corrections?: Correction[];
 }
 
 export interface PendingAction extends CallAction {
@@ -140,10 +143,10 @@ export function summarySections(note: CallNote): CallNote[] {
 }
 
 function transcriptOf(note: CallNote): string {
-  return note.turns.map((t) => `[${formatOffset(t.at)}] ${t.speaker === 'you' ? 'You' : 'Others'}: ${t.text}`).join('\n');
+  return collapseLoops(note.turns).map((t) => `[${formatOffset(t.at)}] ${t.speaker === 'you' ? 'You' : 'Others'}: ${t.text}`).join('\n');
 }
 
-export function buildSummaryPrompt(note: CallNote): string {
+export function buildSummaryPrompt(note: CallNote, candidates: readonly Candidate[] = []): string {
   return `Below is the automatic transcript of a work call. "You" is the person who owns these notes (their microphone); "Others" is everyone else on the call, not told apart. The transcript is machine-made: words may be wrong, and lines can be doubled or garbled.
 
 Write notes the owner can act on without reading the transcript. Use only what was said; do not invent decisions, owners, dates or ticket numbers. If something is unclear, leave it out.
@@ -157,9 +160,11 @@ Return one JSON object and nothing else (no markdown):
   "actions": [
     {"text": "what has to be done, starting with a verb", "owner": "you" or "other" or "unclear", "who": "name if owner is other and a name was said, else empty", "due": "when, if said, else empty", "dueDate": "that day as YYYY-MM-DD, worked out from the call date above, else empty", "at": "mm:ss of the line where it was agreed", "ticket": "a ticket or work item number if one was named for this, else empty"}
   ],
-  "topics": ["up to 4 short topics"]
+  "topics": ["up to 4 short topics"],
+  "corrections": [{"from": "a word or phrase exactly as written in the transcript", "to": "what was actually said"}]
 }
 "owner" is "you" only when "You" took it on, or Others asked "You" to do it; "other" when someone else took it; "unclear" when it was agreed but not who owns it. Empty arrays are fine. If there is no real conversation (noise, a test, one person talking to themselves), return {"empty": true}.
+"corrections" lists only words the speech recognizer clearly got wrong (a name, a product, a system, a term the rest of the call makes plain); use the corrected spelling in the notes you write. Leave out anything you are not sure of.${candidates.length ? `\nNames and terms from the owner's tickets and pages that some transcript words sound like: ${candidates.map((c) => `${c.heard} ≈ ${c.maybe.join(" / ")}`).join("; ")}. These are only leads: use one only when the call's context supports it.` : ""}
 
 Call date (local): ${new Date(note.startedAt).toDateString()}. All timestamps are offsets from the original call start, including when this is one section of a longer call.
 
@@ -177,7 +182,7 @@ function parseOffset(v: unknown): number | undefined {
 }
 
 /** The model's JSON, tolerant of fences and chatter around it; undefined when there is none. */
-export function parseSummaryReply(raw: string, note: CallNote): { title?: string; doc: Omit<CallSummaryDoc, 'v' | 'status' | 'generatedAt'> } | undefined {
+export function parseSummaryReply(raw: string, note: CallNote, candidates: readonly Candidate[] = []): { title?: string; doc: Omit<CallSummaryDoc, 'v' | 'status' | 'generatedAt'> } | undefined {
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
   if (start < 0 || end <= start) return undefined;
@@ -221,7 +226,8 @@ export function parseSummaryReply(raw: string, note: CallNote): { title?: string
     .map((d: any) => ({ text: text(typeof d === 'string' ? d : d?.text, 240), at: parseOffset(d?.at) }))
     .filter((d: { text: string }) => d.text);
   const decisionSources = decisions.filter((d: { at?: number }) => d.at !== undefined && note.turns.some((t) => Math.abs(t.at - d.at!) <= 30));
-  return { ...(title ? { title } : {}), doc: { tldr, highlights: list(json.highlights, 3, 140), decisions: decisions.map((d: { text: string }) => d.text), decisionSources, actions, topics: list(json.topics, 4, 40) } };
+  const corrections = acceptCorrections(json.corrections, note.turns, candidates);
+  return { ...(title ? { title } : {}), doc: { ...(corrections.length ? { corrections } : {}), tldr, highlights: list(json.highlights, 3, 140), decisions: decisions.map((d: { text: string }) => d.text), decisionSources, actions, topics: list(json.topics, 4, 40) } };
 }
 
 function validDate(value: string): boolean {
@@ -276,7 +282,7 @@ const inFlight = new Set<string>();
  * call throws (no model chosen, rate limit): nothing is saved, so a later try
  * starts clean.
  */
-export async function summarizeCallNote(dir: string, id: string, complete: Complete, opts: { force?: boolean; processedBy?: string } = {}): Promise<CallSummaryDoc | undefined> {
+export async function summarizeCallNote(dir: string, id: string, complete: Complete, opts: { force?: boolean; processedBy?: string; vocab?: OrgVocabulary } = {}): Promise<CallSummaryDoc | undefined> {
   if (inFlight.has(id)) return undefined;
   inFlight.add(id);
   try {
@@ -293,8 +299,9 @@ export async function summarizeCallNote(dir: string, id: string, complete: Compl
     }
     const parts: NonNullable<ReturnType<typeof parseSummaryReply>>[] = [];
     for (const section of summarySections(note)) {
-      const raw = await complete(buildSummaryPrompt(section));
-      const parsed = parseSummaryReply(raw, section);
+      const candidates = opts.vocab ? correctionCandidates(section.turns, opts.vocab) : [];
+      const raw = await complete(buildSummaryPrompt(section, candidates));
+      const parsed = parseSummaryReply(raw, section, candidates);
       if (parsed) parts.push(parsed);
       else {
         let empty = false;
@@ -311,7 +318,8 @@ export async function summarizeCallNote(dir: string, id: string, complete: Compl
       decisionSources: unique(parts.flatMap((p) => p.doc.decisionSources ?? []), (d) => normalized(d.text)),
       actions: unique(parts.flatMap((p) => p.doc.actions), (a) => `${normalized(a.text)}:${a.ticket ?? ''}`),
       topics: unique(parts.flatMap((p) => p.doc.topics), normalized),
-    } : { decisions: [], actions: [], topics: [] };
+      corrections: unique(parts.flatMap((p) => p.doc.corrections ?? []), (c) => c.from),
+    } : { decisions: [], actions: [], topics: [], corrections: [] };
     const doc = await updateSummary(dir, id, async () => {
       // A deleted note must not be recreated by an in-flight model response.
       if (!(await readCallNote(dir, id))) return undefined;

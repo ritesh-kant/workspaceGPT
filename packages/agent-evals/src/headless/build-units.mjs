@@ -75,6 +75,7 @@ const UNITS = [
   '../desktop/sidecar/host/callRecorder.ts',
   '../desktop/sidecar/host/whisperModel.ts',
   'src/services/callNotes.ts',
+  'src/services/callNoteCorrect.ts',
   'src/services/callNoteSummary.ts',
   // Copilot on desktop: Chat Completions ⇄ Responses, and the bridge route that uses it (fetch mocked).
   'src/services/copilotResponses.ts',

@@ -18,6 +18,7 @@ import { normalizeModelId } from '../utils/normalizeModelId';
 import { getProviderDefaultHeaders } from '../utils/anthropicHeaders';
 import { markUserTurn } from './copilotDirect';
 import { getActiveTicketProvider } from './tickets/registry';
+import { readOrgVocabulary } from './callNoteCorrect';
 import { callNotesDir, isCallNoteId, readCallNote } from './callNotes';
 import { isSummarizing, listOpenActions, notesNeedingSummary, readCallSummary, setActionState, summarizeCallNote, type ActionState, type Complete } from './callNoteSummary';
 
@@ -59,6 +60,9 @@ function ticketState(context: vscode.ExtensionContext) {
   return provider ? async (id: string) => (await provider.fetchTicket(id, { includeComments: false })).state : undefined;
 }
 
+/** The people and terms in the synced Knowledge, to spell names the speech model misheard; none when it cannot be read. */
+const vocabulary = (context: vscode.ExtensionContext) => readOrgVocabulary(context.globalStorageUri.fsPath).catch(() => undefined);
+
 let sweeping = false;
 
 /** Handles a call-summary message; false when the message is not one of them. */
@@ -93,7 +97,7 @@ export async function handleCallNoteMessage(
     await reply({ type: MESSAGE_TYPES.CALL_SUMMARY, id, summary: (await readCallSummary(dir, id)) ?? null, summarizing: true });
     let error: string | undefined;
     try {
-      await summarizeCallNote(dir, id, completer(context), { force: data.force === true, processedBy: callSummaryProcessor(context) });
+      await summarizeCallNote(dir, id, completer(context), { force: data.force === true, processedBy: callSummaryProcessor(context), vocab: await vocabulary(context) });
       onRetitled();
     } catch (err: any) {
       error = String(err?.message ?? err);
@@ -110,7 +114,7 @@ export async function handleCallNoteMessage(
     let error: string | undefined;
     try {
       for (const note of missing) {
-        await summarizeCallNote(dir, note.id, completer(context), { processedBy: callSummaryProcessor(context) });
+        await summarizeCallNote(dir, note.id, completer(context), { processedBy: callSummaryProcessor(context), vocab: await vocabulary(context) });
         onRetitled();
         await actions({ summarizing: note !== missing[missing.length - 1] });
       }

@@ -49,6 +49,7 @@ const callRecorderMod = await import(path.join(outDir, 'callRecorder.mjs'));
 const callNotesMod = await import(path.join(outDir, 'callNotes.mjs'));
 const whisperModelMod = await import(path.join(outDir, 'whisperModel.mjs'));
 const callSummaryMod = await import(path.join(outDir, 'callNoteSummary.mjs'));
+const callCorrectMod = await import(path.join(outDir, 'callNoteCorrect.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -7063,6 +7064,79 @@ process.stdin.resume();
 }
 
 // ═══ Call summaries: parse, skip quiet calls, open action items ═══
+console.log('\ncall note corrections');
+{
+  const { readOrgVocabulary, phoneticKey, similarity, correctionCandidates, collapseLoops, acceptCorrections, applyCorrections } = callCorrectMod;
+  const { parseSummaryReply, buildSummaryPrompt } = callSummaryMod;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-vocab-'));
+  fs.mkdirSync(path.join(root, 'ado', 'mds'), { recursive: true });
+  const item = (n, title, who) => fs.writeFileSync(path.join(root, 'ado', 'mds', `ADO-${n}.md`), `---\nurl: x\n---\n# [Bug #${n}] ${title}\n\n| Field | Value |\n|---|---|\n| **Assigned To** | ${who} |\n`);
+  item(1, 'Amplience content missing on PDP', 'Singhal, Parag (Contractor)');
+  item(2, 'Amplience slot fails on stage', 'Soliman, Ebrahim (Contractor)');
+  item(3, 'Remix giftbox', 'Unassigned');
+  const turn = (at, text, speaker = 'others') => ({ speaker, at, text });
+  const vocab = await readOrgVocabulary(root);
+
+  await t('the vocabulary holds names from "Last, First" fields and terms that recur in titles', () => {
+    assert.ok(vocab.names.includes('Parag') && vocab.names.includes('Singhal') && vocab.names.includes('Ebrahim'));
+    assert.ok(vocab.terms.includes('Amplience'));
+    assert.ok(!vocab.names.includes('Unassigned') && !vocab.names.includes('Contractor'));
+  });
+  await t('an unreadable storage folder is an empty vocabulary, not an error', async () => {
+    const v = await readOrgVocabulary(path.join(root, 'nope'));
+    assert.deepEqual(v, { names: [], terms: [] });
+  });
+  await t('spellings that sound alike have close keys, ones that do not are far', () => {
+    assert.ok(similarity(phoneticKey('Prag'), phoneticKey('Parag')) >= 0.75);
+    assert.ok(similarity(phoneticKey('Emplence'), phoneticKey('Amplience')) >= 0.75);
+    assert.ok(similarity(phoneticKey('Bruno'), phoneticKey('Parag')) < 0.75);
+  });
+  await t('a misheard capitalized word gets the Knowledge spelling as a candidate; a correct one does not', () => {
+    const turns = [turn(0, 'Thank you, Prag. The Emplence slot is down.'), turn(5, 'Parag will check.')];
+    const c = correctionCandidates(turns, vocab);
+    assert.ok(c.some((x) => x.heard === 'Prag' && x.maybe.includes('Parag')));
+    assert.ok(c.some((x) => x.heard === 'Emplence' && x.maybe.includes('Amplience')));
+    assert.ok(!c.some((x) => x.heard === 'Parag'));
+  });
+  await t('ordinary words that only open a sentence are not candidates', () => {
+    const c = correctionCandidates([turn(0, 'Thank you. Today is a hot fix. Okay, ready. Cool.')], { names: ['Task', 'Terri', 'Kyle', 'Zaka'], terms: [] });
+    assert.deepEqual(c, []);
+  });
+  await t('an empty vocabulary gives no candidates', () => {
+    assert.deepEqual(correctionCandidates([turn(0, 'Thank you, Prag.')], { names: [], terms: [] }), []);
+  });
+  await t('a looped sentence is dropped, a short repeat is kept', () => {
+    const loop = 'Okay, the image will be upload, I am sorry.';
+    const out = collapseLoops([turn(0, loop), turn(2, 'Okay, yeah, you can say that today.'), turn(4, loop), turn(6, 'Okay, yeah, you can say that today.'), turn(8, 'Yeah.'), turn(9, 'Yeah.')]);
+    assert.deepEqual(out.map((x) => x.at), [0, 2, 8, 9]);
+  });
+  await t('a correction is accepted when grounded and refused when invented', () => {
+    const turns = [turn(0, 'Thank you, Prag. Today is a hard fix. It is a hot fix too. Ready for viewing.'), turn(9, 'We moved it to QA.')];
+    const cands = [{ heard: 'Prag', maybe: ['Parag'] }];
+    const got = acceptCorrections([
+      { from: 'Prag', to: 'Parag' },          // offered by the Knowledge
+      { from: 'hard fix', to: 'hot fix' },    // the call says "hot fix" itself
+      { from: 'viewing', to: 'QA' },          // the call says "QA" itself
+      { from: 'Thank', to: 'Cassandra' },     // invented
+      { from: 'never said', to: 'Never said X' },
+      { from: 'Prag', to: 'Parag' },
+    ], turns, cands);
+    assert.deepEqual(got.map((c) => `${c.from}>${c.to}`), ['Prag>Parag', 'hard fix>hot fix', 'viewing>QA']);
+    assert.equal(acceptCorrections('nope', turns, cands).length, 0);
+  });
+  await t('corrections apply to whole words only', () => {
+    assert.equal(applyCorrections('Prag and Pragmatic', [{ from: 'Prag', to: 'Parag', count: 1 }]), 'Parag and Pragmatic');
+  });
+  await t('the summary prompt carries the leads, and the reply\'s corrections are checked against them', () => {
+    const note = { id: 'c1', title: 'x', startedAt: Date.now(), status: 'done', turns: [turn(0, 'Thank you, Prag, and the Emplence slot is down, that is why we are here.'), turn(30, 'ok')] };
+    const cands = correctionCandidates(note.turns, vocab);
+    assert.match(buildSummaryPrompt(note, cands), /Prag ≈ Parag/);
+    assert.doesNotMatch(buildSummaryPrompt(note), /sound like/);
+    const parsed = parseSummaryReply(JSON.stringify({ tldr: 'Slot down.', corrections: [{ from: 'Prag', to: 'Parag' }, { from: 'Emplence', to: 'Amplience' }, { from: 'slot', to: 'Zorgon' }] }), note, cands);
+    assert.deepEqual(parsed.doc.corrections.map((c) => c.to), ['Parag', 'Amplience']);
+  });
+}
+
 console.log('\ncall summaries');
 {
   const { parseSummaryReply, summarizeCallNote, readCallSummary, listOpenActions, setActionState, notesNeedingSummary } = callSummaryMod;
