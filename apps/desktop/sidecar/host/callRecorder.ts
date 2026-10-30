@@ -57,10 +57,12 @@ export function callNoteTitle(startedAt: number): string {
  * recorder: the app quit, crashed or restarted mid-call. It ends where its file
  * was last written; with nothing heard it is removed, as a failed start is.
  */
-export async function closeInterruptedNotes(dir: string): Promise<void> {
+export async function closeInterruptedNotes(dir: string, opts: { live?: () => string | undefined; only?: string } = {}): Promise<void> {
   const names = await fs.promises.readdir(dir).catch(() => [] as string[]);
   for (const name of names.filter((n) => n.endsWith('.md'))) {
     const id = name.slice(0, -3);
+    // The note being recorded right now is not interrupted, however early in the call.
+    if (id === opts.live?.() || (opts.only && id !== opts.only)) continue;
     const note = await readCallNote(dir, id);
     if (note?.status !== 'recording') continue;
     const file = path.join(dir, name);
@@ -96,6 +98,11 @@ export class CallRecorder {
 
   get active(): boolean {
     return !!this.proc;
+  }
+
+  /** The note being recorded, if any. */
+  get noteId(): string | undefined {
+    return this.proc ? this.note?.id : undefined;
   }
 
   /** `pids`: the processes call detection saw in the call; their audio is the other side. */

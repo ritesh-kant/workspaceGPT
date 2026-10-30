@@ -272,7 +272,12 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
         {note && (
           <div className='call-note-actions'>
             {liveHere && liveHere.state !== 'finishing' && (
-              <button type='button' className='call-note-button call-note-button--stop' onClick={stop}>
+              <button type='button' className='call-note-button call-note-button--stop' onClick={() => stop()}>
+                Stop taking notes
+              </button>
+            )}
+            {recording && !liveHere && (
+              <button type='button' className='call-note-button call-note-button--stop' onClick={() => stop(noteId)}>
                 Stop taking notes
               </button>
             )}

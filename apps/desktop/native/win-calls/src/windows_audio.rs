@@ -160,6 +160,22 @@ fn call_microphone(pids: &[u32]) -> Result<String> {
     Err("The call's microphone is no longer available. Try again during a call.".into())
 }
 
+/// A full queue means transcription is slower than the call. Skip that speech
+/// and say so once; ending the notes would lose everything still to come.
+fn offer(tx: &mpsc::SyncSender<Chunk>, chunk: Chunk, behind: &mut bool) -> Result<()> {
+    match tx.try_send(chunk) {
+        Ok(()) => Ok(()),
+        Err(mpsc::TrySendError::Full(_)) => {
+            if !*behind {
+                *behind = true;
+                emit(json!({"type":"warning", "code":"behind", "message":"This computer is transcribing more slowly than the call, so some speech was skipped."}));
+            }
+            Ok(())
+        }
+        Err(mpsc::TrySendError::Disconnected(_)) => Err("Transcription stopped.".to_string()),
+    }
+}
+
 fn capture(
     pid: Option<u32>,
     mic_device: String,
@@ -201,6 +217,7 @@ fn capture(
     let speaker = if pid.is_some() { "others" } else { "you" };
     let mut track = Track::new(speaker);
     let mut last_packet = Instant::now();
+    let mut behind = false;
     while !stopped.load(Ordering::SeqCst) {
         while unsafe { input.GetNextPacketSize() }.map_err(|e| e.to_string())? > 0 {
             let mut data = std::ptr::null_mut();
@@ -223,7 +240,7 @@ fn capture(
             for (i, frame) in samples.chunks(160).enumerate() {
                 let at = (end - (samples.len() - i * 160) as f64 / RATE as f64).max(0.0);
                 if let Some(chunk) = track.push(frame, at) {
-                    tx.try_send(chunk).map_err(|_| "This computer could not transcribe the call fast enough. Notes stopped to avoid accumulating audio in memory.".to_string())?;
+                    offer(&tx, chunk, &mut behind)?;
                 }
             }
             last_packet = Instant::now();
@@ -232,7 +249,7 @@ fn capture(
         // Flush at the gap so later speech retains its actual wall-clock offset.
         if last_packet.elapsed() >= Duration::from_millis(500) {
             if let Some(chunk) = track.finish() {
-                tx.try_send(chunk).map_err(|e| e.to_string())?;
+                offer(&tx, chunk, &mut behind)?;
             }
         }
         std::thread::sleep(Duration::from_millis(10));

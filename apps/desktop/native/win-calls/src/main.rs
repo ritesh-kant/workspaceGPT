@@ -120,7 +120,7 @@ fn run() -> Result<(), String> {
                 "The call's audio process is no longer available. Try again during a call.".into(),
             );
         }
-        let (tx, rx) = mpsc::sync_channel(4);
+        let (tx, rx) = mpsc::sync_channel(16);
         let (finish_tx, finish_rx) = mpsc::channel();
         let capture_stop = stopped.clone();
         let result = transcribe(model, rx, move || {

@@ -43,6 +43,8 @@ export interface CallsRequest {
   op: 'enable' | 'disable' | 'record' | 'stop';
   /** With 'enable': Settings → "Take notes automatically", so a detected call records without asking. */
   auto?: boolean;
+  /** With 'stop': the note to end; one marked "recording" that nothing records any more is closed. */
+  noteId?: string;
 }
 
 /** Something holding the mic (and, where the OS can tell, audio output). */
@@ -208,7 +210,7 @@ export function createCallDetection(
       : undefined;
 
   const sendState = () => send({ type: 'state', inCall: tracker.inCall, since: tracker.since });
-  void closeInterruptedNotes(notesDir);
+  void closeInterruptedNotes(notesDir, { live: () => recorder?.noteId });
 
   const record = () => {
     recordedSince = tracker.since;
@@ -260,7 +262,8 @@ export function createCallDetection(
     send(capability);
     sendState();
     if (recorder) send({ type: 'model', ...model.state });
-    if (recordingState) send(recordingState);
+    // Always: a page that outlived the previous host must hear that nothing records now.
+    send(recordingState ?? { type: 'recording', state: 'idle' });
   });
   surface.callsRequested.event((req) => {
     if (req.op === 'enable') {
@@ -279,6 +282,9 @@ export function createCallDetection(
         send({ type: 'recording', state: 'idle', error: 'The speech model is not downloaded yet. Try again once Settings → Call notes says it is ready.' });
         void model.ensure();
       } else record();
-    } else if (req.op === 'stop') recorder?.stop();
+    } else if (req.op === 'stop') {
+      if (req.noteId && req.noteId !== recorder?.noteId) void closeInterruptedNotes(notesDir, { live: () => recorder?.noteId, only: req.noteId });
+      else recorder?.stop();
+    }
   });
 }

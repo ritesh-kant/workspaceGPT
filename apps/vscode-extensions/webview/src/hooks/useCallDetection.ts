@@ -12,7 +12,7 @@ import { useSettingsStore } from '../store/settingsStore';
 type CallsOp = 'enable' | 'disable' | 'record' | 'stop';
 interface CallsBridge {
   latest(): { capability?: CallCapability; state?: CallState; recording?: CallRecording; model?: SpeechModel };
-  request(op: CallsOp, auto?: boolean): void;
+  request(op: CallsOp, auto?: boolean, noteId?: string): void;
 }
 export interface CallCapability {
   available: boolean;
@@ -64,7 +64,8 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
   outcome: RecordingOutcome | undefined;
   model: SpeechModel | undefined;
   record(): void;
-  stop(): void;
+  /** With a note id: ends a note still marked "recording" that nothing records any more. */
+  stop(noteId?: unknown): void;
   /** Ask again for the model after a failed download (turning detection on fetches it). */
   retryModel(): void;
 } {
@@ -92,6 +93,8 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
       } else if (event?.type === 'recording') {
         if (event.state === 'idle') {
           setRecording(undefined);
+          // The host's "nothing records" on attach, not an ending.
+          if (!event.noteId && !event.error) return;
           setOutcome((prev) => ({
             noteId: event.noteId,
             error: event.error,
@@ -132,7 +135,7 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
     outcome,
     model,
     record: () => bridge()?.request('record'),
-    stop: () => bridge()?.request('stop'),
+    stop: (noteId) => bridge()?.request('stop', undefined, typeof noteId === 'string' ? noteId : undefined),
     retryModel: () => bridge()?.request('enable'),
   };
 }
