@@ -30,6 +30,7 @@ import FolderSwitchDialog from './components/FolderSwitchDialog';
 import { folderName, sameFolder, useWorkspaceFolders } from './hooks/useWorkspaceFolders';
 import UsageLimitBar from './components/UsageLimitBar';
 import ContextMeter from './components/ContextMeter';
+import DataFlowBadge from './components/DataFlowBadge';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
 import { useCiSync } from './hooks/useCiSync';
 import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
@@ -3528,6 +3529,11 @@ const App: React.FC = () => {
                   </div>
                 )}
                 {workspaceSettings}
+                <DataFlowBadge
+                  mode={mode}
+                  provider={selectedModelProvider?.provider}
+                  baseUrl={selectedModelProvider?.baseUrl}
+                />
                 <ContextMeter
                   usage={contextUsage}
                   modelId={mode === 'local' ? selectedModelProvider?.selectedModel : 'glm-5.3-flash'}

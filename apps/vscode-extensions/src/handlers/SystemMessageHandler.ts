@@ -2,13 +2,14 @@ import * as vscode from 'vscode';
 import { EXTENSION, MESSAGE_TYPES, STORAGE_KEYS, normalizeQdrantUrl } from '../../constants';
 import { collapseWorkspaceGptSidebar } from '../utils/collapseSidebar';
 import { clearWorkspaceGPTData } from 'src/utils/clearData';
+import { describeSourceData } from '../utils/sourceData';
 import { AnalyticsService } from '../services/analyticsService';
 import { installMcpServer } from '../utils/mcpInstaller';
 import { isMcpInstalled } from '../utils/mcpStatusChecker';
 import { clearMemories, listMemories, memoryEnabled, saveMemory, setMemoryEnabled } from '../services/agent/userMemory';
 import { clearProjectMemories, listProjectMemories, projectMemoryDir, saveProjectMemory } from '../services/agent/projectMemory';
 import { syncContextKeys } from '../utils/syncContextKeys';
-import { preserveHostOwnedSyncFields } from '../utils/syncStateStore';
+import { preserveHostOwnedSyncFields, SYNC_SECTIONS, SyncSection } from '../utils/syncStateStore';
 
 /**
  * Analytics-only events the webview may report over ONBOARDING_EVENT (mostly
@@ -80,11 +81,26 @@ export class SystemMessageHandler {
       case MESSAGE_TYPES.MEMORY_SET_ENABLED:
         await this.handleMemory(data);
         return true;
+      case MESSAGE_TYPES.SOURCE_DATA_GET:
+      case MESSAGE_TYPES.SOURCE_DATA_REVEAL:
+        if (SYNC_SECTIONS.includes(data.section)) await this.handleSourceData(data);
+        return true;
       case MESSAGE_TYPES.COLLAPSE_SIDEBAR:
         await collapseWorkspaceGptSidebar(data?.dock);
         return true;
     }
     return false;
+  }
+
+  /** Settings → Knowledge: what a source has stored on this machine, and a way to open it. */
+  private async handleSourceData(data: any): Promise<void> {
+    const section = data.section as SyncSection;
+    const info = await describeSourceData(this.context, section);
+    if (data.type === MESSAGE_TYPES.SOURCE_DATA_REVEAL) {
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(info.path));
+      return;
+    }
+    this.webviewView.webview.postMessage({ type: MESSAGE_TYPES.SOURCE_DATA_INFO, ...info });
   }
 
   /** Settings → Memory: apply the change, then answer with the whole state. */

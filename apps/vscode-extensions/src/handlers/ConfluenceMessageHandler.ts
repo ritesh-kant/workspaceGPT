@@ -8,6 +8,7 @@ import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
 import { publishSyncState } from '../utils/syncStateStore';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
+import { deleteSourceData, describeSourceData } from '../utils/sourceData';
 
 export class ConfluenceMessageHandler {
   private confluenceService: ConfluenceService;
@@ -62,6 +63,10 @@ export class ConfluenceMessageHandler {
       case MESSAGE_TYPES.STOP_CONFLUENCE_SYNC:
         this.analyticsService.trackEvent('confluence_sync_stopped');
         await this.handleStopConfluenceSync();
+        return true;
+      case MESSAGE_TYPES.SOURCE_DATA_DELETE:
+        if (data.section !== 'confluence') return false;
+        await this.handleDeleteLocalData();
         return true;
       case MESSAGE_TYPES.RESUME_INDEXING_CONFLUENCE:
         this.analyticsService.trackEvent('confluence_indexing_resumed');
@@ -153,6 +158,20 @@ export class ConfluenceMessageHandler {
     } catch (error) {
       console.error('Error cancelling Confluence OAuth:', error);
     }
+  }
+
+  /** Settings → Knowledge → "Delete local copy": drop what is stored here, keep the connection. */
+  private async handleDeleteLocalData(): Promise<void> {
+    this.confluenceService.stopSync();
+    this.embeddingService.stopEmbeddingProcess();
+    await this.embeddingService.clearEmbeddingIndex();
+    await this.confluenceService.resetSyncProgress();
+    await this.embeddingService.resetEmbeddingProgress();
+    await deleteSourceData(this.context, 'confluence');
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.SOURCE_DATA_INFO,
+      ...(await describeSourceData(this.context, 'confluence')),
+    });
   }
 
   private async handleDisconnectConfluence(): Promise<void> {

@@ -53,7 +53,7 @@ import { recordOriginalContent } from 'workspacegpt-extension-diff';
 import { startServer, type DesktopServer } from './host/server';
 import { createTerminalHost } from './host/terminalHost';
 import { mergeLoginShellPath, type ShellPathResult } from './host/shellEnv';
-import { clipboardRead, clipboardWrite, openExternal, openInEditor } from './host/opener';
+import { clipboardRead, clipboardWrite, openExternal, openInEditor, revealFolder } from './host/opener';
 import { installProcessReaper, killChildrenSync, liveChildren, reapChildren } from './host/processReaper';
 // Aliased in esbuild.config.mjs to apps/vscode-extensions/src/extension.ts.
 import * as extension from 'workspacegpt-extension-host';
@@ -291,6 +291,7 @@ async function main(): Promise<void> {
     writeSettings: (values) => settings.replaceAll(values),
     openExternal,
     openInEditor,
+    revealFolder,
     clipboardWrite,
     clipboardRead,
     ...(args.parentStdio && {

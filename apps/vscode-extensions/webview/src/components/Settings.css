@@ -837,6 +837,39 @@
   opacity: 0.7;
 }
 
+/* "Stored on this device" under a Knowledge source's sync row. */
+.local-data-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: 6px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.75rem;
+}
+
+.local-data-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--vscode-textLink-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.local-data-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.local-data-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.local-data-danger {
+  color: var(--vscode-errorForeground);
+}
+
 .stop-sync-button {
   background-color: var(--vscode-errorForeground);
   color: var(--vscode-editor-background);

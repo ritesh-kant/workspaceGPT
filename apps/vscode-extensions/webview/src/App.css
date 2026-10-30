@@ -2162,6 +2162,23 @@ button:disabled {
   opacity: 0.6;
 }
 
+/* Where the next question goes (DataFlowBadge): quiet text, green when nothing leaves the machine. */
+.data-flow-badge {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  cursor: default;
+}
+
+.data-flow-badge[data-local='true'] {
+  color: var(--vscode-testing-iconPassed, #3fb950);
+}
+
 /* Shared base styles for bottom selectors */
 .chat-mode-selector,
 .context-selector-bottom,

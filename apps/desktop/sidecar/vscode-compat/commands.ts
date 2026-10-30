@@ -60,6 +60,13 @@ export const BUILTIN_COMMANDS: Record<string, BuiltinCommand> = {
       else await runtime.openExternal(uri.toString(true));
     },
   },
+  revealFileInOS: {
+    kind: 'implemented',
+    why: 'opens the folder (or the file’s folder) in Finder / Explorer; only paths that exist on disk',
+    run: async (target: Uri) => {
+      if (target?.scheme === 'file') await runtime.revealFolder(target.fsPath);
+    },
+  },
   // The desktop window is a single full-size chat: there is no sidebar to
   // collapse, no editor group to split or maximize, and no view container to
   // reveal. These are VS Code layout choreography with nothing to act on.

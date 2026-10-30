@@ -4,6 +4,7 @@ import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
 import { JiraAuthService, jiraApiBase } from '../services/jira/jiraAuthService';
 import { JiraService, JiraSyncConfig } from '../services/jira/jiraService';
 import { JiraEmbeddingService } from '../services/jira/jiraEmbeddingService';
+import { deleteSourceData, describeSourceData } from '../utils/sourceData';
 import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
 import { publishSyncState } from '../utils/syncStateStore';
@@ -69,6 +70,10 @@ export class JiraMessageHandler {
       case MESSAGE_TYPES.STOP_JIRA_SYNC:
         await this.handleStopSync();
         return true;
+      case MESSAGE_TYPES.SOURCE_DATA_DELETE:
+        if (data.section !== 'jira') return false;
+        await this.handleDeleteLocalData();
+        return true;
       case MESSAGE_TYPES.RESUME_INDEXING_JIRA:
         await this.handleResumeIndexing();
         return true;
@@ -123,6 +128,20 @@ export class JiraMessageHandler {
     } catch (error) {
       console.error('Error cancelling Jira OAuth:', error);
     }
+  }
+
+  /** Settings → Knowledge → "Delete local copy": drop what is stored here, keep the connection. */
+  private async handleDeleteLocalData(): Promise<void> {
+    this.jiraService.stopSync();
+    await this.jiraEmbeddingService.stopEmbeddingProcess();
+    await this.jiraEmbeddingService.clearEmbeddingIndex();
+    await this.jiraService.resetSyncProgress();
+    await this.jiraEmbeddingService.resetEmbeddingProgress();
+    await deleteSourceData(this.context, 'jira');
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.SOURCE_DATA_INFO,
+      ...(await describeSourceData(this.context, 'jira')),
+    });
   }
 
   private async handleDisconnect(): Promise<void> {

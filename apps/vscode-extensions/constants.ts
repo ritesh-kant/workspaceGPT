@@ -204,6 +204,14 @@ export const MESSAGE_TYPES = {
   MEMORY_CLEAR: 'memory-clear',
   MEMORY_SET_ENABLED: 'memory-set-enabled',
   MEMORY_STATE: 'memory-state',
+  // Settings → Knowledge → "Stored on this device". host: SOURCE_DATA_GET {section} answers SOURCE_DATA_INFO
+  // {section, items, bytes, path}; SOURCE_DATA_REVEAL {section} opens that folder in the OS file manager;
+  // SOURCE_DATA_DELETE {section} (handled by that source's own handler) wipes it, keeps the connection, and
+  // answers with a fresh SOURCE_DATA_INFO.
+  SOURCE_DATA_GET: 'source-data-get',
+  SOURCE_DATA_INFO: 'source-data-info',
+  SOURCE_DATA_REVEAL: 'source-data-reveal',
+  SOURCE_DATA_DELETE: 'source-data-delete',
   OPEN_SESSION_IN: 'open-session-in',
   GET_CHAT_SESSION: 'get-chat-session',
   GET_CHAT_SESSION_RESPONSE: 'get-chat-session-response',

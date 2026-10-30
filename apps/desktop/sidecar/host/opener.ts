@@ -4,6 +4,8 @@
  * can never be interpreted as a command.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 function launch(cmd: string, args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
@@ -130,6 +132,35 @@ export async function openInEditor(file: string, line?: number): Promise<void> {
   if (process.platform === 'darwin') await launch('open', ['-t', file]);
   else if (process.platform === 'win32') await launch('notepad.exe', [file]);
   else await systemOpen(file);
+}
+
+/**
+ * `revealFileInOS`: show a directory (or the directory holding a file) in the
+ * file manager. Only a path that exists is passed on, and what is opened is
+ * always a directory, which the OS shows rather than runs — unlike a file:
+ * link, which `openExternal` refuses.
+ */
+export async function revealFolder(target: string): Promise<boolean> {
+  let dir: string;
+  try {
+    dir = (await stat(target)).isDirectory() ? target : dirname(target);
+    if (!(await stat(dir)).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  if (process.platform === 'darwin') return launch('open', [dir]);
+  if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      // The quotes are ours, as in windowsShellOpen; explorer splits an unquoted path on commas.
+      const child = spawn('explorer.exe', [`"${dir}"`], { stdio: 'ignore', windowsVerbatimArguments: true });
+      child.on('error', () => resolve(false));
+      child.on('spawn', () => {
+        child.unref();
+        resolve(true);
+      });
+    });
+  }
+  return launch('xdg-open', [dir]);
 }
 
 function pipeTo(cmd: string, args: string[], input: string): Promise<void> {

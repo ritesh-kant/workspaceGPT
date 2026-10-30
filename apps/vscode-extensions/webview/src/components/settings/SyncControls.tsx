@@ -4,6 +4,7 @@ import { VSCodeAPI } from '../../vscode';
 import { MESSAGE_TYPES, SYNC_INTERVAL_MS } from '../../constants';
 import { clearStatusMessageAfterDelay } from '../../store/statusMessage';
 import { formatRelativeTime } from './utils';
+import LocalDataLine from './LocalDataLine';
 
 export type SyncSection = 'confluence' | 'ado' | 'jira';
 
@@ -255,6 +256,7 @@ const SyncControls: React.FC<{ section: SyncSection }> = ({ section }) => {
           </div>
         ) : null}
       </div>
+      <LocalDataLine section={section} busy={isSyncing || isIndexing} refreshKey={lastSyncTime} />
     </>
   );
 };

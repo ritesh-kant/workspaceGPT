@@ -98,6 +98,8 @@ export interface DesktopRuntime {
   openExternal(target: string): Promise<boolean>;
   /** Open a file in the user's own editor (the desktop has no embedded editor). */
   openInEditor(file: string, line?: number): Promise<void>;
+  /** Show a folder (or a file's folder) in Finder / Explorer. False when the path is not on disk. */
+  revealFolder(path: string): Promise<boolean>;
   clipboardWrite(text: string): Promise<void>;
   clipboardRead(): Promise<string>;
   /** Undefined until the host provides one; the compat APIs that need it then report the gap. */
@@ -148,6 +150,7 @@ export const runtime: DesktopRuntime = {
   ui: logOnlyUi,
   openExternal: async () => unconfigured('openExternal'),
   openInEditor: async () => unconfigured('openInEditor'),
+  revealFolder: async () => unconfigured('revealFolder'),
   clipboardWrite: async () => unconfigured('clipboardWrite'),
   clipboardRead: async () => unconfigured('clipboardRead'),
 };

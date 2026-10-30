@@ -4,6 +4,7 @@ import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
 import { AdoService, AdoConfig } from '../services/ado/adoService';
 import { AdoAuthService } from '../services/ado/adoAuthService';
 import { AdoEmbeddingService } from '../services/ado/adoEmbeddingService';
+import { deleteSourceData, describeSourceData } from '../utils/sourceData';
 import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
 import { publishSyncState } from '../utils/syncStateStore';
@@ -68,6 +69,10 @@ export class AdoMessageHandler {
         this.analyticsService.trackEvent('ado_sync_stopped');
         await this.handleStopAdoSync();
         return true;
+      case MESSAGE_TYPES.SOURCE_DATA_DELETE:
+        if (data.section !== 'ado') return false;
+        await this.handleDeleteLocalData();
+        return true;
       case MESSAGE_TYPES.RESUME_INDEXING_ADO:
         this.analyticsService.trackEvent('ado_indexing_resumed');
         await this.handleResumeIndexingAdo();
@@ -109,6 +114,20 @@ export class AdoMessageHandler {
     await this.adoEmbeddingService.resetEmbeddingProgress();
     await this.handleCompleteAdoSync();
     return true;
+  }
+
+  /** Settings → Knowledge → "Delete local copy": drop what is stored here, keep the connection. */
+  private async handleDeleteLocalData(): Promise<void> {
+    this.adoService.stopSync();
+    await this.adoEmbeddingService.stopEmbeddingProcess();
+    await this.adoEmbeddingService.clearEmbeddingIndex();
+    await this.adoService.resetSyncProgress();
+    await this.adoEmbeddingService.resetEmbeddingProgress();
+    await deleteSourceData(this.context, 'ado');
+    this.webviewView.webview.postMessage({
+      type: MESSAGE_TYPES.SOURCE_DATA_INFO,
+      ...(await describeSourceData(this.context, 'ado')),
+    });
   }
 
   private async handleConnectAdoMsal(): Promise<void> {
