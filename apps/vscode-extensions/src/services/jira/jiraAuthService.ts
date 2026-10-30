@@ -236,7 +236,20 @@ export class JiraAuthService {
     }
   }
 
+  // Static: several JiraAuthService instances exist per process. Atlassian rotates
+  // refresh tokens, so concurrent refreshes with one token make the second fail.
+  private static refreshInFlight: Promise<JiraOAuthTokens> | null = null;
+
   async refreshAccessToken(): Promise<JiraOAuthTokens> {
+    if (!JiraAuthService.refreshInFlight) {
+      JiraAuthService.refreshInFlight = this.doRefresh().finally(() => {
+        JiraAuthService.refreshInFlight = null;
+      });
+    }
+    return JiraAuthService.refreshInFlight;
+  }
+
+  private async doRefresh(): Promise<JiraOAuthTokens> {
     const tokens = await this.getStoredTokens();
     if (!tokens?.refreshToken) {
       throw new Error('No refresh token available. Please re-authenticate with Jira.');
@@ -255,6 +268,11 @@ export class JiraAuthService {
 
       if (!response.ok) {
         const errorText = await response.text();
+        // Another process may have rotated and saved a newer token meanwhile.
+        const latest = await this.getStoredTokens();
+        if (latest && latest.refreshToken !== tokens.refreshToken && latest.expiresAt > Date.now() + 60 * 1000) {
+          return latest;
+        }
         throw new Error(`Token refresh failed (${response.status}): ${errorText}`);
       }
 

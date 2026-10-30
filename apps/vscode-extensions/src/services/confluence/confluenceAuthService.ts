@@ -30,7 +30,8 @@ export interface ConfluenceSpace {
 export class ConfluenceAuthExpiredError extends Error {}
 
 export class ConfluenceAuthService {
-  private refreshInFlight: Promise<OAuthTokens> | null = null;
+  // Static: many ConfluenceAuthService instances exist per process (handlers, schedulers, page service)
+  private static refreshInFlight: Promise<OAuthTokens> | null = null;
   private context: vscode.ExtensionContext;
   private server: http.Server | null = null;
   private pendingReject: ((reason?: any) => void) | null = null;
@@ -227,12 +228,12 @@ export class ConfluenceAuthService {
   async refreshAccessToken(): Promise<OAuthTokens> {
     // Atlassian rotates refresh tokens, so two concurrent refreshes with the same
     // token make the second fail as reuse. Share one request per process.
-    if (!this.refreshInFlight) {
-      this.refreshInFlight = this.doRefresh().finally(() => {
-        this.refreshInFlight = null;
+    if (!ConfluenceAuthService.refreshInFlight) {
+      ConfluenceAuthService.refreshInFlight = this.doRefresh().finally(() => {
+        ConfluenceAuthService.refreshInFlight = null;
       });
     }
-    return this.refreshInFlight;
+    return ConfluenceAuthService.refreshInFlight;
   }
 
   private async doRefresh(): Promise<OAuthTokens> {
