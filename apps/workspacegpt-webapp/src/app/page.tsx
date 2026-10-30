@@ -515,9 +515,9 @@ export default function Home() {
               <span className="text-yellow-400 font-semibold">Remote mode is in preview.</span>{" "}
               It is rolling out now and may change while we tune capacity and models. Local mode is generally
               available and is unaffected. Inference in Remote mode is performed by an upstream model provider under
-              its own policy &mdash; see the{" "}
-              <Link href="/privacy" className="text-brand hover:underline">privacy policy</Link> for exactly what
-              travels where.
+              its own policy &mdash; see{" "}
+              <Link href="/trust" className="text-brand hover:underline">what is sent, and how to check it yourself</Link>,
+              and the <Link href="/privacy" className="text-brand hover:underline">privacy policy</Link>.
             </div>
           </div>
         </section>
@@ -596,7 +596,22 @@ export default function Home() {
                 {
                   icon: "clipboard-list" as const,
                   title: "Your work, on open",
-                  body: "The sidebar lists the ADO items assigned to you with their state and sprint — start a run straight from a ticket.",
+                  body: "Desktop opens on the tickets assigned to you from Azure DevOps and Jira, with state and sprint. Press Start work to begin a run from the ticket. Switch between a Board and an Inbox layout.",
+                },
+                {
+                  icon: "at-sign" as const,
+                  title: "Mentions in one place",
+                  body: "See where you were mentioned in Confluence pages and comments, Jira and Azure DevOps comments. Open the thread or mark it read.",
+                },
+                {
+                  icon: "git-pull-request" as const,
+                  title: "Pull requests to review",
+                  body: "Your reviews and your own pull requests from Azure DevOps, GitHub, GitLab and Bitbucket, split into To review and Your PRs.",
+                },
+                {
+                  icon: "message-square" as const,
+                  title: "From your recent calls",
+                  body: "Call notes are taken on your device. What is pending for you, what the call left unassigned, and what mattered show up beside your tickets.",
                 },
                 {
                   icon: "search" as const,
@@ -605,7 +620,7 @@ export default function Home() {
                 },
                 {
                   icon: "at-sign" as const,
-                  title: "@-mentions",
+                  title: "@-mention files",
                   body: "Pull a specific file or folder into the conversation instead of hoping retrieval finds it.",
                 },
                 {
@@ -632,6 +647,11 @@ export default function Home() {
                   icon: "git-pull-request" as const,
                   title: "Ticket to pull request",
                   body: "Create PR commits only what the agent changed to a fresh branch, pushes it, and opens your host's new-PR page with the run's report filled in. The report is also posted back on the ticket.",
+                },
+                {
+                  icon: "check" as const,
+                  title: "CI that fixes itself",
+                  body: "A chip under the chat shows your pull request's checks. Switch on Auto-fix and WorkspaceGPT reads a failing check and starts a session to fix it. You decide whether it pushes.",
                 },
               ].map((f) => (
                 <div

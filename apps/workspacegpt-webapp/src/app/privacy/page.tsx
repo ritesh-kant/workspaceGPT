@@ -234,9 +234,14 @@ export default function PrivacyPage() {
               <code className="text-brand">remote_sign_in_started</code>.
             </li>
             <li>
-              A random identifier generated on your machine on first run. It is not derived from
-              your name, email, GitHub account, IP address, or machine id, and we cannot use it to
-              identify you.
+              A stable identifier for your installation. In the IDE extension it is a hash your
+              editor derives for this install (VS Code&rsquo;s machine id); it is not derived from
+              your name, email, GitHub account, or IP address, and we do not use it to identify
+              you. If you sign in to Remote mode, your GitHub login, email, plan and account status are attached to it.
+            </li>
+            <li>
+              A coarse country, which PostHog infers from the connection&rsquo;s IP address when the
+              event arrives. We do not store the IP address ourselves.
             </li>
             <li>
               The extension version, your editor version, and whether the event came from the

@@ -29,6 +29,142 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-30",
+    releases: [{ product: "Desktop", version: "0.0.48–0.0.62" }],
+    title: "Call notes on Windows, attachments, and sturdier sync",
+    summary:
+      "Call notes reach Windows, the agent can read ticket attachments when you say so, and several sign-in and sync failures now explain themselves.",
+    items: [
+      {
+        icon: "message-square",
+        title: "Call notes on Windows",
+        body: "Calls are detected on Windows too, and notes are kept on your machine. Call notes also stop a stale recording and keep going when transcription falls behind.",
+      },
+      {
+        icon: "file-text",
+        title: "Ticket attachments, on your say-so",
+        body: "A ticket's unread attachments are listed, and WorkspaceGPT reads one only after you agree.",
+      },
+      {
+        icon: "git-pull-request",
+        title: "Better pull request commits",
+        body: "Create PR writes the commit message from the actual diff, and a slow push gets ten minutes instead of timing out. Repositories are looked up with each of your GitHub accounts until one can read them.",
+      },
+      {
+        icon: "alert",
+        title: "Clear errors for company networks",
+        body: "When a sync, model call, code host or model download fails on an untrusted TLS certificate, you now get a message that says so and what to do about it.",
+      },
+      {
+        icon: "pen",
+        title: "Dictation on Windows, and drafts that stick",
+        body: "Dictate into the composer on Windows with an on-device recognizer. Unsent drafts are saved reliably, and a failed save is reported instead of silently lost.",
+      },
+      {
+        icon: "plug",
+        title: "More Copilot models",
+        body: "Models that Copilot serves only through its responses endpoint now run through the desktop app.",
+      },
+    ],
+  },
+  {
+    date: "2026-10-22",
+    releases: [{ product: "Desktop", version: "0.0.43–0.0.47" }],
+    title: "Call notes, and reports that say how to test",
+    summary:
+      "WorkspaceGPT can take notes on your calls on-device, and every finished run ends with how to check the work.",
+    items: [
+      {
+        icon: "message-square",
+        title: "Call notes (beta)",
+        body: "When a call starts, WorkspaceGPT asks whether to take notes, or does so automatically if you turn that on. On macOS the call is transcribed on-device with Whisper. Notes sit in the sidebar and on your work home, and the agent can use them.",
+      },
+      {
+        icon: "check",
+        title: "A \"How to test\" section in every report",
+        body: "Reports now end with the steps to verify the change. Python projects get real verification, and the counts of what changed are honest.",
+      },
+      {
+        icon: "terminal",
+        title: "Run output under the block",
+        body: "Pressing Run on a shell block shows its output right below it, and command cards show the command that ran.",
+      },
+      {
+        icon: "git-pull-request",
+        title: "Cleaner PR and CI fixes",
+        body: "Pull requests and CI fixes use conventional commit messages and exact file paths, with no placeholder logs.",
+      },
+    ],
+  },
+  {
+    date: "2026-10-20",
+    releases: [{ product: "Desktop", version: "0.0.41–0.0.42" }],
+    title: "Memory, rules files, and a sync that cleans up after itself",
+    summary:
+      "WorkspaceGPT remembers things per repository, follows your rules files across every folder, and no longer keeps pages that were deleted upstream.",
+    items: [
+      {
+        icon: "database",
+        title: "Project memory",
+        body: "What WorkspaceGPT learns about a repository is stored in files beside your own memory. You can read, edit and remove it, and each entry notes where it came from.",
+      },
+      {
+        icon: "file-text",
+        title: "Rules files in every folder",
+        body: "AGENTS.md and CLAUDE.md are read from every workspace root, with a 32 KB budget, and from subfolders when the agent works in them.",
+      },
+      {
+        icon: "refresh",
+        title: "Sync removes what was deleted",
+        body: "Confluence, Jira and Azure DevOps syncs now drop items that were deleted, moved or renamed upstream, so answers stop citing pages that are gone.",
+      },
+      {
+        icon: "sparkles",
+        title: "Long chats keep going",
+        body: "When a run or chat gets long, it is summarized and continued instead of running out of room. A startup sync can no longer blank the chat window.",
+      },
+    ],
+  },
+  {
+    date: "2026-10-14",
+    releases: [{ product: "Desktop", version: "0.0.28–0.0.40" }],
+    title: "Debug mode, diagrams, dictation and slash commands",
+    summary:
+      "A new way to chase bugs, diagrams in chat and spike docs, and a faster composer.",
+    items: [
+      {
+        icon: "search",
+        title: "Debug mode",
+        body: "Turn on Debug and the agent gathers evidence first, with log probes and bisecting, before it proposes a fix.",
+      },
+      {
+        icon: "file-text",
+        title: "Mermaid diagrams and images",
+        body: "Diagrams render in chat and in spike docs, with zoom and copy. Confluence images can be attached to a page.",
+      },
+      {
+        icon: "pen",
+        title: "Dictation and slash commands",
+        body: "Dictate into the composer on macOS with on-device speech (⌘⇧D). Type / for slash commands, and the controls sit beneath a tighter composer.",
+      },
+      {
+        icon: "download",
+        title: "Import GitHub Copilot chats",
+        body: "Bring your Copilot conversations in alongside Claude Code and Cursor.",
+      },
+      {
+        icon: "laptop",
+        title: "A much smaller download",
+        body: "The desktop runtime dropped an unused model, cutting the installer by about three quarters.",
+      },
+      {
+        icon: "check",
+        title: "Remembered choices and spike coverage",
+        body: "Your choices, such as a Confluence parent folder, are remembered. Spikes check that they covered every source before they finish.",
+      },
+    ],
+  },
+  {
     date: "2026-10-10",
     releases: [{ product: "Desktop", version: "0.0.22–0.0.27" }],
     title: "A home for your work, and CI that fixes itself",

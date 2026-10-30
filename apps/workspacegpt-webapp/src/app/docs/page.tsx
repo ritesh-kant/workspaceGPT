@@ -563,6 +563,15 @@ ollama pull mistral`}</CodeBlock>
               <Card icon="clock" title="Sessions" accent="brand">
                 <p>Switch between Chat and Work. Groups page 20 at a time, and a right-click menu opens, pins, renames, groups or deletes a chat.</p>
               </Card>
+              <Card icon="message-square" title="Call notes (beta)" accent="brand">
+                <p>Detects when you are on a call and asks whether to take notes, or does it automatically if you turn that on. On macOS the call is transcribed on-device with Whisper. Notes live in the sidebar and on your work home, and the agent can use them. Nothing is uploaded.</p>
+              </Card>
+              <Card icon="pen" title="Dictation" accent="blue">
+                <p>A mic button in the composer (⌘⇧D on macOS) turns speech into text with an on-device recognizer, on macOS and Windows.</p>
+              </Card>
+              <Card icon="database" title="Memory and rules" accent="brand">
+                <p>Settings → Memory lists everything WorkspaceGPT remembers about you and, per repository, about the project. Read, edit or remove any of it. AGENTS.md and CLAUDE.md files are followed in every workspace folder.</p>
+              </Card>
               <Card icon="sliders" title="Layout and themes" accent="blue">
                 <p>Drag the sidebar to the width you like, zoom the app, and pick light or dark; the choice is remembered. A Connectors page manages Control Chrome.</p>
               </Card>
