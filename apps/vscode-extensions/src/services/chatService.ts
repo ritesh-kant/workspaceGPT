@@ -1925,6 +1925,9 @@ export class ChatService {
       case 'get_ticket': {
         const provider = getActiveTicketProvider(this.context);
         if (!provider) throw new Error('No ticket tracker is connected. Connect one in Settings.');
+        // A named attachment is read only after the model asked the user (the
+        // ticket prompt lists what was skipped and says to ask first).
+        if (args?.attachment) return provider.readAttachment(String(args?.id ?? ''), String(args.attachment));
         return provider.fetchTicket(String(args?.id ?? ''), { includeComments: !!args?.includeComments });
       }
       case 'list_prs':

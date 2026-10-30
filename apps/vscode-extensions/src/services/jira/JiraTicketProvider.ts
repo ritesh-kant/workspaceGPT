@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import { STORAGE_KEYS } from '../../../constants';
 import { TicketProvider } from '../tickets/TicketProvider';
-import { MyTicketsResult, TicketDetail } from '../tickets/types';
+import { MyTicketsResult, TicketAttachmentContent, TicketDetail } from '../tickets/types';
 import { JiraAuthService } from './jiraAuthService';
-import { addJiraComment, fetchJiraIssue, parseIssueKey } from './jiraIssueService';
+import { addJiraComment, fetchJiraAttachment, fetchJiraIssue, parseIssueKey } from './jiraIssueService';
 import { listMyJiraTickets } from './jiraMyWorkService';
 
 /** Jira issue urls, for lifting the key back out of a search hit — mirrors ADO_URL_ID_RE's role in referenceIndex.ts. */
@@ -30,6 +30,10 @@ export class JiraTicketProvider implements TicketProvider {
 
   fetchTicket(id: string, opts: { includeComments: boolean }): Promise<TicketDetail> {
     return fetchJiraIssue(this.context, { id, includeComments: opts.includeComments });
+  }
+
+  readAttachment(id: string, name: string): Promise<TicketAttachmentContent> {
+    return fetchJiraAttachment(this.context, { id, name });
   }
 
   listMyTickets(): Promise<MyTicketsResult> {

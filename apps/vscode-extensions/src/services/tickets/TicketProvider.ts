@@ -1,4 +1,4 @@
-import { MyTicketsResult, TicketDetail, TrackerKind } from './types';
+import { MyTicketsResult, TicketAttachmentContent, TicketDetail, TrackerKind } from './types';
 
 /**
  * A ticket tracker. One implementation per vendor (AdoTicketProvider today,
@@ -22,6 +22,9 @@ export interface TicketProvider {
 
   /** One ticket, live and complete — the `get_ticket` tool's path. */
   fetchTicket(id: string, opts: { includeComments: boolean }): Promise<TicketDetail>;
+
+  /** One attached file the automatic read skipped, fetched because the user agreed — the `get_ticket` tool's `attachment` path. */
+  readAttachment(id: string, name: string): Promise<TicketAttachmentContent>;
 
   /** Tickets assigned to the current user — the My Work panel. */
   listMyTickets(): Promise<MyTicketsResult>;

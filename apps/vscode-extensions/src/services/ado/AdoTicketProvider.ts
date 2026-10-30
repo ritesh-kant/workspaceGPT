@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { STORAGE_KEYS } from '../../../constants';
 import { TicketProvider } from '../tickets/TicketProvider';
-import { MyTicketsResult, TicketDetail } from '../tickets/types';
-import { addWorkItemComment, fetchWorkItem, listMyWorkItems, parseWorkItemId } from './adoWorkItemService';
+import { MyTicketsResult, TicketAttachmentContent, TicketDetail } from '../tickets/types';
+import { addWorkItemComment, fetchWorkItem, fetchWorkItemAttachment, listMyWorkItems, parseWorkItemId } from './adoWorkItemService';
 import { reportToHtml } from '../agent/shipHelpers';
 import { ADO_FILENAME_ID_RE, ADO_URL_ID_RE } from '../agent/referenceIndex';
 
@@ -28,6 +28,10 @@ export class AdoTicketProvider implements TicketProvider {
 
   fetchTicket(id: string, opts: { includeComments: boolean }): Promise<TicketDetail> {
     return fetchWorkItem(this.context, { id, includeComments: opts.includeComments });
+  }
+
+  readAttachment(id: string, name: string): Promise<TicketAttachmentContent> {
+    return fetchWorkItemAttachment(this.context, { id, name });
   }
 
   listMyTickets(): Promise<MyTicketsResult> {

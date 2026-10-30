@@ -569,6 +569,11 @@ const TOOL_DEFS = [
             description:
               'Also fetch the discussion thread. Costly in tokens — request it only when the description and acceptance criteria are too thin to act on.',
           },
+          attachment: {
+            type: 'string',
+            description:
+              'File name of ONE attachment the ticket lists under "Attachments not read" — returns that file (a HAR is summarised to its failing requests; an image is shown). Only after the user agreed to it via ask_user.',
+          },
         },
         required: ['id'],
       },

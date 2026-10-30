@@ -6459,6 +6459,38 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     assert.equal(attach.condenseAttachmentText('short\r\nlog'), 'short\nlog');
   });
 
+  await t('skipped attachments: every unread file is listed with the real reason, none is silently dropped', () => {
+    const all = [
+      { name: 'www.mms.com.har', sizeBytes: 23_381_000 },
+      { name: 'big.log', sizeBytes: 900_000 },
+      { name: 'error.png', sizeBytes: 40_000 },
+      { name: 'ok.log', sizeBytes: 2_000 },
+    ];
+    const skipped = attach.skippedAttachmentsOf(all, ['ok.log']);
+    assert.deepEqual(skipped.map((s) => s.name), ['www.mms.com.har', 'big.log', 'error.png']);
+    assert.match(skipped[0].reason, /type not read/);
+    assert.match(skipped[1].reason, /too large/);
+    assert.match(skipped[2].reason, /image/);
+    assert.deepEqual(attach.skippedAttachmentsOf(all, all.map((a) => a.name)), []);
+  });
+
+  await t('HAR summary: keeps failing requests and GraphQL errors, drops the rest', () => {
+    const har = JSON.stringify({ log: { entries: [
+      { request: { method: 'GET', url: 'https://x/ok' }, response: { status: 200, content: { text: '{"data":{}}' } } },
+      { request: { method: 'POST', url: 'https://x/graphql', postData: { text: '{"operationName":"GetCart"}' } }, response: { status: 200, content: { text: '{"errors":[{"message":"cart locked"}]}' } } },
+      { request: { method: 'GET', url: 'https://x/missing' }, response: { status: 404, content: { text: 'nope' } } },
+    ] } });
+    const out = attach.summarizeHar(har);
+    assert.match(out, /3 requests, 2 failing/);
+    assert.match(out, /GetCart/);
+    assert.match(out, /cart locked/);
+    assert.match(out, /404 GET https:\/\/x\/missing/);
+    assert.ok(!out.includes('https://x/ok'));
+    assert.equal(attach.summarizeHar('not json'), '');
+    const content = attach.requestedAttachmentContent('a.har', new TextEncoder().encode(har).buffer);
+    assert.match(content.note, /Summarised/);
+  });
+
   await t('ADO relationsOf: names the link, keeps ids, skips attachments/self, shortens commit shas', () => {
     const rels = ado.relationsOf({
       relations: [

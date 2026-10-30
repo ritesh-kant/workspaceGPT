@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { ATTACHMENT_LIMITS, STORAGE_KEYS } from '../../../constants';
 import { AdoAuthService } from './adoAuthService';
-import { MyTicketsResult, TicketComment, TicketDetail, TicketImage, TicketRelation, TicketSummary, TicketTextAttachment } from '../tickets/types';
-import { MAX_TEXT_ATTACHMENTS, MAX_TEXT_ATTACHMENT_BYTES, condenseAttachmentText, isTextAttachmentName } from '../tickets/attachmentText';
+import { MyTicketsResult, TicketAttachmentContent, TicketComment, TicketDetail, TicketImage, TicketRelation, TicketSummary, TicketTextAttachment } from '../tickets/types';
+import { MAX_REQUESTED_ATTACHMENT_BYTES, MAX_TEXT_ATTACHMENTS, MAX_TEXT_ATTACHMENT_BYTES, condenseAttachmentText, isTextAttachmentName, requestedAttachmentContent, skippedAttachmentsOf } from '../tickets/attachmentText';
 import { sniffImageMime } from '../tickets/imageSniff';
 
 /**
@@ -231,6 +231,53 @@ async function fetchTextAttachments(ctx: AdoRequestContext, item: any): Promise<
   return out;
 }
 
+/** Every file attached to the work item, as name + size. */
+function attachedFilesOf(item: any): { name: string; sizeBytes?: number }[] {
+  return (item?.relations ?? [])
+    .filter((r: any) => r?.rel === 'AttachedFile')
+    .map((r: any) => ({ name: String(r?.attributes?.name ?? ''), sizeBytes: Number(r?.attributes?.resourceSize ?? 0) || undefined }));
+}
+
+/**
+ * One attached file, read because the user agreed to it. Unlike the automatic
+ * read this has no extension or small-size gate (a HAR is tens of MB), but it
+ * still only talks to ADO's own hosts and still caps the download.
+ */
+export async function fetchWorkItemAttachment(
+  context: vscode.ExtensionContext,
+  args: { id: string | number; name: string }
+): Promise<TicketAttachmentContent> {
+  const id = parseWorkItemId(String(args?.id ?? ''));
+  const ctx = await getRequestContext(context);
+  const item = await adoGet(
+    ctx,
+    `https://dev.azure.com/${encodeURIComponent(ctx.orgName)}/${encodeURIComponent(ctx.projectName)}/_apis/wit/workitems/${id}?$expand=relations&api-version=7.1`,
+    `#${id}`
+  );
+  const want = String(args?.name ?? '').trim().toLowerCase();
+  const rel = (item.relations ?? []).find(
+    (r: any) => r?.rel === 'AttachedFile' && String(r?.attributes?.name ?? '').toLowerCase() === want
+  );
+  const name = String(rel?.attributes?.name ?? args?.name ?? '');
+  if (!rel) {
+    const names = attachedFilesOf(item).map((a) => a.name).join(', ');
+    return { name, note: `No attachment named "${args?.name}" on #${id}. Attached: ${names || 'none'}.` };
+  }
+  const size = Number(rel.attributes?.resourceSize ?? 0);
+  if (size > MAX_REQUESTED_ATTACHMENT_BYTES) return { name, note: `Too large to download (${Math.round(size / 1048576)} MB).` };
+  const u = new URL(String(rel.url));
+  if (u.hostname !== 'dev.azure.com' && !u.hostname.endsWith('.visualstudio.com')) {
+    return { name, note: 'This attachment is not hosted by Azure DevOps, so it was not downloaded.' };
+  }
+  const resp = await fetch(u.toString(), { headers: { Authorization: ctx.authHeader } });
+  if (!resp.ok) return { name, note: `Download failed (${resp.status}).` };
+  const buf = await resp.arrayBuffer();
+  if (buf.byteLength > MAX_REQUESTED_ATTACHMENT_BYTES) return { name, note: 'Too large to download.' };
+  const mimeType = sniffImageMime(buf);
+  if (mimeType) return { name, images: [{ name, mimeType, dataUrl: `data:${mimeType};base64,${Buffer.from(buf).toString('base64')}` }] };
+  return requestedAttachmentContent(name, buf);
+}
+
 /** Comments are supplementary — never fail the whole read because they 404'd. */
 async function fetchComments(ctx: AdoRequestContext, id: string): Promise<TicketComment[]> {
   try {
@@ -289,6 +336,7 @@ export async function fetchWorkItem(
   const systemInfoHtml = f['Microsoft.VSTS.TCM.SystemInfo'];
   const relations = relationsOf(item, id);
   const attachments = await fetchTextAttachments(ctx, item);
+  const skippedAttachments = skippedAttachmentsOf(attachedFilesOf(item), attachments.map((a) => a.name));
 
   return {
     id: item.id != null ? String(item.id) : id,
@@ -315,6 +363,7 @@ export async function fetchWorkItem(
     systemInfo: systemInfoHtml ? htmlToText(systemInfoHtml).trim() || undefined : undefined,
     relations: relations.length ? relations : undefined,
     attachments: attachments.length ? attachments : undefined,
+    skippedAttachments: skippedAttachments.length ? skippedAttachments : undefined,
     ...(args?.includeComments ? { comments: await fetchComments(ctx, id) } : {}),
   };
 }

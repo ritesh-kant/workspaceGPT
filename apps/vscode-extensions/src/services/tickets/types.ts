@@ -55,6 +55,24 @@ export interface TicketDetail {
   relations?: TicketRelation[];
   /** Text attachments (logs, stack traces), condensed to head + tail. */
   attachments?: TicketTextAttachment[];
+  /** Attached files that were NOT read, with why — so the agent can offer to read them instead of never knowing they exist. */
+  skippedAttachments?: SkippedAttachment[];
+}
+
+export interface SkippedAttachment {
+  name: string;
+  sizeBytes?: number;
+  /** Plain words: "too large to fetch automatically", "file type not read automatically", … */
+  reason: string;
+}
+
+/** One attachment read on request (get_ticket with `attachment`). */
+export interface TicketAttachmentContent {
+  name: string;
+  text?: string;
+  images?: TicketImage[];
+  /** Why there is no text/image, or what was done to it (a HAR is summarised, not returned whole). */
+  note?: string;
 }
 
 export interface TicketRelation {

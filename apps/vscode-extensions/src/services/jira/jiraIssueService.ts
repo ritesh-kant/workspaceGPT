@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { ATTACHMENT_LIMITS } from '../../../constants';
 import { JiraAuthService, jiraApiBase } from './jiraAuthService';
-import { TicketComment, TicketDetail, TicketImage, TicketRelation, TicketTextAttachment } from '../tickets/types';
-import { MAX_TEXT_ATTACHMENTS, MAX_TEXT_ATTACHMENT_BYTES, condenseAttachmentText, isTextAttachmentName } from '../tickets/attachmentText';
+import { TicketAttachmentContent, TicketComment, TicketDetail, TicketImage, TicketRelation, TicketTextAttachment } from '../tickets/types';
+import { MAX_REQUESTED_ATTACHMENT_BYTES, MAX_TEXT_ATTACHMENTS, MAX_TEXT_ATTACHMENT_BYTES, condenseAttachmentText, isTextAttachmentName, requestedAttachmentContent, skippedAttachmentsOf } from '../tickets/attachmentText';
 import { adfToText, markdownToAdf, mediaIdsFromAdf } from './adf';
 import { sniffImageMime } from '../tickets/imageSniff';
 
@@ -138,6 +138,31 @@ async function fetchTextAttachments(ctx: JiraRequestContext, attachments: any[] 
   return out;
 }
 
+/** One attached file, read because the user agreed to it: no extension or small-size gate, but a capped download. */
+export async function fetchJiraAttachment(
+  context: vscode.ExtensionContext,
+  args: { id: string | number; name: string }
+): Promise<TicketAttachmentContent> {
+  const key = parseIssueKey(String(args?.id ?? ''));
+  const ctx = await getRequestContext(context);
+  const item = await jiraGet(ctx, `${ctx.apiBase}/rest/api/3/issue/${encodeURIComponent(key)}?fields=attachment`, key);
+  const want = String(args?.name ?? '').trim().toLowerCase();
+  const att = (item.fields?.attachment ?? []).find((a: any) => String(a?.filename ?? '').toLowerCase() === want);
+  const name = String(att?.filename ?? args?.name ?? '');
+  if (!att?.id) {
+    const names = (item.fields?.attachment ?? []).map((a: any) => a?.filename).join(', ');
+    return { name, note: `No attachment named "${args?.name}" on ${key}. Attached: ${names || 'none'}.` };
+  }
+  if (Number(att.size ?? 0) > MAX_REQUESTED_ATTACHMENT_BYTES) return { name, note: `Too large to download (${Math.round(Number(att.size) / 1048576)} MB).` };
+  const resp = await fetch(`${ctx.apiBase}/rest/api/3/attachment/content/${encodeURIComponent(String(att.id))}`, { headers: { Authorization: ctx.authHeader } });
+  if (!resp.ok) return { name, note: `Download failed (${resp.status}).` };
+  const buf = await resp.arrayBuffer();
+  if (buf.byteLength > MAX_REQUESTED_ATTACHMENT_BYTES) return { name, note: 'Too large to download.' };
+  const mimeType = sniffImageMime(buf);
+  if (mimeType) return { name, images: [{ name, mimeType, dataUrl: `data:${mimeType};base64,${Buffer.from(buf).toString('base64')}` }] };
+  return requestedAttachmentContent(name, buf);
+}
+
 /** Comments are supplementary — never fail the whole read because they errored. */
 async function fetchComments(ctx: JiraRequestContext, key: string): Promise<TicketComment[]> {
   try {
@@ -176,6 +201,10 @@ export async function fetchJiraIssue(
   const images = mediaIds.length ? await fetchAttachmentImages(ctx, mediaIds) : [];
   const relations = jiraRelationsOf(f.issuelinks);
   const attachments = await fetchTextAttachments(ctx, f.attachment);
+  const skippedAttachments = skippedAttachmentsOf(
+    (f.attachment ?? []).map((a: any) => ({ name: String(a?.filename ?? ''), sizeBytes: Number(a?.size ?? 0) || undefined })),
+    attachments.map((a) => a.name)
+  );
 
   return {
     id: item.key ?? key,
@@ -198,6 +227,7 @@ export async function fetchJiraIssue(
     images: images.length ? images : undefined,
     relations: relations.length ? relations : undefined,
     attachments: attachments.length ? attachments : undefined,
+    skippedAttachments: skippedAttachments.length ? skippedAttachments : undefined,
     ...(args?.includeComments ? { comments: await fetchComments(ctx, key) } : {}),
   };
 }
