@@ -56,6 +56,8 @@ import { mergeLoginShellPath, type ShellPathResult } from './host/shellEnv';
 import { clipboardRead, clipboardWrite, openExternal, openInEditor, revealFolder } from './host/opener';
 import { installProcessReaper, killChildrenSync, liveChildren, reapChildren } from './host/processReaper';
 // Aliased in esbuild.config.mjs to apps/vscode-extensions/src/extension.ts.
+import { installFileLog, startRunMarker, describeError } from './host/fileLog';
+import { queueDesktopEvent } from './host/posthogShim';
 import * as extension from 'workspacegpt-extension-host';
 
 export const READY_PREFIX = '@@WGPT_READY@@ ';
@@ -196,12 +198,26 @@ function readShellHello(timeoutMs = 10_000): Promise<string> {
 
 // VS Code's extension host logs a stray rejection and keeps going; a desktop
 // sidecar that dies on one would take every chat down with it.
-process.on('unhandledRejection', (reason) => console.error('[desktop] unhandled rejection:', reason));
+// Counted per error shape and capped, so a loop of one failure is one event, not a flood.
+const reportedErrors = new Set<string>();
+function reportError(kind: string, err: unknown): void {
+  const d = describeError(err);
+  if (reportedErrors.size >= 5 || reportedErrors.has(d.stackHash)) return;
+  reportedErrors.add(d.stackHash);
+  queueDesktopEvent('desktop_sidecar_error', { kind, ...d, desktopVersion: APP_VERSION });
+}
+process.on('unhandledRejection', (reason) => {
+  console.error('[desktop] unhandled rejection:', reason);
+  reportError('unhandled_rejection', reason);
+});
 // Once the shell is gone our stdout pipe is too; a log line must not become
 // an EPIPE exception while the watchdog is shutting down.
 process.stdout.on('error', () => undefined);
 process.stderr.on('error', () => undefined);
-process.on('uncaughtException', (err) => console.error('[desktop] uncaught exception:', err));
+process.on('uncaughtException', (err) => {
+  console.error('[desktop] uncaught exception:', err);
+  reportError('uncaught_exception', err);
+});
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -223,6 +239,19 @@ async function main(): Promise<void> {
         `    Quit the other copy (or: kill ${err.pid}), or give this one its own profile with --data-dir <dir>.\n`
     );
     process.exit(75);
+  }
+  installFileLog(paths.logDir);
+  console.log(`[desktop] sidecar starting (v${APP_VERSION}, pid ${process.pid}, node ${process.version})`);
+  const runMarker = startRunMarker(paths.logDir, APP_VERSION);
+  if (runMarker.previous) {
+    const p = runMarker.previous;
+    console.warn(`[desktop] previous run ended abnormally (v${p.version}, up ${Math.round((p.lastSeenAt - p.startedAt) / 1000)}s, last RSS ${Math.round(p.rssBytes / 1048576)} MB)`);
+    queueDesktopEvent('desktop_previous_run_abnormal', {
+      previousVersion: p.version,
+      uptimeSeconds: Math.round((p.lastSeenAt - p.startedAt) / 1000),
+      lastRssMb: Math.round(p.rssBytes / 1048576),
+      desktopVersion: APP_VERSION,
+    });
   }
   const failedStores = new Set<string>();
   let storageSurface: ViewSurface | undefined;
@@ -485,6 +514,7 @@ async function main(): Promise<void> {
     } catch {
       /* best effort */
     }
+    runMarker.clear();
     for (const store of [desktopPrefs, settings]) {
       try { store.flushSync(); } catch { /* already reported; continue cleanup and flush the other store */ }
     }

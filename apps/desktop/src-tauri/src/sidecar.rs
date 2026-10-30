@@ -180,7 +180,7 @@ impl Supervisor {
         if let Some(ws) = &st.workspace {
             cmd.arg("--workspace").arg(ws);
         }
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         // TLS-inspecting proxies (Zscaler and similar) re-sign HTTPS with a corporate
         // root CA that IT installs in the OS trust store. Node ships its own CA list,
         // so without this every request fails with "unable to get local issuer
@@ -216,7 +216,19 @@ impl Supervisor {
             writeln!(pipe, "{hello}").map_err(|e| format!("sidecar stdin: {e}"))?;
         }
         let stdout = child.stdout.take().expect("piped stdout");
-        eprintln!("[shell] sidecar started (pid {}, generation {generation})", child.id());
+        if let Some(stderr) = child.stderr.take() {
+            // Still shown in a dev terminal, and kept in shell.log: V8's out-of-memory
+            // abort and native crashes print here, not through the sidecar's console.
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    eprintln!("{line}");
+                    crate::shell_log::line("sidecar-stderr", &line);
+                }
+            });
+        }
+        let started = format!("sidecar started (pid {}, generation {generation})", child.id());
+        eprintln!("[shell] {started}");
+        crate::shell_log::line("shell", &started);
         st.running = Some(Running {
             child,
             stdin,
@@ -296,12 +308,14 @@ impl Supervisor {
             return;
         }
         eprintln!("[shell] sidecar exited unexpectedly ({status:?})");
+        crate::shell_log::line("shell", &format!("sidecar exited unexpectedly ({status:?}); restart={restart}"));
         if restart {
             eprintln!("[shell] restarting sidecar");
             if let Err(e) = self.start() {
                 (self.on_gave_up)(e);
             }
         } else {
+            crate::shell_log::line("shell", "gave up restarting the sidecar");
             (self.on_gave_up)(format!("the sidecar exited {MAX_RESTARTS_PER_MINUTE} times in a minute ({status:?})"));
         }
     }

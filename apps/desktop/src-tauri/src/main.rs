@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod notify;
+mod shell_log;
 mod sidecar;
 mod updater;
 
@@ -223,6 +224,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
         app.state::<notify::Notifications>().enabled(),
         None::<&str>,
     )?;
+    let show_logs = MenuItem::with_id(app, "show-logs", "Show Logs", true, None::<&str>)?;
     let reload = MenuItem::with_id(app, "reload", "Reload Window", true, Some("CmdOrCtrl+R"))?;
 
     let app_menu = Submenu::with_items(
@@ -235,6 +237,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
             &PredefinedMenuItem::separator(app)?,
             &settings,
             &notify_toggle,
+            &show_logs,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, Some("Hide WorkspaceGPT"))?,
             &PredefinedMenuItem::hide_others(app, None)?,
@@ -292,6 +295,12 @@ fn handle_menu(app: &AppHandle, id: &str) {
         "history" => sup.run_command("workspacegpt.history"),
         "settings" => sup.run_command("workspacegpt.settings"),
         "open-folder" => open_folder(app),
+        "show-logs" => {
+            if let Some(dir) = shell_log::log_dir() {
+                let log = dir.join("sidecar.log");
+                let _ = app.opener().reveal_item_in_dir(if log.exists() { log } else { dir });
+            }
+        }
         "reload" => {
             if let Some(w) = app.get_webview_window(MAIN) {
                 let _ = w.eval("location.reload()");

@@ -17,6 +17,14 @@ const override = process.env.WGPT_DESKTOP_ANALYTICS;
 const enabled = override === '1' || (override !== '0' && process.env.NODE_ENV === 'production');
 let announced = false;
 
+// Events raised by the sidecar itself (crash reports). They go out through the
+// extension's own client on its next capture, which gives them its distinctId and
+// keeps its opt-out: if the extension never captures, they never leave.
+const pending: Array<{ event: string; properties: Record<string, unknown> }> = [];
+export function queueDesktopEvent(event: string, properties: Record<string, unknown>): void {
+  if (pending.length < 20) pending.push({ event, properties });
+}
+
 export class PostHog {
   private real: any;
   constructor(key: string, options?: unknown) {
@@ -32,6 +40,10 @@ export class PostHog {
   }
   capture(event: { properties?: Record<string, unknown> } & Record<string, unknown>): void {
     this.real?.capture({ ...event, properties: { ...event.properties, surface: 'desktop' } });
+    while (this.real && pending.length) {
+      const next = pending.shift()!;
+      this.real.capture({ distinctId: event.distinctId, event: next.event, properties: { ...next.properties, surface: 'desktop' } });
+    }
   }
   identify(payload: { properties?: Record<string, unknown> } & Record<string, unknown>): void {
     this.real?.identify({ ...payload, properties: { ...payload.properties, surface: 'desktop' } });
