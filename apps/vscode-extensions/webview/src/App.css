@@ -2809,6 +2809,24 @@ button:disabled {
   right: 0;
 }
 
+/* Only the list scrolls when the menu carries extra content (Effort). WebKit
+   (the desktop app) composites a scroller as a clipped layer, which hid the
+   fixed-position effort flyout inside it — laid out and hit-testable, never
+   painted. Keeping the flyout outside any scroller also pins Effort below the list. */
+.searchable-dropdown-menu.has-content {
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+.searchable-dropdown-menu.has-content > * {
+  flex-shrink: 0;
+}
+.searchable-dropdown-menu.has-content > .searchable-dropdown-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .model-effort-menu {
   border-top: 1px solid var(--wgpt-border, var(--vscode-panel-border));
   margin: 4px 0;

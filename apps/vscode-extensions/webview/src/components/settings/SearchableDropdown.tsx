@@ -240,7 +240,7 @@ const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
 
       {isOpen && !disabled && (
         <div
-          className="searchable-dropdown-menu"
+          className={`searchable-dropdown-menu${menuContent ? ' has-content' : ''}`}
           role={menuContent ? "dialog" : "listbox"}
           aria-label={menuContent ? "Model and reasoning effort" : undefined}
           ref={menuRef}

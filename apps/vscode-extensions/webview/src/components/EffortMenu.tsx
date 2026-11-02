@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { effortLabel } from '../store/modelStore';
 
 interface Props {
@@ -14,7 +14,13 @@ const EffortMenu: React.FC<Props> = ({ value, levels, onChange }) => {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const focusOnOpen = useRef(false);
+  // Opened by hover: closes when the pointer leaves the row and the flyout.
+  // Opened by click or keyboard: stays until a choice, Escape or outside click.
+  const openedByHover = useRef(false);
+  const leaveTimer = useRef<number>();
   const options = ['', ...levels];
+
+  useEffect(() => () => window.clearTimeout(leaveTimer.current), []);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -56,21 +62,36 @@ const EffortMenu: React.FC<Props> = ({ value, levels, onChange }) => {
   };
 
   return (
-    <div className='model-effort-menu'>
+    <div
+      className='model-effort-menu'
+      // The flyout is a DOM child, so moving between row and flyout is not a leave;
+      // the grace period covers the few pixels of popup edge between them.
+      onMouseEnter={() => window.clearTimeout(leaveTimer.current)}
+      onMouseLeave={() => {
+        if (!openedByHover.current) return;
+        leaveTimer.current = window.setTimeout(() => setOpen(false), 250);
+      }}
+    >
       <button
         ref={triggerRef}
         type='button'
         className='model-effort-trigger'
         aria-haspopup='menu'
         aria-expanded={open}
-        onMouseEnter={() => setOpen(true)}
+        onMouseEnter={() => {
+          if (open) return;
+          openedByHover.current = true;
+          setOpen(true);
+        }}
         onClick={() => {
+          openedByHover.current = false;
           if (open) menuRef.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
           else { focusOnOpen.current = true; setOpen(true); }
         }}
         onKeyDown={(event) => {
           if (['ArrowRight', 'ArrowDown', 'Enter', ' '].includes(event.key)) {
             event.preventDefault();
+            openedByHover.current = false;
             if (open) menuRef.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
             else { focusOnOpen.current = true; setOpen(true); }
           }
