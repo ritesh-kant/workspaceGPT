@@ -6341,6 +6341,18 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     assert.ok(createStructuredPrompt([], 'x', '', undefined, null, base).includes('Introduced by'), 'the report format carries the line');
   });
 
+  await t('prompt: Debug mode sends a web bug to the browser when Chrome is connected, and says so when it is not', () => {
+    const base = { codebaseToolsEnabled: true, implementMandate: true, debugMode: true };
+    const av = (browser) => ({ codebase: true, confluence: true, tickets: true, browser });
+    const on = createStructuredPrompt([], 'x', '', undefined, null, { ...base, toolAvailability: av(true) });
+    assert.ok(on.includes('reproduces in the browser') && on.includes('browser_network'));
+    assert.ok(on.includes('leave the tab open, ask with `ask_user` to sign in there'), 'a tab waiting on the user is not closed');
+    const off = createStructuredPrompt([], 'x', '', undefined, null, { ...base, toolAvailability: av(false) });
+    assert.ok(off.includes('Chrome is not connected') && !off.includes('reproduces in the browser'));
+    assert.ok(!createStructuredPrompt([], 'x', '', undefined, null, { ...base, toolAvailability: av(undefined) }).includes('Chrome is not connected'), 'host without the browser says nothing');
+    assert.ok(!createStructuredPrompt([], 'x', '', undefined, null, { ...base, planMode: true, toolAvailability: av(true) }).includes('reproduces in the browser'), 'plan mode is read-only');
+  });
+
   await t('withProbeOutput reads real text: CRLF output and quoted values come through unescaped', () => {
     const state = debugService.newDebugRunState();
     state.probes.set('p1', { id: 'p1', path: 'a.ts', line: 2, label: 'name' });
@@ -7123,6 +7135,12 @@ console.log('\ncall note corrections');
     ], turns, cands);
     assert.deepEqual(got.map((c) => `${c.from}>${c.to}`), ['Prag>Parag', 'hard fix>hot fix', 'viewing>QA']);
     assert.equal(acceptCorrections('nope', turns, cands).length, 0);
+  });
+  await t('a spoken form with a space matches the Knowledge spelling without one', () => {
+    const turns = [turn(0, 'We are not selecting the JNIA and the commerce tool gets wrong data.')];
+    const got = acceptCorrections([{ from: 'JNIA', to: 'Gen AI' }], turns, [{ heard: 'JNIA', maybe: ['GenAI'] }]);
+    assert.deepEqual(got.map((c) => c.to), ['Gen AI']);
+    assert.equal(acceptCorrections([{ from: 'JNIA', to: 'Gen AI' }], turns, []).length, 0);
   });
   await t('corrections apply to whole words only', () => {
     assert.equal(applyCorrections('Prag and Pragmatic', [{ from: 'Prag', to: 'Parag', count: 1 }]), 'Parag and Pragmatic');

@@ -177,6 +177,7 @@ export function acceptCorrections(raw: unknown, turns: readonly CallNoteTurn[], 
     if (!count) continue;
     const grounded =
       offered.has(to.toLowerCase()) ||
+      offered.has(to.toLowerCase().replace(/\s+/g, '')) || // "Gen AI" for the Knowledge's "GenAI"
       similarity(from.toLowerCase(), to.toLowerCase()) >= 0.6 ||
       (spoken.match(wordRe(to))?.length ?? 0) > 0;
     if (!grounded) continue;
