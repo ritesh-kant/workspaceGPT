@@ -82,7 +82,7 @@ import {
   LimitKind,
   pruneStaleHarnessMessages,
 } from './resumeHygiene';
-import { DebugTracker, claimedRootCauseStatus, isTestPath } from './debugState';
+import { DebugTracker, claimedRootCauseStatus, isTestPath, ticketHasWebRepro } from './debugState';
 import { hasRegressionCue, ticketTexts } from '../../utils/regressionCue';
 import { AutoVerifyTracker, CheckResultLike, CheckKindName, PendingCheck, AUTO_CHECKABLE_FILE_RE } from './autoVerify';
 import { stripLineNumbers } from '../../services/codebase/lineNumbers';
@@ -217,6 +217,8 @@ interface WorkerData {
    * "Publish to Confluence": the document is finished, so no code scouting.
    */
   turnAction?: 'publish-spike';
+  /** An earlier turn of this chat already read the code (host-tracked from its metrics). */
+  codeExploredInChat?: boolean;
   /**
    * Debug mode: a Bug ticket is being worked, or the user chose "Debug this".
    * Decided by the host from the ticket's type / the button — never from the
@@ -268,6 +270,7 @@ const {
   harnessProfile,
   reasoningEffort,
   turnAction,
+  codeExploredInChat,
   debugMode,
   linkedConfluencePageId,
 } = workerData as WorkerData;
@@ -366,6 +369,11 @@ function shouldRetryWithoutImages(err: any): boolean {
   const status = err?.status ?? err?.statusCode ?? err?.response?.status;
   return REQUEST_SHAPE_REJECTED.has(status);
 }
+
+/** Browser tools whose result a later call of the same tool on the same tab replaces. */
+const BROWSER_PAGE_READS = new Set(['browser_read_tree', 'browser_read_page']);
+/** Screenshots kept as images in the conversation; older ones become a one-line note. */
+const SCREENSHOTS_KEPT = 2;
 
 function isImageContentPart(part: any): boolean {
   return !!part && typeof part === 'object' && part.type === 'image_url';
@@ -795,6 +803,8 @@ const TOOL_DEFS = [
         'Use it whenever you need their input mid-task: where a page goes, which option to take, a missing fact, a template URL. ' +
         'Never ask in prose instead, and never end your answer with a question — the user cannot click prose. ' +
         '2–4 short options, your recommended one first with " (Recommended)" appended to its label; the card always adds a free-text "Other" answer, so do not add one. ' +
+        'Every option must be a complete answer on its own: when you need a value (an email, a name, a URL), put a concrete proposed value in the option label so one click supplies it — never an option that says to type the value under "Other". ' +
+        'If the answer that comes back lacks what you asked for, ask again; do not end the run on it. ' +
         'One call can carry up to 4 related questions. Do not ask what you can find out with a tool.',
       parameters: {
         type: 'object',
@@ -1167,7 +1177,7 @@ const TOOL_DEFS = [
         'key (keys, space-separated combos like "Enter", "Tab", "cmd+a", "shift+Tab"); scroll (direction + amount, at ref or x/y; a ref alone scrolls it into view); ' +
         'drag (from ref or x/y to toRef or toX/toY); fill (set a form field by ref to value — text, select option, or "true"/"false" for a checkbox); wait (seconds, max 10); ' +
         'dialog (answer an alert/confirm/prompt the page is showing: accept true = OK, false = Cancel, text for a prompt — while one is open the page does nothing else, and results say when an action opened one). ' +
-        'Returns the tab\'s url and title afterwards. Password fields are refused — the user types those.',
+        'Returns the tab\'s url and title afterwards, what the action hit, and whether the page changed — when it says nothing changed, look before acting again rather than repeating it. Password fields are refused — the user types those.',
       parameters: {
         type: 'object',
         properties: {
@@ -1417,6 +1427,8 @@ const TICKET_RESEARCH_RUN = !!ticketContext && isResearchWorkItem(ticketContext.
 const debugTracker = debugMode && !chatOnly ? new DebugTracker(hasRegressionCue(prompt, ...ticketTexts(ticketContext))) : null;
 let debugEditGateUsed = false;
 let debugClaimNudgesUsed = 0;
+// Debug run on a web bug that ended without the browser while Chrome was connected — sent back once.
+let browserReproNudgeUsed = false;
 const TICKET_IMPLEMENT_MANDATE = !!executeMandate || IMPLEMENT_MANDATE_RE.test(prompt) || hasWriteIntent(prompt);
 const TICKET_IMPLEMENT_RUN =
   !!ticketContext && !ticketLookupOnly && (!TICKET_RESEARCH_RUN || TICKET_IMPLEMENT_MANDATE);
@@ -2954,6 +2966,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     if (out && debugTracker && !planMode) {
       const unbacked = debugTracker.claimIssues(out);
       if (unbacked.length) out += `\n\n---\n⚠️ **Harness note:** this report says the root cause is confirmed, but the run did not establish it: ${unbacked.join('; ')}. Treat it as probable.`;
+      const notDone = debugTracker.doneIssues(out, writesApplied + (priorWrites ?? 0));
+      if (notDone.length) out += `\n\n---\n⚠️ **Harness note:** this report is headed Done, but ${notDone.join(', and ')}. The bug is not fixed yet.`;
       const ledger = debugTracker.ledgerMarkdown();
       if (ledger) out += `\n\n${ledger}`;
     }
@@ -3163,6 +3177,41 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   const recordToolResult = (name: string, round: number, content: string) => {
     toolResultLog.push({ msgIndex: messages.length - 1, name, round, chars: content.length, compacted: false });
     noteToolResultSeen(name, content);
+    if (BROWSER_PAGE_READS.has(name)) collapseSupersededPageReads(name, content);
+  };
+
+  // A browser run looks at the page again after nearly every action, and each
+  // look stayed in `messages`, re-sent on every later call: a 118-step repro
+  // grew from 28k to 146k prompt tokens a call (7.6M in all), most of it
+  // screenshots and page trees of states long gone. A newer read of the same
+  // tab replaces an older one (its refs are stale by then anyway), so the old
+  // one shrinks to its head — a fact about the run, not a guess about relevance.
+  // A query read replacing a full one costs at most one re-read.
+  const tabOf = (content: string) => /"tabId":(\d+)/.exec(content)?.[1];
+  const collapseSupersededPageReads = (name: string, latest: string): void => {
+    const tab = tabOf(latest);
+    for (let k = toolResultLog.length - 2; k >= 0; k--) {
+      const entry = toolResultLog[k];
+      if (entry.name !== name || entry.compacted || entry.chars < COMPACT_MIN_CHARS) continue;
+      const msg = messages[entry.msgIndex];
+      if (typeof msg?.content !== 'string' || tabOf(msg.content) !== tab) continue;
+      msg.content = `${msg.content.slice(0, COMPACT_HEAD_CHARS)}…[older ${name} of this tab, replaced by a newer one — read the page again if you need what it showed]`;
+      toolCharsUsed -= Math.max(0, entry.chars - msg.content.length);
+      entry.compacted = true;
+    }
+  };
+
+  // Screenshots go to the model as image turns; only the latest few stay images.
+  const dropOldScreenshotImages = (): void => {
+    let kept = 0;
+    for (let k = messages.length - 1; k >= 0; k--) {
+      const m = messages[k];
+      if (m?.role !== 'user' || !Array.isArray(m.content)) continue;
+      const head = m.content[0];
+      if (head?.type !== 'text' || !String(head.text).startsWith('Screenshot of ') || !m.content.some(isImageContentPart)) continue;
+      if (++kept <= SCREENSHOTS_KEPT) continue;
+      m.content = `${head.text.replace(/:$/, '')} — image dropped from context; take a new screenshot to see the page now.`;
+    }
   };
 
   const compactOldToolResults = (currentRound: number): void => {
@@ -3493,7 +3542,12 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // prompt — the scout surveyed six apps for it. With a ticket attached the
   // code may well be the subject, so the scout still runs there.
   const pageLinked = !!linkedConfluencePageId && !ticketContext && !executeMandate;
-  const exploration = resume || turnAction === 'publish-spike' || pageLinked || (docPrefetched && !WRITE_INTENT_RUN)
+  // A follow-up in a chat whose earlier turn already read the code: the scout
+  // would search this turn's instruction words instead of the code's — "Use
+  // chrome to reproduce it" scouted "chrome" and "reproduce", read 113 mocks and
+  // spent six explorer calls (125k tokens) for five useless claims. The earlier
+  // turn's answer names the files; the model reads on from there.
+  const exploration = resume || codeExploredInChat || turnAction === 'publish-spike' || pageLinked || (docPrefetched && !WRITE_INTENT_RUN)
     ? null
     : await runExplorationPhase(
         prompt,
@@ -4096,6 +4150,48 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           });
           continue;
         }
+        // "Done" in a Debug report means fixed. A reproduction is step 2 of the
+        // protocol, not the end of it: send the run back to trace the cause.
+        const doneIssues = debugTracker.doneIssues(outcome.content, writesApplied + (priorWrites ?? 0));
+        if (doneIssues.length && debugClaimNudgesUsed < 2) {
+          debugClaimNudgesUsed++;
+          messages.push({ role: 'assistant', content: outcome.content });
+          messages.push({
+            role: 'user',
+            content:
+              `STOP: your report is headed **Done**, which in a Debug report means the bug is fixed — but ${doneIssues.join(', and ')}. ` +
+              'If you reproduced it, that is where the investigation starts, not where it ends: read the code path the evidence points at (read_file the handler that runs next, find_references for what it calls), ' +
+              'record competing causes with debug_ledger, and settle them with something you run — browser_eval on the page state, browser_console / browser_network after repeating the step, or add_probe and the repro. ' +
+              'Do not hand the user a check (a breakpoint, a DevTools step) you can run yourself. If you truly cannot go further, change the heading to **Root cause not found** or **Partially done** and name the exact obstacle.',
+          });
+          continue;
+        }
+      }
+      // A web bug that ends without a confirmed cause while Chrome is connected and
+      // no browser tool ran: the repro was one tool call away. Observed live —
+      // "Root cause not found" on #1453249, and the user had to type "use chrome
+      // to reproduce it". Facts only: the run's own tool counts, the connection,
+      // and a URL in the ticket's text (which can only add this one turn).
+      if (
+        debugTracker &&
+        !planMode &&
+        !budgetExhausted &&
+        !browserReproNudgeUsed &&
+        toolAvailability?.browser &&
+        ticketHasWebRepro(ticketContext) &&
+        !Object.keys(toolNameCounts).some((n) => n.startsWith('browser_')) &&
+        claimedRootCauseStatus(outcome.content) !== 'confirmed'
+      ) {
+        browserReproNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            'STOP: this bug has a web reproduction (the ticket gives a URL) and Chrome is connected, but you have not opened it — the root cause is not confirmed without it. ' +
+            'Reproduce it now: browser_open_tab the URL, follow the ticket\'s steps with browser_act, read browser_network / browser_console for the failing request and any error, then continue the investigation from that evidence. ' +
+            'If the browser cannot reproduce it (a sign-in you lack, data you cannot create), say so in Reproduction with the exact obstacle.',
+        });
+        continue;
       }
       // A Debug run may honestly END on "probable" or "not found" with nothing edited
       // (DEBUG REPORT FORMAT) — the demand below to apply a fix would push it to
@@ -4565,6 +4661,15 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         } else if (tc.name === 'counterfactual_check') {
           const ev = debugTracker.noteCounterfactual(rawResult as Parameters<DebugTracker['noteCounterfactual']>[0]);
           if (ev) recorded = [ev];
+        } else if (tc.name === 'browser_network' || tc.name === 'browser_console' || tc.name === 'browser_eval') {
+          let browserArgs = {};
+          try {
+            browserArgs = JSON.parse(tc.args || '{}');
+          } catch {
+            /* unparseable args — record without them */
+          }
+          const ev = debugTracker.noteBrowser(tc.name, rawResult, browserArgs);
+          if (ev) recorded = [ev];
         }
         if (recorded.length) modelResult = { ...(modelResult as Record<string, unknown>), evidence: recorded.map((e) => ({ id: e.id, kind: e.kind })) };
       }
@@ -4645,6 +4750,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       }
     });
     messages.push(...pendingImageTurns);
+    if (pendingImageTurns.length) dropOldScreenshotImages();
     toolCallsExecuted += toolCalls.length;
 
     // The model is verifying on its own (it called get_diagnostics or

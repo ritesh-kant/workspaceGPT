@@ -30,6 +30,8 @@ const CANCEL_COOLDOWN_MS = 10 * 60_000;
 const MAX_LOG_ENTRIES = 300;
 const MAX_BODY_CHARS = 20_000;
 const MAX_EVAL_CHARS = 20_000;
+const MAX_SHOT_EDGE = 1568;
+const MAX_SHOT_PIXELS = 1_150_000;
 const IS_MAC = /Mac/.test(navigator.userAgent);
 
 interface ConsoleEntry {
@@ -74,6 +76,33 @@ const dialogWaiters = new Map<number, Set<() => void>>();
 
 const sessions = new Map<number, Session>();
 const cancelledAt = new Map<number, number>();
+/** Screenshot pixels per CSS pixel of each tab's last screenshot, so browser_act x/y map back to the page. */
+const shotScale = new Map<number, number>();
+// What happened to the debugger on a tab, said when an attach is refused there, so the
+// error shows whether we were attached before the page loaded and why Chrome let go.
+const attachTrail = new Map<number, string[]>();
+
+function trail(tabId: number, what: string): void {
+  const list = attachTrail.get(tabId) ?? [];
+  list.push(`${new Date().toISOString().slice(11, 19)} ${what}`);
+  attachTrail.set(tabId, list.slice(-6));
+}
+
+// Tabs we hold the debugger on, kept across a service-worker restart. Chrome refuses a
+// fresh attach once another extension has a frame on the page, even to the extension that
+// is already attached, so after a restart we take the old attachment over instead.
+const ATTACHED_KEY = 'wgptAttachedTabs';
+
+async function attachedTabs(): Promise<number[]> {
+  const stored = await chrome.storage.session.get(ATTACHED_KEY).catch(() => ({}) as Record<string, unknown>);
+  return Array.isArray(stored[ATTACHED_KEY]) ? (stored[ATTACHED_KEY] as number[]) : [];
+}
+
+async function markAttached(tabId: number, on: boolean): Promise<void> {
+  const next = (await attachedTabs()).filter((id) => id !== tabId);
+  if (on) next.push(tabId);
+  await chrome.storage.session.set({ [ATTACHED_KEY]: next }).catch(() => undefined);
+}
 
 // Refs are numbered across ALL tabs, so ref_12 names one element in one tab;
 // refOwner remembers which. Without it every page counted from ref_1, and a
@@ -159,11 +188,17 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   const session = sessions.get(source.tabId);
   if (session?.idle) clearTimeout(session.idle);
   sessions.delete(source.tabId);
+  void markAttached(source.tabId, false);
+  trail(source.tabId, `Chrome detached us (${reason})`);
   if (reason === 'canceled_by_user') cancelledAt.set(source.tabId, Date.now());
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   sessions.delete(tabId);
+  void markAttached(tabId, false);
+  attachTrail.delete(tabId);
+  shotScale.delete(tabId);
+  pageModeTabs.delete(tabId);
   cancelledAt.delete(tabId);
   for (const [ref, owner] of refOwner) if (owner === tabId) refOwner.delete(ref);
 });
@@ -189,6 +224,28 @@ function formatRemoteObject(o: any): string {
   return o.unserializableValue ?? o.description ?? o.type ?? '';
 }
 
+/**
+ * Chrome refuses to attach the debugger to a tab that has another extension's frame on it,
+ * and drops a debugger already attached when such a frame appears: LastPass's field menu
+ * (webclient-infield.html) did both on mms.com — attached on about:blank, detached two seconds
+ * into the load. Which tabs get such a frame is up to that extension, so the tools then work
+ * through the page instead (attachOrPage). Names the extension, by title when Chrome has one.
+ */
+async function foreignExtensions(): Promise<string> {
+  const targets = await chrome.debugger.getTargets().catch(() => [] as chrome.debugger.TargetInfo[]);
+  // Its frame is listed as type "other" with no extensionId, so the id is read from the URL.
+  const hostOf = (url: string) => url.replace('chrome-extension://', '').split('/')[0];
+  const found = targets.filter((t) => t.type !== 'worker' && t.type !== 'background_page' && t.url.startsWith('chrome-extension://') && hostOf(t.url) !== chrome.runtime.id);
+  return [...new Set(found.map((t) => `${t.title && !t.title.startsWith('chrome-extension://') ? `"${t.title}" ` : ''}${hostOf(t.url)} (${t.url.split('/').pop()})`))].join(', ');
+}
+
+async function foreignExtensionHint(tabId: number): Promise<string> {
+  const who = await foreignExtensions();
+  const history = attachTrail.get(tabId);
+  const earlier = history?.length ? ` On this tab: ${history.join('; ')}.` : '';
+  return `.${who ? ` Another extension has a frame on this page: ${who}.` : ''}${earlier} This is Chrome's restriction, not a fault in the page. Call the tool again: it then works through the page instead of the debugger.`;
+}
+
 async function attach(tabId: number): Promise<Session> {
   let session = sessions.get(tabId);
   if (!session) {
@@ -198,15 +255,21 @@ async function attach(tabId: number): Promise<Session> {
         'The user stopped WorkspaceGPT from controlling this tab (Cancel on Chrome\'s debugging bar). Ask them in chat before trying again.'
       );
     }
-    try {
-      await chrome.debugger.attach({ tabId }, '1.3');
-    } catch (err) {
-      const message = errorText(err);
-      // Still attached from before the service worker restarted: take it over.
-      if (!/already attached/i.test(message)) throw new Error(`Cannot control this tab: ${message}`);
-      await chrome.debugger.detach({ tabId }).catch(() => undefined);
-      await chrome.debugger.attach({ tabId }, '1.3');
+    // Still attached from before the service worker restarted: take that over without a new attach.
+    const stillAttached =
+      (await attachedTabs()).includes(tabId) && (await chrome.debugger.sendCommand({ tabId }, 'Runtime.enable', {}).then(() => true, () => false));
+    if (!stillAttached) {
+      try {
+        await chrome.debugger.attach({ tabId }, '1.3');
+      } catch (err) {
+        const message = errorText(err);
+        if (/different extension/i.test(message)) throw new Error(`Cannot control this tab: ${message}${await foreignExtensionHint(tabId)}`);
+        if (!/already attached/i.test(message)) throw new Error(`Cannot control this tab: ${message}`);
+        await chrome.debugger.detach({ tabId }).catch(() => undefined);
+        await chrome.debugger.attach({ tabId }, '1.3');
+      }
     }
+    await markAttached(tabId, true);
     session = { console: [], network: new Map() };
     sessions.set(tabId, session);
     // retried=true: a failure here must not re-enter attach().
@@ -220,9 +283,39 @@ async function attach(tabId: number): Promise<Session> {
   session.idle = setTimeout(() => {
     // Chrome fires no onDetach for a detach we ask for, so forget the session here.
     sessions.delete(tabId);
+    void markAttached(tabId, false);
     void chrome.debugger.detach({ tabId }).catch(() => undefined);
   }, IDLE_DETACH_MS);
   return session;
+}
+
+/** Tabs Chrome would not let us debug, with whose frame was in the way; their tools work through the page. */
+const pageModeTabs = new Map<number, string>();
+
+/**
+ * Attach the debugger, or — when Chrome refuses because another extension has a frame on the
+ * tab — say so and start recording the page's requests and console from inside it, so the
+ * tools can carry on through the page. Any other refusal is still an error.
+ */
+async function attachOrPage(tabId: number): Promise<boolean> {
+  try {
+    await attach(tabId);
+    pageModeTabs.delete(tabId);
+    return true;
+  } catch (err) {
+    if (!/different extension/i.test(errorText(err))) throw err;
+    pageModeTabs.set(tabId, (await foreignExtensions()) || 'another extension');
+    await inPage(tabId, pageInstallRecorder, [MAX_BODY_CHARS], 'MAIN').catch(() => undefined);
+    return false;
+  }
+}
+
+function pageModeNote(tabId: number): string {
+  return (
+    `Chrome would not let WorkspaceGPT debug this tab: another extension has a frame on it (${pageModeTabs.get(tabId) ?? 'unknown'}). ` +
+    'This ran through the page instead: clicks and keys are synthetic events a few sites ignore, drag and dialogs are unavailable, and console/network hold only what happened since WorkspaceGPT started recording on this page. ' +
+    'If a site ignores these clicks, ask the user with ask_user to turn that extension off for this site.'
+  );
 }
 
 async function cdp<T = any>(tabId: number, method: string, params: object = {}, retried = false): Promise<T> {
@@ -337,15 +430,26 @@ function checkUrl(url: unknown): string {
 }
 
 /** Wait for a tab to finish loading after something that may navigate it. */
-async function settle(tabId: number, timeoutMs: number, minWaitMs = 0): Promise<void> {
+async function settle(tabId: number, timeoutMs: number, minWaitMs = 0): Promise<boolean> {
   const start = Date.now();
   if (minWaitMs) await sleep(minWaitMs);
   while (Date.now() - start < timeoutMs) {
     const tab = await chrome.tabs.get(tabId).catch(() => undefined);
-    if (!tab || tab.status === 'complete' || sessions.get(tabId)?.dialog) return;
+    if (!tab || tab.status === 'complete' || sessions.get(tabId)?.dialog) return true;
     await sleep(200);
   }
+  return false;
 }
+
+/**
+ * A tab still loading after `settle` timed out is usually waiting on the user: Chrome's
+ * own sign-in prompt (HTTP basic auth) holds the load and cannot be seen or answered from
+ * the page. Said in the result so the model leaves the tab open and asks, rather than
+ * reading a blank page and closing it.
+ */
+const WAITING_ON_USER =
+  'The page has not finished loading. A tab stuck like this is usually showing Chrome\'s own sign-in prompt (HTTP basic auth) or a slow server. ' +
+  'Only the user can answer that prompt: leave this tab open, ask them with ask_user to sign in in it, and continue once they answer. Do not close the tab.';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -594,12 +698,17 @@ function pageFill(ref: string, value: string) {
   return { error: `${el.tagName.toLowerCase()} is not a form field. Use browser_act "click" then "type" instead.` };
 }
 
-async function inPage<T, A extends unknown[]>(tabId: number, func: (...args: A) => T, args: A): Promise<T> {
+async function inPage<T, A extends unknown[]>(
+  tabId: number,
+  func: (...args: A) => T,
+  args: A,
+  world: chrome.scripting.ExecutionWorld = 'ISOLATED'
+): Promise<Awaited<T>> {
   assertNoDialog(tabId);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const [frame] = await Promise.race([
-      chrome.scripting.executeScript({ target: { tabId }, func, args }),
+      chrome.scripting.executeScript({ target: { tabId }, func, args, world }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error('the page did not respond in 15s — it may be showing a dialog (alert/confirm) or be busy')),
@@ -607,14 +716,362 @@ async function inPage<T, A extends unknown[]>(tabId: number, func: (...args: A) 
         );
       }),
     ]);
-    return frame.result as T;
+    return frame.result as Awaited<T>;
   } catch (err) {
     assertNoDialog(tabId);
     // chrome://, the Web Store and other extensions' pages cannot be scripted.
-    throw new Error(`Cannot read this tab: ${errorText(err)}`);
+    const text = errorText(err);
+    // Chrome swapped the page for its own error page: not reachable from this Chrome (VPN, DNS, a refused or cancelled sign-in), not a bug in the page.
+    const hint = /showing error page/i.test(text)
+      ? ' Chrome is showing its own error page for this address: the site is not reachable from this Chrome, or a sign-in was refused. Leave the tab open, tell the user what you saw and ask them with ask_user to open the site in it (VPN, sign-in) — do not close it.'
+      : '';
+    throw new Error(`Cannot read this tab: ${text}${hint}`);
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ── Pointer, probes and the no-debugger path (page-side) ───────────────────
+
+/**
+ * The cursor drawn on the agent's tab so the user can watch where it acts. It sits in a closed
+ * shadow root with pointer-events: none, so it never takes a click or shows in elementFromPoint.
+ */
+function pagePointer(x: number, y: number, kind: string) {
+  const w = window as any;
+  if (kind === 'remove') {
+    w.__wgptPointer?.remove();
+    w.__wgptPointer = undefined;
+    return;
+  }
+  if (!w.__wgptPointer?.isConnected) {
+    const host = document.createElement('wgpt-pointer');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
+    const root = host.attachShadow({ mode: 'closed' });
+    root.innerHTML =
+      '<style>.c{position:fixed;left:0;top:0;width:24px;height:24px;pointer-events:none;transition:transform .35s cubic-bezier(.2,.7,.3,1),opacity .2s;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}' +
+      '.r{position:fixed;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;border:2px solid #4f7cff;opacity:0;pointer-events:none}' +
+      '.r.on{animation:p .5s ease-out}@keyframes p{from{opacity:.9;transform:scale(.4)}to{opacity:0;transform:scale(1.7)}}</style>' +
+      '<div class="r"></div><svg class="c" viewBox="0 0 24 24"><path d="M4 2l16 9-7 1.7L9.6 20z" fill="#4f7cff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    (document.documentElement || document.body).appendChild(host);
+    const cursor = root.querySelector('.c') as SVGElement;
+    cursor.style.transform = `translate(${innerWidth / 2}px, ${innerHeight / 2}px)`;
+    void cursor.getBoundingClientRect();
+    w.__wgptPointer = host;
+    w.__wgptPointerRoot = root;
+  }
+  const root: ShadowRoot = w.__wgptPointerRoot;
+  const cursor = root.querySelector('.c') as SVGElement;
+  if (kind === 'hide') {
+    cursor.style.opacity = '0';
+    return;
+  }
+  cursor.style.opacity = '1';
+  cursor.style.transform = `translate(${x - 4}px, ${y - 2}px)`;
+  if (kind === 'click') {
+    const ring = root.querySelector('.r') as HTMLElement;
+    setTimeout(() => {
+      ring.style.left = `${x}px`;
+      ring.style.top = `${y}px`;
+      ring.classList.remove('on');
+      void ring.offsetWidth;
+      ring.classList.add('on');
+    }, 350);
+  }
+}
+
+/** What is at a point, and a signature of the page to tell afterwards whether an action changed anything. */
+function pageProbe(x: number | null, y: number | null) {
+  let hit: string | undefined;
+  if (x !== null && y !== null) {
+    let el = document.elementFromPoint(x, y);
+    while (el?.shadowRoot) {
+      const inner = el.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === el) break;
+      el = inner;
+    }
+    const named = el?.closest('a,button,input,select,textarea,label,summary,[role],[onclick]') ?? el;
+    if (named) {
+      const label = ((named as HTMLElement).innerText || named.getAttribute('aria-label') || named.getAttribute('placeholder') || (named as HTMLInputElement).value || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 60);
+      hit = `${named.tagName.toLowerCase()}${label ? ` "${label}"` : ''}`;
+    }
+  }
+  let focus = document.activeElement;
+  while (focus?.shadowRoot?.activeElement) focus = focus.shadowRoot.activeElement;
+  return { hit, url: location.href, size: document.body ? document.body.innerHTML.length : 0, focus: focus ? focus.tagName.toLowerCase() : '' };
+}
+
+/** A click, hover or right-click as DOM events at a point: what the tools do when Chrome refuses the debugger. */
+function pageSyntheticPointer(x: number, y: number, action: string) {
+  let el = document.elementFromPoint(x, y) as HTMLElement | null;
+  while (el?.shadowRoot) {
+    const inner = el.shadowRoot.elementFromPoint(x, y) as HTMLElement | null;
+    if (!inner || inner === el) break;
+    el = inner;
+  }
+  if (!el) return { error: `Nothing on the page at (${Math.round(x)}, ${Math.round(y)}).` };
+  const base = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, view: window };
+  const pointer = (type: string, extra: object = {}) => el!.dispatchEvent(new PointerEvent(type, { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true, ...extra }));
+  const mouse = (type: string, extra: object = {}) => el!.dispatchEvent(new MouseEvent(type, { ...base, ...extra }));
+  pointer('pointerover');
+  mouse('mouseover');
+  pointer('pointermove');
+  mouse('mousemove');
+  if (action === 'hover') return { ok: true };
+  const button = action === 'right_click' ? 2 : 0;
+  const buttons = button === 2 ? 2 : 1;
+  for (let i = 1; i <= (action === 'double_click' ? 2 : 1); i++) {
+    pointer('pointerdown', { button, buttons });
+    mouse('mousedown', { button, buttons, detail: i });
+    if (i === 1) (el.closest('input,textarea,select,button,a[href],[tabindex],[contenteditable]') as HTMLElement | null)?.focus();
+    pointer('pointerup', { button });
+    mouse('mouseup', { button, detail: i });
+    // click() runs the element's own behaviour too: a link follows, a checkbox toggles, a submit button submits.
+    if (button === 0) el.click();
+  }
+  if (button === 2) mouse('contextmenu', { button: 2, buttons: 2 });
+  if (action === 'double_click') mouse('dblclick', { detail: 2 });
+  return { ok: true };
+}
+
+/** Types into the focused field as the browser would, through the value setter frameworks watch. */
+function pageSyntheticType(text: string) {
+  let el = document.activeElement as HTMLElement | null;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement as HTMLElement;
+  if (!el || el === document.body) return { error: 'Nothing is focused to type into. Click the field first, or pass its ref.' };
+  if (el instanceof HTMLInputElement && el.type === 'password') return { error: 'Refusing to type into a password field. Ask the user to type it themselves.' };
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    let start = el.value.length;
+    let end = start;
+    try {
+      start = el.selectionStart ?? start;
+      end = el.selectionEnd ?? end;
+    } catch {
+      /* email and number inputs have no selection */
+    }
+    el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+    const next = el.value.slice(0, start) + text + el.value.slice(end);
+    if (setter) setter.call(el, next);
+    else el.value = next;
+    try {
+      el.setSelectionRange(start + text.length, start + text.length);
+    } catch {
+      /* no selection on this input type */
+    }
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true };
+  }
+  if (el.isContentEditable) {
+    document.execCommand('insertText', false, text);
+    return { ok: true };
+  }
+  return { error: `The focused <${el.tagName.toLowerCase()}> does not take text.` };
+}
+
+/**
+ * Key presses as DOM events. A synthetic key does nothing by itself, so the keys that matter
+ * do their job here: Enter submits the field's form (or presses the focused button or link),
+ * Tab moves focus, Backspace deletes, a single character types.
+ */
+function pageSyntheticKeys(keys: string) {
+  const done: string[] = [];
+  for (const combo of keys.split(/\s+/).filter(Boolean)) {
+    const parts = combo.split('+');
+    const key = parts.pop() ?? '';
+    const mods = parts.map((m) => m.toLowerCase());
+    let el = document.activeElement as HTMLElement | null;
+    while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement as HTMLElement;
+    const target = el ?? document.body;
+    const name = key.length === 1 ? key : key[0].toUpperCase() + key.slice(1).toLowerCase().replace(/^Arrow(.)/, (_, c) => `Arrow${c.toUpperCase()}`);
+    const init = { key: name === 'Esc' ? 'Escape' : name === 'Return' ? 'Enter' : name, bubbles: true, cancelable: true, composed: true, shiftKey: mods.includes('shift'), ctrlKey: mods.includes('ctrl'), altKey: mods.includes('alt'), metaKey: mods.includes('cmd') || mods.includes('meta') };
+    const allowed = target.dispatchEvent(new KeyboardEvent('keydown', init));
+    const field = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? target : null;
+    if (allowed && !init.ctrlKey && !init.metaKey && !init.altKey) {
+      if (init.key === 'Enter') {
+        if (field instanceof HTMLInputElement && field.form) field.form.requestSubmit();
+        else if (target instanceof HTMLButtonElement || target instanceof HTMLAnchorElement) target.click();
+      } else if (init.key === 'Tab') {
+        const focusable = Array.from(document.querySelectorAll<HTMLElement>('a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])')).filter((e) => !(e as HTMLButtonElement).disabled && e.offsetParent !== null);
+        const i = focusable.indexOf(target);
+        focusable[(i + (init.shiftKey ? -1 : 1) + focusable.length) % focusable.length]?.focus();
+      } else if (init.key === 'Backspace' && field) {
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')?.set;
+        setter?.call(field, field.value.slice(0, -1));
+        field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+      } else if (init.key.length === 1) {
+        if (field instanceof HTMLInputElement && field.type === 'password') return { error: 'Refusing to type into a password field. Ask the user to type it themselves.' };
+        if (field) {
+          const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')?.set;
+          setter?.call(field, field.value + init.key);
+          field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: init.key }));
+        }
+      }
+    } else if (allowed && (init.metaKey || init.ctrlKey) && init.key.toLowerCase() === 'a' && field) field.select();
+    target.dispatchEvent(new KeyboardEvent('keyup', init));
+    done.push(combo);
+  }
+  return { ok: true, detail: `pressed ${done.join(' ')}` };
+}
+
+function pageSyntheticScroll(direction: string, ticks: number, x: number | null, y: number | null) {
+  const dx = direction === 'left' ? -100 * ticks : direction === 'right' ? 100 * ticks : 0;
+  const dy = direction === 'up' ? -100 * ticks : direction === 'down' ? 100 * ticks : 0;
+  let el = x !== null && y !== null ? (document.elementFromPoint(x, y) as HTMLElement | null) : null;
+  while (el && !(el.scrollHeight > el.clientHeight && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
+  if (el) el.scrollBy(dx, dy);
+  else window.scrollBy(dx, dy);
+  return { ok: true };
+}
+
+function pageViewport() {
+  return { width: innerWidth, height: innerHeight };
+}
+
+/**
+ * Runs in the page's own world: records fetch/XHR (with request and response bodies) and the
+ * console, for browser_network and browser_console when Chrome refuses the debugger. It sees
+ * only what happens after it is installed, and a new page starts without it.
+ */
+function pageInstallRecorder(maxBody: number) {
+  const w = window as any;
+  if (w.__wgptRec) return w.__wgptRec.since;
+  const rec = { since: Date.now(), seq: 0, network: [] as any[], console: [] as any[] };
+  w.__wgptRec = rec;
+  const cap = (v: unknown) => (typeof v === 'string' ? v.slice(0, maxBody) : v instanceof URLSearchParams ? v.toString().slice(0, maxBody) : undefined);
+  const push = (list: any[], entry: any) => {
+    list.push(entry);
+    if (list.length > 300) list.splice(0, list.length - 300);
+  };
+  const origFetch = w.fetch;
+  w.fetch = function (input: any, init?: any) {
+    const req = input instanceof Request ? input : null;
+    const entry: any = {
+      requestId: `p${++rec.seq}`,
+      method: String(init?.method || req?.method || 'GET').toUpperCase(),
+      url: String(req ? req.url : input instanceof URL ? input.href : input),
+      type: 'fetch',
+      at: Date.now(),
+      requestBody: cap(init?.body),
+    };
+    push(rec.network, entry);
+    return origFetch.apply(this, arguments as any).then(
+      (res: Response) => {
+        entry.status = res.status;
+        entry.mimeType = res.headers.get('content-type') ?? undefined;
+        res.clone().text().then((t) => (entry.body = cap(t)), () => undefined);
+        return res;
+      },
+      (err: unknown) => {
+        entry.failed = String(err);
+        throw err;
+      }
+    );
+  };
+  const open = XMLHttpRequest.prototype.open;
+  const send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function (this: any, method: string, url: string | URL) {
+    this.__wgpt = { requestId: `p${++rec.seq}`, method: String(method).toUpperCase(), url: String(url), type: 'xhr', at: Date.now() };
+    return open.apply(this, arguments as any);
+  } as any;
+  XMLHttpRequest.prototype.send = function (this: any, body?: any) {
+    const entry = this.__wgpt;
+    if (entry) {
+      entry.requestBody = cap(body);
+      push(rec.network, entry);
+      this.addEventListener('loadend', () => {
+        entry.status = this.status;
+        entry.mimeType = this.getResponseHeader('content-type') ?? undefined;
+        if (this.status === 0) entry.failed = 'network error';
+        try {
+          if (this.responseType === '' || this.responseType === 'text') entry.body = cap(this.responseText);
+          else if (this.responseType === 'json') entry.body = cap(JSON.stringify(this.response));
+        } catch {
+          /* unreadable body */
+        }
+      });
+    }
+    return send.apply(this, arguments as any);
+  };
+  const text = (a: unknown) => {
+    if (typeof a === 'string') return a;
+    try {
+      return a instanceof Error ? a.stack || a.message : JSON.stringify(a);
+    } catch {
+      return String(a);
+    }
+  };
+  for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+    const orig = (console as any)[level];
+    (console as any)[level] = function (...args: unknown[]) {
+      push(rec.console, { level, text: args.map(text).join(' ').slice(0, 500), at: Date.now() });
+      return orig.apply(this, args);
+    };
+  }
+  addEventListener('error', (e) => push(rec.console, { level: 'error', text: String(e.message).slice(0, 500), url: e.filename, at: Date.now() }));
+  addEventListener('unhandledrejection', (e) => push(rec.console, { level: 'error', text: `Unhandled rejection: ${text(e.reason)}`.slice(0, 500), at: Date.now() }));
+  return rec.since;
+}
+
+function pageReadRecorder() {
+  const rec = (window as any).__wgptRec;
+  return rec ? { since: rec.since as number, network: rec.network as any[], console: rec.console as any[] } : null;
+}
+
+/** browser_eval without the debugger: evaluated in the page's own world (a page whose CSP forbids eval refuses it). */
+function pageEval(code: string) {
+  const run = (src: string) => (0, eval)(src);
+  let value: unknown;
+  try {
+    try {
+      value = run(code);
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      // Top-level await, or statements with a return: run as an async function body.
+      try {
+        value = run(`(async () => (${code}\n))()`);
+      } catch {
+        value = run(`(async () => {${code}\n})()`);
+      }
+    }
+  } catch (err) {
+    return Promise.resolve({ error: err instanceof Error ? err.message : String(err) });
+  }
+  return Promise.resolve(value).then(
+    (v) => {
+      try {
+        return { value: JSON.stringify(v ?? null) ?? 'undefined' };
+      } catch {
+        return { value: String(v) };
+      }
+    },
+    (err) => ({ error: err instanceof Error ? err.message : String(err) })
+  );
+}
+
+/** Moves the drawn cursor to a point (and ripples on a click), then gives the user a moment to see it. */
+async function showPointer(tabId: number, x: number, y: number, kind: 'move' | 'click'): Promise<void> {
+  const shown = await chrome.scripting.executeScript({ target: { tabId }, func: pagePointer, args: [x, y, kind] }).then(() => true, () => false);
+  if (shown) await sleep(kind === 'click' ? 380 : 250);
+}
+
+type PageSig = Awaited<ReturnType<typeof pageProbe>>;
+
+async function probe(tabId: number, x: number | null = null, y: number | null = null): Promise<PageSig | undefined> {
+  return inPage(tabId, pageProbe, [x, y]).catch(() => undefined);
+}
+
+/** What an action did to the page, so a click that changed nothing is not simply repeated. */
+function changeNote(before?: PageSig, after?: PageSig): string {
+  if (!before || !after) return '';
+  if (after.url !== before.url) return ` → navigated to ${after.url}`;
+  if (after.size !== before.size) return ' → the page changed';
+  if (after.focus !== before.focus) return ` → focus moved to <${after.focus}>`;
+  return ' → nothing on the page changed (same URL, content and focus): look again before the next action';
 }
 
 // ── Input ──────────────────────────────────────────────────────────────────
@@ -744,7 +1201,9 @@ async function target(
   // Numbers may arrive as strings; an absent coordinate must not become 0.
   const x = rawX === undefined || rawX === null || rawX === '' ? NaN : Number(rawX);
   const y = rawY === undefined || rawY === null || rawY === '' ? NaN : Number(rawY);
-  if (Number.isFinite(x) && Number.isFinite(y)) return { x, y, desc: `(${Math.round(x)}, ${Math.round(y)})` };
+  // x/y are in the last screenshot's pixels, which may be smaller than the page's (see screenshot).
+  const scale = shotScale.get(tabId) ?? 1;
+  if (Number.isFinite(x) && Number.isFinite(y)) return { x: x / scale, y: y / scale, desc: `(${Math.round(x)}, ${Math.round(y)})` };
   throw new Error('Pass a ref from browser_read_tree, or x and y from browser_screenshot.');
 }
 
@@ -765,10 +1224,12 @@ function tabForRefs(p: ActParams): number | undefined {
 async function act(p: ActParams): Promise<unknown> {
   const tab = await actTab(tabForRefs(p));
   const tabId = tab.id!;
-  await attach(tabId);
+  // false: Chrome refused the debugger here (another extension's frame), so input goes through the page.
+  const viaDebugger = await attachOrPage(tabId);
   const action = p.action ?? '';
   let detail = '';
   if (action === 'dialog') {
+    if (!viaDebugger) throw new Error(`Answering a dialog needs the debugger. ${pageModeNote(tabId)}`);
     const dialog = sessions.get(tabId)?.dialog;
     if (!dialog) throw new Error('No dialog is open on this tab.');
     await chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', {
@@ -780,21 +1241,34 @@ async function act(p: ActParams): Promise<unknown> {
     return { ...(await tabSummary(tabId)), detail: `${p.accept === true || String(p.accept) === 'true' ? 'accepted' : 'dismissed'} ${dialog.type} "${dialog.message.slice(0, 120)}"` };
   }
   assertNoDialog(tabId);
+  const throughPage = async (func: (...args: any[]) => any, args: unknown[]) => {
+    const res = await inPage(tabId, func, args);
+    if (res && 'error' in res) throw new Error(res.error);
+    return res;
+  };
   try {
   switch (action) {
     case 'click':
     case 'double_click':
     case 'right_click': {
       const t = await target(tabId, p.ref, p.x, p.y);
-      await mouseClick(tabId, t.x, t.y, action === 'right_click' ? 'right' : 'left', action === 'double_click' ? 2 : 1);
-      detail = `${action.replace('_', ' ')} ${t.desc}${t.covered ? ` (covered by <${t.covered}> — the click landed on that)` : ''}`;
+      const before = await probe(tabId, t.x, t.y);
+      await showPointer(tabId, t.x, t.y, 'click');
+      if (viaDebugger) await mouseClick(tabId, t.x, t.y, action === 'right_click' ? 'right' : 'left', action === 'double_click' ? 2 : 1);
+      else await throughPage(pageSyntheticPointer, [t.x, t.y, action]);
+      // What was under the point: a coordinate alone said nothing, and the same miss got clicked twice.
+      const hit = !p.ref && before?.hit ? ` on ${before.hit}` : '';
+      detail = `${action.replace('_', ' ')} ${t.desc}${hit}${t.covered ? ` (covered by <${t.covered}> — the click landed on that)` : ''}`;
       // A click may start a navigation; give it a moment, then wait for the load.
       await settle(tabId, 10_000, 300);
+      detail += changeNote(before, await probe(tabId));
       break;
     }
     case 'hover': {
       const t = await target(tabId, p.ref, p.x, p.y);
-      await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: t.x, y: t.y });
+      await showPointer(tabId, t.x, t.y, 'move');
+      if (viaDebugger) await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: t.x, y: t.y });
+      else await throughPage(pageSyntheticPointer, [t.x, t.y, 'hover']);
       detail = `hovered ${t.desc}`;
       break;
     }
@@ -803,25 +1277,33 @@ async function act(p: ActParams): Promise<unknown> {
       if (p.ref) {
         const t = await target(tabId, p.ref);
         if (t.password) throw new Error('Refusing to type into a password field. Ask the user to type it themselves.');
-        await mouseClick(tabId, t.x, t.y, 'left', 1);
+        await showPointer(tabId, t.x, t.y, 'click');
+        if (viaDebugger) await mouseClick(tabId, t.x, t.y, 'left', 1);
+        else await throughPage(pageSyntheticPointer, [t.x, t.y, 'click']);
       }
-      if (await focusedIsPassword(tabId)) throw new Error('Refusing to type into a password field. Ask the user to type it themselves.');
-      await cdp(tabId, 'Input.insertText', { text: p.text });
+      if (viaDebugger) {
+        if (await focusedIsPassword(tabId)) throw new Error('Refusing to type into a password field. Ask the user to type it themselves.');
+        await cdp(tabId, 'Input.insertText', { text: p.text });
+      } else await throughPage(pageSyntheticType, [p.text]);
       detail = `typed ${p.text.length} characters`;
       break;
     }
     case 'key': {
       if (!p.keys) throw new Error('"key" needs keys, e.g. "Enter" or "cmd+a" or "Tab Tab Enter".');
-      const presses = p.keys.split(/\s+/).filter(Boolean).map(parseCombo);
-      for (const press of presses) {
-        // Focus can move mid-sequence (Tab), so check before every key that types.
-        if (press.typesText && press.def.key !== '\r' && (await focusedIsPassword(tabId))) {
-          throw new Error('Refusing to type into a password field. Ask the user to type it themselves.');
+      const before = await probe(tabId);
+      if (viaDebugger) {
+        const presses = p.keys.split(/\s+/).filter(Boolean).map(parseCombo);
+        for (const press of presses) {
+          // Focus can move mid-sequence (Tab), so check before every key that types.
+          if (press.typesText && press.def.key !== '\r' && (await focusedIsPassword(tabId))) {
+            throw new Error('Refusing to type into a password field. Ask the user to type it themselves.');
+          }
+          await pressCombo(tabId, press);
         }
-        await pressCombo(tabId, press);
-      }
+      } else await throughPage(pageSyntheticKeys, [p.keys]);
       detail = `pressed ${p.keys}`;
       await settle(tabId, 10_000, 200);
+      detail += changeNote(before, await probe(tabId));
       break;
     }
     case 'scroll': {
@@ -830,23 +1312,28 @@ async function act(p: ActParams): Promise<unknown> {
         detail = `scrolled ${t.desc} into view`;
         break;
       }
-      const metrics = await cdp(tabId, 'Page.getLayoutMetrics');
-      const vp = metrics.cssVisualViewport;
-      const at = p.ref || (p.x !== undefined && p.y !== undefined) ? await target(tabId, p.ref, p.x, p.y) : { x: vp.clientWidth / 2, y: vp.clientHeight / 2 };
       const ticks = Math.max(1, Math.min(Number(p.amount) || 3, 20));
       const dir = (p.direction ?? 'down').toLowerCase();
-      const deltaX = dir === 'left' ? -100 * ticks : dir === 'right' ? 100 * ticks : 0;
-      const deltaY = dir === 'up' ? -100 * ticks : dir === 'down' ? 100 * ticks : 0;
-      await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: at.x, y: at.y, deltaX, deltaY });
+      const point = p.ref || (p.x !== undefined && p.y !== undefined) ? await target(tabId, p.ref, p.x, p.y) : undefined;
+      if (viaDebugger) {
+        const metrics = await cdp(tabId, 'Page.getLayoutMetrics');
+        const vp = metrics.cssVisualViewport;
+        const at = point ?? { x: vp.clientWidth / 2, y: vp.clientHeight / 2 };
+        const deltaX = dir === 'left' ? -100 * ticks : dir === 'right' ? 100 * ticks : 0;
+        const deltaY = dir === 'up' ? -100 * ticks : dir === 'down' ? 100 * ticks : 0;
+        await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: at.x, y: at.y, deltaX, deltaY });
+      } else await throughPage(pageSyntheticScroll, [dir, ticks, point?.x ?? null, point?.y ?? null]);
       await sleep(300);
       detail = `scrolled ${dir} ${ticks}`;
       break;
     }
     case 'drag': {
+      if (!viaDebugger) throw new Error(`Dragging needs the debugger. ${pageModeNote(tabId)}`);
       // Bringing the target into view can scroll the source; measure the source last, without scrolling again.
       let from = await target(tabId, p.ref, p.x, p.y);
       const to = await target(tabId, p.toRef, p.toX, p.toY, 'nearest');
       if (p.ref) from = await target(tabId, p.ref, undefined, undefined, 'none');
+      await showPointer(tabId, from.x, from.y, 'move');
       await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y });
       await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', clickCount: 1 });
       for (let i = 1; i <= 10; i++) {
@@ -859,11 +1346,14 @@ async function act(p: ActParams): Promise<unknown> {
         });
       }
       await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', clickCount: 1 });
+      await showPointer(tabId, to.x, to.y, 'move');
       detail = `dragged ${from.desc} to ${to.desc}`;
       break;
     }
     case 'fill': {
       if (!p.ref) throw new Error('"fill" needs a ref from browser_read_tree.');
+      const t = await target(tabId, p.ref);
+      await showPointer(tabId, t.x, t.y, 'click');
       const res = await inPage(tabId, pageFill, [p.ref, String(p.value ?? '')]);
       if ('error' in res) throw new Error(res.error);
       detail = res.detail;
@@ -877,7 +1367,7 @@ async function act(p: ActParams): Promise<unknown> {
     if (!(err instanceof DialogOpenError)) throw err;
     return { ...(await tabSummary(tabId)), detail: `${detail || action} → ${err.message}`, dialogOpen: true };
   }
-  return { ...(await tabSummary(tabId)), detail };
+  return { ...(await tabSummary(tabId)), detail, ...(viaDebugger ? {} : { note: pageModeNote(tabId) }) };
 }
 
 // ── Screenshots ────────────────────────────────────────────────────────────
@@ -891,27 +1381,59 @@ async function screenshot(tabId?: unknown) {
     throw new Error('Only the tab showing in its window can be captured. Omit tabId for the tab the user is looking at, or ask them to switch to it.');
   }
   const id = tab.id!;
-  await attach(id);
+  // The drawn cursor is for the user; keep it out of what the model sees.
+  await chrome.scripting.executeScript({ target: { tabId: id }, func: pagePointer, args: [0, 0, 'hide'] }).catch(() => undefined);
+  if (!(await attachOrPage(id))) {
+    // No debugger: capture what the window shows, then scale it like the debugger path below.
+    const vp = await inPage(id, pageViewport, []);
+    const scale = shotScaleFor(vp.width, vp.height);
+    const width = Math.round(vp.width * scale);
+    const height = Math.round(vp.height * scale);
+    const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 70 });
+    shotScale.set(id, scale);
+    return { tabId: id, url: tab.url, title: tab.title, width, height, dataUrl: await resizeJpeg(raw, width, height), note: pageModeNote(id) };
+  }
   const metrics = await cdp(id, 'Page.getLayoutMetrics');
   const vp = metrics.cssVisualViewport;
   assertNoDialog(id);
   // Device pixels per CSS pixel, from the browser (a page can overwrite window.devicePixelRatio).
   const dpr = metrics.visualViewport?.clientWidth && vp.clientWidth ? metrics.visualViewport.clientWidth / vp.clientWidth : 1;
-  // Clip to the visible viewport at CSS-pixel scale, so a point in the image
-  // is the same x/y browser_act dispatches.
+  const scale = shotScaleFor(vp.clientWidth, vp.clientHeight);
+  // Clip to the visible viewport, at `scale` image pixels per CSS pixel; browser_act divides x/y by the same scale.
   const shot = await cdp<{ data: string }>(id, 'Page.captureScreenshot', {
     format: 'jpeg',
     quality: 70,
-    clip: { x: vp.pageX, y: vp.pageY, width: vp.clientWidth, height: vp.clientHeight, scale: 1 / dpr },
+    clip: { x: vp.pageX, y: vp.pageY, width: vp.clientWidth, height: vp.clientHeight, scale: scale / dpr },
   });
+  shotScale.set(id, scale);
   return {
     tabId: id,
     url: tab.url,
     title: tab.title,
-    width: Math.round(vp.clientWidth),
-    height: Math.round(vp.clientHeight),
+    width: Math.round(vp.clientWidth * scale),
+    height: Math.round(vp.clientHeight * scale),
     dataUrl: `data:image/jpeg;base64,${shot.data}`,
   };
+}
+
+/**
+ * How much to shrink a screenshot. Model providers downscale large images before the model
+ * sees them (Anthropic past 1568px on the long edge or ~1.15 megapixels), and the model's
+ * x/y then point at the smaller picture: a 1890px-wide viewport's clicks landed short.
+ * Shrinking here keeps the image the model sees and the x/y we map back the same size.
+ */
+function shotScaleFor(width: number, height: number): number {
+  return Math.min(1, MAX_SHOT_EDGE / Math.max(width, height), Math.sqrt(MAX_SHOT_PIXELS / (width * height)));
+}
+
+async function resizeJpeg(dataUrl: string, width: number, height: number): Promise<string> {
+  const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const canvas = new OffscreenCanvas(width, height);
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, width, height);
+  const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 })).arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:image/jpeg;base64,${btoa(binary)}`;
 }
 
 // ── Dispatch ───────────────────────────────────────────────────────────────
@@ -955,8 +1477,8 @@ export async function handleBrowserRequest(method: string, params: any): Promise
         await chrome.tabGroups.update(newGroup, { title: GROUP_TITLE, color: 'blue' });
         await chrome.windows.update(tab.windowId, { focused: true }).catch(() => undefined);
       }
-      await settle(tab.id!, 30_000, 300);
-      return tabSummary(tab.id!);
+      const settled = await settle(tab.id!, 30_000, 300);
+      return { ...(await tabSummary(tab.id!)), ...(settled ? {} : { loading: true, note: WAITING_ON_USER }) };
     }
     case 'tabs.close': {
       const closeId = tabIdOf(params.tabId);
@@ -973,8 +1495,10 @@ export async function handleBrowserRequest(method: string, params: any): Promise
       if (where === 'back') await chrome.tabs.goBack(tab.id!);
       else if (where === 'forward') await chrome.tabs.goForward(tab.id!);
       else await chrome.tabs.update(tab.id!, { url: checkUrl(where) });
-      await settle(tab.id!, 30_000, 300);
-      return tabSummary(tab.id!);
+      const settled = await settle(tab.id!, 30_000, 300);
+      // A new page has no recorder; start it again where the tools work through the page.
+      if (pageModeTabs.has(tab.id!)) await inPage(tab.id!, pageInstallRecorder, [MAX_BODY_CHARS], 'MAIN').catch(() => undefined);
+      return { ...(await tabSummary(tab.id!)), ...(settled ? {} : { loading: true, note: WAITING_ON_USER }) };
     }
     case 'page.read': {
       const tab = await resolveTab(params.tabId);
@@ -1005,7 +1529,11 @@ export async function handleBrowserRequest(method: string, params: any): Promise
       return act(params);
     case 'page.eval': {
       const tab = await actTab(params.tabId);
-      await attach(tab.id!);
+      if (!(await attachOrPage(tab.id!))) {
+        const r = await inPage(tab.id!, pageEval, [String(params.expression ?? '')], 'MAIN');
+        if ('error' in r) throw new Error(`${r.error}. ${pageModeNote(tab.id!)}`);
+        return { ...(await tabSummary(tab.id!)), result: r.value.slice(0, MAX_EVAL_CHARS), truncated: r.value.length > MAX_EVAL_CHARS, note: pageModeNote(tab.id!) };
+      }
       assertNoDialog(tab.id!);
       const r = await cdp(tab.id!, 'Runtime.evaluate', {
         expression: String(params.expression ?? ''),
@@ -1021,8 +1549,16 @@ export async function handleBrowserRequest(method: string, params: any): Promise
     }
     case 'page.console': {
       const tab = await resolveTab(params.tabId);
-      const session = await attach(tab.id!);
       const pattern = params.pattern ? String(params.pattern).toLowerCase() : '';
+      if (!(await attachOrPage(tab.id!))) {
+        const rec = await inPage(tab.id!, pageReadRecorder, [], 'MAIN');
+        const entries = (rec?.console ?? [])
+          .filter((e) => !params.onlyErrors || e.level === 'error')
+          .filter((e) => !pattern || String(e.text).toLowerCase().includes(pattern))
+          .slice(-(Number(params.limit) || 50));
+        return { tabId: tab.id, url: tab.url, entries, note: `Recorded since ${rec ? new Date(rec.since).toISOString() : 'now'}. ${pageModeNote(tab.id!)}` };
+      }
+      const session = sessions.get(tab.id!)!;
       const entries = session.console
         .filter((e) => !params.onlyErrors || e.level === 'error')
         .filter((e) => !pattern || e.text.toLowerCase().includes(pattern))
@@ -1037,7 +1573,23 @@ export async function handleBrowserRequest(method: string, params: any): Promise
     }
     case 'page.network': {
       const tab = await resolveTab(params.tabId);
-      const session = await attach(tab.id!);
+      if (!(await attachOrPage(tab.id!))) {
+        const rec = await inPage(tab.id!, pageReadRecorder, [], 'MAIN');
+        const all = rec?.network ?? [];
+        if (params.requestId) {
+          const entry = all.find((e) => e.requestId === String(params.requestId));
+          if (!entry) throw new Error(`No recorded request ${params.requestId} on this page.`);
+          const text = String(entry.body ?? '');
+          return { requestId: entry.requestId, requestBody: entry.requestBody, body: text.slice(0, MAX_BODY_CHARS), truncated: text.length > MAX_BODY_CHARS };
+        }
+        const pattern = params.urlPattern ? String(params.urlPattern).toLowerCase() : '';
+        const requests = all
+          .filter((e) => !pattern || String(e.url).toLowerCase().includes(pattern))
+          .slice(-(Number(params.limit) || 50))
+          .map(({ body, requestBody, ...e }) => ({ ...e, hasBody: body !== undefined, ...(requestBody ? { requestBody: String(requestBody).slice(0, 500) } : {}) }));
+        return { tabId: tab.id, url: tab.url, requests, note: `Fetch and XHR recorded since ${rec ? new Date(rec.since).toISOString() : 'now'}; pass requestId for a response body. ${pageModeNote(tab.id!)}` };
+      }
+      const session = sessions.get(tab.id!)!;
       if (params.requestId) {
         const body = await cdp(tab.id!, 'Network.getResponseBody', { requestId: String(params.requestId) });
         const text = body.base64Encoded ? '[binary body]' : String(body.body ?? '');
@@ -1053,6 +1605,19 @@ export async function handleBrowserRequest(method: string, params: any): Promise
         requests,
         note: 'Only requests since WorkspaceGPT started watching this tab. Reload the page to capture from the start; pass requestId for a response body.',
       };
+    }
+    case 'session.release': {
+      // A run ended: detach from the tabs it drove and take the drawn cursor off them.
+      const ids: number[] = Array.isArray(params.tabIds) ? params.tabIds.map(Number).filter(Number.isInteger) : [...sessions.keys()];
+      for (const id of ids) {
+        const session = sessions.get(id);
+        if (session?.idle) clearTimeout(session.idle);
+        sessions.delete(id);
+        await markAttached(id, false);
+        await chrome.debugger.detach({ tabId: id }).catch(() => undefined);
+        await chrome.scripting.executeScript({ target: { tabId: id }, func: pagePointer, args: [0, 0, 'remove'] }).catch(() => undefined);
+      }
+      return { released: ids.length };
     }
     default:
       throw new Error(`Unknown browser method: ${method}`);

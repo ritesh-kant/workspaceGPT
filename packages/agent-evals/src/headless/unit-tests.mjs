@@ -6346,7 +6346,9 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     const av = (browser) => ({ codebase: true, confluence: true, tickets: true, browser });
     const on = createStructuredPrompt([], 'x', '', undefined, null, { ...base, toolAvailability: av(true) });
     assert.ok(on.includes('reproduces in the browser') && on.includes('browser_network'));
+    assert.ok(on.includes('Reproducing it is where the investigation starts, not where it ends'), 'a repro is not the end of a Debug run');
     assert.ok(on.includes('leave the tab open, ask with `ask_user` to sign in there'), 'a tab waiting on the user is not closed');
+    assert.ok(on.includes('ask the user in chat with `ask_user`') && on.includes('never end the run with the question left in the report'), 'a hard-to-undo step is asked, not left in the report');
     const off = createStructuredPrompt([], 'x', '', undefined, null, { ...base, toolAvailability: av(false) });
     assert.ok(off.includes('Chrome is not connected') && !off.includes('reproduces in the browser'));
     assert.ok(!createStructuredPrompt([], 'x', '', undefined, null, { ...base, toolAvailability: av(undefined) }).includes('Chrome is not connected'), 'host without the browser says nothing');
@@ -6378,6 +6380,45 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     const green = d.noteCommand({ command: 'pnpm exec jest calc', exitCode: 0 });
     assert.equal(green[0].kind, 'repro-pass');
     assert.deepEqual(d.noteCommand({ command: 'pnpm exec eslint x', exitCode: 0 }), [], 'only a command that failed before counts as the repro');
+  });
+
+  await t('DebugTracker records what a live page sent and logged as evidence that can settle a hypothesis', () => {
+    const d = new DebugTracker();
+    const list = d.noteBrowser('browser_network', {
+      url: 'https://shop.test/checkout',
+      requests: [
+        { method: 'POST', url: 'https://bff.test/graphql?op=ValidateZipcode', status: 200 },
+        { method: 'POST', url: 'https://bff.test/graphql?op=UpdateCart', status: 500 },
+      ],
+    });
+    assert.equal(list.kind, 'observed');
+    assert.match(list.text, /2 request\(s\).*1 failed.*UpdateCart → 500/);
+    const body = d.noteBrowser('browser_network', { body: '{"isValidState":true}', requestBody: '{"zip":"20000"}' }, { requestId: 'p3' });
+    assert.match(body.text, /response body of request p3 \(sent: \{"zip":"20000"\}\): \{"isValidState":true\}/);
+    assert.match(d.noteBrowser('browser_console', { url: 'u', entries: [{ level: 'log', text: 'hi' }, { level: 'error', text: 'TypeError: x is undefined' }] }).text, /1 error\(s\) of 2: \[error\] TypeError/);
+    assert.match(d.noteBrowser('browser_eval', { result: '"step-2"' }, { expression: 'store.activeStep' }).text, /`store.activeStep` → "step-2"/);
+    assert.equal(d.noteBrowser('browser_console', { entries: [] }), null, 'an empty log records nothing');
+    assert.equal(d.noteBrowser('browser_network', { error: 'x' }), null);
+    d.addHypothesis('the step never advances after a 200', 'activeStep stays at 2');
+    assert.equal(d.resolve('H1', 'confirmed', ['E4']).hypothesis.status, 'confirmed', 'browser evidence settles a hypothesis');
+    assert.ok(!d.claimIssues('### Root cause — confirmed\nE4').some((i) => /rests on reading code/.test(i)), 'an observation is something that ran');
+  });
+
+  await t('a ticket has a web repro when its own text points at a page, never because of its tracker link', () => {
+    const { ticketHasWebRepro } = dbg;
+    assert.equal(ticketHasWebRepro({ reproSteps: '1. Go to https://www.mms.com/en-fr\n2. Pick Point Relais' }), true);
+    assert.equal(ticketHasWebRepro({ description: 'x', comments: [{ text: 'still on http://staging.shop.test/checkout' }] }), true);
+    assert.equal(ticketHasWebRepro({ url: 'https://dev.azure.com/org/_workitems/edit/1', description: 'NullReferenceException in the export job' }), false);
+    assert.equal(ticketHasWebRepro(null), false);
+  });
+
+  await t('a Debug report headed Done must have fixed something and confirmed the cause', () => {
+    const d = new DebugTracker();
+    const reproOnly = '## ✅ Done — Reproduced bug #1453249 live in Chrome\n\n### Root cause\nNot yet isolated.';
+    assert.deepEqual(d.doneIssues(reproOnly, 0), ['nothing was changed in this run or this chat, so the bug is not fixed', 'the root cause is not confirmed']);
+    assert.deepEqual(d.doneIssues('## ✅ Done — fixed\n### Root cause — confirmed\nE1', 2), []);
+    assert.deepEqual(d.doneIssues('## ⚠️ Root cause not found — x\n### Root cause — not found', 0), [], 'an honest heading is left alone');
+    assert.deepEqual(d.doneIssues('## ⚠️ Partially done — x', 0), []);
   });
 
   await t('the hypothesis ledger: a hypothesis must predict something, and is settled only against evidence the run recorded', () => {

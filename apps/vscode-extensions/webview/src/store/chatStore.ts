@@ -127,6 +127,8 @@ export interface TurnSummary {
   diagnostics?: string;
   /** The turn ran in Plan mode — its answer is a plan, and the card offers "Run plan". */
   plan?: boolean;
+  /** A web bug's Debug run ended without a confirmed cause and never opened the browser — the card offers "Reproduce in Chrome". */
+  reproduceInBrowser?: { ticketId: string; chromeConnected: boolean };
 }
 
 export interface ShippedTurn {

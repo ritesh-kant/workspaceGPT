@@ -122,6 +122,7 @@ import {
 import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgroundJobs';
 import { browserRequest, isBrowserConnected, isPanelSession } from './browser/browserBridge';
 import { BROWSER_CHANGE_TOOL_NAMES } from '../workers/model/toolScope';
+import { claimedRootCauseStatus, ticketHasWebRepro } from '../workers/model/debugState';
 import { isControlChromeEnabled } from './browser/browserPrefs';
 import { loadWorkspaceRules, newSubfolderRulesState, SUBFOLDER_RULES_TOOLS, subfolderRulesFor, SubfolderRulesState } from './agent/rulesFiles';
 import { memoryEnabled, rememberChoice, saveMemory, userMemoryBlock } from './agent/userMemory';
@@ -328,6 +329,12 @@ interface SessionRun {
    * a failed turn, not a quiet success (see describeTurnOutcome).
    */
   turnStepsPosted: number;
+  /** Chrome tabs this run's browser tools touched; the extension detaches its debugger from them when the run ends. */
+  browserTabs: Set<number>;
+  /** An earlier turn of this chat read the code (its metrics said so): later turns skip the pre-loop scout. */
+  codeExplored: boolean;
+  /** Browser tool calls the current turn made — none on a web bug's Debug report offers "Reproduce in Chrome". */
+  turnBrowserCalls: number;
   /**
    * The user's own message asked for a repo-wide check ("run the full test
    * suite"). Set per turn: it lifts the unscoped-verification refusal, since a
@@ -800,6 +807,9 @@ export class ChatService {
         turnRefs: [],
         seenIds: new Set(),
         turnStepsPosted: 0,
+        browserTabs: new Set(),
+        codeExplored: false,
+        turnBrowserCalls: 0,
         userAskedRepoWide: false,
         sessionWritesApplied: 0,
         lastShip: null,
@@ -1113,6 +1123,7 @@ export class ChatService {
       run.turnFileOriginals.clear();
       run.turnRefs.length = 0;
       run.turnStepsPosted = 0;
+      run.turnBrowserCalls = 0;
       run.turnFirstCheckpointSha = null;
       run.writeSeq = 0;
       run.checkRuns.clear();
@@ -1989,7 +2000,7 @@ export class ChatService {
       case 'browser_screenshot': {
         // Same shape as a ticket's images, so the worker sends it to the model
         // as an image part instead of base64 in the tool text.
-        const shot = await browserRequest<{ tabId: number; url: string; title: string; width: number; height: number; dataUrl: string }>(
+        const shot = await browserRequest<{ tabId: number; url: string; title: string; width: number; height: number; dataUrl: string; note?: string }>(
           'page.screenshot',
           { tabId: args?.tabId }
         );
@@ -1998,6 +2009,7 @@ export class ChatService {
           url: shot.url,
           title: shot.title,
           size: `${shot.width}x${shot.height} (browser_act x/y are in these pixels)`,
+          ...(shot.note ? { note: shot.note } : {}),
           images: [{ name: 'screenshot.jpg', dataUrl: shot.dataUrl }],
         };
       }
@@ -3619,6 +3631,7 @@ Query: "${query}"`;
           fullAccess: run.permission === 'full',
           planMode,
           turnAction: run.turnAction,
+          codeExploredInChat: run.codeExplored,
           linkedConfluencePageId: run.linkedConfluencePageId ?? undefined,
           // Read BEFORE this turn's own writes land, so it counts only earlier
           // turns — exactly what the honesty stamp needs to spare a recap.
@@ -3703,6 +3716,11 @@ Query: "${query}"`;
           modelWorker.terminate();
           // Debug mode: any probe the run left behind comes out of the user's files.
           void this.cleanupProbes(run);
+          // Let go of Chrome: the "started debugging this browser" bar goes away with the run, not minutes later.
+          if (run.browserTabs.size && isBrowserConnected()) {
+            void browserRequest('session.release', { tabIds: [...run.browserTabs] }).catch(() => undefined);
+          }
+          run.browserTabs.clear();
 
           if (!error || streamedContent.trim().length > 0) {
             if (error) {
@@ -3756,6 +3774,17 @@ Query: "${query}"`;
                 shippable,
                 ...(workerDiagnostics ? { diagnostics: workerDiagnostics } : {}),
                 ...(spikeDocPath && ticketContext ? { spikeDoc: { path: spikeDocPath, ticketId: ticketContext.id } } : {}),
+                // A web bug's Debug run that ended without a confirmed cause and never
+                // opened the browser — the worker sends it back once when Chrome is
+                // connected; this is what is left after that, or when it is not.
+                ...(debugMode &&
+                ticketContext &&
+                run.turnBrowserCalls === 0 &&
+                run.turnFilesChanged.size === 0 &&
+                ticketHasWebRepro(ticketContext) &&
+                claimedRootCauseStatus((fullContent || streamedContent).trim()) !== 'confirmed'
+                  ? { reproduceInBrowser: { ticketId: ticketContext.id, chromeConnected: isBrowserConnected() } }
+                  : {}),
                 // A plan-mode tool turn's answer IS a plan — the card offers "Run plan".
                 ...(planMode && codebaseRoots?.length ? { plan: true } : {}),
                 // Carried so "Create PR" can re-arm itself from the persisted
@@ -3875,6 +3904,8 @@ Query: "${query}"`;
             modelMs?: number;
             toolMs?: number;
             toolMsByName?: Record<string, { ms: number; calls: number }>;
+            /** 'metrics' only: the pre-loop scout's explorer stats. */
+            exploration?: { explorers?: number };
             turns?: number;
             toolCallsExecuted?: number;
             /** metrics: this turn's token spend, carried onto the turn summary. */
@@ -4007,6 +4038,13 @@ Query: "${query}"`;
                     if (toolsInFlight === 0) this.postStatus(run, '');
                   })
                   .then((toolResult) => {
+                    // Tabs this run drove: their debugger is let go when it ends (settle below).
+                    if (result.name!.startsWith('browser_')) {
+                      run.turnBrowserCalls++;
+                      for (const id of [result.arguments?.tabId, (toolResult as { tabId?: unknown } | null)?.tabId]) {
+                        if (Number.isInteger(Number(id)) && id !== undefined && id !== null && id !== '') run.browserTabs.add(Number(id));
+                      }
+                    }
                     const summary = JSON.stringify(toolResult);
                     console.log(`[codebase-tool] ← ${result.name}: ${summary.length} chars${summary.length <= 300 ? ` — ${summary}` : ''}`);
                     // Provenance, recorded while the result is still structured:
@@ -4169,6 +4207,10 @@ Query: "${query}"`;
                 console.log('[agent-metrics]', JSON.stringify(result));
                 // Stashed on the run so the turn summary below can carry the
                 // token count out to the webview for an estimated credit cost.
+                // This chat has now read the code — the next turn needs no scout (see codeExploredInChat).
+                if (Number(result.exploration?.explorers) > 0 || ['read_file', 'search_codebase', 'find_symbol', 'explore'].some((n) => result.toolMsByName?.[n])) {
+                  run.codeExplored = true;
+                }
                 run.turnPromptTokens = Number(result.promptTokens) || 0;
                 run.turnCompletionTokens = Number(result.completionTokens) || 0;
                 addCreditTally(run.turnCredits, result.credits);

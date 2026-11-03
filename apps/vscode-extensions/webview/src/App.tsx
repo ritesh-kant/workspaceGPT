@@ -1026,6 +1026,7 @@ const App: React.FC = () => {
             spikeDoc: message.spikeDoc,
             diagnostics: message.diagnostics,
             plan: !!message.plan,
+            reproduceInBrowser: message.reproduceInBrowser,
           });
           break;
         case MESSAGE_TYPES.AGENT_WRITE_REVIEW:
@@ -1071,6 +1072,13 @@ const App: React.FC = () => {
       }
     };
 
+    // A live step or status from the host means a run is in flight for this chat, whether or
+    // not this webview started it: a stored session opens idle, and a webview rebuilt mid-run
+    // starts idle too. Without this the steps arrive under no stop button and no status row.
+    const markRunActive = () => {
+      const turn = useChatStore.getState();
+      if (!turn.isLoading && !turn.isStreaming) setIsLoading(true);
+    };
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
@@ -1179,9 +1187,11 @@ const App: React.FC = () => {
           break;
         }
         case MESSAGE_TYPES.RETRIEVAL_STATUS:
+          markRunActive();
           setStatusText(message.text || '');
           break;
         case MESSAGE_TYPES.AGENT_STEP:
+          markRunActive();
           if (message.step) {
             addAgentStep({ ...message.step, ...(message.id ? { id: message.id } : {}) });
           } else if (message.text) {
@@ -1213,6 +1223,7 @@ const App: React.FC = () => {
             spikeDoc: message.spikeDoc,
             diagnostics: message.diagnostics,
             plan: !!message.plan,
+            reproduceInBrowser: message.reproduceInBrowser,
           });
           break;
         case MESSAGE_TYPES.AGENT_REVERT_DONE: {
@@ -2604,6 +2615,36 @@ const App: React.FC = () => {
    * autonomous block's "nobody will answer" would be false. The page itself is
    * still reviewed on a card before anything reaches Confluence.
    */
+  /**
+   * "Reproduce in Chrome" on a web bug's Debug report: the follow-up a user had
+   * to type before ("use chrome to reproduce it"), sent in Debug mode through the
+   * ordinary send path so it continues the same investigation.
+   */
+  const handleReproduceInBrowser = (ticketId: string) => {
+    if (isLoading || isStreaming) return;
+    const promptText = `Reproduce #${ticketId} in Chrome: open the ticket's URL, follow its steps, capture the failing request and any console error, then continue to the root cause.`;
+    if (currentSessionId) {
+      stoppedSessionsRef.current.delete(currentSessionId);
+      debugSessionsRef.current.add(currentSessionId);
+    }
+    resetStreamBuffer();
+    addMessage({ content: promptText, isUser: true, timestamp: Date.now() });
+    setIsLoading(true);
+    setIsStreaming(false);
+    vscode.postMessage({
+      type: MESSAGE_TYPES.SEND_MESSAGE,
+      sessionId: currentSessionId,
+      message: promptText,
+      modelId: selectedModelProvider?.selectedModel,
+      provider: selectedModelProvider.provider,
+      apiKey: selectedModelProvider?.apiKey,
+      contextSelection: contextSelection,
+      assistantMode,
+      ...modeFlags(),
+      debug: true,
+    });
+  };
+
   const handlePublishSpike = (doc: { path: string; ticketId: string }) => {
     if (isLoading || isStreaming) return;
     const promptText = publishSpikePrompt(doc.path, doc.ticketId);
@@ -3020,6 +3061,12 @@ const App: React.FC = () => {
                   onPublishSpike={
                     !message.isUser && message.turnSummary?.spikeDoc && !isLoading && !isStreaming
                       ? handlePublishSpike
+                      : undefined
+                  }
+                  onReproduceInBrowser={
+                    // Only the LAST answer, in Work mode: an older report was already followed up.
+                    !message.isUser && message.turnSummary?.reproduceInBrowser && assistantMode === 'work' && index === messages.length - 1 && !isLoading && !isStreaming
+                      ? handleReproduceInBrowser
                       : undefined
                   }
                   onRunPlan={

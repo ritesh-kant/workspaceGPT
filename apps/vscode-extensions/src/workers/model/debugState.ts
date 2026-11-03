@@ -20,7 +20,7 @@
  * Pure and vscode-free: unit-tested headlessly, like autoVerify.ts.
  */
 
-export type EvidenceKind = 'repro-fail' | 'repro-pass' | 'probe' | 'counterfactual' | 'note';
+export type EvidenceKind = 'repro-fail' | 'repro-pass' | 'probe' | 'counterfactual' | 'observed' | 'note';
 
 export interface Evidence {
   id: string;
@@ -68,6 +68,17 @@ export function claimedRootCauseStatus(answer: string): RootCauseStatus | null {
   if (/probable|likely|suspected|hypothes/i.test(heading)) return 'probable';
   if (/confirmed/i.test(heading)) return 'confirmed';
   return null;
+}
+
+/**
+ * Does the ticket point at a web page to reproduce on — a URL in its repro steps,
+ * description, system info or comments (never its own tracker link)? Only ever
+ * ADDS a nudge or a "Reproduce in Chrome" button; nothing is withheld on a miss.
+ */
+export function ticketHasWebRepro(t: { reproSteps?: string; description?: string; systemInfo?: string; comments?: { text: string }[] } | null | undefined): boolean {
+  if (!t) return false;
+  const text = [t.reproSteps, t.description, t.systemInfo, ...(t.comments ?? []).map((c) => c.text)].filter(Boolean).join('\n');
+  return /https?:\/\/[^\s"'<>]+/i.test(text);
 }
 
 export interface CommandResultLike {
@@ -143,6 +154,50 @@ export class DebugTracker {
       recorded.push(this.addEvidence('probe', `probe ${id}${p.label ? ` (${p.label})` : ''}${p.path ? ` in ${p.path}` : ''} fired ${p.count}×: ${p.samples.join(' | ')}`));
     }
     return recorded;
+  }
+
+  /**
+   * What a live page actually sent, received or logged (browser_network,
+   * browser_console, browser_eval) — the repro of a web bug runs in the browser,
+   * not in a command, and was never recorded: a run that captured every
+   * request of the failing checkout had no evidence id to settle a hypothesis
+   * with. Facts from the tool result only.
+   */
+  noteBrowser(tool: string, result: unknown, args: { requestId?: unknown; expression?: unknown } = {}): Evidence | null {
+    if (!result || typeof result !== 'object') return null;
+    const r = result as Record<string, any>;
+    const short = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+    if (tool === 'browser_network' && args.requestId !== undefined && typeof r.body === 'string') {
+      return this.addEvidence('observed', `response body of request ${short(args.requestId, 40)}${r.requestBody ? ` (sent: ${short(r.requestBody, 120)})` : ''}: ${short(r.body, 300)}`);
+    }
+    if (tool === 'browser_network' && Array.isArray(r.requests) && r.requests.length) {
+      const failed = r.requests.filter((q: any) => q.failed || Number(q.status) >= 400);
+      const lines = (failed.length ? failed : r.requests).slice(-5).map((q: any) => `${q.method ?? ''} ${short(q.url, 90)} → ${q.failed ? `failed (${short(q.failed, 40)})` : q.status ?? 'pending'}`);
+      return this.addEvidence('observed', `${r.requests.length} request(s) on ${short(r.url, 80)}; ${failed.length ? `${failed.length} failed` : 'none failed'}: ${lines.join('; ')}`);
+    }
+    if (tool === 'browser_console' && Array.isArray(r.entries) && r.entries.length) {
+      const errors = r.entries.filter((e: any) => e.level === 'error');
+      const shown = (errors.length ? errors : r.entries).slice(-3).map((e: any) => `[${e.level}] ${short(e.text, 140)}`);
+      return this.addEvidence('observed', `console on ${short(r.url, 80)}: ${errors.length} error(s) of ${r.entries.length}: ${shown.join(' | ')}`);
+    }
+    if (tool === 'browser_eval' && r.result !== undefined) {
+      return this.addEvidence('observed', `in the page, \`${short(args.expression, 120)}\` → ${short(r.result, 300)}`);
+    }
+    return null;
+  }
+
+  /**
+   * A Debug report headed "Done" says the bug is FIXED (DEBUG_REPORT_FORMAT). Observed
+   * live: "## ✅ Done — Reproduced bug #1453249" over a "Root cause: not yet isolated"
+   * section, no edit in the run or the chat, and a "set a breakpoint in React DevTools"
+   * hand-off the run could have done itself. Empty when the heading is not "Done".
+   */
+  doneIssues(answer: string, writesInSession: number): string[] {
+    if (!/^##\s+(?:[\p{Extended_Pictographic}️‍]+\s*)?done\b/imu.test(answer)) return [];
+    const issues: string[] = [];
+    if (writesInSession === 0) issues.push('nothing was changed in this run or this chat, so the bug is not fixed');
+    if (claimedRootCauseStatus(answer) !== 'confirmed') issues.push('the root cause is not confirmed');
+    return issues;
   }
 
   /** git_log / git_blame / git_bisect produced a result: the history was looked at. */
@@ -248,7 +303,7 @@ export class DebugTracker {
     if (this.regression && !this.historyChecked) {
       issues.push('it was reported as something that used to work, but git history (git_log / git_blame / git_bisect) was never checked for the commit that introduced it');
     }
-    if (this.writes === 0 && !this.evidence.some((e) => e.kind === 'repro-fail' || e.kind === 'probe')) {
+    if (this.writes === 0 && !this.evidence.some((e) => e.kind === 'repro-fail' || e.kind === 'probe' || e.kind === 'observed')) {
       issues.push('nothing executed backs the cause — it rests on reading code');
     }
     return issues;

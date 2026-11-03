@@ -355,6 +355,7 @@ interface ChatMessageProps {
   onPublishSpike?: (doc: { path: string; ticketId: string }) => void;
   /** Present on the latest plan-mode answer — carries the plan out in Agent mode. */
   onRunPlan?: () => void;
+  onReproduceInBrowser?: (ticketId: string) => void;
   /**
    * Rewrite this user message and re-ask from here. Absent while a run is in
    * flight (forking a live conversation would race the answer being streamed).
@@ -390,6 +391,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   onResume,
   onPublishSpike,
   onRunPlan,
+  onReproduceInBrowser,
   onEdit,
   onStageFiles,
   onEditingChange,
@@ -666,6 +668,23 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
               </button>
             </div>
           )}
+          {turnSummary?.reproduceInBrowser && onReproduceInBrowser && (
+            <div className="spike-publish">
+              <span className="spike-publish-text">
+                {turnSummary.reproduceInBrowser.chromeConnected
+                  ? 'The ticket has a web reproduction this run never opened.'
+                  : 'The ticket has a web reproduction, but Chrome is not connected. Open Chrome with the WorkspaceGPT extension on, then:'}
+              </span>
+              <button
+                type="button"
+                className="error-resume-button"
+                onClick={() => onReproduceInBrowser(turnSummary.reproduceInBrowser!.ticketId)}
+                title="Continue this investigation in Debug mode: open the ticket's URL in your Chrome, follow its steps, and read the failing request and console errors"
+              >
+                Reproduce in Chrome
+              </button>
+            </div>
+          )}
           {turnSummary?.plan && onRunPlan && (
             <div className="spike-publish">
               <span className="spike-publish-text">Happy with this plan? Carry it out.</span>
@@ -779,6 +798,7 @@ export default React.memo(ChatMessage, (prev, next) => (
   !!prev.onResume === !!next.onResume &&
   !!prev.onPublishSpike === !!next.onPublishSpike &&
   !!prev.onRunPlan === !!next.onRunPlan &&
+  !!prev.onReproduceInBrowser === !!next.onReproduceInBrowser &&
   !!prev.onEdit === !!next.onEdit &&
   !!prev.onStageFiles === !!next.onStageFiles
 ));
