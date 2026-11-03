@@ -412,3 +412,6 @@
   .call-note-when { font-size: 11px; line-height: 1.5; }
   .call-note-actions { margin-left: 32px; }
 }
+
+.call-note-corrected { text-decoration: underline dotted; text-underline-offset: 3px; }
+.call-note-corrections { margin: 0 0 8px; font-size: 12px; opacity: 0.8; }

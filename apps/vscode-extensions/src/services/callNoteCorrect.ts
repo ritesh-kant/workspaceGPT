@@ -13,7 +13,7 @@ import * as path from 'path';
 import type { CallNoteTurn } from './callNotes';
 
 export interface OrgVocabulary {
-  /** First and last names from "Assigned To / Created By / Changed By", as written in the index. */
+  /** First and last names from "Assigned To / Created By / Changed By", plus names that only appear in page and ticket text. */
   names: string[];
   /** Capitalized words from item and page titles that recur (product, system and team terms). */
   terms: string[];
@@ -34,6 +34,10 @@ export interface Candidate {
 
 const SOURCES = ['ado', 'confluence', 'jira'];
 const HEAD_BYTES = 6000;
+/** How much of each page or ticket is read for names that people mention in its text. */
+const BODY_BYTES = 200_000;
+/** A name in text must be capitalized mid-sentence in this many items, and never written in lower case. */
+const MIN_MENTIONS = 3;
 const MAX_FILES = 6000;
 const MAX_CANDIDATES = 30;
 const CACHE_MS = 10 * 60_000;
@@ -45,13 +49,16 @@ export async function readOrgVocabulary(storageRoot: string): Promise<OrgVocabul
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.vocab;
   const names = new Set<string>();
   const termCounts = new Map<string, number>();
+  const mentions = new Map<string, number>();
+  const lower = new Set<string>();
   let scanned = 0;
   for (const source of SOURCES) {
     const dir = path.join(storageRoot, source, 'mds');
     const files = await fsp.readdir(dir).catch(() => [] as string[]);
     for (const file of files) {
       if (!file.endsWith('.md') || scanned++ >= MAX_FILES) continue;
-      const head = await readHead(path.join(dir, file));
+      const text = await readHead(path.join(dir, file), BODY_BYTES);
+      const head = text.slice(0, HEAD_BYTES);
       for (const m of head.matchAll(/\*\*(?:Assigned To|Created By|Changed By)\*\* \| ([^|\n]+)\|/g)) {
         const raw = m[1].replace(/\(.*?\)/g, '').trim();
         if (!raw || /^(unassigned|n\/a)$/i.test(raw)) continue;
@@ -60,19 +67,24 @@ export async function readOrgVocabulary(storageRoot: string): Promise<OrgVocabul
       }
       const title = /^# (.+)$/m.exec(head)?.[1] ?? '';
       for (const w of title.match(/\b[A-Z][A-Za-z0-9]{3,}\b/g) ?? []) termCounts.set(w, (termCounts.get(w) ?? 0) + 1);
+      for (const w of new Set(text.match(/(?<=[a-z,;:] )[A-Z][a-z]{3,11}\b/g) ?? [])) mentions.set(w, (mentions.get(w) ?? 0) + 1);
+      // Standalone words only: a name inside an email, URL or path (shobhit.k@…) is not evidence it is an ordinary word.
+      for (const w of text.match(/(?<![\w.@/_-])[a-z]{4,12}(?![\w.@/_-])/g) ?? []) lower.add(w);
     }
   }
+  // People are named in status pages and ticket text far more often than they are assigned items.
+  for (const [w, n] of mentions) if (n >= MIN_MENTIONS && !lower.has(w.toLowerCase())) names.add(w);
   const vocab = { names: [...names], terms: [...termCounts].filter(([, n]) => n >= 2).map(([w]) => w) };
   cache.set(storageRoot, { at: Date.now(), vocab });
   return vocab;
 }
 
-async function readHead(file: string): Promise<string> {
+async function readHead(file: string, bytes = HEAD_BYTES): Promise<string> {
   const fh = await fsp.open(file, 'r').catch(() => undefined);
   if (!fh) return '';
   try {
-    const buf = Buffer.alloc(HEAD_BYTES);
-    const { bytesRead } = await fh.read(buf, 0, HEAD_BYTES, 0);
+    const buf = Buffer.alloc(bytes);
+    const { bytesRead } = await fh.read(buf, 0, bytes, 0);
     return buf.toString('utf8', 0, bytesRead);
   } finally {
     await fh.close();
@@ -185,6 +197,25 @@ export function acceptCorrections(raw: unknown, turns: readonly CallNoteTurn[], 
     out.push({ from, to, count });
   }
   return out.slice(0, 20);
+}
+
+/** `turns` with the corrections applied; a turn that changed keeps what was heard in `original`. */
+export function correctedTurns<T extends CallNoteTurn>(turns: readonly T[], corrections: readonly Correction[]): (T & { original?: string })[] {
+  if (!corrections.length) return [...turns];
+  return turns.map((turn) => {
+    const text = applyCorrections(turn.text, corrections);
+    return text === turn.text ? turn : { ...turn, text, original: turn.text };
+  });
+}
+
+/** The corrections saved with a call's summary; none while it has no summary. */
+export async function readCorrections(dir: string, id: string): Promise<Correction[]> {
+  try {
+    const doc = JSON.parse(await fsp.readFile(path.join(dir, `${id}.summary.json`), 'utf8'));
+    return (Array.isArray(doc?.corrections) ? doc.corrections : []).filter((c: any) => typeof c?.from === 'string' && typeof c?.to === 'string');
+  } catch {
+    return [];
+  }
 }
 
 /** `text` with each correction applied to every whole-word occurrence. */

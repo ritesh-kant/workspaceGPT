@@ -7119,7 +7119,7 @@ process.stdin.resume();
 // ═══ Call summaries: parse, skip quiet calls, open action items ═══
 console.log('\ncall note corrections');
 {
-  const { readOrgVocabulary, phoneticKey, similarity, correctionCandidates, collapseLoops, acceptCorrections, applyCorrections } = callCorrectMod;
+  const { readOrgVocabulary, phoneticKey, similarity, correctionCandidates, collapseLoops, acceptCorrections, applyCorrections, correctedTurns, readCorrections } = callCorrectMod;
   const { parseSummaryReply, buildSummaryPrompt } = callSummaryMod;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-vocab-'));
   fs.mkdirSync(path.join(root, 'ado', 'mds'), { recursive: true });
@@ -7127,6 +7127,8 @@ console.log('\ncall note corrections');
   item(1, 'Amplience content missing on PDP', 'Singhal, Parag (Contractor)');
   item(2, 'Amplience slot fails on stage', 'Soliman, Ebrahim (Contractor)');
   item(3, 'Remix giftbox', 'Unassigned');
+  fs.mkdirSync(path.join(root, 'confluence', 'mds'), { recursive: true });
+  for (const n of [1, 2, 3]) fs.writeFileSync(path.join(root, 'confluence', 'mds', `p${n}.md`), `# Weekly ${n}\n\nStatus: coordinated with Shobhit to plan support. Shobhit working on it. Other things continue. Mail shobhit.k@example.com about it.\n`);
   const turn = (at, text, speaker = 'others') => ({ speaker, at, text });
   const vocab = await readOrgVocabulary(root);
 
@@ -7134,6 +7136,12 @@ console.log('\ncall note corrections');
     assert.ok(vocab.names.includes('Parag') && vocab.names.includes('Singhal') && vocab.names.includes('Ebrahim'));
     assert.ok(vocab.terms.includes('Amplience'));
     assert.ok(!vocab.names.includes('Unassigned') && !vocab.names.includes('Contractor'));
+  });
+  await t('a name that only appears in page text is found; ordinary capitalized words are not', () => {
+    assert.ok(vocab.names.includes('Shobhit'));
+    assert.ok(!vocab.names.includes('Status') && !vocab.names.includes('Other'));
+    const c = correctionCandidates([turn(0, 'Hi, Soviet.')], vocab);
+    assert.ok(c.some((x) => x.heard === 'Soviet' && x.maybe.includes('Shobhit')));
   });
   await t('an unreadable storage folder is an empty vocabulary, not an error', async () => {
     const v = await readOrgVocabulary(path.join(root, 'nope'));
@@ -7185,6 +7193,31 @@ console.log('\ncall note corrections');
   });
   await t('corrections apply to whole words only', () => {
     assert.equal(applyCorrections('Prag and Pragmatic', [{ from: 'Prag', to: 'Parag', count: 1 }]), 'Parag and Pragmatic');
+  });
+  await t('corrected turns keep what was heard, and untouched turns are left as they are', () => {
+    const turns = [turn(0, 'Hi, Soviet.'), turn(4, 'Okay.')];
+    const out = correctedTurns(turns, [{ from: 'Soviet', to: 'Shobhit', count: 1 }]);
+    assert.equal(out[0].text, 'Hi, Shobhit.');
+    assert.equal(out[0].original, 'Hi, Soviet.');
+    assert.equal(out[1], turns[1]);
+    assert.deepEqual(correctedTurns(turns, []), turns);
+  });
+  await t('the agent reads and searches the corrected call; the file on disk is unchanged', async () => {
+    const { writeCallNote, readCallNote, searchCallNotes, readCallNoteForAgent } = callNotesMod;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-corr-'));
+    await writeCallNote(dir, { id: '2026-11-03-1931-abcd', title: 'Standup', startedAt: Date.now() - 600_000, endedAt: Date.now(), status: 'done', turns: [turn(0, 'Hi, Soviet. We are not selecting the JNIA today.')] });
+    assert.deepEqual(await readCorrections(dir, '2026-11-03-1931-abcd'), []);
+    fs.writeFileSync(path.join(dir, '2026-11-03-1931-abcd.summary.json'), JSON.stringify({ v: 1, status: 'done', corrections: [{ from: 'Soviet', to: 'Shobhit', count: 1 }, { from: 'JNIA', to: 'Gen AI', count: 1 }, { bad: true }] }));
+    assert.equal((await readCorrections(dir, '2026-11-03-1931-abcd')).length, 2);
+    const read = await readCallNoteForAgent(dir, '2026-11-03-1931-abcd');
+    assert.match(read.content, /Hi, Shobhit\. We are not selecting the Gen AI today\./);
+    assert.match((await searchCallNotes(dir, { query: 'shobhit' })).message, /Shobhit/);
+    assert.equal((await readCallNote(dir, '2026-11-03-1931-abcd')).turns[0].text, 'Hi, Soviet. We are not selecting the JNIA today.');
+  });
+  await t('the owner\'s name reaches the summary prompt only when known', () => {
+    const note = { id: 'c2', title: 'x', startedAt: Date.now(), status: 'done', turns: [turn(0, 'Hi, Anitesh.')] };
+    assert.match(buildSummaryPrompt(note, [], 'Ritesh Kant'), /named Ritesh Kant/);
+    assert.doesNotMatch(buildSummaryPrompt(note, []), /however the recognizer spelled/);
   });
   await t('the summary prompt carries the leads, and the reply\'s corrections are checked against them', () => {
     const note = { id: 'c1', title: 'x', startedAt: Date.now(), status: 'done', turns: [turn(0, 'Thank you, Prag, and the Emplence slot is down, that is why we are here.'), turn(30, 'ok')] };

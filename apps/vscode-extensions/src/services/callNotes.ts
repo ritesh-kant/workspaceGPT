@@ -26,6 +26,7 @@
  */
 import * as fsp from 'fs/promises';
 import * as path from 'path';
+import { correctedTurns, readCorrections } from './callNoteCorrect';
 
 export type CallNoteSpeaker = 'you' | 'others';
 
@@ -257,7 +258,7 @@ export async function searchCallNotes(dir: string, args: { query?: unknown; days
     }
     const note = await readCallNote(dir, summary.id);
     if (!note) continue;
-    const lines = note.turns.map((t) => `[${formatOffset(t.at)}] ${SPEAKER_LABEL[t.speaker]}: ${t.text}`);
+    const lines = correctedTurns(note.turns, await readCorrections(dir, note.id)).map((t) => `[${formatOffset(t.at)}] ${SPEAKER_LABEL[t.speaker]}: ${t.text}`);
     const haystack = `${note.title}\n${lines.join('\n')}`.toLowerCase();
     if (!words.every((w) => haystack.includes(w))) continue;
     const hits = lines.filter((l) => words.some((w) => l.toLowerCase().includes(w))).slice(0, MAX_MATCH_LINES);
@@ -278,7 +279,7 @@ export async function searchCallNotes(dir: string, args: { query?: unknown; days
 export async function readCallNoteForAgent(dir: string, id: unknown): Promise<{ ok: boolean; message: string; content?: string }> {
   const note = await readCallNote(dir, id);
   if (!note) return { ok: false, message: `No call note "${String(id ?? '')}". search_call_notes lists them.` };
-  return { ok: true, message: `Call note ${note.id}`, content: renderCallNote(note) };
+  return { ok: true, message: `Call note ${note.id}`, content: renderCallNote({ ...note, turns: correctedTurns(note.turns, await readCorrections(dir, note.id)) }) };
 }
 
 /** A turn as the recorder hears it: with its end, which echo detection needs. */

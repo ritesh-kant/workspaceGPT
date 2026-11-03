@@ -14,6 +14,8 @@ interface CallNoteTurn {
   speaker: 'you' | 'others';
   at: number;
   text: string;
+  /** What the speech model wrote, when the summary corrected the text (names and terms from your Knowledge). */
+  original?: string;
 }
 interface CallNote {
   id: string;
@@ -145,6 +147,8 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
     vscode.postMessage({ type: MESSAGE_TYPES.SET_CALL_ACTION, noteId, actionId: id, state, dueDate });
   };
   const turns = useMemo(() => [...(note?.turns ?? [])].sort((a, b) => a.at - b.at), [note?.turns]);
+  const [asHeard, setAsHeard] = useState(false);
+  const correctedCount = turns.filter((t) => t.original).length;
   const matches = useMemo(() => turns.flatMap((turn, i) =>
     (speaker === 'all' || turn.speaker === speaker) && query.trim() && turn.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) ? [i] : []
   ), [turns, query, speaker]);
@@ -390,13 +394,14 @@ const CallNoteView: React.FC<CallNoteViewProps> = ({ noteId, onBack, onAsk }) =>
                     <button type='button' className='call-note-button' disabled={!matches.length} aria-label='Next match' onClick={() => navigateMatch(1)}>↓</button>
                   </>}
                 </div>
+                {correctedCount > 0 && <p className='call-note-corrections'>{correctedCount} {correctedCount === 1 ? 'line' : 'lines'} corrected using names and terms from your Knowledge. <button type='button' className='call-note-link' onClick={() => setAsHeard((v) => !v)}>{asHeard ? 'Show corrected' : 'Show as heard'}</button></p>}
                 {!note.turns.length && <p className='call-note-empty'>{recording ? 'Lines appear here as they are transcribed.' : 'Nothing was transcribed in this call.'}</p>}
                 <ol className='call-note-transcript' ref={transcriptRef}>
                   {turns.map((turn, i) => (speaker === 'all' || turn.speaker === speaker) && (
                     <li key={i} data-turn={i} className={`call-note-turn call-note-turn--${turn.speaker}${focusedTurn === i ? ' call-note-turn--focused' : ''}`}>
                       <span className='call-note-speaker'>{turn.speaker === 'you' ? 'You' : 'Others'}</span>
                       <span className='call-note-at'>{offset(turn.at)}</span>
-                      <p>{highlight(turn.text)}</p>
+                      <p className={turn.original && !asHeard ? 'call-note-corrected' : undefined} title={turn.original && !asHeard ? `Heard as: ${turn.original}` : undefined}>{highlight(asHeard && turn.original ? turn.original : turn.text)}</p>
                     </li>
                   ))}
                 </ol>

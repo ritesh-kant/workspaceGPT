@@ -146,8 +146,8 @@ function transcriptOf(note: CallNote): string {
   return collapseLoops(note.turns).map((t) => `[${formatOffset(t.at)}] ${t.speaker === 'you' ? 'You' : 'Others'}: ${t.text}`).join('\n');
 }
 
-export function buildSummaryPrompt(note: CallNote, candidates: readonly Candidate[] = []): string {
-  return `Below is the automatic transcript of a work call. "You" is the person who owns these notes (their microphone); "Others" is everyone else on the call, not told apart. The transcript is machine-made: words may be wrong, and lines can be doubled or garbled.
+export function buildSummaryPrompt(note: CallNote, candidates: readonly Candidate[] = [], owner?: string): string {
+  return `Below is the automatic transcript of a work call. "You" is the person who owns these notes (their microphone)${owner ? `, named ${owner}: people greeting or addressing "You" mean them, however the recognizer spelled the name` : ""}; "Others" is everyone else on the call, not told apart. The transcript is machine-made: words may be wrong, and lines can be doubled or garbled.
 
 Write notes the owner can act on without reading the transcript. Use only what was said; do not invent decisions, owners, dates or ticket numbers. If something is unclear, leave it out.
 
@@ -282,7 +282,7 @@ const inFlight = new Set<string>();
  * call throws (no model chosen, rate limit): nothing is saved, so a later try
  * starts clean.
  */
-export async function summarizeCallNote(dir: string, id: string, complete: Complete, opts: { force?: boolean; processedBy?: string; vocab?: OrgVocabulary } = {}): Promise<CallSummaryDoc | undefined> {
+export async function summarizeCallNote(dir: string, id: string, complete: Complete, opts: { force?: boolean; processedBy?: string; vocab?: OrgVocabulary; owner?: string } = {}): Promise<CallSummaryDoc | undefined> {
   if (inFlight.has(id)) return undefined;
   inFlight.add(id);
   try {
@@ -300,7 +300,7 @@ export async function summarizeCallNote(dir: string, id: string, complete: Compl
     const parts: NonNullable<ReturnType<typeof parseSummaryReply>>[] = [];
     for (const section of summarySections(note)) {
       const candidates = opts.vocab ? correctionCandidates(section.turns, opts.vocab) : [];
-      const raw = await complete(buildSummaryPrompt(section, candidates));
+      const raw = await complete(buildSummaryPrompt(section, candidates, opts.owner));
       const parsed = parseSummaryReply(raw, section, candidates);
       if (parsed) parts.push(parsed);
       else {

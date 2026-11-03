@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { isDesktopHost } from '../vscode';
+import { MESSAGE_TYPES } from '../constants';
+import { isDesktopHost, VSCodeAPI } from '../vscode';
 import { useSettingsStore } from '../store/settingsStore';
 
 /**
@@ -10,6 +11,15 @@ import { useSettingsStore } from '../store/settingsStore';
  * bridge, so this reports unavailable and does nothing.
  */
 type CallsOp = 'enable' | 'disable' | 'record' | 'stop';
+
+/** Once per call: its summary (and name corrections) are made when it ends, not when someone next opens it. */
+const summarizing = new Set<string>();
+function summarizeWhenSaved(id: string): void {
+  if (summarizing.has(id)) return;
+  summarizing.add(id);
+  // The recorder saves the note a moment after it announces the end.
+  setTimeout(() => VSCodeAPI().postMessage({ type: MESSAGE_TYPES.SUMMARIZE_CALL_NOTE, id }), 1500);
+}
 interface CallsBridge {
   latest(): { capability?: CallCapability; state?: CallState; recording?: CallRecording; model?: SpeechModel };
   request(op: CallsOp, auto?: boolean, noteId?: string): void;
@@ -95,6 +105,7 @@ export function useCallDetection({ control = true }: { control?: boolean } = {})
           setRecording(undefined);
           // The host's "nothing records" on attach, not an ending.
           if (!event.noteId && !event.error) return;
+          if (event.noteId && !event.error) summarizeWhenSaved(event.noteId);
           setOutcome((prev) => ({
             noteId: event.noteId,
             error: event.error,
