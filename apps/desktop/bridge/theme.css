@@ -222,7 +222,7 @@
    which at the 16px default lands at 11-13px: small next to Claude Code. The
    desktop has room, so raise the root; every rem scales together. */
 html {
-  font-size: 17.5px;
+  font-size: 18px;
 }
 
 html,
