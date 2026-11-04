@@ -82,7 +82,7 @@
   --vscode-font-size: 13px;
   --vscode-font-weight: normal;
   --vscode-editor-font-family: "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
-  --vscode-editor-font-size: 12px;
+  --vscode-editor-font-size: 13px;
 
   --vscode-editor-background: var(--wgpt-d-bg);
   --vscode-editor-foreground: var(--wgpt-d-fg);
@@ -218,15 +218,22 @@
   --vscode-symbolIcon-classForeground: #e0923a;
 }
 
+/* The webview sizes text in rem (chat body 0.8rem, most chrome 0.7-0.75rem),
+   which at the 16px default lands at 11-13px: small next to Claude Code. The
+   desktop has room, so raise the root; every rem scales together. */
+html {
+  font-size: 17.5px;
+}
+
 html,
 body {
   background: var(--vscode-editor-background);
   color: var(--vscode-editor-foreground);
   font-family: var(--vscode-font-family);
 }
-/* Body only, as in a VS Code webview: <html> keeps the 16px default, and the
-   views size everything in rem against it. A 13px root shrank every rem in
-   the desktop by a fifth (Settings card text came out at 10.4px). */
+/* Body only, as in a VS Code webview. Never set <html> to the 13px UI size: it
+   shrank every rem by a fifth (Settings card text came out at 10.4px). The
+   root is raised above 16px on purpose, see above. */
 body {
   font-size: var(--vscode-font-size);
 }

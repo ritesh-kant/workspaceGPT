@@ -5,7 +5,8 @@ import { resolveAgainstRoots } from '../codebase/codebaseTools';
 import { CodeHostRequestError } from '../codehost/http';
 import { ghEnv } from '../codehost/ghCli';
 import { describeError, isCertError } from '../../utils/networkError';
-import type { CiCheck as HostCiCheck, CodeHost, PrRef, RepoRef } from '../codehost/types';
+import type { CiCheck as HostCiCheck, CodeHost, PrComment, PrRef, RepoRef } from '../codehost/types';
+import { REVIEW_THREADS_QUERY, parseReviewThreads } from '../codehost/github';
 
 /**
  * CI monitoring for the pull request on the chat's current branch. GitHub
@@ -24,6 +25,8 @@ export interface CiSnapshot {
   reason?: string;
   pr?: { number: number; url: string; branch: string; sha: string };
   checks: CiCheck[];
+  /** Unresolved review comments on the PR — what blocks "all comments must be resolved". */
+  comments?: PrComment[];
   /** Tail of the failing jobs' logs — only on `failed`, never persisted. */
   failureLog?: string;
 }
@@ -60,6 +63,8 @@ interface RollupItem {
   state?: string;
   detailsUrl?: string;
   targetUrl?: string;
+  workflowName?: string;
+  startedAt?: string;
 }
 
 function toCheck(i: RollupItem): CiCheck {
@@ -68,9 +73,43 @@ function toCheck(i: RollupItem): CiCheck {
   // CheckRun carries status+conclusion; a commit status carries only state.
   const verdict = (i.conclusion || i.state || '').toUpperCase();
   const finished = i.__typename === 'StatusContext' ? !!verdict && verdict !== 'PENDING' && verdict !== 'EXPECTED' : (i.status || '').toUpperCase() === 'COMPLETED';
-  if (!finished) return { name, state: 'pending', url };
-  if (FAIL.has(verdict)) return { name, state: 'fail', url };
-  return { name, state: PASS.has(verdict) ? 'pass' : 'pending', url };
+  const at = Date.parse(i.startedAt ?? '') || undefined;
+  const group = i.workflowName || undefined;
+  if (!finished) return { name, state: 'pending', url, at, group };
+  if (FAIL.has(verdict)) return { name, state: 'fail', url, at, group };
+  return { name, state: PASS.has(verdict) ? 'pass' : 'pending', url, at, group };
+}
+
+/**
+ * One entry per check: a re-run (a PR title edited, a re-triggered workflow)
+ * leaves the superseded run beside the new one, and the old failure would
+ * otherwise keep the PR "Failed" long after the check passed. Same name in the
+ * same workflow = the same check, newest run wins; a check with no timestamp
+ * is never merged away.
+ */
+export function latestRuns(checks: CiCheck[]): CiCheck[] {
+  const newest = new Map<string, CiCheck>();
+  const out: (CiCheck | string)[] = [];
+  for (const c of checks) {
+    if (c.at === undefined) { out.push(c); continue; }
+    const key = `${c.group ?? ''}\u0000${c.name}`;
+    const seen = newest.get(key);
+    if (!seen) out.push(key);
+    if (!seen || c.at >= (seen.at ?? 0)) newest.set(key, c);
+  }
+  return out.map((x) => (typeof x === 'string' ? newest.get(x)! : x));
+}
+
+/** Unresolved review comments through the gh CLI; empty when it cannot say. */
+async function ghReviewComments(cwd: string, prUrl: string): Promise<PrComment[]> {
+  const m = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(prUrl);
+  if (!m) return [];
+  try {
+    const out = await run('gh', ['api', 'graphql', '--hostname', m[1], '-f', `query=${REVIEW_THREADS_QUERY}`, '-F', `owner=${m[2]}`, '-F', `repo=${m[3]}`, '-F', `number=${m[4]}`], cwd);
+    return parseReviewThreads(JSON.parse(out));
+  } catch {
+    return [];
+  }
 }
 
 /** Whether `branch` has been pushed: it tracks an upstream, or origin has a ref of that name. */
@@ -111,14 +150,15 @@ export async function getCiSnapshot(cwd: string): Promise<CiSnapshot> {
     return { state: 'unavailable', reason: 'Unreadable response from gh.', checks: [] };
   }
   const pr = { number: data.number, url: data.url, branch: data.headRefName, sha: data.headRefOid };
-  const checks = (data.statusCheckRollup ?? []).map(toCheck);
+  const checks = latestRuns((data.statusCheckRollup ?? []).map(toCheck));
   if (data.state === 'MERGED') return { state: 'merged', pr, checks };
   if (data.state === 'CLOSED') return { state: 'closed', pr, checks };
-  if (!checks.length) return { state: 'none', pr, checks };
+  const comments = await ghReviewComments(cwd, data.url);
+  if (!checks.length) return { state: 'none', pr, checks, comments };
   // Failed only once everything has finished: a log from a run that is still
   // going is incomplete, and a second failure may be on its way.
-  if (checks.some((c) => c.state === 'pending')) return { state: 'pending', pr, checks };
-  return { state: checks.some((c) => c.state === 'fail') ? 'failed' : 'passed', pr, checks };
+  if (checks.some((c) => c.state === 'pending')) return { state: 'pending', pr, checks, comments };
+  return { state: checks.some((c) => c.state === 'fail') ? 'failed' : 'passed', pr, checks, comments };
 }
 
 /**
@@ -137,12 +177,13 @@ export async function getCiSnapshotViaHost(cwd: string, target: { host: CodeHost
     const found: PrRef | null = await host.findPr(repo, branch);
     if (!found) return { state: 'none', checks: [] };
     const pr = { number: found.number, url: found.url, branch: found.branch, sha: found.sha };
-    const checks = await host.checks(repo, found);
+    const checks = latestRuns(await host.checks(repo, found));
     if (found.state === 'merged') return { state: 'merged', pr, checks };
     if (found.state === 'closed') return { state: 'closed', pr, checks };
-    if (!checks.length) return { state: 'none', pr, checks };
-    if (checks.some((c) => c.state === 'pending')) return { state: 'pending', pr, checks };
-    return { state: checks.some((c) => c.state === 'fail') ? 'failed' : 'passed', pr, checks };
+    const comments = (await host.reviewComments?.(repo, found).catch(() => undefined)) ?? [];
+    if (!checks.length) return { state: 'none', pr, checks, comments };
+    if (checks.some((c) => c.state === 'pending')) return { state: 'pending', pr, checks, comments };
+    return { state: checks.some((c) => c.state === 'fail') ? 'failed' : 'passed', pr, checks, comments };
   } catch (e) {
     return { state: 'unavailable', reason: e instanceof CodeHostRequestError ? e.message : isCertError(e) ? describeError(e) : 'Could not reach the code host.', checks: [] };
   }

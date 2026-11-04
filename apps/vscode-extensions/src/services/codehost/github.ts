@@ -1,7 +1,21 @@
 import { BODY_CAP, COMMENT_BODY_CAP, COMMENT_CAP, CodeHostRequestError, PATCH_CAP, PATCH_TOTAL_CAP, cut, hostFetch, logTail } from './http';
-import type { CiCheck, CodeHost, HomePr, ListPrsOptions, PrRef, PrSummary, RepoRef } from './types';
+import type { CiCheck, CodeHost, HomePr, ListPrsOptions, PrComment, PrRef, PrSummary, RepoRef } from './types';
 
 export const GITHUB_COM = 'github.com';
+
+/** Review threads with their resolved flag — REST's pulls/comments cannot say which are still open. */
+export const REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:50){nodes{isResolved comments(first:1){nodes{author{login} body path line url}}}}}}}`;
+
+/** The unresolved threads' opening comments out of a REVIEW_THREADS_QUERY response. */
+export function parseReviewThreads(result: any): PrComment[] {
+  const threads: any[] = result?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+  return threads
+    .filter((t) => t && !t.isResolved && t.comments?.nodes?.[0])
+    .map((t) => {
+      const c = t.comments.nodes[0];
+      return { by: c.author?.login ?? 'unknown', body: cut(c.body, COMMENT_BODY_CAP), path: c.path ?? undefined, line: c.line ?? undefined, url: c.url ?? undefined };
+    });
+}
 
 const PRS = (r: RepoRef) => `/repos/${r.owner}/${r.repo}`;
 const person = (u: any): string => u?.login ?? 'unknown';
@@ -66,8 +80,10 @@ export class GitHubHost implements CodeHost {
     const PASS = new Set(['success', 'neutral', 'skipped', 'cancelled', 'stale']);
     const fromRun = (c: any): CiCheck => {
       const url = c.html_url || c.details_url || undefined;
-      if (c.status !== 'completed') return { name: c.name, state: 'pending', url };
-      return { name: c.name, state: FAIL.has(c.conclusion) ? 'fail' : PASS.has(c.conclusion) ? 'pass' : 'pending', url };
+      const at = Date.parse(c.started_at ?? '') || undefined;
+      const group = c.app?.slug;
+      if (c.status !== 'completed') return { name: c.name, state: 'pending', url, at, group };
+      return { name: c.name, state: FAIL.has(c.conclusion) ? 'fail' : PASS.has(c.conclusion) ? 'pass' : 'pending', url, at, group };
     };
     const fromStatus = (c: any): CiCheck => ({
       name: c.context || 'check',
@@ -75,6 +91,15 @@ export class GitHubHost implements CodeHost {
       state: c.state === 'success' ? 'pass' : c.state === 'failure' || c.state === 'error' ? 'fail' : 'pending',
     });
     return [...(runs.check_runs ?? []).map(fromRun), ...(statuses.statuses ?? []).map(fromStatus)];
+  }
+
+  async reviewComments(repo: RepoRef, pr: PrRef): Promise<PrComment[]> {
+    const response = await this.fetch(this.graphqlUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: REVIEW_THREADS_QUERY, variables: { owner: repo.owner, repo: repo.repo, number: pr.number } }),
+    });
+    return parseReviewThreads(await response.json());
   }
 
   async failureLog(repo: RepoRef, checks: CiCheck[]): Promise<string | undefined> {

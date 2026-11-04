@@ -112,12 +112,33 @@ const CiChip: React.FC<{ onFixNow: () => void }> = ({ onFixNow }) => {
               ))}
             </ul>
           )}
+          {!!snapshot.comments?.length && (
+            <>
+              <div className='ci-menu-title'>Unresolved comments · {snapshot.comments.length}</div>
+              <ul className='ci-checks'>
+                {snapshot.comments.map((c, i) => (
+                  <li key={`${c.url ?? c.by}-${i}`} className='ci-check ci-check--fail' title={c.body}>
+                    <span className='ci-dot' />
+                    <a
+                      href={c.url}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (c.url) VSCodeAPI().postMessage({ type: MESSAGE_TYPES.OPEN_EXTERNAL, url: c.url });
+                      }}
+                    >
+                      {c.by}: {c.body.replace(/\s+/g, ' ').slice(0, 80)}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <div className='ci-menu-footer'>
-            <label className='ci-menu-option' title='When checks fail, the agent reads the log, fixes it, and pushes to this pull request’s branch. Up to 3 attempts.'>
+            <label className='ci-menu-option' title='When checks fail or review comments are unresolved, the agent reads them, fixes what is a real problem, and pushes to this pull request’s branch. Up to 3 attempts.'>
               <input type='checkbox' checked={autoFix} onChange={(e) => setAutoFix(e.target.checked)} />
-              Auto-fix CI failures
+              Auto-fix CI failures and comments
             </label>
-            {state === 'failed' && (
+            {(state === 'failed' || !!snapshot.comments?.length) && (
               <button type='button' className='ci-menu-fix' disabled={busy || attempts >= MAX_CI_FIX_ATTEMPTS} onClick={() => { setOpen(false); onFixNow(); }}>
                 Fix now{attempts > 0 ? ` (${attempts}/${MAX_CI_FIX_ATTEMPTS} tried)` : ''}
               </button>

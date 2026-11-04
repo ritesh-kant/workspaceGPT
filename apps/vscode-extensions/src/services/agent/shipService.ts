@@ -254,6 +254,7 @@ export interface ShipAllResult {
 
 const COMMIT_SUBJECT_TIMEOUT_MS = 20_000;
 const COMMIT_DIFF_MAX_CHARS = 12_000;
+const RECENT_SUBJECTS = 10;
 
 /** A model-written subject from the tree's diff, or undefined on any failure, timeout or unusable reply. */
 async function modelSubject(gitCwd: string, paths: string[], complete: (prompt: string) => Promise<string>): Promise<string | undefined> {
@@ -267,8 +268,13 @@ async function modelSubject(gitCwd: string, paths: string[], complete: (prompt: 
     // Dependency files are summarised by their stat; their patch is thousands of lines of hashes.
     const added = paths.filter((p) => !tracked.has(p)).map((p) => `new file: ${p}`).join('\n');
     const diff = [stat, added, patch].filter(Boolean).join('\n\n').slice(0, COMMIT_DIFF_MAX_CHARS);
+    // The repo's own recent subjects teach the model its convention (ticket, component).
+    const recent = (await git(gitCwd, ['log', '-n', String(RECENT_SUBJECTS), '--no-merges', '--format=%s']).catch(() => ''))
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
     const reply = await Promise.race([
-      complete(buildCommitSubjectPrompt(paths, diff)),
+      complete(buildCommitSubjectPrompt(paths, diff, recent, await currentBranch(gitCwd))),
       new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timed out')), COMMIT_SUBJECT_TIMEOUT_MS)),
     ]);
     return parseCommitSubjectReply(reply);
@@ -327,7 +333,9 @@ export async function shipAllChanges(
   const answer = await askTitle(suggestion, paths);
   if (answer === undefined) return null; // cancelled
   const parsed = parseConventionalSubject(answer) ?? { type: inferredType, subject: answer.trim() };
-  const commitSubject = `${parsed.type}: ${parsed.subject}`;
+  // What the user confirmed is what gets committed — a ticket or component
+  // they kept in the prefix is theirs, not ours to normalise away.
+  const commitSubject = 'head' in parsed ? `${parsed.head}: ${parsed.subject}` : `${parsed.type}: ${parsed.subject}`;
 
   let branch = newBranch ? `${parsed.type}/${slugify(parsed.subject)}` : baseBranch;
   const existing = newBranch ? await git(gitCwd, ['branch', '--list', branch]) : '';

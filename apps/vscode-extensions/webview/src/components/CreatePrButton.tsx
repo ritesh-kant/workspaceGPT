@@ -44,7 +44,8 @@ const CreatePrButton: React.FC = () => {
   // Keying it off a 'done' ship instead would strand the button hidden, since
   // a turn ship's outcome is acknowledged on its card, not here.
   const treeDirty = hasShippableChanges(status);
-  if (!treeDirty) return null;
+  // Mid-ship the commit has already cleaned the tree: keep showing "Creating…".
+  if (!treeDirty && ship.phase !== 'running') return null;
   const shipsChat = !!turn && changes.files.length > 0;
   const n = changes.files.length;
   const others = changes.others;

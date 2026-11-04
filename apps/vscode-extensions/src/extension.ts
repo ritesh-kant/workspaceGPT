@@ -178,10 +178,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // Register the settings command
   let settingsDisposable = vscode.commands.registerCommand(
     EXTENSION.COMMAND_SETTINGS,
-    () => {
+    (page?: string) => {
       analyticsService.trackEvent('command_settings_triggered');
       webViewProvider.revealChat();
-      void webViewProvider.postMessage({ type: MESSAGE_TYPES.SHOW_SETTINGS });
+      void webViewProvider.postMessage({ type: MESSAGE_TYPES.SHOW_SETTINGS, ...(typeof page === 'string' ? { page } : {}) });
     }
   );
 

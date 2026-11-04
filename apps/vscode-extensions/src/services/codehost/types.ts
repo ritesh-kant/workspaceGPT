@@ -27,6 +27,19 @@ export interface CiCheck {
   name: string;
   state: 'pass' | 'fail' | 'pending';
   url?: string;
+  /** When this run started (ms). A re-run of the same check supersedes the older run — see latestRuns. */
+  at?: number;
+  /** Which workflow/app the check belongs to, so two workflows' same-named jobs stay separate. */
+  group?: string;
+}
+
+/** An unresolved review comment on a pull request. */
+export interface PrComment {
+  by: string;
+  body: string;
+  path?: string;
+  line?: number;
+  url?: string;
 }
 
 export interface PrSummary {
@@ -75,6 +88,8 @@ export interface CodeHost {
   parseRemote(remote: string): RepoRef | undefined;
   findPr(repo: RepoRef, branch: string): Promise<PrRef | null>;
   checks(repo: RepoRef, pr: PrRef): Promise<CiCheck[]>;
+  /** Unresolved review threads' opening comments, where the host can tell resolved from open. */
+  reviewComments?(repo: RepoRef, pr: PrRef): Promise<PrComment[]>;
   /** Tail of the failing jobs' logs; undefined when none of the failures have one. */
   failureLog(repo: RepoRef, checks: CiCheck[]): Promise<string | undefined>;
   listPrs(repo: RepoRef | undefined, opts: ListPrsOptions): Promise<PrSummary[]>;

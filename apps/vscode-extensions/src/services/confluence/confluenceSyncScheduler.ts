@@ -254,7 +254,7 @@ export class ConfluenceSyncScheduler {
     this.authFailureNotified = true;
     vscode.window.showErrorMessage('Your Confluence connection expired — background sync is paused until you reconnect.', 'Reconnect Confluence').then((choice) => {
       if (choice === 'Reconnect Confluence') {
-        vscode.commands.executeCommand('workspacegpt.settings');
+        vscode.commands.executeCommand('workspacegpt.settings', 'knowledge');
       }
     });
   }

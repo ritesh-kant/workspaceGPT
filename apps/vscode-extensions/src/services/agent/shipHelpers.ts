@@ -43,11 +43,13 @@ export const CONVENTIONAL_TYPES = ['feat', 'fix', 'chore', 'docs', 'refactor', '
 export type ConventionalType = (typeof CONVENTIONAL_TYPES)[number];
 
 /** Split "feat(scope)!: subject" into its type and subject; undefined when unprefixed. */
-export function parseConventionalSubject(text: string): { type: ConventionalType; subject: string } | undefined {
-  const m = /^([a-zA-Z]+)(?:\([^)]*\))?!?:\s*(\S.*)$/.exec(text.trim());
+export function parseConventionalSubject(text: string): { type: ConventionalType; subject: string; head: string } | undefined {
+  // `head` is everything before the ": " exactly as written — a leading ticket
+  // key, the scope, the "!" — so a repo's own convention survives the round trip.
+  const m = /^((?:\[?[A-Z][A-Z0-9]+-\d+\]?[\s:,-]*)?)([a-zA-Z]+)((?:\([^)]*\))?!?):\s*(\S.*)$/.exec(text.trim());
   if (!m) return undefined;
-  const type = m[1].toLowerCase() as ConventionalType;
-  return CONVENTIONAL_TYPES.includes(type) ? { type, subject: m[2].trim() } : undefined;
+  const type = m[2].toLowerCase() as ConventionalType;
+  return CONVENTIONAL_TYPES.includes(type) ? { type, subject: m[4].trim(), head: `${m[1]}${m[2]}${m[3]}` } : undefined;
 }
 
 /**
@@ -118,13 +120,24 @@ export function suggestShipSubject(paths: string[], hasNewFiles: boolean): strin
 export const NOISY_DIFF_PATH_RE = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock|[^/]*\.min\.(js|css)|[^/]*\.map)$/;
 
 /** Prompt asking a model for one Conventional Commits subject describing a working-tree diff. */
-export function buildCommitSubjectPrompt(paths: string[], diff: string): string {
+export function buildCommitSubjectPrompt(paths: string[], diff: string, recentSubjects: string[] = [], branch = ''): string {
+  // What the team actually writes beats a generic template: the recent subjects
+  // carry the repo's convention (ticket key, component scope, casing).
+  const history = recentSubjects.length
+    ? 'This repo\'s recent commit subjects, newest first:\n' +
+      recentSubjects.map((s) => `- ${s}`).join('\n') +
+      '\nMatch their format exactly: the same slots in the same order (type, any component or scope, any ticket number), ' +
+      'the same casing and punctuation (ticket keys keep their case whatever the lowercase rule says). Take the component from the changed paths the way those commits name theirs. ' +
+      `Take the ticket number from the branch name${branch ? ` ("${branch}")` : ''} when it holds one; otherwise keep the slot with a placeholder such as PROJ-0000 for the author to fill in. ` +
+      'Still a type from the list, and still at most 72 characters in all.\n\n'
+    : '';
   return (
     'Write a git commit subject for these changes.\n' +
     'Rules: Conventional Commits "type: subject" (type one of ' + CONVENTIONAL_TYPES.join(', ') + '), ' +
     'imperative mood, lowercase, no trailing period, at most 72 characters. ' +
     'Say what changed and why it matters, not which files. If only dependency or lockfiles changed, say which dependencies. ' +
     'Reply with the subject line only.\n\n' +
+    history +
     `Changed files:\n${paths.join('\n')}\n\nDiff (may be truncated):\n${diff}`
   );
 }
@@ -133,7 +146,7 @@ export function buildCommitSubjectPrompt(paths: string[], diff: string): string 
 export function parseCommitSubjectReply(raw: string): string | undefined {
   const line = raw.split('\n').map((l) => l.trim()).find(Boolean)?.replace(/^[`"'*\s]+|[`"'*.\s]+$/g, '');
   const parsed = line ? parseConventionalSubject(line) : undefined;
-  return parsed ? `${parsed.type}: ${cutAtWord(parsed.subject, 72 - parsed.type.length - 2)}` : undefined;
+  return parsed ? `${parsed.head}: ${cutAtWord(parsed.subject, Math.max(20, 72 - parsed.head.length - 2))}` : undefined;
 }
 
 /** Paths (and whether any are new) out of `git status --porcelain` output. */

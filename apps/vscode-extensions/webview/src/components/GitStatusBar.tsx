@@ -34,7 +34,10 @@ const GitStatusBar: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   // A turn ship already reports itself on its message card; announcing it here
   // as well just says the same thing twice, one above the other.
   const showResult = (ship.phase === 'done' && ship.scope === 'tree') || ship.phase === 'error';
-  if (!showChanges && !showResult) return null;
+  // The commit empties the tree before the push and PR call finish; without
+  // this the bar vanishes mid-ship and the user sees nothing until the result.
+  const shipping = ship.phase === 'running';
+  if (!showChanges && !showResult && !shipping) return null;
 
   // One X for whichever the bar is currently carrying: an outcome to
   // acknowledge takes precedence over the diff it came from.

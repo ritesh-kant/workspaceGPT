@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { MAX_CI_FIX_ATTEMPTS, ciFixPrompt, useCiStore, type CiSnapshot } from '../store/ciStore';
+import { MAX_CI_FIX_ATTEMPTS, ciFixPrompt, commentKey, useCiStore, type CiSnapshot } from '../store/ciStore';
 import { recordedChatFiles, useGitStatusStore } from '../store/gitStatusStore';
 import { useChatStore } from '../store/chatStore';
 
@@ -37,6 +37,7 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
     let disposed = false;
     // The PR this fix was started for: a fix that opens a new chat clears the snapshot (see below).
     let fixPr: CiSnapshot['pr'];
+    let fixSubject = '';
 
     const request = () => vscode.postMessage({ type: MESSAGE_TYPES.CI_GET_STATUS, sessionId: useChatStore.getState().currentSessionId });
     const schedule = (ms: number) => {
@@ -50,20 +51,28 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
     const startFix = (snap: CiSnapshot, manual: boolean) => {
       const ci = useCiStore.getState();
       const chat = useChatStore.getState();
-      if (manual && snap.state === 'failed' && snap.pr && !snap.failureLog) {
+      if (!snap.pr || ci.phase !== 'idle' || chat.isLoading || chat.isStreaming) return;
+      // Review comments are unresolved until a person resolves them, so an
+      // automatic fix takes only the ones it has not already tried.
+      const comments = (snap.comments ?? []).filter((c) => manual || !ci.handledComments.includes(commentKey(c)));
+      let log = snap.state === 'failed' ? snap.failureLog : undefined;
+      if (!manual && snap.pr.sha === ci.handledSha) log = undefined;
+      if (manual && snap.state === 'failed' && !log && !comments.length) {
         ci.setNote("Couldn't read the failing log, so there is nothing to fix from. Open the check's details link.");
         return;
       }
-      if (snap.state !== 'failed' || !snap.pr || !snap.failureLog || ci.phase !== 'idle' || chat.isLoading || chat.isStreaming) return;
-      if (!manual && (ci.handledSha === snap.pr.sha || (ci.attempts[snap.pr.number] ?? 0) >= MAX_CI_FIX_ATTEMPTS)) return;
+      if (!log && !comments.length) return;
+      // Mid-run, checks still moving: wait rather than push under a running CI.
+      if (!manual && snap.state === 'pending') return;
       if ((ci.attempts[snap.pr.number] ?? 0) >= MAX_CI_FIX_ATTEMPTS) {
-        ci.setNote(`Gave up after ${MAX_CI_FIX_ATTEMPTS} fix attempts — CI is still failing.`);
+        if (manual) ci.setNote(`Gave up after ${MAX_CI_FIX_ATTEMPTS} fix attempts — it is still not resolved.`);
         return;
       }
-      ci.spendAttempt(snap.pr.number, snap.pr.sha);
+      ci.spendAttempt(snap.pr.number, snap.pr.sha, comments.map(commentKey));
       ci.setNote(null);
       fixPr = snap.pr;
-      sendFixRef.current(ciFixPrompt(snap.pr, snap.failureLog));
+      fixSubject = log ? (comments.length ? `fix: address CI failure and review comments on #${snap.pr.number}` : `fix: address failing CI on #${snap.pr.number}`) : `fix: address review comments on #${snap.pr.number}`;
+      sendFixRef.current(ciFixPrompt(snap.pr, log, comments));
       // Read after sending: from the new-chat screen the send is what gives the chat its id.
       ci.setPhase('fixing', useChatStore.getState().currentSessionId);
     };
@@ -77,7 +86,7 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
       const ci = useCiStore.getState();
       if (m?.type === MESSAGE_TYPES.CI_STATUS) {
         if (m.sessionId !== useChatStore.getState().currentSessionId) return; // reply for a chat since left
-        const snap: CiSnapshot = { state: m.state, reason: m.reason, pr: m.pr, checks: m.checks ?? [], failureLog: m.failureLog };
+        const snap: CiSnapshot = { state: m.state, reason: m.reason, pr: m.pr, checks: m.checks ?? [], comments: m.comments, failureLog: m.failureLog };
         ci.setSnapshot(snap);
         schedule(snap.state === 'pending' || ci.phase !== 'idle' ? FAST_MS : SLOW_MS);
         if (ci.autoFix) startFix(snap, false);
@@ -130,7 +139,7 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
           requestId: `ci-${Date.now().toString(36)}`,
           files,
           branch: pr.branch,
-          subject: `fix: address failing CI on #${pr.number}`,
+          subject: fixSubject || `fix: address failing CI on #${pr.number}`,
         });
       }, 400);
     });
