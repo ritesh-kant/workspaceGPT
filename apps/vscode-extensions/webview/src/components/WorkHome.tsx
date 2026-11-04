@@ -182,7 +182,10 @@ export default function WorkHome(props: Props) {
   const prs = activity.pullRequests.items.filter((pr) => pr.ownership === prTab);
   const allMentions = useMemo(() => [...activity.trackerMentions.items, ...activity.confluenceMentions.items]
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [activity.trackerMentions.items, activity.confluenceMentions.items]);
-  const homeMentions = allMentions.filter((item) => seenAtEntry[item.id] !== item.revision);
+  // Unread first (newest first within each group, the sort is stable); read ones sink so the row cap never hides an unread mention.
+  const isMentionRead = (item: HomeMention) => seen[item.id] === item.revision;
+  const homeMentions = allMentions.filter((item) => seenAtEntry[item.id] !== item.revision)
+    .sort((a, b) => Number(isMentionRead(a)) - Number(isMentionRead(b)));
   const unreadMentions = allMentions.filter((item) => seen[item.id] !== item.revision).length;
   const short = size.height < 500;
   const hasActivityError = !!(props.error || activity.pullRequests.error || activity.trackerMentions.error || activity.confluenceMentions.error);
