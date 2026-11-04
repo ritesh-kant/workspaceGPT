@@ -103,6 +103,10 @@ export class DebugTracker {
   private counterfactual: CounterfactualState = null;
   private reproPassId: string | null = null;
   private reproFailId: string | null = null;
+  /** The bug was looked at in a live page before the fix (any browser evidence then). */
+  private browserBeforeFix = false;
+  /** A browser repro check passed after the fix, or failed again with it reverted. */
+  private browserProven = false;
 
   /**
    * A source edit was applied. Probe edits are not writes, and neither is a
@@ -167,6 +171,7 @@ export class DebugTracker {
     if (!result || typeof result !== 'object') return null;
     const r = result as Record<string, any>;
     const short = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+    if (this.writes === 0) this.browserBeforeFix = true;
     if (tool === 'browser_network' && args.requestId !== undefined && typeof r.body === 'string') {
       return this.addEvidence('observed', `response body of request ${short(args.requestId, 40)}${r.requestBody ? ` (sent: ${short(r.requestBody, 120)})` : ''}: ${short(r.body, 300)}`);
     }
@@ -184,6 +189,45 @@ export class DebugTracker {
       return this.addEvidence('observed', `in the page, \`${short(args.expression, 120)}\` → ${short(r.result, 300)}`);
     }
     return null;
+  }
+
+  /**
+   * The model's browser repro check (browser_eval with `check`): an expression
+   * that returns true when the page works and false when the bug shows. Red
+   * before the fix and green after are recorded like a test command's, so a
+   * hypothesis can be confirmed from a web repro too.
+   */
+  noteBrowserCheck(label: string, result: unknown, url: string): Evidence {
+    const value = String(result ?? '').trim();
+    const where = url ? ` on ${url.slice(0, 100)}` : '';
+    if (value !== 'true' && value !== 'false') {
+      return this.addEvidence('note', `browser check "${label}"${where} returned ${value.slice(0, 80) || 'nothing'} — a check must return true (works) or false (the bug shows)`);
+    }
+    const key = `browser check "${label}"`;
+    if (this.writes === 0) this.browserBeforeFix = true;
+    if (value === 'false' && this.writes === 0) {
+      const ev = this.addEvidence('repro-fail', `${key}${where} returned false — the bug shows`);
+      this.failingCommands.set(key, ev.id);
+      this.reproFailId ??= ev.id;
+      return ev;
+    }
+    if (value === 'true' && this.writes > 0 && this.failingCommands.has(key)) {
+      const ev = this.addEvidence('repro-pass', `${key}${where} returns true with the fix (it failed before: ${this.failingCommands.get(key)}).`);
+      this.reproPassId = ev.id;
+      this.browserProven = true;
+      return ev;
+    }
+    const meaning = value === 'true' ? (this.writes === 0 ? ' — the bug does not show here' : ' — but it never failed before the fix, so it proves nothing yet') : ' — the bug still shows with the fix';
+    return this.addEvidence('observed', `${key}${where} returned ${value}${meaning}`);
+  }
+
+  /**
+   * The bug was reproduced in a live page, a fix was written, but the page never
+   * showed it fixed: a test passing is not the bug the user saw going away.
+   */
+  browserProofIssue(): string | null {
+    if (!this.browserBeforeFix || this.writes === 0 || this.browserProven) return null;
+    return 'the bug was reproduced in the browser, but the fix was never checked there';
   }
 
   /**
@@ -219,6 +263,7 @@ export class DebugTracker {
     if (typeof result.revertedExitCode !== 'number') return null;
     const red = result.revertedExitCode !== 0;
     this.counterfactual = red ? 'red' : 'green';
+    if (red && /^browser check /.test(result.command ?? '')) this.browserProven = true;
     return this.addEvidence(
       'counterfactual',
       red

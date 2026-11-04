@@ -6347,6 +6347,7 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     const on = createStructuredPrompt([], 'x', '', undefined, null, { ...base, toolAvailability: av(true) });
     assert.ok(on.includes('reproduces in the browser') && on.includes('browser_network'));
     assert.ok(on.includes('Reproducing it is where the investigation starts, not where it ends'), 'a repro is not the end of a Debug run');
+    assert.ok(on.includes('Prove a browser-reproduced fix in the browser') && on.includes('`counterfactual_check` {browser: true}'), 'a browser repro is proven in the browser, on the local app');
     assert.ok(on.includes('leave the tab open, ask with `ask_user` to sign in there'), 'a tab waiting on the user is not closed');
     assert.ok(on.includes('ask the user in chat with `ask_user`') && on.includes('never end the run with the question left in the report'), 'a hard-to-undo step is asked, not left in the report');
     const off = createStructuredPrompt([], 'x', '', undefined, null, { ...base, toolAvailability: av(false) });
@@ -6659,6 +6660,55 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     const unknown = await debugService.runCounterfactual({ path: 'calc.test.js' }, roots, ['calc.js', 'ghost.js'], undefined, originalOf);
     assert.ok(unknown.unavailable, 'a file with no recorded original makes it unavailable, and nothing is left reverted');
     assert.equal(fs.readFileSync(fixPath, 'utf8'), fixed);
+  });
+
+  await t('counterfactual_check with a browser repro runs the check while the fix is out, then puts the fix back', async () => {
+    const dir = tempWorkspace({ 'step.js': 'export const advance = (s) => s + 1;\n' });
+    const roots = rootsFor(dir);
+    const fixPath = path.join(dir, 'step.js');
+    const fixed = fs.readFileSync(fixPath, 'utf8');
+    const originalOf = (p) => (p === fixPath ? 'export const advance = (s) => s;\n' : undefined);
+    let sawDuringCheck = '';
+    const repro = {
+      label: 'continue-advances',
+      run: async () => {
+        sawDuringCheck = fs.readFileSync(fixPath, 'utf8');
+        return { exitCode: 1, output: 'browser check "continue-advances" returned false' };
+      },
+    };
+    const result = await debugService.runCounterfactual({ path: '', repro }, roots, ['step.js'], undefined, originalOf);
+    assert.equal(sawDuringCheck, 'export const advance = (s) => s;\n', 'the check ran against the original code');
+    assert.equal(fs.readFileSync(fixPath, 'utf8'), fixed, 'and the fix is back afterwards');
+    assert.equal(result.command, 'browser check "continue-advances"');
+    assert.notEqual(result.revertedExitCode, 0);
+    const d = new DebugTracker();
+    d.noteBrowserCheck('continue-advances', 'false', 'http://localhost:3000/checkout');
+    d.noteWrite('step.js');
+    assert.equal(d.browserProofIssue(), 'the bug was reproduced in the browser, but the fix was never checked there');
+    d.noteCounterfactual(result);
+    assert.equal(d.counterfactualState, 'red');
+    assert.equal(d.browserProofIssue(), null, 'red with the fix out, in the browser, is proof there');
+  });
+
+  await t('a browser repro check records red before the fix and green after, like a failing test', () => {
+    const d = new DebugTracker();
+    const red = d.noteBrowserCheck('continue-advances', 'false', 'http://localhost:3000/checkout');
+    assert.equal(red.kind, 'repro-fail');
+    assert.ok(d.hasFailingRepro);
+    d.noteWrite('src/useShippingAddressStep.ts');
+    assert.match(d.browserProofIssue(), /never checked there/);
+    const still = d.noteBrowserCheck('continue-advances', 'false', 'http://localhost:3000/checkout');
+    assert.match(still.text, /the bug still shows with the fix/);
+    const green = d.noteBrowserCheck('continue-advances', 'true', 'http://localhost:3000/checkout');
+    assert.equal(green.kind, 'repro-pass');
+    assert.match(green.text, /failed before: E1/);
+    assert.equal(d.browserProofIssue(), null);
+    assert.equal(d.noteBrowserCheck('x', '"step 3"', '').kind, 'note', 'a check must answer true or false');
+    const fresh = new DebugTracker();
+    assert.equal(fresh.noteBrowserCheck('y', 'true', 'u').kind, 'observed', 'passing before the fix is not a repro');
+    fresh.noteWrite('a.ts');
+    assert.match(fresh.noteBrowserCheck('y', 'true', 'u').text, /never failed before the fix/);
+    assert.equal(new DebugTracker().browserProofIssue(), null, 'no browser before the fix, no browser proof owed');
   });
 }
 

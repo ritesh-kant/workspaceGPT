@@ -1212,6 +1212,12 @@ const TOOL_DEFS = [
         properties: {
           tabId: { type: 'number', description: 'Tab id from browser_list_tabs. Omit for the tab the user is looking at.' },
           expression: { type: 'string', description: 'A JavaScript expression; a Promise is awaited.' },
+          check: {
+            type: 'string',
+            description:
+              'Debug mode: name this evaluation as the browser repro check (e.g. "continue-advances"). The expression must do the failing interaction itself if needed and return true when the page works, false when the bug shows. ' +
+              'false before your fix records the repro (red); true after it records the fix working (green); counterfactual_check {browser: true} reruns it with the fix taken out.',
+          },
         },
         required: ['expression'],
       },
@@ -1319,15 +1325,17 @@ const TOOL_DEFS = [
       name: 'counterfactual_check',
       description:
         'Prove the fix is what makes the repro pass: temporarily put the files you changed back to their original content (except `keep`, normally the regression test), run the test for `path`, then restore your fix and confirm it is restored. ' +
-        'A confirmed root cause needs this to come back FAILING (red) — if the test still passes without your fix, the test does not exercise the cause. Run it after the repro passes with your fix, with probes removed.',
+        'A confirmed root cause needs this to come back FAILING (red) — if the test still passes without your fix, the test does not exercise the cause. Run it after the repro passes with your fix, with probes removed. ' +
+        'For a bug reproduced in the browser, pass browser: true instead of path: with the fix out, the app you are running locally reloads and your last browser_eval `check` runs again on the same page.',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'The test file (or file under test) whose test run is the repro — same as run_checks path.' },
+          path: { type: 'string', description: 'The test file (or file under test) whose test run is the repro — same as run_checks path. Not needed with browser: true.' },
           kind: { type: 'string', enum: ['test'], description: 'Always "test".' },
           keep: { type: 'array', items: { type: 'string' }, description: 'Changed files to leave in place — the regression test you wrote. Defaults to `path`.' },
+          browser: { type: 'boolean', description: 'The repro is your browser_eval `check` on the locally running app, not a test.' },
+          settleSec: { type: 'number', description: 'With browser: seconds to let the dev server rebuild after the revert (default 8).' },
         },
-        required: ['path'],
       },
     },
   },
@@ -1429,6 +1437,8 @@ let debugEditGateUsed = false;
 let debugClaimNudgesUsed = 0;
 // Debug run on a web bug that ended without the browser while Chrome was connected — sent back once.
 let browserReproNudgeUsed = false;
+// A fix for a bug reproduced in the browser that was never checked there — sent back once.
+let browserProofNudgeUsed = false;
 const TICKET_IMPLEMENT_MANDATE = !!executeMandate || IMPLEMENT_MANDATE_RE.test(prompt) || hasWriteIntent(prompt);
 const TICKET_IMPLEMENT_RUN =
   !!ticketContext && !ticketLookupOnly && (!TICKET_RESEARCH_RUN || TICKET_IMPLEMENT_MANDATE);
@@ -2966,6 +2976,8 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     if (out && debugTracker && !planMode) {
       const unbacked = debugTracker.claimIssues(out);
       if (unbacked.length) out += `\n\n---\n⚠️ **Harness note:** this report says the root cause is confirmed, but the run did not establish it: ${unbacked.join('; ')}. Treat it as probable.`;
+      const unproven = toolAvailability?.browser ? debugTracker.browserProofIssue() : null;
+      if (unproven) out += `\n\n---\n⚠️ **Harness note:** ${unproven} — the fix is not verified where the bug was seen.`;
       const notDone = debugTracker.doneIssues(out, writesApplied + (priorWrites ?? 0));
       if (notDone.length) out += `\n\n---\n⚠️ **Harness note:** this report is headed Done, but ${notDone.join(', and ')}. The bug is not fixed yet.`;
       const ledger = debugTracker.ledgerMarkdown();
@@ -4167,6 +4179,21 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           continue;
         }
       }
+      // The user saw the bug in a page; a passing test is not that page working.
+      // Once: prove it on the locally running app, or say why that is not possible.
+      const browserProof = debugTracker && !planMode && !budgetExhausted && !browserProofNudgeUsed && toolAvailability?.browser ? debugTracker.browserProofIssue() : null;
+      if (browserProof) {
+        browserProofNudgeUsed = true;
+        messages.push({ role: 'assistant', content: outcome.content });
+        messages.push({
+          role: 'user',
+          content:
+            `STOP: ${browserProof}. Check the fix where the bug was seen: start the app locally with run_command {background: true} (its dev script), wait for it with check_command, open it with browser_open_tab, ` +
+            'repeat the reproduction steps, and run browser_eval with `check` (true = works) — then counterfactual_check {browser: true} to show the bug returns without the fix. ' +
+            'If the app cannot run locally (missing env, a backend you cannot reach), say so under Not verified with the exact obstacle — never claim it was checked in the browser.',
+        });
+        continue;
+      }
       // A web bug that ends without a confirmed cause while Chrome is connected and
       // no browser tool ran: the repro was one tool call away. Observed live —
       // "Root cause not found" on #1453249, and the user had to type "use chrome
@@ -4668,7 +4695,11 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           } catch {
             /* unparseable args — record without them */
           }
-          const ev = debugTracker.noteBrowser(tc.name, rawResult, browserArgs);
+          const check = (browserArgs as { check?: unknown }).check;
+          const ev =
+            tc.name === 'browser_eval' && check
+              ? debugTracker.noteBrowserCheck(String(check), (rawResult as { result?: unknown }).result, String((rawResult as { url?: unknown }).url ?? ''))
+              : debugTracker.noteBrowser(tc.name, rawResult, browserArgs);
           if (ev) recorded = [ev];
         }
         if (recorded.length) modelResult = { ...(modelResult as Record<string, unknown>), evidence: recorded.map((e) => ({ id: e.id, kind: e.kind })) };

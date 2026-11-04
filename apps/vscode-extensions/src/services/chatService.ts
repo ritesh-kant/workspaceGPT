@@ -335,6 +335,8 @@ interface SessionRun {
   codeExplored: boolean;
   /** Browser tool calls the current turn made — none on a web bug's Debug report offers "Reproduce in Chrome". */
   turnBrowserCalls: number;
+  /** The last browser_eval marked as the repro check — what counterfactual_check {browser: true} reruns. */
+  browserCheck?: { label: string; tabId: number; url: string; expression: string };
   /**
    * The user's own message asked for a repo-wide check ("run the full test
    * suite"). Set per turn: it lifts the unscoped-verification refusal, since a
@@ -2021,8 +2023,14 @@ export class ChatService {
         }
         return browserRequest('page.act', args ?? {}, 30_000);
       }
-      case 'browser_eval':
-        return browserRequest('page.eval', { tabId: args?.tabId, expression: args?.expression }, 30_000);
+      case 'browser_eval': {
+        const evaluated = await browserRequest<{ tabId?: number; url?: string; result?: string }>('page.eval', { tabId: args?.tabId, expression: args?.expression }, 30_000);
+        // The repro check counterfactual_check reruns with the fix taken out.
+        if (args?.check && typeof evaluated?.tabId === 'number' && evaluated.url) {
+          run.browserCheck = { label: String(args.check), tabId: evaluated.tabId, url: evaluated.url, expression: String(args.expression ?? '') };
+        }
+        return evaluated;
+      }
       case 'browser_console':
         return withProbeOutput(run.debug, await browserRequest('page.console', { tabId: args?.tabId, onlyErrors: args?.onlyErrors, pattern: args?.pattern, limit: args?.limit }));
       case 'browser_network':
@@ -2172,9 +2180,29 @@ export class ChatService {
   private async counterfactualCheck(run: SessionRun, args: any, roots: NamedRoot[], stepId?: string): Promise<unknown> {
     if (run.planMode) throw new Error('Plan mode: nothing is changed this turn, so there is no fix to check.');
     if (run.debug.probes.size) throw new Error('Remove the probes first (remove_probes) — a probe line left in would be part of what you are reverting.');
+    const check = args?.browser ? run.browserCheck : undefined;
+    if (args?.browser && !check) throw new Error('No browser repro check yet: run browser_eval with `check` (an expression that returns true when the page works, false when the bug shows) first.');
     this.postStatus(run, 'Checking the repro without the fix…');
     const result = await runCounterfactual(
-      { path: String(args?.path ?? ''), keep: Array.isArray(args?.keep) ? args.keep.map(String) : undefined },
+      {
+        path: String(args?.path ?? ''),
+        keep: Array.isArray(args?.keep) ? args.keep.map(String) : undefined,
+        // Browser repro: let the dev server pick up the reverted files, reload the
+        // page the check ran on, and run the same check there.
+        ...(check
+          ? {
+              repro: {
+                label: check.label,
+                run: async () => {
+                  await new Promise((r) => setTimeout(r, Math.min(Math.max(Number(args?.settleSec) || 8, 1), 60) * 1000));
+                  await browserRequest('page.navigate', { tabId: check.tabId, url: check.url }, 45_000);
+                  const r = await browserRequest<{ result?: string }>('page.eval', { tabId: check.tabId, expression: check.expression }, 30_000);
+                  return { exitCode: r?.result === 'true' ? 0 : 1, output: `browser check "${check.label}" on ${check.url} returned ${r?.result}` };
+                },
+              },
+            }
+          : {}),
+      },
       roots,
       [...run.turnFilesChanged.keys()],
       this.streamOutputTo(run, stepId)

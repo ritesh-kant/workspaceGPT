@@ -88,6 +88,11 @@ export interface CounterfactualArgs {
   path: string;
   kind?: string;
   keep?: string[];
+  /**
+   * The repro is a browser check, not a test: run this instead of the test
+   * command while the fix is out. exitCode 0 = the check passed (works), 1 = the bug shows.
+   */
+  repro?: { label: string; run: () => Promise<{ exitCode: number | null; output: string }> };
 }
 
 const COUNTERFACTUAL_NOTE =
@@ -113,8 +118,8 @@ export async function runCounterfactual(
   const files = changed.filter((f) => !keep.has(norm(f)));
   if (!files.length) return { unavailable: 'no file was changed besides the test itself, so there is no fix to take out.' };
 
-  const plan = planVerification(roots, { path: args.path, kind: 'test' });
-  assertCommandAllowed(plan.command);
+  const plan = args.repro ? null : planVerification(roots, { path: args.path, kind: 'test' });
+  if (plan) assertCommandAllowed(plan.command);
 
   const reverted: { display: string; restoreTo: string | null }[] = [];
   const failedRestore: string[] = [];
@@ -132,7 +137,7 @@ export async function runCounterfactual(
       reverted.push({ display, restoreTo: write.kind === 'create' ? null : write.before });
     }
     if (!reverted.length) return { unavailable: 'the changed files already equal their originals — there is no fix in place.' };
-    exit = await executeCommand(plan.command, plan.cwd, undefined, onOutput, true);
+    exit = args.repro ? await args.repro.run() : await executeCommand(plan!.command, plan!.cwd, undefined, onOutput, true);
   } finally {
     // Always put the fix back, last-reverted first.
     for (const r of [...reverted].reverse()) {
@@ -147,8 +152,8 @@ export async function runCounterfactual(
   const out = String(exit?.output ?? '');
   return {
     counterfactual: true,
-    command: plan.command,
-    cwd: plan.displayCwd,
+    command: plan ? plan.command : `browser check "${args.repro!.label}"`,
+    cwd: plan?.displayCwd,
     files: reverted.map((r) => r.display),
     revertedExitCode: exit?.timedOut ? null : exit?.exitCode ?? null,
     timedOut: !!exit?.timedOut,
