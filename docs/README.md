@@ -12,6 +12,8 @@ This folder is for people working on WorkspaceGPT itself.
   proposing a feature.
 - [roadmap.md](roadmap.md): the ordered plan (phases, what shipped when).
 - [todo.md](todo.md): known follow-ups that aren't scheduled yet.
+- [positioning-vs-claude-code.md](positioning-vs-claude-code.md): how we
+  differ from Claude Code + MCP, and what to check before saying it publicly.
 
 ## Designs (built)
 

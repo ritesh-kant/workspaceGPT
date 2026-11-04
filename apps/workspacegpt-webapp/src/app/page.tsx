@@ -453,8 +453,60 @@ export default function Home() {
           </div>
         </section>
 
+        {/* Different from other coding agents */}
+        <section data-reveal id="different" className="py-16 sm:py-24 border-b border-line">
+          <div className="container mx-auto px-6 max-w-5xl">
+            <div className="text-center mb-12 sm:mb-16">
+              <h2 className="text-3xl sm:text-5xl font-normal text-foreground mb-4 tracking-tight">Not just another coding agent</h2>
+              <p className="text-muted text-base sm:text-lg max-w-2xl mx-auto">
+                Most coding agents start from your code. WorkspaceGPT also starts from{" "}
+                <span className="text-white font-medium">your organisation&rsquo;s Knowledge</span>: the Confluence
+                pages, Jira tickets and Azure DevOps items that explain why the code is the way it is.
+              </p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="bg-surface border border-line rounded-xl p-8 hover:border-line-strong transition-colors duration-500">
+                <h3 className="text-xl font-semibold mb-3 tracking-tight text-white">Indexed, not just searched</h3>
+                <p className="text-muted leading-relaxed">
+                  Confluence, Jira and Azure DevOps are synced to your machine and indexed, so the agent finds the
+                  decision you forgot by meaning, before you ask. An agent that runs a keyword search per question
+                  only finds what you guess the words for.
+                </p>
+              </div>
+              <div className="bg-surface border border-line rounded-xl p-8 hover:border-line-strong transition-colors duration-500">
+                <h3 className="text-xl font-semibold mb-3 tracking-tight text-white">Private by design</h3>
+                <p className="text-muted leading-relaxed">
+                  The index and embeddings stay on your device in every mode. Only your question and the snippets
+                  retrieved for it go to the model you chose, and you can choose a local one.
+                </p>
+              </div>
+              <div className="bg-surface border border-line rounded-xl p-8 hover:border-line-strong transition-colors duration-500">
+                <h3 className="text-xl font-semibold mb-3 tracking-tight text-white">Built around the ticket</h3>
+                <p className="text-muted leading-relaxed">
+                  Start from a ticket and it researches every Knowledge source, shows its references, asks when it
+                  needs your input, and writes back to Confluence for your review. You don&rsquo;t write that
+                  process into a prompt.
+                </p>
+              </div>
+              <div className="bg-surface border border-line rounded-xl p-8 hover:border-line-strong transition-colors duration-500">
+                <h3 className="text-xl font-semibold mb-3 tracking-tight text-white">Your model, your tools</h3>
+                <p className="text-muted leading-relaxed">
+                  Use your Copilot plan, your own key or a local model, in VS Code or the desktop app. It also ships
+                  an MCP server, so the agent you already use can search the same Knowledge.
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-8 text-center text-sm text-muted">
+              Already using Claude Code?{" "}
+              <Link href="/vs-claude-code" className="text-brand hover:underline">See how they compare</Link>.
+            </p>
+          </div>
+        </section>
+
         {/* Two Modes */}
-        <section data-reveal id="modes" className="py-16 sm:py-24 border-b border-line">
+        <section data-reveal id="modes"className="py-16 sm:py-24 border-b border-line">
           <div className="container mx-auto px-6 max-w-5xl">
             <div className="text-center mb-12 sm:mb-16">
               <h2 className="text-3xl sm:text-5xl font-normal text-foreground mb-4 tracking-tight">Two modes, one guarantee</h2>

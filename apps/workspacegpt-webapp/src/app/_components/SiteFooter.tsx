@@ -6,6 +6,7 @@ const LINKS = [
   { href: "/docs", label: "Docs" },
   { href: "/changelog", label: "Changelog" },
   { href: "/trust", label: "Trust" },
+  { href: "/vs-claude-code", label: "vs Claude Code" },
   { href: "/privacy", label: "Privacy" },
   { href: "/support", label: "Support" },
   { href: "https://github.com/ritesh-kant/workspaceGPT/issues", label: "GitHub Issues" },

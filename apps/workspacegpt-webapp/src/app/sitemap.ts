@@ -29,6 +29,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     },
     {
+      url: `${SITE_URL}/vs-claude-code`,
+      lastModified: "2026-11-04",
+      changeFrequency: "monthly",
+      priority: 0.7,
+    },
+    {
       url: `${SITE_URL}/docs`,
       lastModified: LATEST_RELEASE,
       changeFrequency: "weekly",
