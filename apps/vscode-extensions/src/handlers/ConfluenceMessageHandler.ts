@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import path from 'path';
 import { MESSAGE_TYPES, MODEL, STORAGE_KEYS } from '../../constants';
 import { ConfluenceService, ConfluenceConfig } from '../services/confluence/confluenceService';
-import { ConfluenceAuthService } from '../services/confluence/confluenceAuthService';
+import { ConfluenceAuthService, ConfluenceAuthExpiredError } from '../services/confluence/confluenceAuthService';
 import { ConfluenceEmbeddingService } from '../services/confluence/confluenceEmbeddingService';
 import { EmbeddingConfig } from '../types/types';
 import { AnalyticsService } from '../services/analyticsService';
@@ -300,6 +300,7 @@ export class ConfluenceMessageHandler {
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
+        authExpired: error instanceof ConfluenceAuthExpiredError,
       });
     }
   }
@@ -330,6 +331,7 @@ export class ConfluenceMessageHandler {
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR,
         message: error instanceof Error ? error.message : String(error),
+        authExpired: error instanceof ConfluenceAuthExpiredError,
       });
     }
   }

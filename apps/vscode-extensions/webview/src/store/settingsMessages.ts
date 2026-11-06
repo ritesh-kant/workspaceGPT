@@ -118,6 +118,18 @@ function handleConfluenceMessage(message: any): void {
       break;
 
     case MESSAGE_TYPES.SYNC_CONFLUENCE_ERROR:
+      // Host-detected dead token: show the Connect state instead of "Connected" + a vague error.
+      if (message.authExpired) {
+        batchUpdateConfig('confluence', {
+          isAuthenticated: false,
+          isSyncing: false,
+          isConnecting: false,
+          messageType: 'error',
+          statusMessage: 'Your Confluence connection expired. Reconnect to resume syncing.',
+          canResume: true,
+        });
+        break;
+      }
       batchUpdateConfig('confluence', {
         isSyncing: false,
         messageType: 'error',

@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as http from 'http';
+import * as fs from 'fs';
+import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { ATLASSIAN_OAUTH, STORAGE_KEYS } from '../../../constants';
 import { claimAtlassianCallbackSlot } from '../atlassianCallbackSlot';
@@ -243,7 +245,7 @@ export class ConfluenceAuthService {
     }
 
     try {
-      const response = await fetch(ATLASSIAN_OAUTH.TOKEN_PROXY_URL, {
+      const send = () => fetch(ATLASSIAN_OAUTH.TOKEN_PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -251,9 +253,21 @@ export class ConfluenceAuthService {
           refresh_token: tokens.refreshToken,
         }),
       });
+      // A thrown fetch means no response arrived (sleep/wake, dropped network), but Atlassian
+      // may already have rotated the token. Retrying the same token once is safe inside its
+      // reuse window and avoids leaving a dead token stored.
+      let response: Response;
+      try {
+        response = await send();
+      } catch (networkError) {
+        this.logRefresh(`network error, retrying once: ${networkError instanceof Error ? networkError.message : String(networkError)}`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        response = await send();
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
+        this.logRefresh(`refresh rejected: HTTP ${response.status} ${errorText.slice(0, 300)}`);
         // Another process (desktop app / second window) may have rotated the token
         // and saved a newer one since we read it; use that instead of failing.
         const latest = await this.getStoredTokens();
@@ -421,6 +435,17 @@ export class ConfluenceAuthService {
   }
 
   // --- Private Helpers ---
+
+  /** Append a line to confluence-auth.log in extension storage: desktop/background runs have no visible console. */
+  private logRefresh(line: string): void {
+    try {
+      const dir = this.context.globalStorageUri.fsPath;
+      fs.mkdirSync(dir, { recursive: true });
+      fs.appendFileSync(path.join(dir, 'confluence-auth.log'), `${new Date().toISOString()} ${line}\n`);
+    } catch {
+      // logging must never break a refresh
+    }
+  }
 
   private async saveTokens(tokens: OAuthTokens): Promise<void> {
     await this.context.secrets.store(
