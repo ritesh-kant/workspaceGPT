@@ -193,10 +193,17 @@ export class ViewSurface {
       previous.close(WS_CLOSE_SUPERSEDED, 'superseded by a newer window');
     }
     socket.on('message', (raw) => {
+      // Liveness probe from the page's watchdog: answer and move on.
+      const text = String(raw);
+      if (text.length < 32 && text.includes('"ping"')) {
+        if (socket.readyState === 1) socket.send('{"t":"pong"}');
+        return;
+      }
       // A superseded page must not overwrite the new owner's state.
-      if (this.socket === socket) this.onFrame(String(raw));
+      if (this.socket === socket) this.onFrame(text);
     });
-    socket.on('close', () => {
+    socket.on('close', (code) => {
+      console.log(`[desktop] ${this.viewType} page disconnected (code ${code})`);
       if (this.socket !== socket) return;
       this.socket = undefined;
       // Any dialog that page was showing is gone; resolve as "dismissed".

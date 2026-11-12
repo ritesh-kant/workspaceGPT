@@ -149,6 +149,44 @@ interface UiFrame {
   const BANNER_GRACE_MS = 3000;
   let disconnectBanner: ReturnType<typeof setTimeout> | undefined;
 
+  // A socket can die without onclose ever firing (the webview suspended, the
+  // network stack reset). Probe it; if nothing comes back, drop it and reconnect.
+  let lastHeard = Date.now();
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  const revive = (why: string): void => {
+    if (stopped || !token) return;
+    const dead = socket;
+    open = false;
+    clearTimeout(retryTimer);
+    retry = 0;
+    if (dead) {
+      dead.onclose = null;
+      try {
+        dead.close();
+      } catch {
+        /* already gone */
+      }
+    }
+    disconnectBanner ??= setTimeout(() => banner('Disconnected from WorkspaceGPT — reconnecting…', 'warning'), BANNER_GRACE_MS);
+    console.warn(`[wgpt-bridge] reviving socket: ${why}`);
+    connect();
+  };
+  setInterval(() => {
+    if (stopped) return;
+    if (open && socket && socket.readyState === WebSocket.OPEN) {
+      if (Date.now() - lastHeard > 35000) revive('no reply to ping for 35s');
+      else socket.send('{"t":"ping"}');
+    }
+  }, 10000);
+  const wake = () => {
+    if (document.visibilityState === 'hidden') return;
+    if (!open || !socket || socket.readyState !== WebSocket.OPEN) revive('page woke with no live socket');
+    else socket.send('{"t":"ping"}'); // the watchdog above judges the answer
+  };
+  document.addEventListener('visibilitychange', wake);
+  window.addEventListener('online', wake);
+  window.addEventListener('focus', wake);
+
   function send(frame: unknown): void {
     const data = JSON.stringify(frame);
     if (open && socket) socket.send(data);
@@ -170,6 +208,7 @@ interface UiFrame {
       for (const data of outbox.splice(0)) socket!.send(data);
     };
     socket.onmessage = (ev) => {
+      lastHeard = Date.now();
       let frame: any;
       try {
         frame = JSON.parse(String(ev.data));
@@ -193,7 +232,9 @@ interface UiFrame {
         else renderToolbar(frame.items ?? []);
       }
     };
+    const mine = socket;
     socket.onclose = (ev) => {
+      if (socket !== mine) return; // a replaced socket's late close must not start a second retry loop
       open = false;
       if (ev.code === 4001) {
         stopped = true;
@@ -205,7 +246,7 @@ interface UiFrame {
       // down server; the message says both.
       disconnectBanner ??= setTimeout(() => banner('Disconnected from WorkspaceGPT — reconnecting…', 'warning'), BANNER_GRACE_MS);
       const delay = Math.min(5000, 250 * 2 ** retry++);
-      setTimeout(connect, delay);
+      retryTimer = setTimeout(connect, delay);
     };
   }
 
