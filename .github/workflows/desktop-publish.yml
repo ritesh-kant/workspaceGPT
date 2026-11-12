@@ -35,8 +35,8 @@ jobs:
           # target), stages the x64 Node + native packages (pnpm
           # supportedArchitectures installs them all), and codesign doesn't
           # care which CPU it signs for.
-          - { target: darwin-arm64, os: macos-14, rust: "aarch64-apple-darwin,x86_64-apple-darwin" }
-          - { target: darwin-x64, os: macos-14, rust: "aarch64-apple-darwin,x86_64-apple-darwin" }
+          - { target: darwin-arm64, os: macos-15, rust: "aarch64-apple-darwin,x86_64-apple-darwin" }
+          - { target: darwin-x64, os: macos-15, rust: "aarch64-apple-darwin,x86_64-apple-darwin" }
           # Windows builds natively. No code-signing certificate: install.ps1
           # downloads without the internet mark, so SmartScreen doesn't stop it.
           - { target: win32-x64, os: windows-latest, rust: x86_64-pc-windows-msvc }
@@ -208,7 +208,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        os: [macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: curl install.sh | sh (macOS, UTF-8 locale like Terminal)
