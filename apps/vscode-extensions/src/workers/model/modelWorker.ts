@@ -86,6 +86,8 @@ import { DebugTracker, claimedRootCauseStatus, isTestPath, ticketHasWebRepro } f
 import { hasRegressionCue, ticketTexts } from '../../utils/regressionCue';
 import { AutoVerifyTracker, CheckResultLike, CheckKindName, PendingCheck, AUTO_CHECKABLE_FILE_RE } from './autoVerify';
 import { stripLineNumbers } from '../../services/codebase/lineNumbers';
+import { configPlumbingNudge, findConfigPlumbingGaps, newEnvKeysFromWrite, PlumbingSearchResult } from './configPlumbing';
+import { PrBaseline, PrDiff, PrReviewContext, prReviewContextBlock, prReviewNudge, snapshotPrReview, untouchedComments } from './prReview';
 import { logPromptCall } from './promptTokenDebug';
 
 interface WorkerData {
@@ -219,6 +221,8 @@ interface WorkerData {
    * "Publish to Confluence": the document is finished, so no code scouting.
    */
   turnAction?: 'publish-spike';
+  /** The CI chip's fix run on a pull request: its base ref and where the review comments point (prReview.ts). */
+  prReview?: PrReviewContext;
   /** An earlier turn of this chat already read the code (host-tracked from its metrics). */
   codeExploredInChat?: boolean;
   /**
@@ -273,6 +277,7 @@ const {
   harnessProfile,
   reasoningEffort,
   turnAction,
+  prReview,
   codeExploredInChat,
   debugMode,
   linkedConfluencePageId,
@@ -971,12 +976,14 @@ const TOOL_DEFS = [
     type: 'function',
     function: {
       name: 'git_diff',
-      description: 'Unified diff of uncommitted changes — optionally limited to one path, or the staged changes. Read-only.',
+      description:
+        'Unified diff of uncommitted changes — optionally limited to one path, or the staged changes. With `base`, everything this branch changed since it left that ref, committed or not: what a pull request shows. Read-only.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Restrict the diff to this file or directory.' },
           staged: { type: 'boolean', description: 'Show staged (index) changes instead of unstaged. Defaults to false.' },
+          base: { type: 'string', description: 'Branch or commit the branch was cut from, e.g. "origin/main". Diffs from its merge-base with HEAD to the working tree.' },
         },
       },
     },
@@ -2754,6 +2761,14 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // continuation turn is appended to it instead of a fresh structured prompt —
   // the rules, orientation and rules files are already in its first turn.
   const resume = seedFromTranscript(resumeTranscript);
+  // A pull-request run starts knowing what the PR changes, and records each
+  // commented file's PR diff so the end of the run can tell what it touched.
+  const prDiff: PrDiff = async (a) => {
+    const r = (await requestTool('git_diff', a).catch(() => null)) as { output?: unknown } | null;
+    return typeof r?.output === 'string' ? r.output : null;
+  };
+  const prBaseline: PrBaseline | null = prReview ? await snapshotPrReview(prReview, prDiff).catch(() => null) : null;
+  const prContext = prReview && prBaseline ? prReviewContextBlock(prReview, prBaseline) : '';
   const messages: any[] = resume
     ? [
         ...resume.messages,
@@ -2771,7 +2786,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
           ),
         },
       ]
-    : [{ role: 'user', content: buildUserContent(initialPrompt) }];
+    : [{ role: 'user', content: buildUserContent(initialPrompt + prContext) }];
   if (resume) {
     parentPort?.postMessage({
       type: 'resumed',
@@ -3057,6 +3072,12 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
   // One-shot: a finished report that changed code or marks a ⚠️ but tells the
   // user nothing about how to test it (see missingHowToTest).
   let howToTestNudgeUsed = false;
+  // Env vars this run's writes started reading → the file that reads each
+  // (see configPlumbing.ts), and the one-shot nudge when one is never supplied.
+  const newEnvReads = new Map<string, string>();
+  let configPlumbingNudgeUsed = false;
+  // One-shot: review comments whose PR diff this run left exactly as it was (prReview.ts).
+  let prReviewNudgeUsed = false;
   let incompleteAnswerNudgesUsed = 0;
   // Answer-shape failure signatures live in answerGates.ts (shared with the
   // eval harness, which pins the live transcripts that motivated each one).
@@ -4328,6 +4349,30 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         messages.push({ role: 'user', content: HOW_TO_TEST_NUDGE });
         continue;
       }
+      // The run started reading an env var that no deployment file supplies
+      // (#1588522). Structural — the run's own writes and the repo's files —
+      // so it runs in both harness profiles, once.
+      if (!configPlumbingNudgeUsed && !budgetExhausted && !planMode && newEnvReads.size > 0) {
+        configPlumbingNudgeUsed = true;
+        const gaps = await findConfigPlumbingGaps(newEnvReads, (a) => requestTool('search_codebase', a) as Promise<PlumbingSearchResult>).catch(() => []);
+        if (gaps.length) {
+          messages.push({ role: 'assistant', content: outcome.content });
+          messages.push({ role: 'user', content: configPlumbingNudge(gaps) });
+          continue;
+        }
+      }
+      // A pull-request run's report is checked against the PR itself: a
+      // commented change still in the PR unchanged must not be reported fixed
+      // or absent (#1588522). Structural — git facts — so both profiles, once.
+      if (!prReviewNudgeUsed && !budgetExhausted && !planMode && prReview && prBaseline) {
+        prReviewNudgeUsed = true;
+        const untouched = await untouchedComments(prReview, prBaseline, prDiff).catch(() => []);
+        if (untouched.length) {
+          messages.push({ role: 'assistant', content: outcome.content });
+          messages.push({ role: 'user', content: prReviewNudge(prReview, untouched) });
+          continue;
+        }
+      }
       // A spike's one coverage reflection: built from the run's own tool counts
       // (not phrasing), so it runs in BOTH harness profiles — the phrase gates
       // below are off for a strong model, which is exactly who skipped the
@@ -4761,6 +4806,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         // void — re-arming it is what turns a failing check into a
         // fix-then-re-verify cycle instead of a one-shot complaint.
         if (!failed) autoVerify.noteWrite(argPath, { deleted: tc.name === 'delete_file', checks: writeChecks });
+        if (!failed && argPath) for (const k of newEnvKeysFromWrite(tc.name, tc.args)) if (!newEnvReads.has(k)) newEnvReads.set(k, argPath);
       }
       if (EXTERNAL_WRITE_TOOL_NAMES.has(tc.name)) {
         anyWriteAttempted = true;

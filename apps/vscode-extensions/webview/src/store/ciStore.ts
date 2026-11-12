@@ -12,7 +12,7 @@ export interface CiCheck {
 export interface CiSnapshot {
   state: CiStateName;
   reason?: string;
-  pr?: { number: number; url: string; branch: string; sha: string };
+  pr?: { number: number; url: string; branch: string; sha: string; base?: string };
   checks: CiCheck[];
   /** Unresolved review comments on the PR. */
   comments?: { by: string; body: string; path?: string; line?: number; url?: string }[];
@@ -83,11 +83,24 @@ export const useCiStore = create<CiStoreState>((set) => ({
 export const commentKey = (c: { url?: string; by: string; body: string }): string => c.url ?? `${c.by}:${c.body}`;
 
 /**
+ * What the host needs to treat a fix run as a pull-request run: the base to
+ * diff against and where each comment points (see workers/model/prReview.ts).
+ */
+export interface PrReviewMeta {
+  base?: string;
+  comments: { path: string; line?: number; by?: string }[];
+}
+export const prReviewMeta = (pr: { base?: string }, comments: NonNullable<CiSnapshot['comments']> = []): PrReviewMeta => ({
+  base: pr.base,
+  comments: comments.flatMap((c) => (c.path ? [{ path: c.path, line: c.line, by: c.by }] : [])),
+});
+
+/**
  * The prompt that starts a fix run: the failing log and/or the PR's unresolved
  * review comments. The push is the app's job, not the model's.
  */
 export const ciFixPrompt = (
-  pr: { number: number; branch: string },
+  pr: { number: number; branch: string; base?: string },
   log?: string,
   comments: NonNullable<CiSnapshot['comments']> = []
 ): string => {
@@ -102,7 +115,11 @@ export const ciFixPrompt = (
     parts.push(
       `Pull request #${pr.number} (branch ${pr.branch}) has unresolved review comments. For each one, read the code it points at and decide whether it is a real problem. ` +
         'Fix the ones that are, with the smallest change. If a comment is mistaken or only a matter of taste, leave the code alone and say why in your final report. ' +
-        'Do not reply to or resolve the threads.\n\n' +
+        'Do not reply to or resolve the threads. ' +
+        // #1588522: lockfile churn already committed on the branch was judged
+        // "not present" because the plain git_diff shows only uncommitted work.
+        `The comments are about changes already committed on this branch, so check each against \`git_diff\` with \`base\` ${pr.base ? `"origin/${pr.base}"` : 'set to the branch the PR merges into (e.g. "origin/main")'}, not the uncommitted diff, and confirm a fix the same way. ` +
+        'To undo unwanted changes to a generated file such as a lockfile, restore it from that base first and regenerate it there; re-running the generator on top of the current file keeps what is already in it.\n\n' +
         comments.map((c, i) => `${i + 1}. ${c.by}${c.path ? ` on ${c.path}${c.line ? `:${c.line}` : ''}` : ''}${c.url ? ` (${c.url})` : ''}\n${c.body}`).join('\n\n')
     );
   }

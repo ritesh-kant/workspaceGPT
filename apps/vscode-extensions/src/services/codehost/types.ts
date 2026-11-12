@@ -21,6 +21,8 @@ export interface PrRef {
   branch: string;
   sha: string;
   state: 'open' | 'merged' | 'closed';
+  /** The branch it merges into, when the host says. */
+  base?: string;
 }
 
 export interface CiCheck {

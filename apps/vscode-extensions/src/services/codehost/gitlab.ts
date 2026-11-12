@@ -39,7 +39,7 @@ export class GitLabHost implements CodeHost {
   async findPr(repo: RepoRef, branch: string): Promise<PrRef | null> {
     const mrs = await this.json<any[]>(`${proj(repo)}/merge_requests?source_branch=${encodeURIComponent(branch)}&state=all&order_by=updated_at&sort=desc&per_page=10`);
     const m = mrs.find((x) => x.state === 'opened') ?? mrs[0];
-    return m ? { number: m.iid, url: m.web_url, branch: m.source_branch, sha: m.sha, state: prState(m.state) } : null;
+    return m ? { number: m.iid, url: m.web_url, branch: m.source_branch, sha: m.sha, base: m.target_branch, state: prState(m.state) } : null;
   }
 
   async checks(repo: RepoRef, pr: PrRef): Promise<CiCheck[]> {

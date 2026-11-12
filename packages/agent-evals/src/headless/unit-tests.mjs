@@ -7792,6 +7792,227 @@ console.log('\ncopilot /responses translation');
   }
 }
 
+// #1588522: DD_TRACE_V6_ENABLED was read in six services but never added to
+// deploymentVariables/*.yml or forwarded by terraform/ecs.tf; every check was
+// green. The gap is found from the run's writes and a sibling key's files.
+console.log('\nconfigPlumbing (a new env var must reach the process)');
+{
+  const { newEnvKeysFromWrite, componentRoot, findConfigPlumbingGaps, configPlumbingNudge } = await import(path.join(outDir, 'configPlumbing.mjs'));
+
+  await t('edit that adds a read reports only the new key', () => {
+    const args = JSON.stringify({
+      path: 'apps/mms/mms-bff/src/index.ts',
+      edits: [{ oldString: 'import "dd-trace/init";\nconst o = process.env.WEBAPP_ORIGIN;', newString: 'if (process.env["DD_TRACE_V6_ENABLED"] === "true") require("dd-trace-v6/init");\nconst o = process.env.WEBAPP_ORIGIN;\nconst e = process.env.NODE_ENV;' }],
+    });
+    assert.deepEqual(newEnvKeysFromWrite('edit_file', args), ['DD_TRACE_V6_ENABLED']);
+    assert.deepEqual(newEnvKeysFromWrite('create_file', JSON.stringify({ content: "x = os.getenv('FEATURE_X')" })), ['FEATURE_X']);
+    assert.deepEqual(newEnvKeysFromWrite('delete_file', '{}'), []);
+    assert.deepEqual(newEnvKeysFromWrite('edit_file', 'not json'), []);
+  });
+
+  await t('component root is the folder above src/', () => {
+    assert.equal(componentRoot('apps/generic/solace-listener/src/topic/index.ts'), 'apps/generic/solace-listener');
+    assert.equal(componentRoot('apps/generic/edd/edd-api/dd-trace-preload.js'), 'apps/generic/edd/edd-api');
+    assert.equal(componentRoot('src/index.ts'), '');
+  });
+
+  const ROOT = 'apps/mms/mms-bff';
+  const FILES = {
+    FEATURE_OPTIMIZELY_ENABLED: [`${ROOT}/src/flags.ts`, `${ROOT}/.env.example`, `${ROOT}/deploymentVariables/mms/test01.yml`, `${ROOT}/deploymentVariables/mms/stage.yml`, `${ROOT}/terraform/ecs.tf`, `${ROOT}/README.md`],
+    DD_TRACE_V6_ENABLED: [`${ROOT}/src/index.ts`, `${ROOT}/deploymentVariables/mms/test01.yml`],
+  };
+  const search = async (a) => {
+    assert.equal(a.glob, `${ROOT}/**`);
+    if (!a.outputMode) {
+      return { matches: [
+        { file: `${ROOT}/src/flags.ts`, text: 'if (process.env.FEATURE_OPTIMIZELY_ENABLED === "true")' },
+        { file: `${ROOT}/src/flags.ts`, text: 'const on = process.env.FEATURE_OPTIMIZELY_ENABLED' },
+        { file: `${ROOT}/src/index.ts`, text: 'if (process.env["DD_TRACE_V6_ENABLED"] === "true")' },
+        { file: `${ROOT}/src/x.ts`, text: 'process.env.NODE_ENV' },
+      ] };
+    }
+    return FILES[a.query] ? { files: FILES[a.query] } : { files: ['unrelated.ts'], note: 'No exact match' };
+  };
+
+  await t('a new key missing from the sibling\'s declaration files is a gap', async () => {
+    const gaps = await findConfigPlumbingGaps(new Map([['DD_TRACE_V6_ENABLED', `${ROOT}/src/index.ts`]]), search);
+    assert.equal(gaps.length, 1);
+    assert.equal(gaps[0].sibling, 'FEATURE_OPTIMIZELY_ENABLED');
+    assert.deepEqual(gaps[0].missingFrom, [`${ROOT}/.env.example`, `${ROOT}/deploymentVariables/mms/stage.yml`, `${ROOT}/terraform/ecs.tf`], 'code and README excluded; test01 already has it');
+    assert.match(configPlumbingNudge(gaps), /terraform\/ecs\.tf/);
+  });
+
+  await t('a key found nowhere (fallback note) misses every declaration file', async () => {
+    const gaps = await findConfigPlumbingGaps(new Map([['BRAND_NEW', `${ROOT}/src/index.ts`]]), search);
+    assert.equal(gaps[0].missingFrom.length, 4);
+  });
+
+  await t('a key already declared everywhere is no gap', async () => {
+    const all = async (a) => (a.query === 'DONE_KEY' ? { files: FILES.FEATURE_OPTIMIZELY_ENABLED } : search(a));
+    assert.deepEqual(await findConfigPlumbingGaps(new Map([['DONE_KEY', `${ROOT}/src/index.ts`]]), all), []);
+  });
+
+  await t('a partial or fallback sibling search never produces a gap', async () => {
+    const partial = async (a) => (!a.outputMode ? { matches: [], partial: true } : search(a));
+    assert.deepEqual(await findConfigPlumbingGaps(new Map([['DD_TRACE_V6_ENABLED', `${ROOT}/src/index.ts`]]), partial), []);
+    const noSiblings = async (a) => (!a.outputMode ? { matches: [{ file: `${ROOT}/src/index.ts`, text: 'process.env.DD_TRACE_V6_ENABLED' }] } : search(a));
+    assert.deepEqual(await findConfigPlumbingGaps(new Map([['DD_TRACE_V6_ENABLED', `${ROOT}/src/index.ts`]]), noSiblings), []);
+  });
+}
+
+// #1588522: the lockfile was regenerated with a pnpm other than the pinned
+// 10.32.1. A pinned package manager is enforced where the command runs.
+console.log('\npinPackageManager (the repo\'s pinned pnpm/yarn, not the one on PATH)');
+{
+  const { pinPackageManager, declaredPackageManager } = commandTools;
+  const { HOW_TO_WORK } = await import(path.join(outDir, 'promptTemplates.mjs'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-pm-'));
+  fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ name: 'r', packageManager: 'pnpm@10.32.1+sha512.abc' }));
+  const app = path.join(repo, 'apps', 'a');
+  fs.mkdirSync(app, { recursive: true });
+  fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'a' }));
+  const probe = (installed, corepack) => ({ version: () => installed, onPath: (n) => n === 'corepack' && corepack });
+
+  await t('the pin is read from the nearest package.json that declares one', () => {
+    assert.deepEqual(declaredPackageManager(app, repo), { name: 'pnpm', version: '10.32.1' });
+  });
+  await t('matching version runs unchanged', async () => {
+    assert.deepEqual(await pinPackageManager('pnpm install --lockfile-only', app, repo, probe('10.32.1', true)), { command: 'pnpm install --lockfile-only' });
+  });
+  await t('a mismatch runs through corepack and says so', async () => {
+    const r = await pinPackageManager('pnpm install --lockfile-only', repo, repo, probe('9.15.0', true));
+    assert.equal(r.command, 'corepack pnpm install --lockfile-only');
+    assert.match(r.note, /pins pnpm@10\.32\.1 .* is 9\.15\.0/);
+  });
+  await t('no corepack: a lockfile write is refused, anything else runs with a note', async () => {
+    for (const c of ['pnpm install', 'pnpm', 'pnpm --filter x add lodash', 'pnpm up']) {
+      assert.match((await pinPackageManager(c, repo, repo, probe('9.15.0', false))).refuse ?? '', /Not run/, c);
+    }
+    const r = await pinPackageManager('pnpm exec eslint src/a.ts', repo, repo, probe('9.15.0', false));
+    assert.equal(r.refuse, undefined);
+    assert.equal(r.command, 'pnpm exec eslint src/a.ts');
+    assert.ok(r.note);
+  });
+  await t('other tools, a different pinned manager, or no pnpm installed: untouched', async () => {
+    assert.deepEqual(await pinPackageManager('npm test', repo, repo, probe('9.15.0', true)), { command: 'npm test' });
+    assert.deepEqual(await pinPackageManager('yarn install', repo, repo, probe('1.22.0', true)), { command: 'yarn install' });
+    assert.deepEqual(await pinPackageManager('pnpm install', repo, repo, probe(null, true)), { command: 'pnpm install' });
+  });
+  await t('HOW_TO_WORK tells the agent to wire a new key in everywhere a sibling is', () => {
+    assert.match(HOW_TO_WORK, /wired in everywhere a sibling is/);
+    assert.match(HOW_TO_WORK, /infrastructure that forwards it/);
+  });
+  fs.rmSync(repo, { recursive: true, force: true });
+}
+
+// #1588522: committed lockfile churn on a PR branch was judged "not present"
+// because git_diff showed only uncommitted changes.
+console.log('\ngit_diff base (a pull request\'s committed changes)');
+{
+  const { gitDiff } = await import(path.join(outDir, 'inspectTools.mjs'));
+  const { ciFixPrompt } = await import(path.join(outDir, 'ciStore.mjs'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-diff-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@t');
+  git('config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, 'lock.yaml'), 'babel: 7.29.0\n');
+  git('add', '.');
+  git('commit', '-qm', 'base');
+  git('checkout', '-qb', 'feature');
+  fs.writeFileSync(path.join(repo, 'lock.yaml'), 'babel: 7.29.6\n');
+  git('commit', '-qam', 'churn');
+  const roots = [{ name: 'r', uri: { fsPath: repo } }];
+
+  await t('the plain diff shows none of the committed branch changes', async () => {
+    assert.equal((await gitDiff({ path: 'lock.yaml' }, roots)).output, '(no changes)');
+  });
+  await t('with base, the diff shows what the pull request changed', async () => {
+    const out = (await gitDiff({ path: 'lock.yaml', base: 'main' }, roots)).output;
+    assert.match(out, /-babel: 7\.29\.0/);
+    assert.match(out, /\+babel: 7\.29\.6/);
+  });
+  await t('restoring from base clears it, uncommitted work included', async () => {
+    git('checkout', 'main', '--', 'lock.yaml');
+    assert.equal((await gitDiff({ path: 'lock.yaml', base: 'main' }, roots)).output, '(no changes)');
+  });
+  await t('an option-shaped base is refused', async () => {
+    await assert.rejects(gitDiff({ base: '--output=/tmp/x' }, roots), /not an option/);
+  });
+  await t('the review-comment prompt points at git_diff with the PR base', () => {
+    const c = [{ by: 'r', body: 'unrelated lockfile churn', path: 'pnpm-lock.yaml', line: 1 }];
+    assert.match(ciFixPrompt({ number: 1, branch: 'b', base: 'main' }, undefined, c), /`base` "origin\/main"/);
+    assert.match(ciFixPrompt({ number: 1, branch: 'b' }, undefined, c), /branch the PR merges into/);
+    assert.match(ciFixPrompt({ number: 1, branch: 'b' }, undefined, c), /restore it from that base first/);
+    assert.doesNotMatch(ciFixPrompt({ number: 1, branch: 'b' }, 'log'), /git_diff/, 'a CI-log-only run is unchanged');
+  });
+  fs.rmSync(repo, { recursive: true, force: true });
+}
+
+// #1588522 again: the PR-review run reported committed lockfile churn as
+// "No change needed". The run now starts with the PR's changed files and is
+// checked against each commented file's PR diff before its report stands.
+console.log('\nprReview (a PR fix run is judged against the PR, not the working tree)');
+{
+  const { gitDiff } = await import(path.join(outDir, 'inspectTools.mjs'));
+  const { snapshotPrReview, prReviewContextBlock, untouchedComments, prReviewNudge, hunkAt } = await import(path.join(outDir, 'prReview.mjs'));
+  const { prReviewMeta } = await import(path.join(outDir, 'ciStore.mjs'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-pr-'));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@t');
+  git('config', 'user.name', 't');
+  const lock = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`);
+  fs.writeFileSync(path.join(repo, 'lock.yaml'), lock.join('\n') + '\n');
+  fs.writeFileSync(path.join(repo, 'ws.yaml'), 'a: 1\n');
+  git('add', '.');
+  git('commit', '-qm', 'base');
+  git('checkout', '-qb', 'feature');
+  lock[29] = 'babel: 7.29.6';
+  fs.writeFileSync(path.join(repo, 'lock.yaml'), lock.join('\n') + '\n');
+  fs.writeFileSync(path.join(repo, 'ws.yaml'), 'a: 1\ndd-trace-v6: 6\n');
+  git('commit', '-qam', 'pr');
+  const roots = [{ name: 'r', uri: { fsPath: repo } }];
+  const diff = async (a) => (await gitDiff(a, roots)).output;
+  const ctx = { base: 'main', comments: [{ path: 'lock.yaml', line: 30, by: 'ebrahim' }, { path: 'ws.yaml', line: 2, by: 'ebrahim' }] };
+
+  await t('the webview sends only comments that point at a file', () => {
+    assert.deepEqual(prReviewMeta({ base: 'main' }, [{ by: 'a', body: 'x', path: 'p', line: 3 }, { by: 'b', body: 'general' }]), { base: 'main', comments: [{ path: 'p', line: 3, by: 'a' }] });
+  });
+
+  const baseline = await snapshotPrReview(ctx, diff);
+  await t('the run starts knowing the PR\'s files', () => {
+    assert.deepEqual(baseline.files, ['lock.yaml', 'ws.yaml']);
+    assert.match(prReviewContextBlock(ctx, baseline), /Compared with main, it changes:\n- lock\.yaml\n- ws\.yaml/);
+  });
+  await t('nothing changed by the run: every comment comes back, with its own hunk', async () => {
+    const list = await untouchedComments(ctx, baseline, diff);
+    assert.deepEqual(list.map((c) => c.path), ['lock.yaml', 'ws.yaml']);
+    assert.match(list[0].hunk, /\+babel: 7\.29\.6/);
+    assert.match(prReviewNudge(ctx, list), /ebrahim on `lock\.yaml:30`/);
+  });
+  await t('re-running a generator that leaves the file as it was still counts as untouched', async () => {
+    fs.writeFileSync(path.join(repo, 'lock.yaml'), lock.join('\n') + '\n');
+    assert.ok((await untouchedComments(ctx, baseline, diff)).some((c) => c.path === 'lock.yaml'));
+  });
+  await t('restoring the file from base clears its comment; the other stays', async () => {
+    git('checkout', 'main', '--', 'lock.yaml');
+    assert.deepEqual((await untouchedComments(ctx, baseline, diff)).map((c) => c.path), ['ws.yaml']);
+  });
+  await t('a comment on a file the PR does not change is never reported', async () => {
+    const other = { base: 'main', comments: [{ path: 'nope.txt', line: 1 }] };
+    assert.deepEqual(await untouchedComments(other, await snapshotPrReview(other, diff), diff), []);
+  });
+  await t('hunkAt picks the hunk covering the line', () => {
+    const d = '@@ -1,2 +1,2 @@\n-a\n+b\n@@ -50,3 +50,3 @@\n-x\n+y';
+    assert.match(hunkAt(d, 51), /^@@ -50/);
+    assert.match(hunkAt(d, 1), /^@@ -1,2/);
+    assert.match(hunkAt(d), /^@@ -1,2/);
+    assert.match(hunkAt(d, 1744), /line 1744 is not inside a changed hunk now[\s\S]*@@ -1,2[\s\S]*@@ -50,3/, 'never another hunk passed off as the comment\'s');
+  });
+  fs.rmSync(repo, { recursive: true, force: true });
+}
+
 // ── summary ──
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) {

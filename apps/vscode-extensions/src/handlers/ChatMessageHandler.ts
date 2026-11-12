@@ -319,10 +319,10 @@ export class ChatMessageHandler {
       if (!this.chatService) {
         this.chatService = new ChatService(this.webviewView, this.context, this.analyticsService);
       }
-      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, autonomous, planMode, assistantMode, executePlan, turnAction, permission, debug } = data;
+      const { sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, autonomous, planMode, assistantMode, executePlan, turnAction, permission, debug, prReview } = data;
       // The first send of a chat whose folder was picked on the chip: record it before the run resolves its roots.
       if (this.newChatFolder && !this.viewedSessionId) this.chatService.sessionRoots(sessionId, this.newChatFolder);
-      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, !!autonomous, !!planMode, assistantMode === 'chat' ? 'chat' : 'work', !!executePlan, turnAction === 'publish-spike' ? 'publish-spike' : undefined, isPermission(permission) ? permission : undefined, !!debug);
+      await this.chatService.sendMessage(sessionId, message, modelId, apiKey, provider, contextSelection, attachments, mentions, historyOverride, !!autonomous, !!planMode, assistantMode === 'chat' ? 'chat' : 'work', !!executePlan, turnAction === 'publish-spike' ? 'publish-spike' : undefined, isPermission(permission) ? permission : undefined, !!debug, prReview);
     } catch (error) {
       this.analyticsService.trackEvent('message_send_error', {
         modelId: data.modelId,

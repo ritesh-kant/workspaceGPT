@@ -62,7 +62,7 @@ export class BitbucketHost implements CodeHost {
     const q = encodeURIComponent(`source.branch.name="${branch.replace(/"/g, '')}"`);
     const res = await this.json<{ values: any[] }>(`${repoPath(repo)}/pullrequests?q=${q}&state=OPEN&state=MERGED&state=DECLINED&sort=-updated_on&pagelen=10`);
     const p = res.values.find((x) => x.state === 'OPEN') ?? res.values[0];
-    return p ? { number: p.id, url: p.links?.html?.href, branch: p.source?.branch?.name, sha: p.source?.commit?.hash ?? '', state: prState(p.state) } : null;
+    return p ? { number: p.id, url: p.links?.html?.href, branch: p.source?.branch?.name, sha: p.source?.commit?.hash ?? '', base: p.destination?.branch?.name, state: prState(p.state) } : null;
   }
 
   async checks(repo: RepoRef, pr: PrRef): Promise<CiCheck[]> {

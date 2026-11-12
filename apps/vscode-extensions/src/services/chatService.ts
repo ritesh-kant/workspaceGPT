@@ -111,6 +111,7 @@ import {
   REPO_WIDE_REQUEST_RE,
   MAX_TIMEOUT_SEC,
   executeCommand,
+  pinPackageManager,
   recordAgentAudit,
   resolveCommandCwd,
   RunCommandArgs,
@@ -119,6 +120,19 @@ import {
   missingExecutableNote,
   resolveCommandPath,
 } from './agent/commandTools';
+import type { PrReviewContext } from '../workers/model/prReview';
+
+/** The webview's prReview, validated: a ref that cannot be an option, at most 30 commented paths. */
+function toPrReviewContext(raw: unknown): PrReviewContext | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as { base?: unknown; comments?: unknown };
+  const branch = typeof r.base === 'string' ? r.base.trim() : '';
+  if (branch.startsWith('-') || /\s/.test(branch)) return undefined;
+  const comments = (Array.isArray(r.comments) ? r.comments : [])
+    .flatMap((c: any) => (c && typeof c.path === 'string' && c.path && !c.path.startsWith('-') ? [{ path: c.path, line: Number.isInteger(c.line) ? c.line : undefined, by: typeof c.by === 'string' ? c.by.slice(0, 80) : undefined }] : []))
+    .slice(0, 30);
+  return { base: branch ? `origin/${branch}` : 'origin/HEAD', comments };
+}
 import { checkBackgroundCommand, startBackgroundCommand } from './agent/backgroundJobs';
 import { browserRequest, isBrowserConnected, isPanelSession } from './browser/browserBridge';
 import { BROWSER_CHANGE_TOOL_NAMES } from '../workers/model/toolScope';
@@ -470,6 +484,8 @@ interface SessionRun {
   lastDebugMode: boolean;
   /** The one-click action that started the current turn, if a button did (see sendMessage). */
   turnAction?: 'publish-spike';
+  /** The current turn addresses a pull request (the CI chip's fix): its base and commented paths. See workers/model/prReview.ts. */
+  prReview?: PrReviewContext;
   /** The Confluence page linked in the current turn's message, once pre-fetched (see sendMessage). */
   linkedConfluencePageId?: string | null;
   /**
@@ -1068,7 +1084,9 @@ export class ChatService {
     /** The composer's permission dial. Absent from older senders: `autonomous` then means 'auto'. */
     permission?: Permission,
     /** The "Debug this" action (or a Bug's ▶): work this as a bug — reproduce, observe, prove the cause. A fact from the button, never read from the prompt. */
-    debug = false
+    debug = false,
+    /** The CI chip's fix run: the PR's base branch and where its review comments point. A fact from the button. */
+    prReview?: unknown
   ): Promise<void> {
     const run = this.runFor(sessionId);
     if (run.worker) {
@@ -1082,6 +1100,7 @@ export class ChatService {
     }
     run.cancelled = false;
     run.turnAction = turnAction;
+    run.prReview = toPrReviewContext(prReview);
     run.linkedConfluencePageId = null;
     // Publishing needs write access, and the stored connection says whether it
     // has it — refuse now, before a run spends minutes preparing a page it
@@ -1907,6 +1926,15 @@ export class ChatService {
       case 'git_status':
         return gitStatus(args, roots);
       case 'git_diff':
+        // A pull-request run's "the diff" is the PR's (prReview.ts); an
+        // explicit base, "" included, or staged keeps the model's choice.
+        if (run.prReview && args?.base === undefined && !args?.staged) {
+          try {
+            return { ...(await gitDiff({ ...args, base: run.prReview.base }, roots)), base: run.prReview.base };
+          } catch {
+            /* the base is not known locally (never fetched): the plain diff below */
+          }
+        }
         return gitDiff(args, roots);
       case 'git_log':
         return gitLog(args, roots);
@@ -2368,7 +2396,16 @@ export class ChatService {
       await this.audit('command', command, 'rejected', 'skipped', unscoped.reason);
       throw new Error(unscoped.reason);
     }
-    const summary = `Run: ${command}`;
+    // The repo's pinned package manager, not whichever one is on PATH. The
+    // permission decision below stays on the command the model wrote; what
+    // runs (and what the card shows) is the pinned form.
+    const rootDir = roots.map((r) => r.uri.fsPath).find((p) => cwd === p || cwd.startsWith(p + path.sep)) ?? cwd;
+    const pinned = await pinPackageManager(command, cwd, rootDir);
+    if (pinned.refuse) {
+      await this.audit('command', command, 'rejected', 'skipped', pinned.refuse);
+      throw new Error(pinned.refuse);
+    }
+    const summary = `Run: ${pinned.command}`;
 
     let decisionKind: 'auto' | 'auto-full' | 'approved' | 'approved-session' = 'auto';
     // Verification commands run without a card in an autonomous run. Anything
@@ -2411,7 +2448,7 @@ export class ChatService {
     }
 
     if (args.background) {
-      const started = await startBackgroundCommand(command, cwd);
+      const started = await startBackgroundCommand(pinned.command, cwd);
       await this.audit('command', `${command} → started in background (${started.jobId})`, decisionKind, 'applied');
       return {
         background: true,
@@ -2420,16 +2457,16 @@ export class ChatService {
         hint: 'Started, not finished. Call check_command with this jobId and waitSec to follow it; report the log file to the user.',
       };
     }
-    this.postStatus(run, `Running: ${command}`);
+    this.postStatus(run, `Running: ${pinned.command}`);
     // Autonomous runs auto-approve verification commands, so nobody is there
     // to notice one that runs long — those get the unattended ceiling.
-    const res = await executeCommand(command, cwd, args.timeoutSec, this.streamOutputTo(run, stepId), autoRun);
+    const res = await executeCommand(pinned.command, cwd, args.timeoutSec, this.streamOutputTo(run, stepId), autoRun);
     this.noteExecutableMissing(run, command, res);
     const channel = agentOutputChannel();
     channel.appendLine(`\n$ ${command}   (cwd: ${displayCwd}, exit ${res.exitCode}, ${res.durationMs}ms)`);
     if (res.output) channel.appendLine(res.output);
-    await this.audit('command', `${command} → exit ${res.exitCode}`, decisionKind, res.exitCode === 0 ? 'applied' : 'failed');
-    return res;
+    await this.audit('command', `${pinned.command} → exit ${res.exitCode}`, decisionKind, res.exitCode === 0 ? 'applied' : 'failed');
+    return pinned.note ? { ...res, packageManagerNote: pinned.note } : res;
   }
 
   /**
@@ -3660,6 +3697,7 @@ Query: "${query}"`;
           fullAccess: run.permission === 'full',
           planMode,
           turnAction: run.turnAction,
+          prReview: run.prReview,
           codeExploredInChat: run.codeExplored,
           linkedConfluencePageId: run.linkedConfluencePageId ?? undefined,
           // Read BEFORE this turn's own writes land, so it counts only earlier

@@ -68,7 +68,7 @@ export class GitHubHost implements CodeHost {
     const prs = await this.json<any[]>(`${PRS(repo)}/pulls?head=${encodeURIComponent(`${repo.owner}:${branch}`)}&state=all&sort=updated&direction=desc&per_page=10`);
     const p = prs.find((x) => x.state === 'open') ?? prs[0];
     if (!p) return null;
-    return { number: p.number, url: p.html_url, branch: p.head.ref, sha: p.head.sha, state: p.merged_at ? 'merged' : p.state === 'closed' ? 'closed' : 'open' };
+    return { number: p.number, url: p.html_url, branch: p.head.ref, sha: p.head.sha, base: p.base?.ref, state: p.merged_at ? 'merged' : p.state === 'closed' ? 'closed' : 'open' };
   }
 
   async checks(repo: RepoRef, pr: PrRef): Promise<CiCheck[]> {

@@ -33,6 +33,7 @@ import ContextMeter from './components/ContextMeter';
 import DataFlowBadge from './components/DataFlowBadge';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
 import { useCiSync } from './hooks/useCiSync';
+import type { PrReviewMeta } from './store/ciStore';
 import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
 import SettingsButton from './components/Settings';
 import Releases from './components/Releases';
@@ -638,8 +639,8 @@ const App: React.FC = () => {
   // One poll loop behind both the status bar and the composer's Create PR button.
   useGitStatusSync(!!hasWorkspaceFolder);
   // Filled in once handleFixCi exists below; the CI hook only needs a stable way to call it.
-  const fixCiRef = useRef<(prompt: string) => void>(() => undefined);
-  const { fixNow: fixCiNow } = useCiSync(!!hasWorkspaceFolder && assistantMode === 'work', (prompt) => fixCiRef.current(prompt));
+  const fixCiRef = useRef<(prompt: string, prReview: PrReviewMeta) => void>(() => undefined);
+  const { fixNow: fixCiNow } = useCiSync(!!hasWorkspaceFolder && assistantMode === 'work', (prompt, prReview) => fixCiRef.current(prompt, prReview));
 
   const modelProviders = useModelProviders();
 
@@ -2578,7 +2579,7 @@ const App: React.FC = () => {
    * normal send path (like handleResume), with the mode dial as it stands.
    * The push afterwards is the host's (see useCiSync) — the model is told not to.
    */
-  const handleFixCi = (promptText: string) => {
+  const handleFixCi = (promptText: string, prReview: PrReviewMeta) => {
     if (isLoading || isStreaming) return;
     // The chip also shows on the new-chat screen: give the fix its own chat,
     // like every other send path, or it is never saved and its replies land
@@ -2604,6 +2605,7 @@ const App: React.FC = () => {
       contextSelection: contextSelection,
       assistantMode,
       ...modeFlags(),
+      prReview,
     });
   };
   fixCiRef.current = handleFixCi;

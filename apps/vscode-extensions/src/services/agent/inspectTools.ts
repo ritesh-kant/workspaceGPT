@@ -120,6 +120,15 @@ export interface GitDiffArgs {
   path?: string;
   /** Diff the staged (index) changes instead of unstaged ones. */
   staged?: boolean;
+  /**
+   * A ref the branch was cut from (e.g. "origin/main"): diff everything since
+   * the merge-base, committed and uncommitted. A pull request's changes are
+   * committed, so the plain diff shows none of them (#1588522: a review
+   * comment on committed lockfile churn was judged "not present").
+   */
+  base?: string;
+  /** Paths only (host-internal; not in the model's schema). */
+  nameOnly?: boolean;
 }
 
 export interface GitLogArgs {
@@ -143,7 +152,10 @@ export async function gitStatus(_args: unknown, roots: NamedRoot[]) {
 
 export async function gitDiff(args: GitDiffArgs, roots: NamedRoot[]) {
   const { cwd, relPath } = gitTarget(roots, args.path);
-  const cmd = ['diff', ...(args.staged ? ['--cached'] : []), ...(relPath ? ['--', relPath] : [])];
+  const base = typeof args.base === 'string' ? args.base.trim() : '';
+  if (base.startsWith('-')) throw new Error('base must be a branch or commit, not an option.');
+  const from = base ? (await gitRun(cwd, ['merge-base', base, 'HEAD'])).trim() : '';
+  const cmd = ['diff', ...(args.nameOnly ? ['--name-only'] : []), ...(from ? [from] : args.staged ? ['--cached'] : []), ...(relPath ? ['--', relPath] : [])];
   const out = await gitRun(cwd, cmd);
   return capOutput(out.trimEnd() || '(no changes)');
 }

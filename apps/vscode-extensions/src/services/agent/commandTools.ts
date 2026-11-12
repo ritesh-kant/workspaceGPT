@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { spawn } from 'child_process';
+import { spawn, execFile } from 'child_process';
 import * as fs from 'fs';
 import { appendFile, mkdir } from 'fs/promises';
 import * as path from 'path';
@@ -510,6 +510,105 @@ export function resolveCommandCwd(roots: NamedRoot[], cwdArg?: string): { cwd: s
  * progress rather than a hang). Never rejects — a failed spawn is an exit
  * with null code and the error text as output.
  */
+/**
+ * A repo that pins its package manager (`"packageManager": "pnpm@10.32.1"`)
+ * must be driven with that version: another pnpm rewrites pnpm-lock.yaml
+ * wholesale (#1588522: `pnpm install --lockfile-only` under a different pnpm
+ * dropped `bundledDependencies: []` and churned the lock, and the user had to
+ * ask for 10.32.1). A prompt rule can be forgotten; this cannot. On a version
+ * mismatch the command runs through corepack, which honours the pin; with no
+ * corepack, a lockfile-writing command is refused rather than run wrong.
+ */
+export interface PinnedPackageManager {
+  /** The command to actually run (unchanged when nothing needs pinning). */
+  command: string;
+  /** Told to the model alongside the result. */
+  note?: string;
+  /** Set when the command must not run; the message says why and what to do. */
+  refuse?: string;
+}
+const LOCKFILE_WRITE_RE = /^(?:pnpm|yarn)(?:\s+(?:-\S+(?:\s+[^-\s]\S*)?\s+)*(?:install|i|add|remove|rm|uninstall|un|update|up|upgrade|dedupe|import)(?:\s|$)|\s*$)/;
+const PM_COMMAND_RE = /^(pnpm|yarn)(?:\s|$)/;
+
+export function declaredPackageManager(cwd: string, rootDir: string): { name: string; version: string } | null {
+  let dir = path.resolve(cwd);
+  const root = path.resolve(rootDir);
+  for (;;) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+      const m = /^(pnpm|yarn|npm|bun)@(\d+\.\d+\.\d+[^+]*)/.exec(String(pkg?.packageManager ?? ''));
+      if (m) return { name: m[1], version: m[2] };
+    } catch {
+      /* no package.json here, or unreadable — keep walking up */
+    }
+    if (dir === root || !dir.startsWith(root)) return null;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/** Asked once per tool, folder and PATH: the answer cannot change mid-session. */
+const installedVersionCache = new Map<string, Promise<string | null>>();
+function installedVersion(exe: string, cwd: string): Promise<string | null> {
+  const key = `${exe}|${cwd}|${lastCommandPath ?? ''}`;
+  let hit = installedVersionCache.get(key);
+  if (!hit) {
+    // Async on purpose: this runs on the extension host, and a slow shim
+    // (corepack fetching a version) must not freeze the editor.
+    hit = new Promise((resolve) => {
+      execFile(
+        exe,
+        ['--version'],
+        {
+          cwd,
+          encoding: 'utf8',
+          timeout: 10_000,
+          shell: process.platform === 'win32',
+          env: { ...process.env, ...(lastCommandPath ? { PATH: lastCommandPath } : {}), COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' },
+        },
+        (err, stdout) => {
+          const v = /\d+\.\d+\.\d+\S*/.exec(String(stdout ?? ''));
+          resolve(!err && v ? v[0] : null);
+        }
+      );
+    });
+    installedVersionCache.set(key, hit);
+  }
+  return hit;
+}
+
+export async function pinPackageManager(
+  command: string,
+  cwd: string,
+  rootDir: string,
+  probe: { version: (exe: string, cwd: string) => Promise<string | null> | string | null; onPath: (name: string) => boolean } = {
+    version: installedVersion,
+    onPath: (n) => !!findOnPath(n),
+  }
+): Promise<PinnedPackageManager> {
+  const exe = PM_COMMAND_RE.exec(command)?.[1];
+  if (!exe) return { command };
+  const pinned = declaredPackageManager(cwd, rootDir);
+  if (!pinned || pinned.name !== exe) return { command };
+  const installed = await probe.version(exe, cwd);
+  // Not installed at all is the exit-127 path's job, not this one.
+  if (!installed || installed === pinned.version) return { command };
+  const mismatch = `package.json pins ${exe}@${pinned.version} but the ${exe} on PATH is ${installed}`;
+  if (probe.onPath('corepack')) {
+    return { command: `corepack ${command}`, note: `${mismatch}, so this ran through corepack, which uses the pinned version.` };
+  }
+  if (LOCKFILE_WRITE_RE.test(command)) {
+    return {
+      command,
+      refuse:
+        `Not run: ${mismatch}, and corepack is not available to switch versions. Running it would rewrite the lockfile with the wrong ${exe}. ` +
+        `Do not retry it with another version. Report it as not run; the user can run "corepack enable" or install ${exe}@${pinned.version}.`,
+    };
+  }
+  return { command, note: `${mismatch}; corepack is not available, so this ran with ${installed}.` };
+}
+
 export async function executeCommand(
   command: string,
   cwd: string,
@@ -557,7 +656,7 @@ export async function executeCommand(
       // stdout pipe, 'close' (and so this promise) waited for them too.
       child = spawn(file, args as string[], {
         cwd,
-        env: { ...process.env, ...(commandPath ? { PATH: commandPath } : {}), CI: '1', FORCE_COLOR: '0' },
+        env: { ...process.env, ...(commandPath ? { PATH: commandPath } : {}), CI: '1', FORCE_COLOR: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' },
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: !isWin,
       });

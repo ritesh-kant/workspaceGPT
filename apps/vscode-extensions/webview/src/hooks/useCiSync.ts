@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { VSCodeAPI } from '../vscode';
 import { MESSAGE_TYPES } from '../constants';
-import { MAX_CI_FIX_ATTEMPTS, ciFixPrompt, commentKey, useCiStore, type CiSnapshot } from '../store/ciStore';
+import { MAX_CI_FIX_ATTEMPTS, ciFixPrompt, commentKey, prReviewMeta, useCiStore, type CiSnapshot, type PrReviewMeta } from '../store/ciStore';
 import { recordedChatFiles, useGitStatusStore } from '../store/gitStatusStore';
 import { useChatStore } from '../store/chatStore';
 
@@ -25,7 +25,7 @@ const chatUncommittedFiles = (messages: Parameters<typeof recordedChatFiles>[0])
  * changed files to the PR's branch and pushes → CI re-runs → repeat, up to
  * MAX_CI_FIX_ATTEMPTS per PR, never twice for the same failing commit.
  */
-export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): { fixNow: () => void } {
+export function useCiSync(enabled: boolean, sendFix: (prompt: string, prReview: PrReviewMeta) => void): { fixNow: () => void } {
   const sendFixRef = useRef(sendFix);
   sendFixRef.current = sendFix;
   const startFixRef = useRef<() => void>(() => undefined);
@@ -72,7 +72,7 @@ export function useCiSync(enabled: boolean, sendFix: (prompt: string) => void): 
       ci.setNote(null);
       fixPr = snap.pr;
       fixSubject = log ? (comments.length ? `fix: address CI failure and review comments on #${snap.pr.number}` : `fix: address failing CI on #${snap.pr.number}`) : `fix: address review comments on #${snap.pr.number}`;
-      sendFixRef.current(ciFixPrompt(snap.pr, log, comments));
+      sendFixRef.current(ciFixPrompt(snap.pr, log, comments), prReviewMeta(snap.pr, comments));
       // Read after sending: from the new-chat screen the send is what gives the chat its id.
       ci.setPhase('fixing', useChatStore.getState().currentSessionId);
     };

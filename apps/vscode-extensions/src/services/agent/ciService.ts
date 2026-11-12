@@ -23,7 +23,8 @@ export interface CiSnapshot {
   state: CiState;
   /** Why the state is 'unavailable' (gh missing / not signed in / not a GitHub repo). */
   reason?: string;
-  pr?: { number: number; url: string; branch: string; sha: string };
+  /** `base`: the branch the PR merges into, when the host said. */
+  pr?: { number: number; url: string; branch: string; sha: string; base?: string };
   checks: CiCheck[];
   /** Unresolved review comments on the PR — what blocks "all comments must be resolved". */
   comments?: PrComment[];
@@ -125,7 +126,7 @@ export async function getCiSnapshot(cwd: string): Promise<CiSnapshot> {
   if (branch && !(await isOnRemote(cwd, branch))) return { state: 'none', checks: [] };
   let raw: string;
   try {
-    raw = await run('gh', ['pr', 'view', '--json', 'number,url,state,headRefName,headRefOid,statusCheckRollup'], cwd);
+    raw = await run('gh', ['pr', 'view', '--json', 'number,url,state,headRefName,headRefOid,baseRefName,statusCheckRollup'], cwd);
   } catch (e) {
     const err = e as Error & { code?: string };
     if (/no pull requests? found/i.test(err.message)) return { state: 'none', checks: [] };
@@ -143,13 +144,13 @@ export async function getCiSnapshot(cwd: string): Promise<CiSnapshot> {
     if (/not a git repository|could not resolve to a Repository/i.test(err.message)) return { state: 'none', checks: [] };
     return { state: 'unavailable', reason: err.message.split('\n')[0].slice(0, 160), checks: [] };
   }
-  let data: { number: number; url: string; state: string; headRefName: string; headRefOid: string; statusCheckRollup?: RollupItem[] };
+  let data: { number: number; url: string; state: string; headRefName: string; headRefOid: string; baseRefName?: string; statusCheckRollup?: RollupItem[] };
   try {
     data = JSON.parse(raw);
   } catch {
     return { state: 'unavailable', reason: 'Unreadable response from gh.', checks: [] };
   }
-  const pr = { number: data.number, url: data.url, branch: data.headRefName, sha: data.headRefOid };
+  const pr = { number: data.number, url: data.url, branch: data.headRefName, sha: data.headRefOid, base: data.baseRefName };
   const checks = latestRuns((data.statusCheckRollup ?? []).map(toCheck));
   if (data.state === 'MERGED') return { state: 'merged', pr, checks };
   if (data.state === 'CLOSED') return { state: 'closed', pr, checks };
@@ -176,7 +177,7 @@ export async function getCiSnapshotViaHost(cwd: string, target: { host: CodeHost
   try {
     const found: PrRef | null = await host.findPr(repo, branch);
     if (!found) return { state: 'none', checks: [] };
-    const pr = { number: found.number, url: found.url, branch: found.branch, sha: found.sha };
+    const pr = { number: found.number, url: found.url, branch: found.branch, sha: found.sha, base: found.base };
     const checks = latestRuns(await host.checks(repo, found));
     if (found.state === 'merged') return { state: 'merged', pr, checks };
     if (found.state === 'closed') return { state: 'closed', pr, checks };
