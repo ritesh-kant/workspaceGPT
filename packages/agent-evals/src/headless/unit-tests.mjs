@@ -953,6 +953,15 @@ console.log('\nharnessProfile (which gates a run gets)');
       assert.ok(p.includes('`explore` delegates'), `${profile}: delegation`);
     }
   });
+  await t('a Work-mode chat with no folder is told it has no file access', () => {
+    const avail = (codebase) => ({ codebase, confluence: true, tickets: true });
+    const noFolder = createStructuredPrompt([], 'can you access D:\\views\\repos?', '', undefined, null, { toolAvailability: avail(false) });
+    assert.ok(noFolder.includes('No folder is open for this chat'), 'no-folder line missing');
+    const withFolder = createStructuredPrompt([], 'x', '', undefined, null, { codebaseToolsEnabled: true, toolAvailability: avail(true) });
+    assert.ok(!withFolder.includes('No folder is open for this chat'), 'said with a folder open');
+    const chat = createStructuredPrompt([], 'x', '', undefined, null, { chatOnly: true, toolAvailability: avail(false) });
+    assert.ok(!chat.includes('No folder is open for this chat'), 'said in Chat mode');
+  });
   await t('an unspecified profile keeps the fuller prompt, not the leaner one', () => {
     // Safe default: a caller that has not been taught about profiles must not
     // silently lose guardrails.

@@ -811,7 +811,13 @@ ${chatOnly || !ticketTools ? '' : `  - **ADO Tickets**: When answering about Azu
         browserBlock +
         conductBlock +
         'Use `search_web` only for unfamiliar or time-sensitive external facts, and cite its URLs when used.'
-      : 'Answer the user\'s question using ONLY the context provided below. If the context does not contain relevant information, clearly state that you don\'t have the data rather than guessing.';
+      : 'Answer the user\'s question using ONLY the context provided below. If the context does not contain relevant information, clearly state that you don\'t have the data rather than guessing.' +
+        // A Work-mode chat with no folder has no file tools at all. Said from
+        // the fact, so a question about a local path gets "open the folder",
+        // not a guess dressed up with an unrelated source.
+        (avail?.codebase === false
+          ? ' No folder is open for this chat, so you cannot read, list or search any file or folder on this computer this turn. If the user asks about one, say exactly that and tell them to open that folder in WorkspaceGPT (File → Open Folder) and ask again in a new session there; do not cite unrelated sources as if they answered it.'
+          : '');
 
   // The user approved a plan the previous turn proposed (see APPROVAL_RE in
   // chatService). Without an explicit revocation the model re-derives the same
