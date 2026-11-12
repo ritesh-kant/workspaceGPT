@@ -31,6 +31,8 @@ function handleConfluenceMessage(message: any): void {
     case MESSAGE_TYPES.CONFLUENCE_OAUTH_SUCCESS:
       batchUpdateConfig('confluence', {
         isAuthenticated: true,
+        authExpired: false,
+        ...(message.siteChanged ? { spaceKey: '', availableSpaces: [], lastSyncTime: '', isSyncCompleted: false, isIndexingCompleted: false } : {}),
         isConnecting: false,
         siteName: message.site?.name || '',
         cloudId: message.site?.id || '',
@@ -52,6 +54,7 @@ function handleConfluenceMessage(message: any): void {
     case MESSAGE_TYPES.DISCONNECT_CONFLUENCE:
       batchUpdateConfig('confluence', {
         isAuthenticated: false,
+        authExpired: false,
         siteName: '',
         cloudId: '',
         spaceKey: '',
@@ -82,9 +85,10 @@ function handleConfluenceMessage(message: any): void {
       if (message.authExpired) {
         batchUpdateConfig('confluence', {
           isAuthenticated: false,
+          authExpired: true,
           isConnecting: false,
           messageType: 'error',
-          statusMessage: 'Your Confluence connection expired. Reconnect to resume syncing.',
+          statusMessage: '', // the Reconnect card explains it
         });
         break;
       }
@@ -101,9 +105,10 @@ function handleConfluenceMessage(message: any): void {
       if (message.authExpired) {
         batchUpdateConfig('confluence', {
           isAuthenticated: false,
+          authExpired: true,
           isConnecting: false,
           messageType: 'error',
-          statusMessage: 'Your Confluence connection expired. Reconnect to resume syncing.',
+          statusMessage: '', // the Reconnect card explains it
         });
         break;
       }
@@ -142,10 +147,11 @@ function handleConfluenceMessage(message: any): void {
       if (message.authExpired) {
         batchUpdateConfig('confluence', {
           isAuthenticated: false,
+          authExpired: true,
           isSyncing: false,
           isConnecting: false,
           messageType: 'error',
-          statusMessage: 'Your Confluence connection expired. Reconnect to resume syncing.',
+          statusMessage: '', // the Reconnect card explains it
           canResume: true,
         });
         break;

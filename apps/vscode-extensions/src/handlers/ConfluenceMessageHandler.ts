@@ -125,8 +125,15 @@ export class ConfluenceMessageHandler {
 
   private async handleStartConfluenceOAuth(): Promise<void> {
     try {
+      const previousSite = this.confluenceAuthService.getStoredSite();
       const result = await this.confluenceAuthService.startOAuthFlow();
       this.analyticsService.trackEvent('confluence_connected');
+      // Reconnect keeps the space and synced pages for an incremental sync; that is only
+      // valid on the same site, so another site starts clean.
+      const siteChanged = !!previousSite && previousSite.id !== result.site.id;
+      if (siteChanged) {
+        await this.handleDeleteLocalData();
+      }
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.CONFLUENCE_OAUTH_SUCCESS,
         site: {
@@ -134,6 +141,7 @@ export class ConfluenceMessageHandler {
           name: result.site.name,
           url: result.site.url,
         },
+        siteChanged,
       });
       await this.handleFetchConfluenceSpaces();
     } catch (error) {
@@ -193,6 +201,7 @@ export class ConfluenceMessageHandler {
         settings.state.config.confluence = {
           ...settings.state.config.confluence,
           isAuthenticated: false,
+          authExpired: false,
           siteName: '',
           cloudId: '',
           spaceKey: '',

@@ -49,6 +49,7 @@ const ConfluenceSettings: React.FC = () => {
   };
 
   const isAuthenticated = confluenceConfig?.isAuthenticated;
+  const isExpired = !isAuthenticated && !!confluenceConfig?.authExpired;
   const hasSpaceSelected = !!confluenceConfig?.spaceKey;
 
   const spaceOptions = (confluenceConfig?.availableSpaces ?? []).map((space) => ({
@@ -65,7 +66,7 @@ const ConfluenceSettings: React.FC = () => {
   const summary = !isEnabled
     ? 'Off'
     : !isAuthenticated
-      ? 'Not connected'
+      ? isExpired ? 'Connection expired' : 'Not connected'
       : !hasSpaceSelected
         ? 'Connected · no space selected'
         : isBusy
@@ -104,14 +105,16 @@ const ConfluenceSettings: React.FC = () => {
           {!isAuthenticated && (
             <div className='oauth-connect connection-setup'>
               <p className="description-text">
-                Connect your Atlassian account to sync Confluence pages.
+                {isExpired
+                  ? `Your Confluence sign-in expired. Reconnect to resume syncing${confluenceConfig.spaceKey ? ` ${confluenceConfig.spaceKey}` : ''}. Your space and synced pages stay on this device, so only changes sync.`
+                  : 'Connect your Atlassian account to sync Confluence pages.'}
               </p>
               <button
                 onClick={startOAuth}
                 disabled={confluenceConfig?.isConnecting}
                 className="primary-button-full connection-button"
               >
-                {confluenceConfig?.isConnecting ? 'Connecting…' : 'Connect to Confluence'}
+                {confluenceConfig?.isConnecting ? 'Connecting…' : isExpired ? 'Reconnect' : 'Connect to Confluence'}
               </button>
               {confluenceConfig?.isConnecting && (
                 <button

@@ -33,6 +33,8 @@ export interface ConfluenceConfig {
   canResumeIndexing: boolean;
   lastSyncTime?: string;
   isConnecting?: boolean;
+  /** Refresh token was rejected: offer Reconnect, which keeps the space and the synced pages. */
+  authExpired?: boolean;
 }
 
 export interface AdoCurrentSprint {
