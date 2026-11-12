@@ -237,6 +237,7 @@ export class ConfluenceMessageHandler {
       this.webviewView.webview.postMessage({
         type: MESSAGE_TYPES.FETCH_CONFLUENCE_SPACES_ERROR,
         message: error instanceof Error ? error.message : String(error),
+        authExpired: error instanceof ConfluenceAuthExpiredError,
       });
     }
   }
@@ -259,6 +260,7 @@ export class ConfluenceMessageHandler {
         type: MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS,
         status: false,
         message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
+        authExpired: error instanceof ConfluenceAuthExpiredError,
       });
     }
   }

@@ -78,6 +78,16 @@ function handleConfluenceMessage(message: any): void {
       break;
 
     case MESSAGE_TYPES.FETCH_CONFLUENCE_SPACES_ERROR:
+      // Any Confluence request can find the refresh token dead; show Connect, not "Connected" + raw OAuth text.
+      if (message.authExpired) {
+        batchUpdateConfig('confluence', {
+          isAuthenticated: false,
+          isConnecting: false,
+          messageType: 'error',
+          statusMessage: 'Your Confluence connection expired. Reconnect to resume syncing.',
+        });
+        break;
+      }
       batchUpdateConfig('confluence', {
         messageType: 'error',
         statusMessage: message.message || 'Failed to fetch spaces',
@@ -87,6 +97,16 @@ function handleConfluenceMessage(message: any): void {
 
     // Connection check
     case MESSAGE_TYPES.CONFLUENCE_CONNECTION_STATUS:
+      // Any Confluence request can find the refresh token dead; show Connect, not "Connected" + raw OAuth text.
+      if (message.authExpired) {
+        batchUpdateConfig('confluence', {
+          isAuthenticated: false,
+          isConnecting: false,
+          messageType: 'error',
+          statusMessage: 'Your Confluence connection expired. Reconnect to resume syncing.',
+        });
+        break;
+      }
       batchUpdateConfig('confluence', {
         messageType: message.status ? 'success' : 'error',
         statusMessage: message.message || '',
