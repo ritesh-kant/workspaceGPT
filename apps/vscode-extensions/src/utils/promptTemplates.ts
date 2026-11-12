@@ -609,7 +609,7 @@ export function createStructuredPrompt(
   chatHistory: string = '',
   currentUserName?: string,
   currentSprint?: { name: string; iterationPath: string; startDate: string; endDate: string } | null,
-  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean; browser?: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; userMemory?: string; projectMemory?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; fullAccess?: boolean; planMode?: boolean; chatOnly?: boolean; debugMode?: boolean }
+  options?: { codebaseToolsEnabled?: boolean; toolAvailability?: { codebase: boolean; confluence: boolean; tickets: boolean; browser?: boolean }; ticketTrackerLabel?: string; harnessProfile?: 'small-model' | 'strong-model'; repoOrientation?: string; workspaceFolders?: { name: string; path: string }[]; promptProfile?: 'full' | 'narrow'; workspaceRules?: string; userMemory?: string; projectMemory?: string; textAttachments?: { name: string; content: string }[]; imageAttachmentNames?: string[]; mentionedFiles?: { name: string; content: string }[]; executeMandate?: boolean; ticketContext?: TicketPromptContext; ticketLookupOnly?: boolean; implementMandate?: boolean; writeExpected?: boolean; autonomous?: boolean; fullAccess?: boolean; planMode?: boolean; chatOnly?: boolean; debugMode?: boolean }
 ): string {
   const greetingRegex =
     /^\s*(hello|hi|hey|hey there|hi there|good (morning|afternoon|evening|night))\s*$/i;
@@ -901,6 +901,16 @@ This run has Full access. Where anything above says a command shows the user an 
       ? `**Workspace orientation (pre-fetched — use it to decide where to look first):**\n\`\`\`\n${options.repoOrientation}\n\`\`\`\n`
       : '';
 
+  // The absolute path of each folder the tools work in. Tool results carry only
+  // relative paths, so without this the model has to guess which folder a path
+  // the user typed refers to, and then argues from relative listings that
+  // cannot settle it. Always emitted, unlike the orientation, which is skipped
+  // on @-mention and resumed turns.
+  const foldersBlock =
+    codebaseToolsEnabled && options?.workspaceFolders?.length
+      ? `**Workspace folder${options.workspaceFolders.length > 1 ? 's' : ''} (absolute path${options.workspaceFolders.length > 1 ? 's' : ''} on disk; every workspace-relative path in tool calls and results is relative to ${options.workspaceFolders.length > 1 ? 'one of these, by name' : 'this'}):**\n${options.workspaceFolders.map((f) => `- ${options.workspaceFolders!.length > 1 ? `"${f.name}": ` : ''}${f.path}`).join('\n')}\nWhen the user gives an absolute path, map it onto ${options.workspaceFolders.length > 1 ? 'these folders' : 'this folder'} before using a tool.\n`
+      : '';
+
   const rulesBlock =
     codebaseToolsEnabled && options?.workspaceRules
       ? `**Project rules (set by the user/team — follow them; they override your defaults):**\n${options.workspaceRules}\n`
@@ -913,7 +923,7 @@ This run has Full access. Where anything above says a command shows the user an 
   // They are emitted ABOVE the Context rather than inside it: both are fixed
   // for the whole workspace, so keeping them ahead of the first per-question
   // byte puts them inside the cacheable prefix. See the return statement.
-  const workspaceBlock = codebaseToolsEnabled ? `${rulesBlock}${orientationBlock}` : '';
+  const workspaceBlock = codebaseToolsEnabled ? `${foldersBlock}${rulesBlock}${orientationBlock}` : '';
   const contextBlock = formattedContext
     ? codebaseToolsEnabled
       ? `**Context (retrieved from Confluence/Azure DevOps before this turn — answer from it when it suffices; verify in the workspace with your tools when it does not):**\n\`\`\`\n${formattedContext}\n\`\`\`\n`

@@ -3639,6 +3639,7 @@ Query: "${query}"`;
           // Contents of the files/folders the user @-mentioned in this message.
           mentionedFiles: resolvedMentions,
           repoOrientation,
+          workspaceFolders: codebaseRoots?.map((r) => ({ name: r.name, path: r.uri.fsPath })),
           promptProfile: shouldIncludeRepoOrientation ? 'full' : 'narrow',
           workspaceRules: codebaseRoots?.length
             ? [loadWorkspaceRules(codebaseRoots), verificationRecipesBlock(this.context)].filter(Boolean).join('\n\n') || undefined

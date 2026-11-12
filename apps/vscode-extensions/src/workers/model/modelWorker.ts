@@ -130,6 +130,8 @@ interface WorkerData {
   mentionedFiles?: { name: string; content: string }[];
   /** Pre-built workspace file tree + README head, injected into codebase prompts. */
   repoOrientation?: string;
+  /** Absolute paths of the folders this chat's tools work in. */
+  workspaceFolders?: { name: string; path: string }[];
   /** Whether this is a narrow, file-anchored or resumed codebase turn. */
   promptProfile?: 'full' | 'narrow';
   /** Merged project rules files (.workspacegpt/rules.md, CLAUDE.md, …). */
@@ -253,6 +255,7 @@ const {
   imageAttachments,
   mentionedFiles,
   repoOrientation,
+  workspaceFolders,
   promptProfile,
   workspaceRules,
   userMemory,
@@ -1853,6 +1856,7 @@ async function generateResponse(): Promise<void> {
         // run, paired with the phrase gates PHRASE_GATES disables.
         harnessProfile: HARNESS_PROFILE,
         repoOrientation,
+        workspaceFolders,
         promptProfile,
         workspaceRules,
         userMemory,
