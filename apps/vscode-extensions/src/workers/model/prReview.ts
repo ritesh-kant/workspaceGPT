@@ -61,6 +61,11 @@ export function hunkAt(diffText: string, line?: number): string {
   const lines = diffText.split('\n');
   const starts = lines.flatMap((l, i) => (l.startsWith('@@') ? [i] : []));
   let pick = starts[0] ?? 0;
+  // No line (GitHub drops it once a thread is outdated) and several hunks:
+  // any one shown would read as the comment's target, so list them.
+  if (!line && starts.length > 1) {
+    return `(the comment has no current line; this file's changes are at:)\n${starts.slice(0, 20).map((s) => lines[s]).join('\n')}${starts.length > 20 ? '\n…' : ''}`;
+  }
   if (line) {
     const covering = starts.find((s) => {
       const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(lines[s]);
@@ -68,7 +73,7 @@ export function hunkAt(diffText: string, line?: number): string {
     });
     // The reviewer's line can predate later commits. Another hunk shown in its
     // place would read as the comment's target, so list them all instead.
-    if (covering === undefined && starts.length) {
+    if (covering === undefined && starts.length > 1) {
       const headers = starts.slice(0, 20).map((s) => lines[s]);
       return `(line ${line} is not inside a changed hunk now; this file's changes are at:)\n${headers.join('\n')}${starts.length > 20 ? '\n…' : ''}`;
     }
@@ -105,9 +110,12 @@ export function prReviewNudge(ctx: PrReviewContext, list: UntouchedComment[]): s
     .map((c) => `- ${c.by ? `${c.by} on ` : ''}\`${c.path}${c.line ? `:${c.line}` : ''}\` — still in the PR, unchanged by this run:\n\`\`\`diff\n${c.hunk}\n\`\`\``)
     .join('\n');
   return (
-    `Before this is accepted: these review comments point at changes that are still in the pull request exactly as the reviewer saw them (diff against ${ctx.base}, committed and uncommitted):\n` +
+    `Before this is accepted: these review comments point at files this run left exactly as they were, and their changes are still in the pull request (diff against ${ctx.base}, committed and uncommitted):\n` +
     items +
-    '\nFor each: if your report calls it fixed, not present or no change needed, that is wrong — fix it now (a generated file such as a lockfile is restored from the base and regenerated), or report it as left alone with the reason. ' +
+    '\nFor each, your report must match that diff:\n' +
+    '- Fixed in another file (the comment\'s file was only where the reviewer noticed it): name the file and line that fixes it.\n' +
+    '- "Not present" or "no change needed": only if the diff above shows the problem is not there. If it is there, fix it now (a generated file such as a lockfile is restored from the base and regenerated), or report it as not done.\n' +
+    '- Left alone on purpose (a matter of taste, or a decision for someone else): say so and why.\n' +
     'Then give your final answer.'
   );
 }

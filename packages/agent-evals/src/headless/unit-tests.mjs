@@ -7990,6 +7990,7 @@ console.log('\nprReview (a PR fix run is judged against the PR, not the working 
     assert.deepEqual(list.map((c) => c.path), ['lock.yaml', 'ws.yaml']);
     assert.match(list[0].hunk, /\+babel: 7\.29\.6/);
     assert.match(prReviewNudge(ctx, list), /ebrahim on `lock\.yaml:30`/);
+    assert.match(prReviewNudge(ctx, list), /Fixed in another file/, 'a fix that lives elsewhere is a valid answer, not a contradiction');
   });
   await t('re-running a generator that leaves the file as it was still counts as untouched', async () => {
     fs.writeFileSync(path.join(repo, 'lock.yaml'), lock.join('\n') + '\n');
@@ -8007,8 +8008,66 @@ console.log('\nprReview (a PR fix run is judged against the PR, not the working 
     const d = '@@ -1,2 +1,2 @@\n-a\n+b\n@@ -50,3 +50,3 @@\n-x\n+y';
     assert.match(hunkAt(d, 51), /^@@ -50/);
     assert.match(hunkAt(d, 1), /^@@ -1,2/);
-    assert.match(hunkAt(d), /^@@ -1,2/);
+    assert.match(hunkAt(d), /no current line[\s\S]*@@ -1,2[\s\S]*@@ -50,3/, 'an outdated comment (no line) lists the hunks too');
+    assert.match(hunkAt('@@ -1,2 +1,2 @@\n-a\n+b', 99), /^@@ -1,2/, 'a single hunk is the comment\'s, whatever its line');
     assert.match(hunkAt(d, 1744), /line 1744 is not inside a changed hunk now[\s\S]*@@ -1,2[\s\S]*@@ -50,3/, 'never another hunk passed off as the comment\'s');
+  });
+  fs.rmSync(repo, { recursive: true, force: true });
+}
+
+// #1588522: a fix run that restored and regenerated a lockfile with commands
+// pushed nothing — only edit-tool writes were in the turn's file list.
+console.log('\ncommandChanges (files a turn changed through commands)');
+{
+  const { snapshotTree, changedSince } = await import(path.join(outDir, 'commandChanges.mjs'));
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-cmd-')));
+  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@t');
+  git('config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, 'pnpm-lock.yaml'), 'babel: 7.29.0\n');
+  fs.writeFileSync(path.join(repo, 'a.ts'), 'x\n');
+  fs.writeFileSync(path.join(repo, 'gone.txt'), 'g\n');
+  git('add', '.');
+  git('commit', '-qm', 'base');
+  // Already dirty before the turn, and left alone by it: never reported.
+  fs.writeFileSync(path.join(repo, 'a.ts'), 'users own edit\n');
+  const roots = [{ name: 'r', uri: { fsPath: repo } }];
+
+  const start = await snapshotTree(roots);
+  // What the turn's commands do.
+  fs.writeFileSync(path.join(repo, 'pnpm-lock.yaml'), 'babel: 7.29.0\ndd-trace-v6: 6.24.0\n');
+  fs.mkdirSync(path.join(repo, 'gen'));
+  fs.writeFileSync(path.join(repo, 'gen', 'new.ts'), 'n\n');
+  fs.rmSync(path.join(repo, 'gone.txt'));
+  const changes = await changedSince(roots, start, await snapshotTree(roots));
+
+  await t('a command-modified, -created and -deleted file are all in the turn', () => {
+    const by = Object.fromEntries(changes.map((c) => [c.path, c]));
+    assert.deepEqual(Object.keys(by).sort(), ['gen/new.ts', 'gone.txt', 'pnpm-lock.yaml']);
+    assert.equal(by['pnpm-lock.yaml'].kind, 'edit');
+    assert.equal(by['pnpm-lock.yaml'].added, 1);
+    assert.equal(by['gen/new.ts'].kind, 'create');
+    assert.equal(by['gone.txt'].kind, 'delete');
+  });
+  await t('a file already dirty and untouched by the turn stays out', () => {
+    assert.ok(!changes.some((c) => c.path === 'a.ts'));
+  });
+  await t('a file dirty before the turn and changed again by it is in', async () => {
+    const s2 = await snapshotTree(roots);
+    fs.writeFileSync(path.join(repo, 'a.ts'), 'users own edit\nplus a codemod\n');
+    const c2 = await changedSince(roots, s2, await snapshotTree(roots));
+    assert.deepEqual(c2.map((c) => c.path), ['a.ts']);
+  });
+  await t('a path with a leading-space status (first porcelain entry) is read whole', async () => {
+    const s3 = await snapshotTree(roots);
+    assert.ok([...s3.values()][0].has('a.ts'), [...[...s3.values()][0].keys()].join(','));
+  });
+  await t('outside a git repository: nothing, no throw', async () => {
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'wgpt-nogit-'));
+    const r = [{ name: 'n', uri: { fsPath: bare } }];
+    assert.deepEqual(await changedSince(r, await snapshotTree(r), await snapshotTree(r)), []);
+    fs.rmSync(bare, { recursive: true, force: true });
   });
   fs.rmSync(repo, { recursive: true, force: true });
 }

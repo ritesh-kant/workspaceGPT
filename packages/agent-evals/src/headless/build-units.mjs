@@ -25,6 +25,7 @@ const UNITS = [
   'src/services/agent/resumeStore.ts',
   'src/services/codebase/codebaseTools.ts',
   'src/services/agent/inspectTools.ts',
+  'src/services/agent/commandChanges.ts',
   'webview/src/store/ciStore.ts',
   'src/services/codebase/lineNumbers.ts',
   'src/utils/apiKeyFailover.ts',

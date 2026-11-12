@@ -73,6 +73,7 @@ import { decide, resolvePermission, type Permission } from './agent/permissionPo
 import { answersByQuestion, normalizeQuestions } from './agent/askUser';
 import { recordOriginalContent } from './agent/agentDiffProvider';
 import { lineChangeStats } from './agent/agentHunkLens';
+import { changedSince, snapshotTree, TreeSnapshot } from './agent/commandChanges';
 import { planVerification, rememberRecipe, verificationRecipesBlock, RunChecksArgs, derivableChecks } from './agent/verifyTools';
 import { shipChanges, ShipInput } from './agent/shipService';
 import { deriveShipTitle } from './agent/shipHelpers';
@@ -324,6 +325,10 @@ interface SessionRun {
   turnCredits: CreditTally;
   /** File-change rollup for the current agent turn (path → cumulative counts). */
   turnFilesChanged: Map<string, TurnFileChange>;
+  /** The working tree's dirty files at turn start (commandChanges.ts); null when it could not be read. */
+  turnTreeStart?: Promise<TreeSnapshot | null>;
+  /** Commands this turn ran through run_command — the end-of-turn tree comparison runs only when > 0. */
+  turnCommandsRun: number;
   /** Each turnFilesChanged path's text before this turn's first write to it — what its counts diff against. */
   turnFileOriginals: Map<string, string>;
   /**
@@ -821,6 +826,7 @@ export class ChatService {
         turnCompletionTokens: 0,
         turnCredits: emptyCreditTally(),
         turnFilesChanged: new Map(),
+        turnCommandsRun: 0,
         turnFileOriginals: new Map(),
         turnRefs: [],
         seenIds: new Set(),
@@ -2371,6 +2377,24 @@ export class ChatService {
     }
   }
 
+  /**
+   * Files the turn's commands changed (a regenerated lockfile, a codemod's
+   * output) join its file list, so Create PR and the CI fix push carry them
+   * (commandChanges.ts). Edit-tool records win for a path both touched.
+   * Never rejects, and gives up after 20s rather than hold the turn's end.
+   */
+  private async recordCommandChanges(run: SessionRun, roots?: NamedRoot[]): Promise<void> {
+    if (!run.turnCommandsRun || !run.turnTreeStart || !roots?.length) return;
+    const work = (async () => {
+      const start = await run.turnTreeStart;
+      if (!start) return;
+      for (const c of await changedSince(roots, start, await snapshotTree(roots))) {
+        if (!run.turnFilesChanged.has(c.path)) run.turnFilesChanged.set(c.path, c);
+      }
+    })().catch(() => undefined);
+    await Promise.race([work, new Promise((r) => setTimeout(r, 20_000))]);
+  }
+
   private async gatedCommand(run: SessionRun, args: RunCommandArgs, roots: NamedRoot[], stepId?: string): Promise<unknown> {
     const command = (args.command ?? '').trim();
     if (!command) throw new Error('command must be non-empty.');
@@ -2447,6 +2471,9 @@ export class ChatService {
       this.postWriteOutcome(run, id, 'applied');
     }
 
+    // The start-of-turn tree must be read before a command can change it.
+    await run.turnTreeStart;
+    run.turnCommandsRun++;
     if (args.background) {
       const started = await startBackgroundCommand(pinned.command, cwd);
       await this.audit('command', `${command} → started in background (${started.jobId})`, decisionKind, 'applied');
@@ -3599,6 +3626,8 @@ Query: "${query}"`;
           console.warn('Failed to build repo orientation (continuing without):', e);
         }
       }
+      run.turnCommandsRun = 0;
+      run.turnTreeStart = codebaseRoots?.length ? snapshotTree(codebaseRoots).catch(() => null) : undefined;
       if (codebaseRoots?.length) {
         // Which repo this turn's pull-request references belong to. Resolved
         // once, and stamped onto each ref, so a message re-read from history
@@ -3722,6 +3751,9 @@ Query: "${query}"`;
         // worker dies before it sends 'done' (see settle() below).
         let streamedContent = '';
         let settled = false;
+        // 'done' arrived and the command-changed files are being read: the
+        // worker's own exit must not settle first, without them.
+        let doneReceived = false;
 
         // Safety net for a worker that stops making progress entirely (hung
         // tool call, dead LLM connection with no socket error, etc.) without
@@ -4023,7 +4055,8 @@ Query: "${query}"`;
                 workerSaidStall = !!result.stallShaped;
                 workerWritesApplied = typeof result.writesApplied === 'number' ? result.writesApplied : null;
                 workerDiagnostics = typeof result.diagnostics === 'string' ? result.diagnostics : undefined;
-                settle(null);
+                doneReceived = true;
+                void this.recordCommandChanges(run, codebaseRoots).then(() => settle(null));
                 break;
 
               case 'error':
@@ -4354,6 +4387,7 @@ Query: "${query}"`;
         // no-op once settle() already ran via a message, the error handler,
         // or the stall timer above.
         modelWorker.on('exit', (code) => {
+          if (doneReceived) return;
           settle(code === 0 ? null : new Error(`Model worker exited unexpectedly (code ${code}).`));
         });
       });
