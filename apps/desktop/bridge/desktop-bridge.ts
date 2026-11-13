@@ -152,11 +152,13 @@ interface UiFrame {
   // A socket can die without onclose ever firing (the webview suspended, the
   // network stack reset). Probe it; if nothing comes back, drop it and reconnect.
   let lastHeard = Date.now();
+  let downSince: number | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const revive = (why: string): void => {
     if (stopped || !token) return;
     const dead = socket;
     open = false;
+    downSince ??= Date.now();
     clearTimeout(retryTimer);
     retry = 0;
     if (dead) {
@@ -173,6 +175,20 @@ interface UiFrame {
   };
   setInterval(() => {
     if (stopped) return;
+    // Last resort: reconnecting from inside this page hasn't worked for 30s, so
+    // start the page over (a fresh socket and timers). At most once a minute.
+    if (!open && downSince && Date.now() - downSince > 30000) {
+      try {
+        const last = Number(sessionStorage.getItem('wgpt.bridge.reloadAt') ?? 0);
+        if (Date.now() - last > 60000) {
+          sessionStorage.setItem('wgpt.bridge.reloadAt', String(Date.now()));
+          location.reload();
+          return;
+        }
+      } catch {
+        /* storage blocked: skip the reload rather than risk a loop */
+      }
+    }
     if (open && socket && socket.readyState === WebSocket.OPEN) {
       if (Date.now() - lastHeard > 35000) revive('no reply to ping for 35s');
       else socket.send('{"t":"ping"}');
@@ -202,6 +218,8 @@ interface UiFrame {
     socket.onopen = () => {
       open = true;
       retry = 0;
+      lastHeard = Date.now();
+      downSince = undefined;
       clearTimeout(disconnectBanner);
       disconnectBanner = undefined;
       banner(null);
@@ -242,6 +260,7 @@ interface UiFrame {
         return;
       }
       if (stopped) return;
+      downSince ??= Date.now();
       // 1006 on the very first attempt with a bad token looks the same as a
       // down server; the message says both.
       disconnectBanner ??= setTimeout(() => banner('Disconnected from WorkspaceGPT — reconnecting…', 'warning'), BANNER_GRACE_MS);
