@@ -6,7 +6,7 @@ The work-brief overlay's icons (bridge/cue-*.svg), drawn from the app icon
 
 ready      the app icon
 thinking   a pulse runs around the brain, the bulb glows (building / answering)
-listening  the brackets become sound waves (for a future listening mode)
+listening  the bulb lines become a bouncing voice meter (for a future listening mode)
 Animations stop under prefers-reduced-motion.
 """
 import sys, os
@@ -49,13 +49,12 @@ thinking = svg('WorkspaceGPT: thinking', CHEVRONS + brain() + pulse + BULB,
     '.bulb{animation:glow 1.4s ease-in-out infinite}'
     '@keyframes glow{50%{opacity:.35}}')
 
-# Listening: the brackets become sound waves that pulse outward.
-waves = (f'<g fill="none" stroke="{WHITE}" stroke-width="5" stroke-linecap="round">'
-         '<path class="w1" d="M30 49 Q23 62 30 75"/><path class="w2" d="M21 41 Q9 62 21 83"/>'
-         f'<g transform="{MIRROR}"><path class="w1" d="M30 49 Q23 62 30 75"/><path class="w2" d="M21 41 Q9 62 21 83"/></g></g>')
-listening = svg('WorkspaceGPT: listening', waves + brain() + BULB,
-    '.w1,.w2{animation:wave 1.2s ease-in-out infinite}.w2{animation-delay:.3s}'
-    '@keyframes wave{0%,100%{opacity:.25}50%{opacity:1}}')
+# Listening: the bulb's two lines become five bars that bounce, like a voice meter.
+bars = ''.join(f'<path class="b b{i}" d="M{x} 92 V100"/>' for i, x in enumerate([52, 58, 64, 70, 76]))
+listening = svg('WorkspaceGPT: listening', CHEVRONS + brain() + f'<g stroke="{GREEN}" stroke-width="4.6" stroke-linecap="round">{bars}</g>',
+    '.b{transform-box:fill-box;transform-origin:center;animation:eq .9s ease-in-out infinite}'
+    '.b0{animation-delay:-.45s}.b1{animation-delay:-.15s}.b2{animation-delay:-.6s}.b3{animation-delay:-.3s}.b4{animation-delay:-.75s}'
+    '@keyframes eq{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1.45)}}')
 
 for name, text in [('cue-ready.svg', ready), ('cue-thinking.svg', thinking), ('cue-listening.svg', listening)]:
     open(os.path.join(out, name), 'w').write(text)
