@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:*;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ask about my work</title>
+  <link rel="stylesheet" href="/__desktop/cue.css" />
+</head>
+<body data-view="icon" data-state="empty">
+  <!--
+    The work-brief overlay: a small always-on-top window the shell opens
+    (src-tauri/src/main.rs, CUE). Collapsed it is one round icon; a click
+    opens the ask panel, Esc or × folds it back. The shell keeps the window
+    out of screen sharing, so others on a call never see it.
+  -->
+  <button id="icon" class="icon" type="button" title="Ask about my work" aria-label="Ask about my work">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+      <path d="M12 3.5a5.5 5.5 0 0 0-3.2 9.97c.45.32.7.83.7 1.38v.9h5v-.9c0-.55.25-1.06.7-1.38A5.5 5.5 0 0 0 12 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+      <path d="M10 19h4M10.5 21.5h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+    </svg>
+    <span class="dot" aria-hidden="true"></span>
+  </button>
+
+  <section id="panel" class="panel" aria-label="Ask about my work">
+    <header class="head" data-tauri-drag-region>
+      <span class="title" data-tauri-drag-region>Ask about my work</span>
+      <button id="refresh" class="btn-ghost" type="button" title="Rebuild the brief now" aria-label="Rebuild the brief now">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      </button>
+      <button id="close" class="btn-ghost" type="button" title="Collapse (Esc)" aria-label="Collapse">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
+      </button>
+    </header>
+    <p id="status" class="status" data-tauri-drag-region>Connecting…</p>
+    <form id="form" class="ask">
+      <textarea id="q" rows="2" placeholder="What did I change in checkout last month?" aria-label="Your question"></textarea>
+      <button id="send" type="submit" class="send" aria-label="Ask">Ask</button>
+    </form>
+    <div id="answer" class="answer" aria-live="polite"></div>
+    <div id="sources" class="sources"></div>
+  </section>
+  <script src="/__desktop/cue.js"></script>
+</body>
+</html>

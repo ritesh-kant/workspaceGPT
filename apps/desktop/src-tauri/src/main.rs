@@ -7,6 +7,7 @@
 //! (no Tauri IPC — see capabilities/default.json).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cue;
 mod notify;
 mod shell_log;
 mod sidecar;
@@ -61,6 +62,7 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
     *app.state::<CurrentPort>().0.lock().unwrap() = Some(port);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
+        open_cue(&app2);
         if let Some(w) = app2.get_webview_window(MAIN) {
             // Restarted sidecar (crash, or Open Folder…): same token, new port.
             let _ = w.navigate(page_url(port));
@@ -109,6 +111,14 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
             Err(e) => eprintln!("[shell] could not open the window: {e}"),
         }
     });
+}
+
+/// The work-brief icon (cue.rs), on the sidecar currently serving.
+fn open_cue(app: &AppHandle) {
+    let Some(port) = *app.state::<CurrentPort>().0.lock().unwrap() else { return };
+    let token = app.state::<sidecar::Supervisor>().token().to_string();
+    let port_app = app.clone();
+    cue::sync(app, port, &token_script(&token), move || *port_app.state::<CurrentPort>().0.lock().unwrap());
 }
 
 fn open_folder(app: &AppHandle) {
@@ -209,8 +219,10 @@ fn change_zoom(app: &AppHandle, delta: Option<f64>) {
 
 /// The app-menu checkbox for notifications, kept so a click can read its new state.
 struct NotifyToggle(CheckMenuItem<tauri::Wry>);
+/// The app-menu checkbox for the work-brief icon.
+struct CueToggle(CheckMenuItem<tauri::Wry>);
 
-fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>)> {
+fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>)> {
     let new_chat = MenuItem::with_id(app, "new-chat", "New Chat", true, Some("CmdOrCtrl+N"))?;
     let history = MenuItem::with_id(app, "history", "Chat History", true, Some("CmdOrCtrl+Y"))?;
     let open = MenuItem::with_id(app, "open-folder", "Open Folder…", true, Some("CmdOrCtrl+O"))?;
@@ -222,6 +234,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
         notify::MENU_LABEL,
         true,
         app.state::<notify::Notifications>().enabled(),
+        None::<&str>,
+    )?;
+    let cue_toggle = CheckMenuItem::with_id(
+        app,
+        cue::MENU_ID,
+        cue::MENU_LABEL,
+        true,
+        *app.state::<cue::CueEnabled>().0.lock().unwrap(),
         None::<&str>,
     )?;
     let show_logs = MenuItem::with_id(app, "show-logs", "Show Logs", true, None::<&str>)?;
@@ -237,6 +257,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
             &PredefinedMenuItem::separator(app)?,
             &settings,
             &notify_toggle,
+            &cue_toggle,
             &show_logs,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, Some("Hide WorkspaceGPT"))?,
@@ -285,7 +306,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
         &[&PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::close_window(app, None)?],
     )?;
     let menu = Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window])?;
-    Ok((menu, check_updates, notify_toggle))
+    Ok((menu, check_updates, notify_toggle, cue_toggle))
 }
 
 fn handle_menu(app: &AppHandle, id: &str) {
@@ -311,6 +332,7 @@ fn handle_menu(app: &AppHandle, id: &str) {
         "zoom-reset" => change_zoom(app, None),
         updater::MENU_ID => updater::menu_clicked(app),
         notify::MENU_ID => notify::menu_toggled(app, &app.state::<NotifyToggle>().0),
+        cue::MENU_ID => cue::menu_toggled(app, &app.state::<CueToggle>().0, open_cue),
         "tray-show" => show_main(app),
         "tray-quit" => app.exit(0),
         _ => {}
@@ -385,7 +407,8 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| show_main(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // The work-brief icon always starts in its corner, collapsed.
+        .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&[cue::CUE]).build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(CurrentPort(Mutex::new(None)))
@@ -395,9 +418,11 @@ fn main() {
         .setup(move |app| {
             app.manage(notify::Notifications::load(app.handle()));
             app.manage(Zoom(Mutex::new(load_zoom(app.handle()))));
+            app.manage(cue::load(app.handle()));
             *handle_slot.lock().unwrap() = Some(app.handle().clone());
-            let (menu, check_updates, notify_toggle) = build_menu(app.handle())?;
+            let (menu, check_updates, notify_toggle, cue_toggle) = build_menu(app.handle())?;
             app.manage(NotifyToggle(notify_toggle));
+            app.manage(CueToggle(cue_toggle));
             app.set_menu(menu)?;
 
             let tray_menu = Menu::with_items(

@@ -82,6 +82,8 @@ const UNITS = [
   'src/services/callNotes.ts',
   'src/services/callNoteCorrect.ts',
   'src/services/callNoteSummary.ts',
+  // Work brief: tiers, lookup, prompt and cited sources (pure).
+  'src/services/workBrief/brief.ts',
   // Copilot on desktop: Chat Completions ⇄ Responses, and the bridge route that uses it (fetch mocked).
   'src/services/copilotResponses.ts',
   'src/services/copilotDirect.ts',

@@ -52,6 +52,7 @@ import { attachChromeChat } from 'workspacegpt-extension-chromechat';
 import { recordOriginalContent } from 'workspacegpt-extension-diff';
 import { startServer, type DesktopServer } from './host/server';
 import { createTerminalHost } from './host/terminalHost';
+import { createCueHost } from './host/cueHost';
 import { mergeLoginShellPath, type ShellPathResult } from './host/shellEnv';
 import { clipboardRead, clipboardWrite, openExternal, openInEditor, revealFolder } from './host/opener';
 import { installProcessReaper, killChildrenSync, liveChildren, reapChildren } from './host/processReaper';
@@ -358,8 +359,14 @@ async function main(): Promise<void> {
     () => runtime.workspaceFolders[0],
     (l) => console.log(l),
   );
+  const cueHost = createCueHost({
+    executeCommand: (id, ...rest) => compat.commands.executeCommand(id, ...rest),
+    openExternal: (url) => runtime.openExternal(url),
+    log: (l) => console.log(l),
+  });
   server = await startServer({
     onTerminalSocket: (ws) => terminalHost.attach(ws),
+    onCueSocket: (ws) => cueHost.attach(ws),
     port: args.port,
     token,
     surfaces,

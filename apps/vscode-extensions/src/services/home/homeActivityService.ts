@@ -23,7 +23,7 @@ export function activityRevision(value: unknown): string {
 }
 
 /** No response bodies or credentials in errors/analytics. Never follow auth-bearing redirects. */
-async function request(url: string, authHeader: string, init?: RequestInit): Promise<any> {
+export async function request(url: string, authHeader: string, init?: RequestInit): Promise<any> {
   // Every call here is a read, so a transient gateway error is safe to retry.
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(url, {

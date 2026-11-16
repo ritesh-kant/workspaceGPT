@@ -5,6 +5,7 @@
  *   /                     the shell (sidebar + main pane), bridge/shell.html
  *   /view/<viewType>      that view's own HTML with the bridge injected
  *   /__desktop/ws?view=   one socket per view page
+ *   /__desktop/cue        the work-brief icon overlay's socket (bridge/cue.html)
  *
  * Security (docs/design/desktop.md, Decision 3):
  *  - bound to 127.0.0.1 only, on a random port;
@@ -49,6 +50,8 @@ export interface ServerOptions {
   extraOrigins: string[];
   /** The integrated terminal's socket (host/terminalHost.ts); absent in builds without it. */
   onTerminalSocket?: (ws: WebSocket) => void;
+  /** The work-brief icon overlay's socket (host/cueHost.ts). */
+  onCueSocket?: (ws: WebSocket) => void;
   /**
    * The saved theme choice ('light' | 'dark'; absent = follow the system). The
    * loopback port is random per launch, so the pages' localStorage starts empty
@@ -217,10 +220,15 @@ export function startServer(opts: ServerOptions): Promise<DesktopServer> {
       socket.write(`HTTP/1.1 ${code} ${why}\r\nConnection: close\r\n\r\n`);
       socket.destroy();
     };
-    if (url.pathname !== '/__desktop/ws' && url.pathname !== '/__desktop/term') return reject(404, 'Not Found');
+    if (url.pathname !== '/__desktop/ws' && url.pathname !== '/__desktop/term' && url.pathname !== '/__desktop/cue') return reject(404, 'Not Found');
     if (!hosts().has(req.headers.host ?? '')) return reject(421, 'Misdirected Request');
     if (!origins().has(origin)) return reject(403, 'Forbidden Origin');
     if (!tokenMatches(url.searchParams.get('t'), opts.token)) return reject(401, 'Unauthorized');
+    if (url.pathname === '/__desktop/cue') {
+      if (!opts.onCueSocket) return reject(404, 'Not Found');
+      wss.handleUpgrade(req, socket, head, (ws) => opts.onCueSocket!(ws));
+      return;
+    }
     if (url.pathname === '/__desktop/term') {
       if (!opts.onTerminalSocket) return reject(404, 'Not Found');
       wss.handleUpgrade(req, socket, head, (ws) => opts.onTerminalSocket!(ws));
