@@ -5,7 +5,7 @@ The work-brief overlay's icons (bridge/cue-*.svg), drawn from the app icon
   python3 scripts/cue-icons.py bridge
 
 ready      the app icon
-thinking   a pulse runs around the brain, the bulb glows (building / answering)
+thinking   the bulb lines become three rising dots, like "typing…" (building / answering)
 listening  the bulb lines become a bouncing voice meter (for a future listening mode)
 Animations stop under prefers-reduced-motion.
 """
@@ -39,15 +39,12 @@ def svg(title, body, style=''):
 # Ready: the brand icon as it is.
 ready = svg('WorkspaceGPT: ready', CHEVRONS + brain() + BULB)
 
-# Thinking: a bright pulse runs around each half of the brain; the bulb glows.
-pulse = (f'<g transform="{FIT}" fill="none" stroke="#C9FFF0" stroke-width="5.1" stroke-linecap="round">'
-         f'<path class="run" pathLength="100" d="{HEMI}"/>'
-         f'<path class="run" pathLength="100" transform="{MIRROR}" d="{HEMI}"/></g>')
-thinking = svg('WorkspaceGPT: thinking', CHEVRONS + brain() + pulse + BULB,
-    '.run{stroke-dasharray:14 86;animation:run 1.4s linear infinite}'
-    '@keyframes run{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}'
-    '.bulb{animation:glow 1.4s ease-in-out infinite}'
-    '@keyframes glow{50%{opacity:.35}}')
+# Thinking: the bulb's two lines become three dots that rise in turn, like a chat "typing…"
+# (the same place the voice meter uses, so every state changes only the bulb).
+dots = ''.join(f'<circle class="d d{i}" cx="{x}" cy="96" r="4.2"/>' for i, x in enumerate([54, 64, 74]))
+thinking = svg('WorkspaceGPT: thinking', CHEVRONS + brain() + f'<g fill="{GREEN}">{dots}</g>',
+    '.d{animation:hop 1.2s ease-in-out infinite}.d1{animation-delay:.2s}.d2{animation-delay:.4s}'
+    '@keyframes hop{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-6px);opacity:1}}')
 
 # Listening: the bulb's two lines become five bars that bounce, like a voice meter.
 bars = ''.join(f'<path class="b b{i}" d="M{x} 92 V100"/>' for i, x in enumerate([52, 58, 64, 70, 76]))
