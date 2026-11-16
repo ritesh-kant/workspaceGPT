@@ -280,6 +280,41 @@ interface SessionPreview {
     }
   }
 
+  // A view's own reconnect/reload watchdog runs inside its page, so a page
+  // that comes back dead (a reload that failed on wake from sleep, an error
+  // page) has none, and the chat stays blank until the app restarts. Watch
+  // the frames from here: no bridge, or a bridge that has been disconnected
+  // for 45s while the window is visible, gets its frame reloaded. A page
+  // that was superseded by another window (stopped) is left alone.
+  const frameDownSince = new Map<HTMLIFrameElement, number>();
+  setInterval(() => {
+    if (document.visibilityState === 'hidden') {
+      frameDownSince.clear();
+      return;
+    }
+    for (const f of document.querySelectorAll<HTMLIFrameElement>('iframe.view')) {
+      let healthy = false;
+      try {
+        const bridge = (f.contentWindow as any)?.__wgptBridge;
+        const h = bridge?.health?.();
+        healthy = !!bridge && (!h || h.open || h.stopped);
+      } catch {
+        /* no access to the frame: treat it as dead */
+      }
+      if (healthy) {
+        frameDownSince.delete(f);
+        continue;
+      }
+      const since = frameDownSince.get(f) ?? Date.now();
+      frameDownSince.set(f, since);
+      if (Date.now() - since > 45000) {
+        frameDownSince.delete(f);
+        console.warn(`[wgpt-shell] reloading the ${f.getAttribute('aria-label')} view: no live connection for 45s`);
+        f.src = f.src;
+      }
+    }
+  }, 5000);
+
   // An extension build without the Sessions view still gets the chat; the
   // header then offers History instead.
   fetch(`/view/${encodeURIComponent(SESSIONS_VIEW)}`, { method: 'HEAD', cache: 'no-store' })

@@ -309,6 +309,8 @@ interface UiFrame {
   // What the shell calls into: its header buttons run the same title actions.
   w.__wgptBridge = {
     viewType,
+    // The shell's frame watchdog reads this (shell.ts).
+    health: () => ({ open, stopped }),
     command: (id: string) => send({ t: 'command', id }),
     dictation: {
       available: () => dictationAvailable,
