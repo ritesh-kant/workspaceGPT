@@ -13,9 +13,10 @@ import StatusDot from './StatusDot';
 const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent);
 
 /** Shortcuts that don't clash with common system ones; values are Tauri accelerators. */
-const HOTKEYS: { value: string; mac: string; other: string }[] = [
+const HOTKEYS: { value: string; mac: string; other: string; macOnly?: boolean }[] = [
   { value: 'CommandOrControl+Shift+Space', mac: '⌘ ⇧ Space', other: 'Ctrl + Shift + Space' },
-  { value: 'Alt+Space', mac: '⌥ Space', other: 'Alt + Space' },
+  // On Windows Alt+Space opens every window's system menu; taking it would break that.
+  { value: 'Alt+Space', mac: '⌥ Space', other: 'Alt + Space', macOnly: true },
   { value: 'CommandOrControl+Alt+Space', mac: '⌘ ⌥ Space', other: 'Ctrl + Alt + Space' },
   { value: 'CommandOrControl+Shift+K', mac: '⌘ ⇧ K', other: 'Ctrl + Shift + K' },
   { value: '', mac: 'Off', other: 'Off' },
@@ -68,7 +69,7 @@ const WorkBriefSettings: React.FC = () => {
             <small className='form-text'>Opens or closes the panel from any app.</small>
           </span>
           <select className='settings-select' value={hotkey} aria-label='Hotkey' onChange={(e) => updateConfig('workBrief', 'hotkey', e.target.value)}>
-            {HOTKEYS.map((k) => (
+            {HOTKEYS.filter((k) => isMac || !k.macOnly).map((k) => (
               <option key={k.value || 'off'} value={k.value}>
                 {isMac ? k.mac : k.other}
               </option>
