@@ -18,7 +18,7 @@ import { resolveConfluenceWebUrl } from '../confluence/confluenceWebUrl';
 import { ghEnv } from '../codehost/ghCli';
 import { adfText } from '../home/types';
 import { request } from '../home/homeActivityService';
-import { callNotesDir, listCallNotes } from '../callNotes';
+import { callNotesDir, listCallNotes, readCallNote } from '../callNotes';
 import { readCallSummary } from '../callNoteSummary';
 import type { WorkItem } from './brief';
 
@@ -234,17 +234,27 @@ async function githubWork(since: number): Promise<WorkItem[]> {
   return items;
 }
 
-/** Call notes kept on this machine: the summary when there is one, else the opening words. */
-async function callWork(context: vscode.ExtensionContext, since: number): Promise<WorkItem[]> {
+/** Transcript kept per call; a question about one call gets up to brief.ts DETAIL_TEXT_CHARS of it. */
+const CALL_TEXT_CHARS = 4000;
+
+/**
+ * Call notes kept on this machine: the summary when there is one, then the
+ * transcript. Local reads only, so workBrief.ts re-reads them on every
+ * question and a call that just ended is already known.
+ */
+export async function callWork(context: vscode.ExtensionContext, since = Date.now() - WINDOW_DAYS * DAY): Promise<WorkItem[]> {
   const dir = callNotesDir(context.globalStorageUri.fsPath);
   const notes = (await listCallNotes(dir)).filter((n) => n.startedAt >= since && n.status === 'done');
   return Promise.all(notes.map(async (n): Promise<WorkItem> => {
     const s = await readCallSummary(dir, n.id).catch(() => undefined);
     const mine = s?.actions?.filter((a) => a.owner === 'you').map((a) => a.text) ?? [];
-    const text = s?.status === 'done'
+    const summary = s?.status === 'done'
       ? [s.tldr, s.highlights?.length ? `Highlights: ${s.highlights.join('; ')}` : '', s.decisions?.length ? `Decisions: ${s.decisions.join('; ')}` : '',
         mine.length ? `My actions: ${mine.join('; ')}` : ''].filter(Boolean).join(' ')
-      : n.preview;
+      : '';
+    const note = await readCallNote(dir, n.id).catch(() => undefined);
+    const heard = note?.turns.map((t) => `${t.speaker === 'you' ? 'Me' : 'Others'}: ${t.text}`).join(' ') ?? n.preview;
+    const text = [summary || 'Not summarized yet.', heard ? `Transcript: ${heard}` : ''].filter(Boolean).join(' ').slice(0, CALL_TEXT_CHARS);
     return { tag: `CALL ${n.id}`, source: 'call', kind: 'Call', title: n.title, roles: ['attended'], updatedAt: n.endedAt ?? n.startedAt, createdAt: n.startedAt, text };
   }));
 }

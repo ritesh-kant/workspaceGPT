@@ -8076,7 +8076,7 @@ console.log('\ncommandChanges (files a turn changed through commands)');
 // ═══ work brief (services/workBrief/brief.ts) ═══
 console.log('\nwork brief (tiers, lookup, prompt, sources)');
 {
-  const { tierItems, lookupCards, buildAnswerPrompt, citedSources, speakable, dedupe, renderCard, HOT_CHARS } = briefMod;
+  const { tierItems, lookupCards, buildAnswerPrompt, citedSources, answerParts, speakable, dedupe, renderCard, HOT_CHARS } = briefMod;
   const NOW = Date.parse('2026-11-16T10:00:00Z');
   const D = 86_400_000;
   const item = (n, over = {}) => ({ tag: `ADO #${n}`, source: 'ado', kind: 'Bug', title: `Item ${n}`, roles: ['assigned'], updatedAt: NOW - n * D, ...over });
@@ -8123,7 +8123,7 @@ console.log('\nwork brief (tiers, lookup, prompt, sources)');
     const items = [item(1, { url: 'https://x/1' }), item(2)];
     const answer = 'I fixed it last week [ADO #1] and reviewed [ADO #2] [ADO #999].';
     const got = citedSources(answer, items, new Set(['ADO #1']));
-    assert.deepEqual(got, [{ tag: 'ADO #1', title: 'Item 1', url: 'https://x/1' }]);
+    assert.deepEqual(got, [{ tag: 'ADO #1', label: '#1', title: 'Item 1', source: 'ado', url: 'https://x/1' }]);
   });
   await t('a shortened id links only when exactly one shown item ends with it', () => {
     const items = [item(1, { tag: 'PR github acme/app#12610', url: 'https://g/1' }), item(2, { tag: 'PR github acme/web#77' }), item(3, { tag: 'PR github acme/api#77' })];
@@ -8135,6 +8135,29 @@ console.log('\nwork brief (tiers, lookup, prompt, sources)');
   await t('the prompt gives explicit cut-off dates for recent windows', () => {
     const { prompt } = buildAnswerPrompt({ question: 'x', items: [item(1)], now: NOW });
     assert.ok(prompt.includes('last 14 days = on or after 2026-11-02'), prompt.slice(0, 900));
+  });
+  await t('answer parts number cited sources and drop made-up ids', () => {
+    const items = [item(1, { url: 'https://x/1' }), item(2)];
+    const shown = new Set(['ADO #1', 'ADO #2']);
+    const answer = 'Fixed it [ADO #1] [ADO #1], and see [ADO #999].';
+    const sources = citedSources(answer, items, shown);
+    assert.deepEqual(answerParts(answer, items, shown, sources), ['Fixed it', 0, ', and see', '.']);
+  });
+  await t('a follow-up carries earlier turns and looks up what the last question named', () => {
+    const items = [item(2, { title: 'Recent thing' }), item(300, { tag: 'JIRA PAY-77', title: 'Refund rounding', text: 'banker rounding' })];
+    const { prompt } = buildAnswerPrompt({ question: 'who reviewed it?', items, now: NOW,
+      history: [{ q: 'what happened with refund rounding?', a: 'I fixed it [JIRA PAY-77].' }] });
+    assert.ok(prompt.includes('EARLIER IN THIS CONVERSATION'));
+    assert.ok(prompt.includes('DETAIL FOR THIS QUESTION'));
+    assert.ok(prompt.indexOf('EARLIER IN THIS CONVERSATION') < prompt.indexOf('Question: who reviewed it?'));
+  });
+  await t('"my last call" looks up the newest call with its long transcript', () => {
+    const call = (n, text) => ({ tag: `CALL c${n}`, source: 'call', kind: 'Call', title: `Call ${n}`, roles: ['attended'], updatedAt: NOW - n * D, text });
+    const items = [call(1, 'Transcript: ' + 'we agreed to ship on Friday. '.repeat(60)), call(5, 'older call'), item(3)];
+    const { prompt } = buildAnswerPrompt({ question: 'summarize my last call', items, now: NOW });
+    const detail = prompt.slice(prompt.indexOf('DETAIL FOR THIS QUESTION'));
+    assert.ok(detail.startsWith('DETAIL FOR THIS QUESTION ===\n[CALL c1]'), detail.slice(0, 120));
+    assert.ok(detail.length > 1500, String(detail.length));
   });
   await t('spoken text drops the citation brackets', () => {
     assert.equal(speakable('It is in review [PR github a/b#7].'), 'It is in review.');

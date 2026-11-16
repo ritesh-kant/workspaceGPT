@@ -4,6 +4,10 @@
  * its window through a private navigation the shell cancels
  * (workspacegpt://cue/expand | collapse), the same no-IPC signal the main
  * window uses for refresh-layout.
+ *
+ * The panel is a short conversation: each question goes with the earlier
+ * turns, so a follow-up ("and the second one?") knows what it refers to.
+ * The conversation lives only in this page; New conversation clears it.
  */
 type Status = {
   state: 'empty' | 'building' | 'ready';
@@ -13,24 +17,29 @@ type Status = {
   notes: string[];
   error?: string;
 };
-type Result = { ok: boolean; answer: string; spoken: string; sources: { tag: string; title: string; url?: string }[]; ms: number };
+type Source = { tag: string; label?: string; title: string; source?: string; url?: string };
+type Result = { ok: boolean; answer: string; spoken: string; sources: Source[]; parts?: Array<string | number>; ms: number };
+type Turn = { q: string; a: string };
 
 const w = window as unknown as { __WGPT_DESKTOP__?: { token: string } };
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const body = document.body;
 const icon = $<HTMLButtonElement>('icon');
-const statusLine = $<HTMLParagraphElement>('status');
+const statusLine = $<HTMLSpanElement>('status');
 const form = $<HTMLFormElement>('form');
 const q = $<HTMLTextAreaElement>('q');
 const send = $<HTMLButtonElement>('send');
-const answer = $<HTMLDivElement>('answer');
-const sources = $<HTMLDivElement>('sources');
+const thread = $<HTMLDivElement>('thread');
+const empty = $<HTMLDivElement>('empty');
+const newChat = $<HTMLButtonElement>('newChat');
 const iconImg = $<HTMLImageElement>('iconImg');
 
 let ws: WebSocket | undefined;
 let seq = 0;
-let pending: number | undefined;
+let pending: { id: number; q: string; el: HTMLDivElement } | undefined;
 let lastStatus: Status | undefined;
+/** Answered turns of this conversation, sent with each follow-up. */
+let turns: Turn[] = [];
 
 /**
  * The icon shows what the brief is doing: thinking while it builds or
@@ -49,7 +58,10 @@ function setView(view: 'icon' | 'panel') {
   body.dataset.view = view;
   // Same-window navigation to a scheme the shell intercepts and cancels.
   location.assign(`workspacegpt://cue/${view === 'panel' ? 'expand' : 'collapse'}`);
-  if (view === 'panel') setTimeout(() => q.focus(), 60);
+  if (view === 'panel') {
+    syncComposer();
+    setTimeout(() => q.focus(), 60);
+  }
 }
 
 const SOURCE_NAMES: Record<string, [string, string]> = {
@@ -69,30 +81,151 @@ function renderStatus(s: Status) {
   lastStatus = s;
   body.dataset.state = s.error && s.state !== 'building' ? 'error' : s.state;
   const counts = Object.entries(s.counts).filter(([, n]) => n > 0).map(([k, n]) => counted(k, n)).join(' · ');
-  const text =
-    s.state === 'building' ? `Building your brief from the last ${s.windowDays} days…`
-      : s.state === 'empty' ? (s.error ? `Could not build: ${s.error}` : `No brief yet. Ask a question to build it (last ${s.windowDays} days).`)
-        : `${counts || 'No items'} · built ${s.builtAt ? ago(s.builtAt) : ''}${s.notes.length ? ` · ${s.notes.length} source${s.notes.length > 1 ? 's' : ''} not read` : ''}`;
-  statusLine.textContent = text;
-  statusLine.title = s.notes.join('\n');
-  icon.title = s.state === 'ready' ? `Ask about my work (${counts})` : 'Ask about my work';
+  const total = Object.values(s.counts).reduce((a, b) => a + b, 0);
+  statusLine.textContent =
+    s.state === 'building' ? `Reading the last ${s.windowDays} days of your work…`
+      : s.state === 'empty' ? (s.error ? `Could not read your work: ${s.error}` : 'Ready to read your work on the first question')
+        : `Knows ${total} items · updated ${s.builtAt ? ago(s.builtAt) : ''}${s.notes.length ? ' · some sources not read' : ''}`;
+  // The detail stays one hover away.
+  statusLine.title = [counts, ...s.notes].filter(Boolean).join('\n');
+  icon.title = s.state === 'ready' ? `Ask about my work (${counts}) · drag to move` : 'Ask about my work (drag to move)';
   updateIcon();
 }
 
-function renderResult(r: Result) {
+function scrollDown() {
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function addUser(text: string) {
+  empty.hidden = true;
+  newChat.hidden = false;
+  const el = document.createElement('div');
+  el.className = 'msg user';
+  el.textContent = text;
+  thread.append(el);
+  scrollDown();
+}
+
+function addThinking(firstBuild: boolean): HTMLDivElement {
+  const el = document.createElement('div');
+  el.className = 'msg bot';
+  const dots = document.createElement('span');
+  dots.className = 'typing';
+  dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+  el.append(dots);
+  if (firstBuild) {
+    const note = document.createElement('span');
+    note.className = 'typing-note';
+    note.textContent = 'Reading your work first. The first time takes a minute.';
+    el.append(note);
+  }
+  thread.append(el);
+  scrollDown();
+  return el;
+}
+
+function open(s: Source) {
+  if (s.url) ws?.send(JSON.stringify({ t: 'open', url: s.url }));
+}
+
+/** An answer: text with numbered citation markers, then one chip per source. */
+function fillAnswer(el: HTMLDivElement, r: Result) {
+  el.replaceChildren();
+  el.classList.toggle('muted', !r.ok);
+  const text = document.createElement('div');
+  text.className = 'text';
+  // Older hosts send no parts: show the answer as it came.
+  for (const part of r.parts ?? [r.answer]) {
+    if (typeof part === 'string') {
+      text.append(part);
+      continue;
+    }
+    const s = r.sources[part];
+    if (!s) continue;
+    const cite = document.createElement('span');
+    cite.className = 'cite';
+    cite.textContent = String(part + 1);
+    cite.title = `${s.label ?? s.tag}: ${s.title}`;
+    cite.addEventListener('click', () => open(s));
+    text.append(cite);
+  }
+  el.append(text);
+  if (r.sources.length) {
+    const srcs = document.createElement('div');
+    srcs.className = 'srcs';
+    r.sources.forEach((s, i) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.disabled = !s.url;
+      chip.title = s.url ? `${s.title}\nOpen in browser` : s.title;
+      const n = document.createElement('span');
+      n.className = 'n';
+      n.textContent = String(i + 1);
+      const l = document.createElement('span');
+      l.className = 'l';
+      // Pages and calls read better by their title than by an id.
+      l.textContent = s.source === 'confluence' || s.source === 'call' || !s.label ? (s.label && s.source === 'call' ? s.label : s.title) : `${s.label} · ${s.title}`;
+      chip.append(n, l);
+      chip.addEventListener('click', () => open(s));
+      srcs.append(chip);
+    });
+    el.append(srcs);
+  }
+  if (r.ok) {
+    const tools = document.createElement('div');
+    tools.className = 'tools';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'btn-ghost';
+    copy.title = 'Copy answer';
+    copy.setAttribute('aria-label', 'Copy answer');
+    copy.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8" stroke="currentColor" stroke-width="1.8"/></svg>';
+    copy.addEventListener('click', () => void navigator.clipboard?.writeText(r.spoken || r.answer).catch(() => undefined));
+    tools.append(copy);
+    el.append(tools);
+  }
+  scrollDown();
+}
+
+function finish(r: Result) {
+  if (!pending) return;
+  const { q: asked, el } = pending;
+  pending = undefined;
+  fillAnswer(el, r);
+  if (r.ok) turns.push({ q: asked, a: r.spoken || r.answer });
+  syncComposer();
   updateIcon();
-  answer.classList.toggle('muted', !r.ok);
-  answer.textContent = r.answer;
-  sources.replaceChildren(...r.sources.map((s) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chip';
-    chip.textContent = s.tag;
-    chip.title = s.title;
-    chip.disabled = !s.url;
-    chip.addEventListener('click', () => s.url && ws?.send(JSON.stringify({ t: 'open', url: s.url })));
-    return chip;
-  }));
+}
+
+function syncComposer() {
+  send.disabled = pending !== undefined || !q.value.trim();
+  q.placeholder = turns.length ? 'Ask a follow-up…' : 'Ask about your work…';
+  // Grow with the text, up to the CSS max-height. While the panel is hidden
+  // there is nothing to measure; opening it calls this again.
+  q.style.height = 'auto';
+  if (q.scrollHeight) q.style.height = `${q.scrollHeight}px`;
+}
+
+function ask(text: string) {
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN || pending !== undefined) return;
+  addUser(text);
+  const el = addThinking(lastStatus?.state !== 'ready');
+  pending = { id: ++seq, q: text, el };
+  ws.send(JSON.stringify({ t: 'ask', id: pending.id, q: text, history: turns.slice(-6) }));
+  q.value = '';
+  syncComposer();
+  updateIcon();
+}
+
+function newConversation() {
+  if (pending) return;
+  turns = [];
+  thread.querySelectorAll('.msg').forEach((m) => m.remove());
+  empty.hidden = false;
+  newChat.hidden = true;
+  syncComposer();
+  q.focus();
 }
 
 // Headless (no shell): the token rides in the fragment, as on the shell page.
@@ -116,25 +249,14 @@ function connect() {
       return;
     }
     if (msg.t === 'status') renderStatus(msg.status);
-    else if (msg.t === 'answer' && msg.id === pending) {
-      pending = undefined;
-      send.disabled = false;
-      renderResult(msg.result);
-    } else if (msg.t === 'error' && (msg.id === undefined || msg.id === pending)) {
-      if (msg.id !== undefined) {
-        pending = undefined;
-        send.disabled = false;
-      }
-      renderResult({ ok: false, answer: msg.message, spoken: '', sources: [], ms: 0 });
+    else if (msg.t === 'answer' && msg.id === pending?.id) finish(msg.result);
+    else if (msg.t === 'error' && msg.id !== undefined && msg.id === pending?.id) {
+      finish({ ok: false, answer: msg.message, spoken: '', sources: [], ms: 0 });
     }
   };
   sock.onclose = () => {
     if (ws === sock) ws = undefined;
-    if (pending !== undefined) {
-      pending = undefined;
-      send.disabled = false;
-      renderResult({ ok: false, answer: 'WorkspaceGPT restarted. Ask again.', spoken: '', sources: [], ms: 0 });
-    }
+    finish({ ok: false, answer: 'WorkspaceGPT restarted. Ask again.', spoken: '', sources: [], ms: 0 });
     setTimeout(connect, 2000);
   };
 }
@@ -174,9 +296,14 @@ icon.addEventListener('click', () => {
 });
 $('close').addEventListener('click', () => setView('icon'));
 $('refresh').addEventListener('click', () => ws?.send(JSON.stringify({ t: 'refresh' })));
+newChat.addEventListener('click', newConversation);
+for (const b of document.querySelectorAll<HTMLButtonElement>('.suggestion')) {
+  b.addEventListener('click', () => ask(b.textContent ?? ''));
+}
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') setView('icon');
 });
+q.addEventListener('input', syncComposer);
 q.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
@@ -185,15 +312,8 @@ q.addEventListener('keydown', (e) => {
 });
 form.addEventListener('submit', (e) => {
   e.preventDefault();
-  const text = q.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN || pending !== undefined) return;
-  pending = ++seq;
-  send.disabled = true;
-  sources.replaceChildren();
-  answer.classList.add('muted');
-  answer.textContent = lastStatus?.state === 'ready' ? 'Thinking…' : 'Building your brief first. This takes a minute the first time…';
-  ws.send(JSON.stringify({ t: 'ask', id: pending, q: text }));
-  updateIcon();
+  ask(q.value.trim());
 });
 
+syncComposer();
 connect();

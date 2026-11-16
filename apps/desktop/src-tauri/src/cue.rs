@@ -23,8 +23,8 @@ pub const HIDE_MENU_LABEL: &str = "Hide Work Brief Icon in Screen Shares";
 
 /// Window sizes in logical pixels. The page draws a 36px icon with a 4px margin.
 const ICON: f64 = 44.0;
-const PANEL_W: f64 = 380.0;
-const PANEL_H: f64 = 440.0;
+const PANEL_W: f64 = 400.0;
+const PANEL_H: f64 = 540.0;
 /// From the screen's top-right corner (below the macOS menu bar).
 const MARGIN_RIGHT: f64 = 16.0;
 const MARGIN_TOP: f64 = 40.0;

@@ -4,7 +4,7 @@
  * /__desktop/cue. The page holds nothing: every answer comes from the
  * extension's commands (services/workBrief/workBrief.ts).
  *
- *   page → host  {t:'status'} | {t:'ask', id, q} | {t:'refresh'} | {t:'open', url}
+ *   page → host  {t:'status'} | {t:'ask', id, q, history?: {q, a}[]} | {t:'refresh'} | {t:'open', url}
  *   host → page  {t:'status', status} | {t:'answer', id, result} | {t:'error', id?, message}
  */
 import type { WebSocket } from 'ws';
@@ -46,7 +46,11 @@ export function createCueHost(deps: CueHostDeps) {
         if (msg?.t === 'ask' && typeof msg.q === 'string') {
           const id = msg.id;
           try {
-            const pending = deps.executeCommand('workspacegpt.workBrief.ask', msg.q.slice(0, 2000));
+            // Earlier turns of this conversation, so a follow-up knows what "it" is.
+            const history = Array.isArray(msg.history)
+              ? msg.history.slice(-6).filter((t: any) => typeof t?.q === 'string' && typeof t?.a === 'string')
+              : [];
+            const pending = deps.executeCommand('workspacegpt.workBrief.ask', msg.q.slice(0, 2000), history);
             // A first question builds the brief; let the page say so.
             void status();
             send({ t: 'answer', id, result: await pending });

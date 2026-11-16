@@ -84,6 +84,19 @@ and a 200-day-old item the question named was added as a full card.
   question. A first question with no brief builds it first. The status line
   says "Building your brief…".
 
+## Conversation (follow-ups)
+
+The panel is a short conversation: each question goes with up to 6 earlier
+turns (after the brief, so the brief stays a cacheable prefix). The lookup
+also reads the previous question, so "and who reviewed it?" finds what the
+last turn named. Answers come back as text plus numbered citation markers
+(`answerParts`); a bracket naming no shown item is dropped.
+
+Call notes are local, so they are re-read on every question: a call that
+ended after the last build is already known. A call's card carries its
+summary (when there is one) and then the transcript, up to 4,000 chars. A
+question that points at an item gets its detail card with up to 3,000 chars.
+
 ## Desktop overlay
 
 | Piece | Where |

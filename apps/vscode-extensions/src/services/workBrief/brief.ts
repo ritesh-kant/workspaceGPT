@@ -51,6 +51,10 @@ export const LINE_CHARS = 60_000;
 export const CARD_TEXT_CHARS = 600;
 /** Cold cards added per question. */
 export const LOOKUP_LIMIT = 5;
+/** Detail kept on a card added for one question (a call's transcript, a long description). */
+export const DETAIL_TEXT_CHARS = 3000;
+/** Earlier turns of the same conversation sent with a follow-up. */
+export const HISTORY_TURNS = 6;
 
 const DAY = 86_400_000;
 
@@ -58,7 +62,7 @@ const day = (ms: number | undefined) => (ms ? new Date(ms).toISOString().slice(0
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
-export function renderCard(item: WorkItem): string {
+export function renderCard(item: WorkItem, textChars = CARD_TEXT_CHARS): string {
   const head = [
     item.kind,
     item.state,
@@ -70,7 +74,7 @@ export function renderCard(item: WorkItem): string {
   const lines = [`[${item.tag}] ${head}`, `Title: ${oneLine(item.title)}`];
   if (item.people?.length) lines.push(item.people.join(' · '));
   const text = item.text ? oneLine(item.text) : '';
-  if (text) lines.push(`Detail: ${clip(text, CARD_TEXT_CHARS)}`);
+  if (text) lines.push(`Detail: ${clip(text, textChars)}`);
   return lines.join('\n');
 }
 
@@ -114,7 +118,9 @@ export function tierItems(items: readonly WorkItem[], now = Date.now()): Tiered 
   return { hot, warm, unlisted };
 }
 
-const STOP = new Set(('the and for with that this from what was were did does have has had are you your our about into over how why who when where which they them then than but not can could would should will just also its it\'s any all one two status update work worked working on in at to of a an is be by me my i we ask said tell give show').split(' '));
+const STOP = new Set(('the and for with that this from what was were did does have has had are you your our about into over how why who when where which they them then than but not can could would should will just also its it\'s any all one two status update work worked working on in at to of a an is be by me my i we ask said tell give show '
+  // Recency and request words match too much text; recency is applied by date instead.
+  + 'last latest recent recently today yesterday week month summary summarize summarise').split(' '));
 
 export function tokens(text: string): string[] {
   return (text.toLowerCase().match(/[a-z0-9][a-z0-9._-]*/g) ?? [])
@@ -141,7 +147,7 @@ export function lookupCards(question: string, items: readonly WorkItem[], exclud
   const qTokens = new Set(tokens(question));
   const candidates = items.filter((i) => !exclude.has(i.tag));
   if (!candidates.length) return [];
-  const docs = candidates.map((item) => new Set(tokens(`${item.title} ${item.where ?? ''} ${item.text ?? ''}`)));
+  const docs = candidates.map((item) => new Set(tokens(`${item.kind} ${item.title} ${item.where ?? ''} ${item.text ?? ''}`)));
   const df = new Map<string, number>();
   for (const doc of docs) for (const w of doc) if (qTokens.has(w)) df.set(w, (df.get(w) ?? 0) + 1);
   const scored = candidates.map((item, i) => {
@@ -175,6 +181,8 @@ export interface PromptInput {
   builtAt?: number;
   /** What could not be read ("Jira: reconnect…"), so the model can say a source is missing. */
   notes?: string[];
+  /** Earlier turns of this conversation, oldest first, for follow-ups. */
+  history?: { q: string; a: string }[];
 }
 
 export interface BuiltPrompt {
@@ -191,7 +199,11 @@ export function buildAnswerPrompt(input: PromptInput): BuiltPrompt {
   const now = input.now ?? Date.now();
   const { hot, warm, unlisted } = tierItems(input.items, now);
   const shown = new Set<string>([...hot, ...warm].map((i) => i.tag));
-  const extra = lookupCards(input.question, [...warm, ...unlisted], new Set(hot.map((i) => i.tag)));
+  const history = (input.history ?? []).slice(-HISTORY_TURNS);
+  // A follow-up ("and the second one?") names its subject in the turn before.
+  const lookupText = [history[history.length - 1]?.q ?? '', input.question].join(' ');
+  // Hot items can be looked up too: their detail card carries far more text than the summary card.
+  const extra = lookupCards(lookupText, input.items, new Set());
   for (const item of extra) shown.add(item.tag);
   const parts = [
     `You are ${input.user ? `${input.user}'s` : "the user's"} work memory. They may be in a meeting and need an answer they can say out loud right now.`,
@@ -201,6 +213,7 @@ export function buildAnswerPrompt(input: PromptInput): BuiltPrompt {
     '- 1 to 3 short sentences, first person, as the user would say it ("I fixed…", "It is in review…"). No headings, no lists unless asked for a list.',
     '- Cite every item you use by its bracketed id at the end, copied exactly as written in the brief, e.g. [ADO #1234] [PAGE 5521] [PR github org/repo#42].',
     '- Never invent statuses, dates, numbers, names or links. Prefer the newest item when two disagree.',
+    '- In a follow-up, use the earlier conversation only to understand what the question refers to; facts still come only from the brief.',
     // Models misjudge "last two weeks" against bare dates; give them the cut-offs.
     `- Check every date against today before calling something recent or old. Last 7 days = on or after ${day(now - 7 * DAY)}; last 14 days = on or after ${day(now - 14 * DAY)}; last 30 days = on or after ${day(now - 30 * DAY)}.`,
     '',
@@ -214,7 +227,10 @@ export function buildAnswerPrompt(input: PromptInput): BuiltPrompt {
     ...warm.map(renderLine),
   ];
   if (extra.length) {
-    parts.push('', '=== DETAIL FOR THIS QUESTION ===', extra.map(renderCard).join('\n\n'));
+    parts.push('', '=== DETAIL FOR THIS QUESTION ===', extra.map((i) => renderCard(i, DETAIL_TEXT_CHARS)).join('\n\n'));
+  }
+  if (history.length) {
+    parts.push('', '=== EARLIER IN THIS CONVERSATION ===', ...history.map((t) => `Q: ${oneLine(t.q)}\nA: ${oneLine(t.a)}`));
   }
   parts.push('', `Question: ${input.question.trim()}`);
   return { prompt: parts.join('\n'), shown };
@@ -222,33 +238,79 @@ export function buildAnswerPrompt(input: PromptInput): BuiltPrompt {
 
 export interface AnswerSource {
   tag: string;
+  /** Short name for a chip: "#1234", "PAY-77", "app#42", "Call · 16 Nov 18:26", a page title. */
+  label: string;
   title: string;
+  source: WorkSource;
   url?: string;
+}
+
+export function sourceLabel(item: WorkItem): string {
+  const last = item.tag.split(' ').slice(1).join(' ');
+  switch (item.source) {
+    case 'ado': return last;
+    case 'jira': return last;
+    case 'pr': return last.startsWith('github ') ? last.slice(7).split('/').pop()! : last.replace(/^ado/, 'PR ');
+    case 'call': {
+      const at = new Date(item.createdAt ?? item.updatedAt);
+      return `Call · ${at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${at.toTimeString().slice(0, 5)}`;
+    }
+    default: return clip(oneLine(item.title), 40);
+  }
+}
+
+/** Links only for ids the answer cites AND the prompt showed; a made-up id gets no link. */
+const CITE = /\[([^\]\n]{3,80})\]/g;
+
+/** The shown item a bracket in the answer names, or undefined for a made-up id. */
+function resolveTag(raw: string, byTag: ReadonlyMap<string, WorkItem>, shown: ReadonlySet<string>): WorkItem | undefined {
+  let tag = raw.trim();
+  if (!byTag.has(tag)) {
+    // Models shorten long ids ("PR #12610" for "PR github org/repo#12610"):
+    // link the one shown item that ends with the same id, never a guess between several.
+    const tail = tag.split(/\s+/).pop()!.toLowerCase();
+    const hits = tail.length >= 3 ? [...shown].filter((t) => {
+      const lower = t.toLowerCase();
+      if (lower === tail) return true;
+      // The id must start at a separator: "#12610" or "12610" matches "…app#12610", "610" does not.
+      return lower.endsWith(tail) && (/^[#!/]/.test(tail) || /[\s#!/]/.test(lower.charAt(lower.length - tail.length - 1)));
+    }) : [];
+    if (hits.length === 1) tag = hits[0];
+  }
+  return shown.has(tag) ? byTag.get(tag) : undefined;
 }
 
 /** Links only for ids the answer cites AND the prompt showed; a made-up id gets no link. */
 export function citedSources(answer: string, items: readonly WorkItem[], shown: ReadonlySet<string>): AnswerSource[] {
   const byTag = new Map(items.map((i) => [i.tag, i]));
   const out: AnswerSource[] = [];
-  for (const m of answer.matchAll(/\[([^\]\n]{3,80})\]/g)) {
-    let tag = m[1].trim();
-    if (!byTag.has(tag)) {
-      // Models shorten long ids ("PR #12610" for "PR github org/repo#12610"):
-      // link the one shown item that ends with the same id, never a guess between several.
-      const tail = tag.split(/\s+/).pop()!.toLowerCase();
-      const hits = tail.length >= 3 ? [...shown].filter((t) => {
-        const lower = t.toLowerCase();
-        if (lower === tail) return true;
-        // The id must start at a separator: "#12610" or "12610" matches "…app#12610", "610" does not.
-        return lower.endsWith(tail) && (/^[#!/]/.test(tail) || /[\s#!/]/.test(lower.charAt(lower.length - tail.length - 1)));
-      }) : [];
-      if (hits.length === 1) tag = hits[0];
-    }
-    const item = byTag.get(tag);
-    if (!item || !shown.has(tag) || out.some((s) => s.tag === tag)) continue;
-    out.push({ tag, title: item.title, ...(item.url ? { url: item.url } : {}) });
+  for (const m of answer.matchAll(CITE)) {
+    const item = resolveTag(m[1], byTag, shown);
+    if (!item || out.some((s) => s.tag === item.tag)) continue;
+    out.push({ tag: item.tag, label: sourceLabel(item), title: item.title, source: item.source, ...(item.url ? { url: item.url } : {}) });
   }
   return out;
+}
+
+/**
+ * The answer as text and citation markers, for display: a bracket that names
+ * a shown item becomes its index in `sources`; any other bracket is dropped.
+ */
+export function answerParts(answer: string, items: readonly WorkItem[], shown: ReadonlySet<string>, sources: readonly AnswerSource[]): Array<string | number> {
+  const byTag = new Map(items.map((i) => [i.tag, i]));
+  const parts: Array<string | number> = [];
+  let at = 0;
+  for (const m of answer.matchAll(CITE)) {
+    const before = answer.slice(at, m.index).replace(/[ \t]+$/, '');
+    if (before) parts.push(before);
+    at = m.index! + m[0].length;
+    const item = resolveTag(m[1], byTag, shown);
+    const index = item ? sources.findIndex((s) => s.tag === item.tag) : -1;
+    if (index >= 0 && parts[parts.length - 1] !== index) parts.push(index);
+  }
+  const rest = answer.slice(at);
+  if (rest.trim()) parts.push(rest);
+  return parts;
 }
 
 /** The answer without its trailing citation brackets, for reading aloud. */

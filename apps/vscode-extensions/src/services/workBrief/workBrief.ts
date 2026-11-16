@@ -17,8 +17,8 @@ import * as vscode from 'vscode';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { completer } from '../callNoteActions';
-import { buildAnswerPrompt, citedSources, dedupe, speakable, type AnswerSource, type WorkItem } from './brief';
-import { fetchMyWork, WINDOW_DAYS } from './fetchMyWork';
+import { answerParts, buildAnswerPrompt, citedSources, dedupe, speakable, type AnswerSource, type WorkItem } from './brief';
+import { callWork, fetchMyWork, WINDOW_DAYS } from './fetchMyWork';
 
 /** A brief older than this is rebuilt in the background on the next question. */
 const STALE_MS = 6 * 3_600_000;
@@ -47,6 +47,8 @@ export interface AskResult {
   /** The answer without citation brackets, to read aloud. */
   spoken: string;
   sources: AnswerSource[];
+  /** The answer for display: text, and numbers that index `sources` where it cites one. */
+  parts?: Array<string | number>;
   builtAt?: number;
   ms: number;
 }
@@ -111,7 +113,7 @@ export class WorkBrief {
     };
   }
 
-  async ask(question: string): Promise<AskResult> {
+  async ask(question: string, history: { q: string; a: string }[] = []): Promise<AskResult> {
     const started = Date.now();
     const q = String(question ?? '').trim().slice(0, 2000);
     if (!q) return { ok: false, answer: 'Ask a question about your work.', spoken: '', sources: [], ms: 0 };
@@ -126,7 +128,13 @@ export class WorkBrief {
     if (!brief.items.length) {
       return { ok: false, answer: 'Your brief is empty. Connect Knowledge (Azure DevOps, Jira or Confluence) in Settings, then refresh.', spoken: '', sources: [], builtAt: brief.builtAt, ms: Date.now() - started };
     }
-    const { prompt, shown } = buildAnswerPrompt({ question: q, items: brief.items, user: brief.user, builtAt: brief.builtAt, notes: brief.notes });
+    // Call notes are local: read them now, so a call that just ended is known without a rebuild.
+    const calls = await callWork(this.context).catch(() => undefined);
+    const items = calls ? [...brief.items.filter((i) => i.source !== 'call'), ...calls] : brief.items;
+    const turns = (Array.isArray(history) ? history : [])
+      .filter((t) => typeof t?.q === 'string' && typeof t?.a === 'string')
+      .map((t) => ({ q: t.q.slice(0, 2000), a: t.a.slice(0, 4000) }));
+    const { prompt, shown } = buildAnswerPrompt({ question: q, items, user: brief.user, builtAt: brief.builtAt, notes: brief.notes, history: turns });
     let answer: string;
     try {
       answer = (await completer(this.context)(prompt)).replace(/<think>[\s\S]*?<\/think>/g, '').trim();
@@ -134,20 +142,21 @@ export class WorkBrief {
       const why = err instanceof Error ? err.message : String(err);
       return { ok: false, answer: /Select a chat model/.test(why) ? 'Select a chat model in Settings → Model to ask about your work.' : `The model did not answer: ${why}`, spoken: '', sources: [], builtAt: brief.builtAt, ms: Date.now() - started };
     }
-    return { ok: !!answer, answer: answer || 'The model returned no answer. Try again.', spoken: speakable(answer), sources: citedSources(answer, brief.items, shown), builtAt: brief.builtAt, ms: Date.now() - started };
+    const sources = citedSources(answer, items, shown);
+    return { ok: !!answer, answer: answer || 'The model returned no answer. Try again.', spoken: speakable(answer), sources, parts: answerParts(answer, items, shown, sources), builtAt: brief.builtAt, ms: Date.now() - started };
   }
 }
 
 /** Registers the brief's commands; returns the disposables. */
 export function registerWorkBrief(context: vscode.ExtensionContext, track?: (event: string, props: Record<string, unknown>) => void): vscode.Disposable[] {
   const brief = new WorkBrief(context);
-  const ask = async (question: string) => {
-    const result = await brief.ask(question);
-    track?.('work_brief_asked', { ok: result.ok, ms: result.ms, sources: result.sources.length });
+  const ask = async (question: string, history?: { q: string; a: string }[]) => {
+    const result = await brief.ask(question, history);
+    track?.('work_brief_asked', { ok: result.ok, ms: result.ms, sources: result.sources.length, followUp: !!history?.length });
     return result;
   };
   return [
-    vscode.commands.registerCommand('workspacegpt.workBrief.ask', (question: string) => ask(question)),
+    vscode.commands.registerCommand('workspacegpt.workBrief.ask', (question: string, history?: { q: string; a: string }[]) => ask(question, history)),
     vscode.commands.registerCommand('workspacegpt.workBrief.status', () => brief.status()),
     vscode.commands.registerCommand('workspacegpt.workBrief.refresh', async () => {
       const started = Date.now();
