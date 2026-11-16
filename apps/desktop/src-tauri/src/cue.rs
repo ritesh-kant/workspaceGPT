@@ -218,6 +218,7 @@ fn register_hotkey(app: &AppHandle, old: &str, new: &str) {
                     let _ = app.run_on_main_thread(move || toggle(&app2));
                 }
             })
+            .inspect(|_| eprintln!("[shell] work brief hotkey {new} registered"))
             .err()
             .map(|e| {
                 eprintln!("[shell] could not register the work brief hotkey {new}: {e}");
