@@ -109,7 +109,7 @@ const cue = { ...bridge, entryPoints: [path.join(root, 'bridge/cue.ts')], outfil
 const mermaidBundle = { ...bridge, entryPoints: [path.join(root, 'bridge/mermaid-entry.ts')], outfile: path.join(outBridge, 'mermaid.js') };
 
 /** Served as-is from dist/bridge. */
-const STATIC_BRIDGE_FILES = ['appearance.js', 'theme.css', 'skin.css', 'shell.css', 'shell.html', 'cue.html', 'cue.css'];
+const STATIC_BRIDGE_FILES = ['appearance.js', 'theme.css', 'skin.css', 'shell.css', 'shell.html', 'cue.html', 'cue.css', 'cue-ready.svg', 'cue-thinking.svg', 'cue-listening.svg'];
 /** xterm's stylesheet, from its package (the shell page's CSP allows only same-origin styles). */
 const XTERM_CSS = path.join(root, 'node_modules/@xterm/xterm/css/xterm.css');
 
@@ -140,8 +140,6 @@ async function run() {
   fs.mkdirSync(outBridge, { recursive: true });
   for (const name of STATIC_BRIDGE_FILES) fs.copyFileSync(path.join(root, 'bridge', name), path.join(outBridge, name));
   fs.copyFileSync(XTERM_CSS, path.join(outBridge, 'xterm.css'));
-  // The work-brief overlay shows the app's own icon (bridge/cue.html).
-  fs.copyFileSync(path.join(root, 'src-tauri/icons/128x128.png'), path.join(outBridge, 'cue-icon.png'));
   linkExtensionDist();
   if (watch) {
     const contexts = await Promise.all([esbuild.context(sidecar), esbuild.context(bridge), esbuild.context(shell), esbuild.context(cue), esbuild.context(mermaidBundle), esbuild.context(relay)]);

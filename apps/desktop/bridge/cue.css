@@ -55,20 +55,20 @@ html, body {
 .icon img { width: 36px; height: 36px; border-radius: 50%; display: block; pointer-events: none; }
 .icon:hover img { filter: brightness(1.12); }
 .icon:focus-visible { outline: 2px solid var(--cue-accent); outline-offset: 1px; }
+/* The icon itself shows ready / thinking (cue-*.svg); the dot only flags "no brief yet" or an error. */
 .dot {
   position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 8px;
-  height: 8px;
+  right: 0;
+  bottom: 0;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: transparent;
   border: 1.5px solid var(--cue-bg);
+  display: none;
 }
-body[data-state="ready"] .dot { background: #34c759; }
-body[data-state="building"] .dot { background: #ff9f0a; animation: pulse 1.2s ease-in-out infinite; }
-body[data-state="empty"] .dot, body[data-state="error"] .dot { background: #8e8e93; }
-@keyframes pulse { 50% { opacity: 0.35; } }
+body[data-state="empty"] .dot { display: block; background: #8e8e93; }
+body[data-state="error"] .dot { display: block; background: #ff453a; }
+body[data-state="empty"] .icon img, body[data-state="error"] .icon img { filter: saturate(0.35); }
 
 body[data-view="panel"] .icon { display: none; }
 body[data-view="icon"] .panel { display: none; }

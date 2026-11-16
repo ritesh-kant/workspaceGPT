@@ -25,11 +25,23 @@ const q = $<HTMLTextAreaElement>('q');
 const send = $<HTMLButtonElement>('send');
 const answer = $<HTMLDivElement>('answer');
 const sources = $<HTMLDivElement>('sources');
+const iconImg = $<HTMLImageElement>('iconImg');
 
 let ws: WebSocket | undefined;
 let seq = 0;
 let pending: number | undefined;
 let lastStatus: Status | undefined;
+
+/**
+ * The icon shows what the brief is doing: thinking while it builds or
+ * answers, ready otherwise (bridge/cue-*.svg, made by scripts/cue-icons.py).
+ * cue-listening.svg waits for a listening mode; this one is ask-only.
+ */
+function updateIcon() {
+  const busy = pending !== undefined || lastStatus?.state === 'building';
+  const src = `/__desktop/cue-${busy ? 'thinking' : 'ready'}.svg`;
+  if (!iconImg.src.endsWith(src)) iconImg.src = src;
+}
 
 /** The shell resizes the window; the page only switches which part it draws. */
 function setView(view: 'icon' | 'panel') {
@@ -64,9 +76,11 @@ function renderStatus(s: Status) {
   statusLine.textContent = text;
   statusLine.title = s.notes.join('\n');
   icon.title = s.state === 'ready' ? `Ask about my work (${counts})` : 'Ask about my work';
+  updateIcon();
 }
 
 function renderResult(r: Result) {
+  updateIcon();
   answer.classList.toggle('muted', !r.ok);
   answer.textContent = r.answer;
   sources.replaceChildren(...r.sources.map((s) => {
@@ -179,6 +193,7 @@ form.addEventListener('submit', (e) => {
   answer.classList.add('muted');
   answer.textContent = lastStatus?.state === 'ready' ? 'Thinking…' : 'Building your brief first. This takes a minute the first time…';
   ws.send(JSON.stringify({ t: 'ask', id: pending, q: text }));
+  updateIcon();
 });
 
 connect();
