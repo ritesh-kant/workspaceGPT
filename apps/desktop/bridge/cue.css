@@ -43,16 +43,17 @@ html, body {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid var(--cue-border);
-  background: var(--cue-bg);
-  color: var(--cue-accent);
+  border: 0;
+  background: transparent;
   display: grid;
   place-items: center;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
   padding: 0;
 }
-.icon:hover { color: var(--cue-fg); }
+/* The app icon, already round. */
+.icon img { width: 36px; height: 36px; border-radius: 50%; display: block; pointer-events: none; }
+.icon:hover img { filter: brightness(1.12); }
 .icon:focus-visible { outline: 2px solid var(--cue-accent); outline-offset: 1px; }
 .dot {
   position: absolute;

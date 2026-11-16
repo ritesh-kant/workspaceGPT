@@ -140,6 +140,8 @@ async function run() {
   fs.mkdirSync(outBridge, { recursive: true });
   for (const name of STATIC_BRIDGE_FILES) fs.copyFileSync(path.join(root, 'bridge', name), path.join(outBridge, name));
   fs.copyFileSync(XTERM_CSS, path.join(outBridge, 'xterm.css'));
+  // The work-brief overlay shows the app's own icon (bridge/cue.html).
+  fs.copyFileSync(path.join(root, 'src-tauri/icons/128x128.png'), path.join(outBridge, 'cue-icon.png'));
   linkExtensionDist();
   if (watch) {
     const contexts = await Promise.all([esbuild.context(sidecar), esbuild.context(bridge), esbuild.context(shell), esbuild.context(cue), esbuild.context(mermaidBundle), esbuild.context(relay)]);
