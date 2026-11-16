@@ -223,8 +223,10 @@ fn change_zoom(app: &AppHandle, delta: Option<f64>) {
 struct NotifyToggle(CheckMenuItem<tauri::Wry>);
 /// The app-menu checkbox for the work-brief icon.
 struct CueToggle(CheckMenuItem<tauri::Wry>);
+/// The app-menu checkbox for hiding the work-brief icon in screen shares.
+struct CueHideToggle(CheckMenuItem<tauri::Wry>);
 
-fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>)> {
+fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>)> {
     let new_chat = MenuItem::with_id(app, "new-chat", "New Chat", true, Some("CmdOrCtrl+N"))?;
     let history = MenuItem::with_id(app, "history", "Chat History", true, Some("CmdOrCtrl+Y"))?;
     let open = MenuItem::with_id(app, "open-folder", "Open Folder…", true, Some("CmdOrCtrl+O"))?;
@@ -246,6 +248,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
         *app.state::<cue::CueEnabled>().0.lock().unwrap(),
         None::<&str>,
     )?;
+    let cue_hide_toggle = CheckMenuItem::with_id(
+        app,
+        cue::HIDE_MENU_ID,
+        cue::HIDE_MENU_LABEL,
+        true,
+        *app.state::<cue::CueHidden>().0.lock().unwrap(),
+        None::<&str>,
+    )?;
     let show_logs = MenuItem::with_id(app, "show-logs", "Show Logs", true, None::<&str>)?;
     let reload = MenuItem::with_id(app, "reload", "Reload Window", true, Some("CmdOrCtrl+R"))?;
 
@@ -260,6 +270,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
             &settings,
             &notify_toggle,
             &cue_toggle,
+            &cue_hide_toggle,
             &show_logs,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, Some("Hide WorkspaceGPT"))?,
@@ -308,7 +319,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
         &[&PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::close_window(app, None)?],
     )?;
     let menu = Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window])?;
-    Ok((menu, check_updates, notify_toggle, cue_toggle))
+    Ok((menu, check_updates, notify_toggle, cue_toggle, cue_hide_toggle))
 }
 
 fn handle_menu(app: &AppHandle, id: &str) {
@@ -335,6 +346,7 @@ fn handle_menu(app: &AppHandle, id: &str) {
         updater::MENU_ID => updater::menu_clicked(app),
         notify::MENU_ID => notify::menu_toggled(app, &app.state::<NotifyToggle>().0),
         cue::MENU_ID => cue::menu_toggled(app, &app.state::<CueToggle>().0, open_cue),
+        cue::HIDE_MENU_ID => cue::hide_menu_toggled(app, &app.state::<CueHideToggle>().0),
         "tray-show" => show_main(app),
         "tray-quit" => app.exit(0),
         _ => {}
@@ -420,11 +432,14 @@ fn main() {
         .setup(move |app| {
             app.manage(notify::Notifications::load(app.handle()));
             app.manage(Zoom(Mutex::new(load_zoom(app.handle()))));
-            app.manage(cue::load(app.handle()));
+            let (cue_enabled, cue_hidden) = cue::load(app.handle());
+            app.manage(cue_enabled);
+            app.manage(cue_hidden);
             *handle_slot.lock().unwrap() = Some(app.handle().clone());
-            let (menu, check_updates, notify_toggle, cue_toggle) = build_menu(app.handle())?;
+            let (menu, check_updates, notify_toggle, cue_toggle, cue_hide_toggle) = build_menu(app.handle())?;
             app.manage(NotifyToggle(notify_toggle));
             app.manage(CueToggle(cue_toggle));
+            app.manage(CueHideToggle(cue_hide_toggle));
             app.set_menu(menu)?;
 
             let tray_menu = Menu::with_items(

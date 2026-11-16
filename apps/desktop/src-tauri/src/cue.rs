@@ -5,7 +5,9 @@
 //! does for refresh-layout — no IPC.
 //!
 //! It is kept out of screen capture (`content_protected`), so people on a
-//! call never see it while the user shares their screen.
+//! call never see it while the user shares their screen. macOS applies that
+//! to the user's own screenshots too, so the app menu can turn it off
+//! (HIDE_MENU_ID) for a screenshot or recording.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -16,6 +18,8 @@ use tauri_plugin_opener::OpenerExt;
 pub const CUE: &str = "cue";
 pub const MENU_ID: &str = "cue-toggle";
 pub const MENU_LABEL: &str = "Show Work Brief Icon";
+pub const HIDE_MENU_ID: &str = "cue-hide-in-shares";
+pub const HIDE_MENU_LABEL: &str = "Hide Work Brief Icon in Screen Shares";
 
 /// Window sizes in logical pixels. The page draws a 36px icon with a 4px margin.
 const ICON: f64 = 44.0;
@@ -27,24 +31,36 @@ const MARGIN_TOP: f64 = 40.0;
 
 /// Whether the icon is shown; kept across launches. On by default.
 pub struct CueEnabled(pub Mutex<bool>);
+/// Whether the icon is kept out of screen capture; kept across launches. On by default.
+pub struct CueHidden(pub Mutex<bool>);
 
 fn pref_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("cue.json"))
 }
 
-pub fn load(app: &AppHandle) -> CueEnabled {
-    let on = pref_path(app)
+fn read_prefs(app: &AppHandle) -> serde_json::Value {
+    pref_path(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v["enabled"].as_bool())
-        .unwrap_or(true);
-    CueEnabled(Mutex::new(on))
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}))
 }
 
-fn save(app: &AppHandle, on: bool) {
+pub fn load(app: &AppHandle) -> (CueEnabled, CueHidden) {
+    let prefs = read_prefs(app);
+    (
+        CueEnabled(Mutex::new(prefs["enabled"].as_bool().unwrap_or(true))),
+        CueHidden(Mutex::new(prefs["hideInShares"].as_bool().unwrap_or(true))),
+    )
+}
+
+/// Sets one key in cue.json, keeping the others.
+fn save(app: &AppHandle, key: &str, on: bool) {
+    let mut prefs = read_prefs(app);
+    prefs[key] = serde_json::Value::Bool(on);
     if let Some(path) = pref_path(app) {
         let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
-        let _ = std::fs::write(&path, serde_json::json!({ "enabled": on }).to_string());
+        let _ = std::fs::write(&path, prefs.to_string());
     }
 }
 
@@ -92,7 +108,7 @@ pub fn sync(app: &AppHandle, port: u16, token_script: &str, current_port: impl F
         .always_on_top(true)
         .skip_taskbar(true)
         .visible_on_all_workspaces(true)
-        .content_protected(true)
+        .content_protected(*app.state::<CueHidden>().0.lock().unwrap())
         .focused(false)
         // The first click on the icon opens the panel instead of only activating the app.
         .accept_first_mouse(true)
@@ -146,10 +162,21 @@ fn place(app: &AppHandle) {
 pub fn menu_toggled(app: &AppHandle, item: &CheckMenuItem<tauri::Wry>, open: impl FnOnce(&AppHandle)) {
     let on = item.is_checked().unwrap_or(true);
     *app.state::<CueEnabled>().0.lock().unwrap() = on;
-    save(app, on);
+    save(app, "enabled", on);
     if on {
         open(app);
     } else if let Some(w) = app.get_webview_window(CUE) {
         let _ = w.close();
+    }
+}
+
+/// The app-menu checkbox: keep the icon out of screen capture (screen shares,
+/// and the user's own screenshots), or let it be captured. Applies at once.
+pub fn hide_menu_toggled(app: &AppHandle, item: &CheckMenuItem<tauri::Wry>) {
+    let on = item.is_checked().unwrap_or(true);
+    *app.state::<CueHidden>().0.lock().unwrap() = on;
+    save(app, "hideInShares", on);
+    if let Some(w) = app.get_webview_window(CUE) {
+        let _ = w.set_content_protected(on);
     }
 }
