@@ -199,10 +199,12 @@ export function buildAnswerPrompt(input: PromptInput): BuiltPrompt {
     'Rules:',
     '- Answer ONLY from the WORK BRIEF below. If it does not contain the answer, reply exactly "Not in your brief." followed by one short line on what to look up.',
     '- 1 to 3 short sentences, first person, as the user would say it ("I fixed…", "It is in review…"). No headings, no lists unless asked for a list.',
-    '- Cite every item you use by its bracketed id at the end, e.g. [ADO #1234] [PAGE 5521].',
+    '- Cite every item you use by its bracketed id at the end, copied exactly as written in the brief, e.g. [ADO #1234] [PAGE 5521] [PR github org/repo#42].',
     '- Never invent statuses, dates, numbers, names or links. Prefer the newest item when two disagree.',
+    // Models misjudge "last two weeks" against bare dates; give them the cut-offs.
+    `- Check every date against today before calling something recent or old. Last 7 days = on or after ${day(now - 7 * DAY)}; last 14 days = on or after ${day(now - 14 * DAY)}; last 30 days = on or after ${day(now - 30 * DAY)}.`,
     '',
-    `Today: ${day(now)}.${input.builtAt ? ` Brief built: ${new Date(input.builtAt).toISOString().slice(0, 16).replace('T', ' ')} UTC.` : ''}`,
+    `Today: ${day(now)} (${new Date(now).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })}).${input.builtAt ? ` Brief built: ${new Date(input.builtAt).toISOString().slice(0, 16).replace('T', ' ')} UTC.` : ''}`,
     ...(input.notes?.length ? ['Sources not read in this brief: ' + input.notes.join(' | ')] : []),
     '',
     `=== WORK BRIEF: RECENT AND OPEN (${hot.length}) ===`,
@@ -229,7 +231,19 @@ export function citedSources(answer: string, items: readonly WorkItem[], shown: 
   const byTag = new Map(items.map((i) => [i.tag, i]));
   const out: AnswerSource[] = [];
   for (const m of answer.matchAll(/\[([^\]\n]{3,80})\]/g)) {
-    const tag = m[1].trim();
+    let tag = m[1].trim();
+    if (!byTag.has(tag)) {
+      // Models shorten long ids ("PR #12610" for "PR github org/repo#12610"):
+      // link the one shown item that ends with the same id, never a guess between several.
+      const tail = tag.split(/\s+/).pop()!.toLowerCase();
+      const hits = tail.length >= 3 ? [...shown].filter((t) => {
+        const lower = t.toLowerCase();
+        if (lower === tail) return true;
+        // The id must start at a separator: "#12610" or "12610" matches "…app#12610", "610" does not.
+        return lower.endsWith(tail) && (/^[#!/]/.test(tail) || /[\s#!/]/.test(lower.charAt(lower.length - tail.length - 1)));
+      }) : [];
+      if (hits.length === 1) tag = hits[0];
+    }
     const item = byTag.get(tag);
     if (!item || !shown.has(tag) || out.some((s) => s.tag === tag)) continue;
     out.push({ tag, title: item.title, ...(item.url ? { url: item.url } : {}) });

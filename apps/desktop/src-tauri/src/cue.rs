@@ -105,6 +105,8 @@ pub fn sync(app: &AppHandle, port: u16, token_script: &str, current_port: impl F
         .visible_on_all_workspaces(true)
         .content_protected(true)
         .focused(false)
+        // The first click on the icon opens the panel instead of only activating the app.
+        .accept_first_mouse(true)
         .initialization_script(token_script)
         .on_navigation(move |url| {
             if url.scheme() == "workspacegpt" && url.host_str() == Some("cue") {

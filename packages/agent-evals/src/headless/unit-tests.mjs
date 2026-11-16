@@ -8125,6 +8125,17 @@ console.log('\nwork brief (tiers, lookup, prompt, sources)');
     const got = citedSources(answer, items, new Set(['ADO #1']));
     assert.deepEqual(got, [{ tag: 'ADO #1', title: 'Item 1', url: 'https://x/1' }]);
   });
+  await t('a shortened id links only when exactly one shown item ends with it', () => {
+    const items = [item(1, { tag: 'PR github acme/app#12610', url: 'https://g/1' }), item(2, { tag: 'PR github acme/web#77' }), item(3, { tag: 'PR github acme/api#77' })];
+    const shown = new Set(items.map((i) => i.tag));
+    assert.deepEqual(citedSources('Merged [PR #12610].', items, shown).map((s) => s.tag), ['PR github acme/app#12610']);
+    assert.deepEqual(citedSources('See [PR #77].', items, shown), []);
+    assert.deepEqual(citedSources('See [PR #610].', items, shown), []);
+  });
+  await t('the prompt gives explicit cut-off dates for recent windows', () => {
+    const { prompt } = buildAnswerPrompt({ question: 'x', items: [item(1)], now: NOW });
+    assert.ok(prompt.includes('last 14 days = on or after 2026-11-02'), prompt.slice(0, 900));
+  });
   await t('spoken text drops the citation brackets', () => {
     assert.equal(speakable('It is in review [PR github a/b#7].'), 'It is in review.');
   });

@@ -1,7 +1,17 @@
 # Work brief — "Ask about my work"
 
-Status: phase 1 + 2 built on `feat/proactive-mode` (2026-11-16). Mock-tested
-only; no run against real Knowledge or a real model yet.
+Status: phase 1 + 2 built on `feat/proactive-mode` (2026-11-16).
+
+First real run (2026-11-16, dev desktop app, the author's profile, which has
+Confluence, GitHub and call notes but no Azure DevOps or Jira connected):
+- The brief built in 12.5 s from 112 calls, 64 pages and 354 PRs.
+- Answers came back in 3.8–8.5 s with correct source chips.
+- Two fixes came out of it:
+  - The model misjudged "last two weeks" against bare dates, so the prompt now gives explicit cut-off dates.
+  - The model shortened long GitHub tags, so a shortened id now links when exactly one shown item ends with it.
+- The overlay window opened at 44×44, top-right, floating, and excluded from
+  screen capture (window sharing state 0). The click → expand step needs a
+  human click: the test shell has no permission to send input.
 
 ## What it is
 
