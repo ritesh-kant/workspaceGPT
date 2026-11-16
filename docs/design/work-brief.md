@@ -10,8 +10,9 @@ Confluence, GitHub and call notes but no Azure DevOps or Jira connected):
   - The model misjudged "last two weeks" against bare dates, so the prompt now gives explicit cut-off dates.
   - The model shortened long GitHub tags, so a shortened id now links when exactly one shown item ends with it.
 - The overlay window opened at 44×44, top-right, floating, and excluded from
-  screen capture (window sharing state 0). The click → expand step needs a
-  human click: the test shell has no permission to send input.
+  screen capture (window sharing state 0). On a two-screen setup it first
+  appeared on the built-in display. It now opens on the main window's screen.
+- The user confirmed that clicking the icon opens the panel.
 
 ## What it is
 
