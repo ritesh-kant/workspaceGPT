@@ -125,7 +125,36 @@ function connect() {
   };
 }
 
+// The icon is both a button and a handle: a press that moves a few pixels
+// starts a native window drag (the same start_dragging command
+// data-tauri-drag-region uses, allowed by capabilities/window-drag.json);
+// a press that doesn't is a click. A drag region on the icon itself would
+// start dragging on mousedown and swallow every click.
+const tauri = (window as unknown as { __TAURI_INTERNALS__?: { invoke(cmd: string): Promise<unknown> } }).__TAURI_INTERNALS__;
+let press: { x: number; y: number } | undefined;
+let dragged = false;
+icon.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  press = { x: e.screenX, y: e.screenY };
+  dragged = false;
+});
+document.addEventListener('mousemove', (e) => {
+  if (!press || !(e.buttons & 1) || dragged) return;
+  if (Math.hypot(e.screenX - press.x, e.screenY - press.y) < 4) return;
+  dragged = true;
+  press = undefined;
+  void tauri?.invoke('plugin:window|start_dragging').catch(() => undefined);
+});
+document.addEventListener('mouseup', () => {
+  press = undefined;
+});
+
 icon.addEventListener('click', () => {
+  // The end of a drag can still arrive as a click; it must not open the panel.
+  if (dragged) {
+    dragged = false;
+    return;
+  }
   setView('panel');
   ws?.send(JSON.stringify({ t: 'status' }));
 });
