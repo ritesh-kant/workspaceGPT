@@ -866,7 +866,18 @@ export class ChatService {
    * run has been stopped — a dying run's stragglers must not reach the UI.
    */
   private post(run: SessionRun, payload: { type: string; [key: string]: unknown }): void {
-    if (run.cancelled) return;
+    // A turn's ending is the one thing a stuck "Thinking…" can't be diagnosed
+    // without: log it (and its being swallowed) so "host finished, view never
+    // got it" is distinguishable from "host never finished".
+    const endsTurn =
+      payload.type === MESSAGE_TYPES.RECEIVE_MESSAGE_DONE ||
+      payload.type === MESSAGE_TYPES.AGENT_TURN_SUMMARY ||
+      payload.type === MESSAGE_TYPES.ERROR_CHAT;
+    if (run.cancelled) {
+      if (endsTurn) console.log(`[chat] ${payload.type} for session ${run.sessionId} dropped: run was stopped`);
+      return;
+    }
+    if (endsTurn) console.log(`[chat] posting ${payload.type} to session ${run.sessionId}`);
     // The single choke point for everything the webview sees, so it is also
     // the only honest place to count what this turn actually surfaced.
     if (payload.type === MESSAGE_TYPES.AGENT_STEP) run.turnStepsPosted++;

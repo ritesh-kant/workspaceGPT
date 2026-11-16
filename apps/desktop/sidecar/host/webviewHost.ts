@@ -169,10 +169,20 @@ export class ViewSurface {
 
   private post(frame: HostToPage): boolean {
     const data = JSON.stringify(frame);
+    // The ending of a chat turn: say what became of it (see chatService.post).
+    const endsTurn =
+      frame.t === 'msg' &&
+      ['receive-message-done', 'agent-turn-summary', 'error-chat'].includes((frame.d as { type?: string } | null)?.type ?? '');
     if (this.connected) {
       this.socket!.send(data);
       this.stats.toPage++;
+      if (endsTurn) {
+        console.log(`[desktop] ${this.viewType}: sent ${(frame.d as { type: string }).type} (socket buffered ${this.socket!.bufferedAmount} bytes)`);
+      }
       return true;
+    }
+    if (endsTurn) {
+      console.warn(`[desktop] ${this.viewType}: no page connected — queued ${(frame.d as { type: string }).type} for the next one`);
     }
     // Nobody connected yet (startup) or between reloads: hold messages for the
     // next page rather than dropping them, as a VS Code webview queues them.
