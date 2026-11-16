@@ -62,11 +62,11 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
     *app.state::<CurrentPort>().0.lock().unwrap() = Some(port);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
-        open_cue(&app2);
         if let Some(w) = app2.get_webview_window(MAIN) {
             // Restarted sidecar (crash, or Open Folder…): same token, new port.
             let _ = w.navigate(page_url(port));
             let _ = w.set_zoom(*app2.state::<Zoom>().0.lock().unwrap());
+            open_cue(&app2);
             return;
         }
         let token = app2.state::<sidecar::Supervisor>().token().to_string();
@@ -110,6 +110,8 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
             }
             Err(e) => eprintln!("[shell] could not open the window: {e}"),
         }
+        // After the main window, so the icon opens on the screen it is on.
+        open_cue(&app2);
     });
 }
 

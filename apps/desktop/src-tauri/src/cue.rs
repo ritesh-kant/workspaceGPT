@@ -80,22 +80,11 @@ pub fn sync(app: &AppHandle, port: u16, token_script: &str, current_port: impl F
         resize(app, false);
         return;
     }
-    // Top-right of the primary screen.
-    let (x, y) = app
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .map(|m| {
-            let s = m.scale_factor();
-            let (mx, my) = (m.position().x as f64 / s, m.position().y as f64 / s);
-            (mx + m.size().width as f64 / s - ICON - MARGIN_RIGHT, my + MARGIN_TOP)
-        })
-        .unwrap_or((MARGIN_RIGHT, MARGIN_TOP));
     let nav_app = app.clone();
     let builder = WebviewWindowBuilder::new(app, CUE, WebviewUrl::External(cue_url(port)))
         .title("Ask about my work")
         .inner_size(ICON, ICON)
-        .position(x, y)
+        .position(MARGIN_RIGHT, MARGIN_TOP)
         .decorations(false)
         .transparent(true)
         .shadow(false)
@@ -123,7 +112,34 @@ pub fn sync(app: &AppHandle, port: u16, token_script: &str, current_port: impl F
         });
     if let Err(e) = builder.build() {
         eprintln!("[shell] could not open the work brief icon: {e}");
+        return;
     }
+    place(app);
+    // The window-state plugin moves the main window to its saved screen after
+    // it is created; place the icon again once that has happened.
+    let later = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let app2 = later.clone();
+        let _ = later.run_on_main_thread(move || place(&app2));
+    });
+}
+
+/// Top-right corner of the screen the main window is on (with two screens the
+/// primary one may not be where the user is looking), else the primary screen.
+/// Physical pixels, so screens with different scale factors line up.
+fn place(app: &AppHandle) {
+    let Some(w) = app.get_webview_window(CUE) else { return };
+    let monitor = app
+        .get_webview_window(crate::MAIN)
+        .and_then(|m| m.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(m) = monitor else { return };
+    let s = m.scale_factor();
+    let width = w.outer_size().map(|z| z.width as i32).unwrap_or((ICON * s) as i32);
+    let x = m.position().x + m.size().width as i32 - width - (MARGIN_RIGHT * s) as i32;
+    let y = m.position().y + (MARGIN_TOP * s) as i32;
+    let _ = w.set_position(PhysicalPosition::new(x, y));
 }
 
 /// The app-menu checkbox: show or hide the icon now and remember the choice.
