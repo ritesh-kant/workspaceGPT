@@ -33,6 +33,7 @@ import ContextMeter from './components/ContextMeter';
 import DataFlowBadge from './components/DataFlowBadge';
 import { useGitStatusSync } from './hooks/useGitStatusSync';
 import { useCiSync } from './hooks/useCiSync';
+import { useWorkBriefShell } from './hooks/useWorkBriefShell';
 import type { PrReviewMeta } from './store/ciStore';
 import { displaySessionTitle, formatRelativeTime } from './utils/sessionTitle';
 import SettingsButton from './components/Settings';
@@ -640,6 +641,8 @@ const App: React.FC = () => {
   useGitStatusSync(!!hasWorkspaceFolder);
   // Filled in once handleFixCi exists below; the CI hook only needs a stable way to call it.
   const fixCiRef = useRef<(prompt: string, prReview: PrReviewMeta) => void>(() => undefined);
+  // Settings → Ask about my work → the desktop shell (icon, screen-share hiding, hotkey).
+  useWorkBriefShell();
   const { fixNow: fixCiNow } = useCiSync(!!hasWorkspaceFolder && assistantMode === 'work', (prompt, prReview) => fixCiRef.current(prompt, prReview));
 
   const modelProviders = useModelProviders();

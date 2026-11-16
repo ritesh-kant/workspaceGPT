@@ -103,7 +103,8 @@ question that points at an item gets its detail card with up to 3,000 chars.
 |---|---|
 | Window `cue` (44×44, grows to 380×440 keeping its right edge) | `src-tauri/src/cue.rs` |
 | Transparent, always on top, no taskbar, on all Spaces, **`content_protected`** (hidden from screen capture) | same |
-| Show/hide | App menu → *Show Work Brief Icon* (on by default, stored in `cue.json`) |
+| Settings | Settings → *Ask about my work* (Beta, desktop only): show the icon, hide in screen shares, hotkey. The page sends them through the sidecar (`cue-prefs` on the notify channel); the shell applies them, keeps a copy in `cue.json` for the next launch and answers `cue-status` (hotkey registered or why not) |
+| Hotkey | Global, default ⌘⇧Space (Ctrl+Shift+Space on Windows), `tauri-plugin-global-shortcut` pinned to 2.3.1 (2.4 needs Tauri 2.12). Opens the panel from any app, even with the icon off; pressed again it folds it back |
 | Page | `bridge/cue.html`, `cue.ts`, `cue.css` |
 | Socket `/__desktop/cue` (token + Origin checked like the view sockets) | `sidecar/host/server.ts`, `sidecar/host/cueHost.ts` |
 | Expand/collapse | Cancelled navigation `workspacegpt://cue/expand` / `collapse`, the same no-IPC pattern as `refresh-layout` |
@@ -122,7 +123,6 @@ counts, never content.
 
 ## Not built / next
 
-- A global hotkey to summon the panel. It needs `tauri-plugin-global-shortcut`, a new crate.
 - A dot on the icon during a call. Call detection exists, but nothing feeds the overlay yet.
 - Comments the user wrote on tickets. The ADO revisions pass that covers "I commented" is also not done.
 - GitLab/Bitbucket PRs.

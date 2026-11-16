@@ -32,6 +32,7 @@ export type HostToPage =
   | { t: 'toolbar'; items: unknown[] }
   | { t: 'dictation'; event: DictationEvent }
   | { t: 'calls'; event: CallEvent }
+  | { t: 'cue'; event: unknown }
   | { t: 'storage-status'; failed: boolean }
   | DiffFrame;
 export type PageToHost =
@@ -42,7 +43,16 @@ export type PageToHost =
   | { t: 'page-log'; level: 'error' | 'info'; text: string }
   | { t: 'diff-action'; file: string; action: DiffAction; idx?: number }
   | ({ t: 'dictation' } & DictationRequest)
-  | ({ t: 'calls' } & CallsRequest);
+  | ({ t: 'calls' } & CallsRequest)
+  | { t: 'cue'; prefs: CuePrefs };
+
+/** Settings → Ask about my work (beta): what the shell applies to the work-brief icon (src-tauri/src/cue.rs). */
+export interface CuePrefs {
+  enabled: boolean;
+  hideInShares: boolean;
+  /** A Tauri accelerator ("CommandOrControl+Shift+Space"), or '' for no hotkey. */
+  hotkey: string;
+}
 
 const MAX_QUEUED = 2000;
 /** How long a question asked with no page connected waits for one. */
@@ -72,6 +82,8 @@ export class ViewSurface {
   readonly dictationRequested = new EventEmitter<DictationRequest>();
   /** Settings → Call notes switched call detection on or off (host/callDetection.ts). */
   readonly callsRequested = new EventEmitter<CallsRequest>();
+  /** Settings → Ask about my work changed (or the page just loaded and says what is saved). */
+  readonly cueRequested = new EventEmitter<CuePrefs>();
   private uiSeq = 0;
   private pendingUi = new Map<number, (value: unknown) => void>();
   /** The `ui` frame behind each pending question, for a page that takes over. */
@@ -266,6 +278,14 @@ export class ViewSurface {
       this.dictationRequested.fire({ op: frame.op, locale: frame.locale });
     } else if (frame.t === 'calls' && (frame.op === 'enable' || frame.op === 'disable' || frame.op === 'record' || frame.op === 'stop')) {
       this.callsRequested.fire({ op: frame.op, auto: frame.auto === true, ...(typeof frame.noteId === 'string' ? { noteId: frame.noteId } : {}) });
+    } else if (frame.t === 'cue' && frame.prefs && typeof frame.prefs === 'object') {
+      const p = frame.prefs;
+      this.cueRequested.fire({
+        enabled: p.enabled !== false,
+        hideInShares: p.hideInShares !== false,
+        // Only accelerator characters reach the shell.
+        hotkey: typeof p.hotkey === 'string' && /^[A-Za-z0-9+]{0,60}$/.test(p.hotkey) ? p.hotkey : '',
+      });
     } else if (frame.t === 'page-log' && typeof frame.text === 'string') {
       (frame.level === 'error' ? console.warn : console.log)(`[page ${this.viewType}] ${frame.text.slice(0, 2000)}`);
     }

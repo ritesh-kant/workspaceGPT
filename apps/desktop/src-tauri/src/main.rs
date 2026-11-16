@@ -25,7 +25,7 @@ use tauri_plugin_opener::OpenerExt;
 pub(crate) const MAIN: &str = "main";
 
 /// Port of the sidecar currently serving the page (changes on restart).
-struct CurrentPort(Mutex<Option<u16>>);
+pub(crate) struct CurrentPort(pub(crate) Mutex<Option<u16>>);
 
 fn page_url(port: u16) -> Url {
     Url::parse(&format!("http://127.0.0.1:{port}/")).expect("loopback url")
@@ -35,7 +35,7 @@ fn page_url(port: u16) -> Url {
 /// in this window, but only a page served by our own loopback server gets it.
 /// `chrome: 'overlay'` tells the shell page the content runs under the title
 /// bar (macOS), so it leaves room for the traffic lights.
-fn token_script(token: &str) -> String {
+pub(crate) fn token_script(token: &str) -> String {
     let chrome = if cfg!(target_os = "macos") { "overlay" } else { "native" };
     format!(
         "(function(){{ if (location.protocol === 'http:' && location.hostname === '127.0.0.1') {{ \
@@ -117,10 +117,7 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
 
 /// The work-brief icon (cue.rs), on the sidecar currently serving.
 fn open_cue(app: &AppHandle) {
-    let Some(port) = *app.state::<CurrentPort>().0.lock().unwrap() else { return };
-    let token = app.state::<sidecar::Supervisor>().token().to_string();
-    let port_app = app.clone();
-    cue::sync(app, port, &token_script(&token), move || *port_app.state::<CurrentPort>().0.lock().unwrap());
+    cue::sync(app, false);
 }
 
 fn open_folder(app: &AppHandle) {
@@ -221,12 +218,8 @@ fn change_zoom(app: &AppHandle, delta: Option<f64>) {
 
 /// The app-menu checkbox for notifications, kept so a click can read its new state.
 struct NotifyToggle(CheckMenuItem<tauri::Wry>);
-/// The app-menu checkbox for the work-brief icon.
-struct CueToggle(CheckMenuItem<tauri::Wry>);
-/// The app-menu checkbox for hiding the work-brief icon in screen shares.
-struct CueHideToggle(CheckMenuItem<tauri::Wry>);
 
-fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>)> {
+fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>)> {
     let new_chat = MenuItem::with_id(app, "new-chat", "New Chat", true, Some("CmdOrCtrl+N"))?;
     let history = MenuItem::with_id(app, "history", "Chat History", true, Some("CmdOrCtrl+Y"))?;
     let open = MenuItem::with_id(app, "open-folder", "Open Folder…", true, Some("CmdOrCtrl+O"))?;
@@ -238,22 +231,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
         notify::MENU_LABEL,
         true,
         app.state::<notify::Notifications>().enabled(),
-        None::<&str>,
-    )?;
-    let cue_toggle = CheckMenuItem::with_id(
-        app,
-        cue::MENU_ID,
-        cue::MENU_LABEL,
-        true,
-        *app.state::<cue::CueEnabled>().0.lock().unwrap(),
-        None::<&str>,
-    )?;
-    let cue_hide_toggle = CheckMenuItem::with_id(
-        app,
-        cue::HIDE_MENU_ID,
-        cue::HIDE_MENU_LABEL,
-        true,
-        *app.state::<cue::CueHidden>().0.lock().unwrap(),
         None::<&str>,
     )?;
     let show_logs = MenuItem::with_id(app, "show-logs", "Show Logs", true, None::<&str>)?;
@@ -269,8 +246,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
             &PredefinedMenuItem::separator(app)?,
             &settings,
             &notify_toggle,
-            &cue_toggle,
-            &cue_hide_toggle,
             &show_logs,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, Some("Hide WorkspaceGPT"))?,
@@ -319,7 +294,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<(Menu<tauri::Wry>, MenuItem<taur
         &[&PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::close_window(app, None)?],
     )?;
     let menu = Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window])?;
-    Ok((menu, check_updates, notify_toggle, cue_toggle, cue_hide_toggle))
+    Ok((menu, check_updates, notify_toggle))
 }
 
 fn handle_menu(app: &AppHandle, id: &str) {
@@ -345,8 +320,6 @@ fn handle_menu(app: &AppHandle, id: &str) {
         "zoom-reset" => change_zoom(app, None),
         updater::MENU_ID => updater::menu_clicked(app),
         notify::MENU_ID => notify::menu_toggled(app, &app.state::<NotifyToggle>().0),
-        cue::MENU_ID => cue::menu_toggled(app, &app.state::<CueToggle>().0, open_cue),
-        cue::HIDE_MENU_ID => cue::hide_menu_toggled(app, &app.state::<CueHideToggle>().0),
         "tray-show" => show_main(app),
         "tray-quit" => app.exit(0),
         _ => {}
@@ -390,7 +363,14 @@ fn main() {
         }),
         Arc::new(move |json| {
             if let Some(app) = notify_slot.lock().unwrap().as_ref() {
-                notify::from_sidecar(app, json);
+                // Settings → Ask about my work arrives on the same channel (sidecar/main.ts).
+                if json.contains("\"kind\":\"cue-prefs\"") {
+                    let app2 = app.clone();
+                    let json = json.to_string();
+                    let _ = app.run_on_main_thread(move || cue::apply(&app2, &json));
+                } else {
+                    notify::from_sidecar(app, json);
+                }
             }
         }),
         // The chat's folder chip (vscode.openFolder in vscode-compat).
@@ -425,6 +405,8 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&[cue::CUE]).build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        // The work-brief hotkey (cue.rs), set in Settings → Ask about my work.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(CurrentPort(Mutex::new(None)))
         .manage(LayoutRefresh(AtomicBool::new(false)))
         .manage(updater::Updates::default())
@@ -432,14 +414,11 @@ fn main() {
         .setup(move |app| {
             app.manage(notify::Notifications::load(app.handle()));
             app.manage(Zoom(Mutex::new(load_zoom(app.handle()))));
-            let (cue_enabled, cue_hidden) = cue::load(app.handle());
-            app.manage(cue_enabled);
-            app.manage(cue_hidden);
+            app.manage(cue::load(app.handle()));
+            cue::start(app.handle());
             *handle_slot.lock().unwrap() = Some(app.handle().clone());
-            let (menu, check_updates, notify_toggle, cue_toggle, cue_hide_toggle) = build_menu(app.handle())?;
+            let (menu, check_updates, notify_toggle) = build_menu(app.handle())?;
             app.manage(NotifyToggle(notify_toggle));
-            app.manage(CueToggle(cue_toggle));
-            app.manage(CueHideToggle(cue_hide_toggle));
             app.set_menu(menu)?;
 
             let tray_menu = Menu::with_items(

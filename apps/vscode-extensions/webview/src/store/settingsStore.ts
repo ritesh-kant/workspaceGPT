@@ -24,6 +24,7 @@ export interface SettingsConfig {
   vectorStore: VectorStoreConfig;
   webSearch: WebSearchConfig;
   callNotes: CallNotesConfig;
+  workBrief: WorkBriefConfig;
 }
 
 export const settingsDefaultConfig: SettingsConfig = {
@@ -132,6 +133,11 @@ export const settingsDefaultConfig: SettingsConfig = {
   callNotes: {
     enabled: false,
   },
+  workBrief: {
+    showIcon: true,
+    hideInShares: true,
+    hotkey: 'CommandOrControl+Shift+Space',
+  },
 };
 
 /** The object-valued sections of SettingsConfig — excludes the config-level
@@ -160,7 +166,7 @@ interface SettingsState {
 
 // Create a custom storage adapter for VSCode global state
 import { MESSAGE_TYPES, STORAGE_KEYS } from '../constants';
-import { ConfluenceConfig, AdoConfig, JiraConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig, WebSearchConfig, CallNotesConfig } from '../types';
+import { ConfluenceConfig, AdoConfig, JiraConfig, DeploymentConfig, EmbeddingProviderConfig, VectorStoreConfig, WebSearchConfig, CallNotesConfig, WorkBriefConfig } from '../types';
 
 // Every store change persists the whole settings blob, and a Confluence/ADO
 // sync updates progress many times a second — one host save per change ran

@@ -141,6 +141,8 @@ function parseArgs(argv: string[]): Args {
  * one-shot listener so the command loop set up later sees every later line.
  */
 let stdinBuffered = '';
+/** The shell's answer to work-brief settings (see cueRequested below); set once the view exists. */
+let onCueStatus: (status: unknown) => void = () => undefined;
 /**
  * Parent-death watchdog: the Tauri shell holds our stdin, so when it quits —
  * cleanly or by force-quit — the pipe closes. Armed right after the hello, so
@@ -467,6 +469,22 @@ async function main(): Promise<void> {
     else console.log(`[desktop] notify (call): ${title} — ${body}`);
   });
 
+  // Settings → Ask about my work (beta) → the shell (src-tauri/src/cue.rs), which
+  // shows or hides the icon, sets screen-share hiding and registers the hotkey,
+  // then answers on stdin with {"type":"cue-status"} for the page to show.
+  let cueStatus: unknown;
+  surface.cueRequested.event((prefs) => {
+    if (args.parentStdio) process.stdout.write(`${NOTIFY_PREFIX}${JSON.stringify({ kind: 'cue-prefs', ...prefs })}\n`);
+    else console.log(`[desktop] work brief settings (no shell to apply them): ${JSON.stringify(prefs)}`);
+  });
+  surface.attached.event(() => {
+    if (cueStatus) surface.sendControl({ t: 'cue', event: cueStatus });
+  });
+  onCueStatus = (status) => {
+    cueStatus = status;
+    surface.sendControl({ t: 'cue', event: status });
+  };
+
   surface.commandRequested.event((id) => {
     if (!titleActions.some((a) => a.command === id)) {
       console.warn(`[desktop] page asked for command ${id}, which is not a title action — ignored`);
@@ -557,7 +575,8 @@ async function main(): Promise<void> {
         } else if (cmd.type === 'picked-folder' && typeof cmd.id === 'number') {
           pendingFolderPicks.get(cmd.id)?.(typeof cmd.path === 'string' ? cmd.path : undefined);
           pendingFolderPicks.delete(cmd.id);
-        } else if (cmd.type === 'diagnostics') console.log('[desktop] diagnostics:', JSON.stringify(writeDiagnostics()));
+        } else if (cmd.type === 'cue-status') onCueStatus(cmd);
+        else if (cmd.type === 'diagnostics') console.log('[desktop] diagnostics:', JSON.stringify(writeDiagnostics()));
         else if (cmd.type === 'command' && typeof cmd.id === 'string' && titleActions.some((a) => a.command === cmd.id)) {
           compat.commands.executeCommand(cmd.id).catch((err) => console.error(`[desktop] ${cmd.id} failed:`, err));
         } else console.warn('[desktop] unknown shell command', cmd.type);

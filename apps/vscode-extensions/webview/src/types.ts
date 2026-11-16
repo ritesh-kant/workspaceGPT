@@ -194,6 +194,16 @@ export interface VectorStoreConfig {
 }
 
 /** Call notes (beta, desktop only): detect calls and ask before recording. docs/design/call-notes.md. */
+/** Settings → Ask about my work (beta, desktop only): the work-brief icon and its hotkey. */
+export interface WorkBriefConfig {
+  /** Show the floating icon. The hotkey works either way. */
+  showIcon: boolean;
+  /** Keep the icon and panel out of screen shares (and screenshots). */
+  hideInShares: boolean;
+  /** A shortcut such as "CommandOrControl+Shift+Space", or '' for none. */
+  hotkey: string;
+}
+
 export interface CallNotesConfig {
   enabled: boolean;
   /** The user accepted or dismissed the one-time desktop introduction. */

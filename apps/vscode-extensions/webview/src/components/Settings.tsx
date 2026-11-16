@@ -11,6 +11,7 @@ import ConfluenceSettings from './settings/ConfluenceSettings';
 import AdoSettings from './settings/AdoSettings';
 import JiraSettings from './settings/JiraSettings';
 import CallNotesSettings from './settings/CallNotesSettings';
+import WorkBriefSettings from './settings/WorkBriefSettings';
 import CodeHostSettings from './settings/CodeHostSettings';
 import WebSearchSettings from './settings/WebSearchSettings';
 import DeploymentSettings from './settings/DeploymentSettings';
@@ -215,6 +216,13 @@ const SettingsButton: React.FC<SettingsButtonProps> = ({
             description: 'Take notes of your calls, transcribed on this Mac.',
             badge: <span className='beta-badge'>Beta</span>,
             render: () => <CallNotesSettings />,
+          } as SettingsPage,
+          {
+            id: 'workBrief',
+            label: 'Ask about my work',
+            description: 'A floating icon and a hotkey that answer questions about your own last year of work, in seconds.',
+            badge: <span className='beta-badge'>Beta</span>,
+            render: () => <WorkBriefSettings />,
           } as SettingsPage,
         ]
       : []),

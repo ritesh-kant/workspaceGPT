@@ -315,5 +315,10 @@ form.addEventListener('submit', (e) => {
   ask(q.value.trim());
 });
 
+// The global hotkey (src-tauri/src/cue.rs): open the panel, or fold it back.
+(window as unknown as { __cueToggle?: () => void }).__cueToggle = () => setView(body.dataset.view === 'panel' ? 'icon' : 'panel');
+
 syncComposer();
 connect();
+// Opened by the hotkey: start as the panel.
+if (new URLSearchParams(location.search).get('open') === '1') setView('panel');
