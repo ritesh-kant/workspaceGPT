@@ -244,7 +244,12 @@ const CALL_TEXT_CHARS = 4000;
  */
 export async function callWork(context: vscode.ExtensionContext, since = Date.now() - WINDOW_DAYS * DAY): Promise<WorkItem[]> {
   const dir = callNotesDir(context.globalStorageUri.fsPath);
-  const notes = (await listCallNotes(dir)).filter((n) => n.startedAt >= since && n.status === 'done');
+  // Short captures (no speech, or under a minute: a mis-detected call, or the
+  // tail of one cut by a restart) are not calls; the sidebar files them apart
+  // (SessionsHtmlTemplate callNotesHtml), and as the newest note one would
+  // answer "my last call" instead of the real last call.
+  const short = (n: { turnCount: number; startedAt: number; endedAt?: number }) => !n.turnCount || (!!n.endedAt && n.endedAt - n.startedAt < 60_000);
+  const notes = (await listCallNotes(dir)).filter((n) => n.startedAt >= since && n.status === 'done' && !short(n));
   return Promise.all(notes.map(async (n): Promise<WorkItem> => {
     const s = await readCallSummary(dir, n.id).catch(() => undefined);
     const mine = s?.actions?.filter((a) => a.owner === 'you').map((a) => a.text) ?? [];
