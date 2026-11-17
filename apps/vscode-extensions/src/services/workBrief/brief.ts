@@ -59,6 +59,8 @@ export const HISTORY_TURNS = 6;
 const DAY = 86_400_000;
 
 const day = (ms: number | undefined) => (ms ? new Date(ms).toISOString().slice(0, 10) : '');
+/** Date and time (UTC): several calls or updates on one day must still be told apart, e.g. "my last call". */
+const stamp = (ms: number | undefined) => (ms ? `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '');
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
@@ -67,8 +69,8 @@ export function renderCard(item: WorkItem, textChars = CARD_TEXT_CHARS): string 
     item.kind,
     item.state,
     item.roles.length ? `you: ${item.roles.join(', ')}` : '',
-    `updated ${day(item.updatedAt)}`,
-    item.createdAt ? `created ${day(item.createdAt)}` : '',
+    `updated ${stamp(item.updatedAt)}`,
+    item.createdAt ? `created ${stamp(item.createdAt)}` : '',
     item.where,
   ].filter(Boolean).join(' · ');
   const lines = [`[${item.tag}] ${head}`, `Title: ${oneLine(item.title)}`];
@@ -159,6 +161,9 @@ export function lookupCards(question: string, items: readonly WorkItem[], exclud
       }
     }
     const title = new Set(tokens(item.title));
+    // The kind ("call", "page") names what the item is, not what it is about: an
+    // untitled "Call on Mon…" must not outrank a newer call for "my last call".
+    for (const w of tokens(item.kind)) title.delete(w);
     for (const w of qTokens) {
       if (!docs[i].has(w)) continue;
       const idf = Math.log(1 + candidates.length / (df.get(w) ?? 1));
@@ -210,7 +215,10 @@ export function buildAnswerPrompt(input: PromptInput): BuiltPrompt {
     '',
     'Rules:',
     '- Answer ONLY from the WORK BRIEF below. If it does not contain the answer, reply exactly "Not in your brief." followed by one short line on what to look up.',
-    '- 1 to 3 short sentences, first person, as the user would say it ("I fixed…", "It is in review…"). No headings, no lists unless asked for a list.',
+    // Read at a glance mid-call: the answer first, then only the specifics worth saying.
+    '- Be brief and to the point. First line: the direct answer in bold, under 12 words, e.g. "**It is in review, waiting on QA.**"',
+    '- Then, only if it adds something the user would say, up to 3 bullets starting "- ", each under 12 words: the specifics (ids, numbers, names, dates). No filler, no restating the question.',
+    '- First person, as the user would say it ("I fixed…", "We agreed…"). No other markdown: no headings, tables or links.',
     '- Cite every item you use by its bracketed id at the end, copied exactly as written in the brief, e.g. [ADO #1234] [PAGE 5521] [PR github org/repo#42].',
     '- Never invent statuses, dates, numbers, names or links. Prefer the newest item when two disagree.',
     '- In a follow-up, use the earlier conversation only to understand what the question refers to; facts still come only from the brief.',
@@ -313,9 +321,14 @@ export function answerParts(answer: string, items: readonly WorkItem[], shown: R
   return parts;
 }
 
-/** The answer without its trailing citation brackets, for reading aloud. */
+/** The answer without its citation brackets or markdown, for reading aloud. */
 export function speakable(answer: string): string {
-  return answer.replace(/\s*\[[^\]\n]{3,80}\]/g, '').replace(/\s+([.,;])/g, '$1').trim();
+  return answer
+    .replace(/\s*\[[^\]\n]{3,80}\]/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/^\s*[-*•]\s+/gm, '')
+    .replace(/\s+([.,;])/g, '$1')
+    .trim();
 }
 
 /** Drop duplicates by tag, newest wins. */

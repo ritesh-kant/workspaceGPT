@@ -8160,7 +8160,19 @@ console.log('\nwork brief (tiers, lookup, prompt, sources)');
     assert.ok(detail.length > 1500, String(detail.length));
   });
   await t('spoken text drops the citation brackets', () => {
+    // "my last call": a call whose title is only "Call on …" must not outrank newer calls.
+    {
+      const c = (id, h, title) => ({ tag: `CALL ${id}`, source: 'call', kind: 'Call', title, roles: [], updatedAt: Date.UTC(2026, 10, 16, h), text: 'notes' });
+      const got = lookupCards('Summarize my last call', [c('old', 19, 'Call on Mon, Nov 16, 07:48 PM'), c('new', 20, 'Commerce Cloud training')], new Set());
+      assert.deepEqual(got.map((i) => i.tag), ['CALL new', 'CALL old']);
+    }
+    // Six calls on one day: only the time says which is the last one.
+    const at = (h) => Date.UTC(2026, 10, 16, h, 1);
+    const call = (h) => renderCard({ tag: `CALL c${h}`, source: 'call', kind: 'Call', title: 't', roles: [], updatedAt: at(h), createdAt: at(h) });
+    assert.match(call(14), /updated 2026-11-16 14:01 UTC/);
+    assert.notEqual(call(14), call(15).replace('c15', 'c14'));
     assert.equal(speakable('It is in review [PR github a/b#7].'), 'It is in review.');
+    assert.equal(speakable('**It is in review.** [PR github a/b#7]\n- QA owns it now'), 'It is in review.\nQA owns it now');
   });
   await t('duplicates merge roles and keep the newest', () => {
     const merged = dedupe([item(5, { roles: ['authored'] }), item(1, { tag: 'ADO #5', roles: ['reviewed'] })]);

@@ -134,10 +134,50 @@ function fillAnswer(el: HTMLDivElement, r: Result) {
   el.classList.toggle('muted', !r.ok);
   const text = document.createElement('div');
   text.className = 'text';
+  // The answer's only markup: a **bold** first line, "- " bullets and **bold**
+  // words (brief.ts asks for that shape). Built as DOM nodes, never innerHTML.
+  let line: HTMLElement | undefined;
+  let list: HTMLUListElement | undefined;
+  let last: HTMLElement = text;
+  const startLine = (raw: string): string => {
+    const bullet = /^\s*[-*•]\s+/.exec(raw);
+    if (bullet) {
+      if (!list) {
+        list = document.createElement('ul');
+        text.append(list);
+      }
+      line = document.createElement('li');
+      list.append(line);
+      return raw.slice(bullet[0].length);
+    }
+    list = undefined;
+    line = document.createElement('p');
+    if (/^\s*\*\*/.test(raw) && !text.childElementCount) line.className = 'lead';
+    text.append(line);
+    return raw;
+  };
+  const inline = (into: HTMLElement, raw: string) => {
+    raw.split(/\*\*(.+?)\*\*/).forEach((bit, i) => {
+      if (!bit) return;
+      if (i % 2) {
+        const b = document.createElement('strong');
+        b.textContent = bit;
+        into.append(b);
+      } else into.append(bit.replace(/\*\*/g, ''));
+    });
+  };
   // Older hosts send no parts: show the answer as it came.
   for (const part of r.parts ?? [r.answer]) {
     if (typeof part === 'string') {
-      text.append(part);
+      part.split('\n').forEach((seg, i) => {
+        if (i > 0) line = undefined;
+        if (!line) {
+          if (!seg.trim()) return;
+          seg = startLine(seg);
+        }
+        inline(line!, seg);
+        last = line!;
+      });
       continue;
     }
     const s = r.sources[part];
@@ -147,7 +187,8 @@ function fillAnswer(el: HTMLDivElement, r: Result) {
     cite.textContent = String(part + 1);
     cite.title = `${s.label ?? s.tag}: ${s.title}`;
     cite.addEventListener('click', () => open(s));
-    text.append(cite);
+    // A citation on a line of its own belongs to the line above it.
+    (line ?? last).append(cite);
   }
   el.append(text);
   if (r.sources.length) {

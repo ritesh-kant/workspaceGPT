@@ -146,6 +146,16 @@ body[data-view="icon"] .panel { display: none; }
   border-radius: 14px 14px 4px 14px;
 }
 .msg.bot { align-self: stretch; }
+/* Answers: a bold one-line answer, then short bullets, readable at a glance. */
+.msg.bot .text { white-space: normal; }
+.msg.bot .text p { margin: 0 0 6px; }
+.msg.bot .text p:last-child { margin-bottom: 0; }
+.msg.bot .text .lead { font-size: 15px; line-height: 1.4; }
+.msg.bot .text .lead strong { font-weight: 600; }
+.msg.bot .text strong { font-weight: 600; }
+.msg.bot .text ul { margin: 2px 0 0; padding-left: 18px; }
+.msg.bot .text li { margin: 4px 0; padding-left: 2px; }
+.msg.bot .text li::marker { color: var(--cue-accent); }
 .msg.bot.muted .text { color: var(--cue-muted); }
 .cite {
   display: inline-grid;
