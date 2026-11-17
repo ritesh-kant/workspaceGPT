@@ -193,6 +193,20 @@ fn place(app: &AppHandle) {
     let _ = w.set_position(PhysicalPosition::new(x, y));
 }
 
+/// The main window moved (the window-state plugin restoring it after launch, or
+/// the user dragging it): keep the icon on the same screen. A drag within that
+/// screen leaves the icon where the user put it.
+pub fn follow_main(app: &AppHandle) {
+    if EXPANDED.load(Ordering::SeqCst) {
+        return;
+    }
+    let (Some(cue), Some(main)) = (app.get_webview_window(CUE), app.get_webview_window(crate::MAIN)) else { return };
+    let (Ok(Some(a)), Ok(Some(b))) = (cue.current_monitor(), main.current_monitor()) else { return };
+    if a.position() != b.position() {
+        place(app);
+    }
+}
+
 /// The hotkey: open the panel from any app, or fold it back if it is open.
 fn toggle(app: &AppHandle) {
     match app.get_webview_window(CUE) {

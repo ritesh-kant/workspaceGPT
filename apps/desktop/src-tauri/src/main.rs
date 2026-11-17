@@ -468,6 +468,11 @@ fn main() {
                     notify::clear_badge(window.app_handle());
                 }
             }
+            if let tauri::WindowEvent::Moved(_) = event {
+                if window.label() == MAIN {
+                    cue::follow_main(window.app_handle());
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == MAIN {
                     api.prevent_close();
