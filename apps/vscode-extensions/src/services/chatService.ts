@@ -317,6 +317,15 @@ interface SessionRun {
   writeGate: AgentWriteGate;
   /** Set on stop: everything the dying run still emits is dropped host-side. */
   cancelled: boolean;
+  /**
+   * Which send is this session's current turn: each send takes the next
+   * number, and Stop bumps it. `cancelled` cannot say this on its own — the
+   * next send resets it, so a turn stopped while still preparing (retrieval,
+   * before any worker existed) used to wake up, spawn its worker and answer
+   * into the next turn's bubble. A turn whose number is no longer current
+   * never starts a worker.
+   */
+  turnSeq: number;
   turnStartMs: number;
   /** Tokens the current turn has spent so far, from the worker's 'metrics' message — carried onto the turn summary to estimate its credit cost. */
   turnPromptTokens: number;
@@ -821,6 +830,7 @@ export class ChatService {
         reject: null,
         writeGate: new AgentWriteGate(),
         cancelled: false,
+        turnSeq: 0,
         turnStartMs: 0,
         turnPromptTokens: 0,
         turnCompletionTokens: 0,
@@ -918,6 +928,8 @@ export class ChatService {
       run.writeGate.rejectAll('Run stopped by the user.');
       this.post(run, { type: MESSAGE_TYPES.AGENT_WRITE_REVIEWS_CLOSED });
       run.cancelled = true;
+      // A turn still preparing has no worker to terminate; this is what stops it.
+      run.turnSeq++;
       if (run.worker) {
         run.worker.terminate();
         run.worker = null;
@@ -1116,6 +1128,7 @@ export class ChatService {
       return;
     }
     run.cancelled = false;
+    const turn = ++run.turnSeq;
     run.turnAction = turnAction;
     run.prReview = toPrReviewContext(prReview);
     run.linkedConfluencePageId = null;
@@ -1713,6 +1726,12 @@ export class ChatService {
         })),
       ];
 
+      // Stopped (or superseded) while retrieving: say nothing more — the
+      // webview already shows "Stopped.", and a newer turn may own the bubble.
+      if (turn !== run.turnSeq) {
+        console.log(`[chat] turn ${turn} for session ${run.sessionId} was stopped while preparing; not starting it`);
+        return;
+      }
       this.postStatus(run, 'Thinking...');
       // Every model call this turn makes differs only in what it asks for —
       // the first attempt, the failure resume below, and the stall resume
@@ -1741,7 +1760,8 @@ export class ChatService {
           toolAvailability,
           getActiveTicketProvider(this.context)?.label,
           !isWorkMode,
-          debug
+          debug,
+          turn
         );
 
       let modelResponse: string;
@@ -3592,7 +3612,9 @@ Query: "${query}"`;
     /** Chat mode: plain conversation, so the worker prompt drops retrieval/tool framing. */
     chatOnly = false,
     /** The user chose "Debug this" for this turn (see sendMessage). */
-    debugRequested = false
+    debugRequested = false,
+    /** The send this call belongs to (see SessionRun.turnSeq). */
+    turn: number = run.turnSeq
   ): Promise<string> {
     try {
       run.lastAnswerStallShaped = false;
@@ -3672,6 +3694,9 @@ Query: "${query}"`;
       run.lastDebugMode = debugMode;
       const ticketLookupOnly = !!ticketContext && !autonomous && !planMode && !ticketImplementIntent && !debugRequested;
 
+      // Stopped during the awaits above (or during an auto-resume's wait): no
+      // worker. Taken by sendMessage as an ordinary stop.
+      if (turn !== run.turnSeq) throw new Error('Generation cancelled by user.');
       const modelWorker = new Worker(workerPath, {
         workerData: {
           prompt: message,
