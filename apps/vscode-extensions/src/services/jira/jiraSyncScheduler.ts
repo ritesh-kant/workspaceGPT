@@ -5,6 +5,7 @@ import { JiraEmbeddingService } from './jiraEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
 import { publishSyncState } from '../../utils/syncStateStore';
+import { justWokeFromSleep } from '../../utils/systemWake';
 
 /** Background sync scheduling — mirrors AdoSyncScheduler exactly, see docs/design/jira.md §5 P5. */
 export class JiraSyncScheduler {
@@ -62,6 +63,12 @@ export class JiraSyncScheduler {
 
   private async checkAndSync(force: boolean = false) {
     try {
+      // A tick right after the system wakes may be inside a few-second dark wake;
+      // a token refresh sent there can rotate the token and lose the reply (systemWake.ts).
+      if (justWokeFromSleep()) {
+        console.log('⏳ Auto-sync: skipped — system just woke from sleep');
+        return;
+      }
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       if (!config?.state?.config?.jira?.isAuthenticated || !config?.state?.config?.jira?.siteUrl || !config?.state?.config?.jira?.projectKey) {
         return; // Not fully configured yet

@@ -8,6 +8,7 @@ import { postToWebview } from 'src/utils/webviewBroadcast';
 import { deleteDirectory } from 'src/utils/deleteDirectory';
 import { deleteSyncedFiles, idFromFilename, listSyncedFiles } from 'src/utils/syncedFilePrune';
 import { ensureDirectoryExists } from 'src/utils/ensureDirectoryExists';
+import { justWokeFromSleep } from 'src/utils/systemWake';
 
 /**
  * Sync orchestration — spawns jiraWorker.ts, tracks resumable progress,
@@ -231,6 +232,8 @@ export class JiraService {
 
       if (getAuthHeader) {
         this.authRefreshInterval = setInterval(async () => {
+          // Atlassian rotates the refresh token; a refresh in a dark wake can lose it (systemWake.ts).
+          if (justWokeFromSleep()) return;
           try {
             const freshHeader = await getAuthHeader();
             this.worker?.postMessage({ type: 'refresh-auth', authHeader: freshHeader });

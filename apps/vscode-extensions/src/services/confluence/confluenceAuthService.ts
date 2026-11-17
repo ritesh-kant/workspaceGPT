@@ -260,7 +260,8 @@ export class ConfluenceAuthService {
       try {
         response = await send();
       } catch (networkError) {
-        this.logRefresh(`network error, retrying once: ${networkError instanceof Error ? networkError.message : String(networkError)}`);
+        const cause = (networkError as { cause?: { code?: string; message?: string } })?.cause;
+        this.logRefresh(`network error, retrying once: ${networkError instanceof Error ? networkError.message : String(networkError)}${cause ? ` (${cause.code ?? cause.message})` : ''}`);
         await new Promise((resolve) => setTimeout(resolve, 2000));
         response = await send();
       }
@@ -292,6 +293,7 @@ export class ConfluenceAuthService {
       };
 
       await this.saveTokens(newTokens);
+      this.logRefresh(`refreshed${refresh_token ? '' : ' (no new refresh token returned)'}`);
       return newTokens;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

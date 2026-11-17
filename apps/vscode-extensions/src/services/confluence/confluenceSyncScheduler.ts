@@ -5,6 +5,7 @@ import { ConfluenceEmbeddingService } from './confluenceEmbeddingService';
 import { EmbeddingConfig } from '../../types/types';
 import { MODEL, STORAGE_KEYS, SYNC_INTERVAL_MS } from '../../../constants';
 import { publishSyncState } from '../../utils/syncStateStore';
+import { justWokeFromSleep } from '../../utils/systemWake';
 
 export class ConfluenceSyncScheduler {
   private intervalId?: NodeJS.Timeout;
@@ -85,6 +86,12 @@ export class ConfluenceSyncScheduler {
 
   private async checkAndSync(force: boolean = false) {
     try {
+      // A tick right after the system wakes may be inside a few-second dark wake;
+      // a token refresh sent there can rotate the token and lose the reply (systemWake.ts).
+      if (justWokeFromSleep()) {
+        console.log('⏳ Auto-sync: skipped — system just woke from sleep');
+        return;
+      }
       const config: any = this.context.globalState.get(STORAGE_KEYS.SETTINGS);
       if (!config?.state?.config?.confluence?.isAuthenticated || !config?.state?.config?.confluence?.spaceKey) {
         return; // Not fully configured yet
