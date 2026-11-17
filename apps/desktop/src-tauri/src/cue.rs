@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
@@ -178,7 +178,10 @@ pub fn sync(app: &AppHandle, open_panel: bool) {
 
 /// Top-right corner of the screen the main window is on (with two screens the
 /// primary one may not be where the user is looking), else the primary screen.
-/// Physical pixels, so screens with different scale factors line up.
+/// Logical points: on macOS a monitor's physical position is its point origin
+/// times its own scale, while a physical window position is divided by the
+/// window's scale, so with a Retina and a 1x screen physical maths lands the
+/// icon off every screen.
 fn place(app: &AppHandle) {
     let Some(w) = app.get_webview_window(CUE) else { return };
     let monitor = app
@@ -187,10 +190,10 @@ fn place(app: &AppHandle) {
         .or_else(|| app.primary_monitor().ok().flatten());
     let Some(m) = monitor else { return };
     let s = m.scale_factor();
-    let width = w.outer_size().map(|z| z.width as i32).unwrap_or((ICON * s) as i32);
-    let x = m.position().x + m.size().width as i32 - width - (MARGIN_RIGHT * s) as i32;
-    let y = m.position().y + (MARGIN_TOP * s) as i32;
-    let _ = w.set_position(PhysicalPosition::new(x, y));
+    let width = if EXPANDED.load(Ordering::SeqCst) { PANEL_W } else { ICON };
+    let x = m.position().x as f64 / s + m.size().width as f64 / s - width - MARGIN_RIGHT;
+    let y = m.position().y as f64 / s + MARGIN_TOP;
+    let _ = w.set_position(LogicalPosition::new(x, y));
 }
 
 /// The main window moved (the window-state plugin restoring it after launch, or
