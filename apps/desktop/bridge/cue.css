@@ -1,0 +1,246 @@
+:root {
+  --cue-bg: #ffffff;
+  --cue-fg: #1d1d1f;
+  --cue-muted: #6e6e73;
+  --cue-border: rgba(0, 0, 0, 0.12);
+  --cue-field: #f2f2f5;
+  --cue-accent: #3b6cf6;
+  --cue-accent-fg: #ffffff;
+  --cue-chip: #eef2ff;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cue-bg: #1f1f22;
+    --cue-fg: #f2f2f4;
+    --cue-muted: #a1a1a8;
+    --cue-border: rgba(255, 255, 255, 0.14);
+    --cue-field: #2b2b30;
+    --cue-accent: #6b8cff;
+    --cue-accent-fg: #0b0b0c;
+    --cue-chip: #2a3150;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  /* The window is transparent: only the icon or the panel is drawn. */
+  background: transparent;
+  overflow: hidden;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color: var(--cue-fg);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ── collapsed: one round icon ── */
+.icon {
+  position: fixed;
+  top: 4px;
+  right: 4px;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  border: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  padding: 0;
+}
+/* A rounded square (scripts/cue-icons.py), the same 30% radius as its tile. */
+.icon img { width: 36px; height: 36px; border-radius: 11px; display: block; pointer-events: none; }
+.icon:hover img { filter: brightness(1.12); }
+.icon:focus-visible { outline: 2px solid var(--cue-accent); outline-offset: 1px; }
+/* The icon itself shows ready / thinking (cue-*.svg); the dot only flags "no brief yet" or an error. */
+.dot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--cue-bg);
+  display: none;
+}
+body[data-state="empty"] .dot { display: block; background: #8e8e93; }
+body[data-state="error"] .dot { display: block; background: #ff453a; }
+body[data-state="empty"] .icon img, body[data-state="error"] .icon img { filter: saturate(0.35); }
+
+body[data-view="panel"] .icon { display: none; }
+body[data-view="icon"] .panel { display: none; }
+
+/* ── expanded: a short conversation ── */
+.panel {
+  position: fixed;
+  inset: 4px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--cue-border);
+  background: var(--cue-bg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 10px 12px;
+  border-bottom: 1px solid var(--cue-border);
+  cursor: grab;
+}
+.head-logo { width: 22px; height: 22px; flex: none; }
+.head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.title { font-weight: 600; font-size: 13px; }
+.status { font-size: 11px; color: var(--cue-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn-ghost {
+  border: 0;
+  background: transparent;
+  color: var(--cue-muted);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+}
+.btn-ghost:hover { background: var(--cue-field); color: var(--cue-fg); }
+.btn-ghost[hidden] { display: none; }
+
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.empty { margin: auto 0; display: flex; flex-direction: column; gap: 12px; }
+.empty[hidden] { display: none; }
+.empty-lead { margin: 0; color: var(--cue-muted); font-size: 13px; }
+.suggest { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.suggestion {
+  border: 1px solid var(--cue-border);
+  background: transparent;
+  color: var(--cue-fg);
+  border-radius: 999px;
+  font: inherit;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.suggestion:hover { background: var(--cue-field); }
+
+.msg { max-width: 100%; font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user {
+  align-self: flex-end;
+  max-width: 85%;
+  background: var(--cue-chip);
+  padding: 7px 11px;
+  border-radius: 14px 14px 4px 14px;
+}
+.msg.bot { align-self: stretch; }
+/* Answers: a bold one-line answer, then short bullets, readable at a glance. */
+.msg.bot .text { white-space: normal; }
+.msg.bot .text p { margin: 0 0 6px; }
+.msg.bot .text p:last-child { margin-bottom: 0; }
+.msg.bot .text .lead { font-size: 15px; line-height: 1.4; }
+.msg.bot .text .lead strong { font-weight: 600; }
+.msg.bot .text strong { font-weight: 600; }
+.msg.bot .text ul { margin: 2px 0 0; padding-left: 18px; }
+.msg.bot .text li { margin: 4px 0; padding-left: 2px; }
+.msg.bot .text li::marker { color: var(--cue-accent); }
+.msg.bot.muted .text { color: var(--cue-muted); }
+.cite {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin: 0 1px;
+  border-radius: 8px;
+  background: var(--cue-chip);
+  color: var(--cue-fg);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: 2px;
+  cursor: pointer;
+}
+.cite:hover { background: var(--cue-accent); color: var(--cue-accent-fg); }
+.srcs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  border: 1px solid var(--cue-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cue-fg);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 7px 2px 3px;
+  cursor: pointer;
+}
+.chip:hover:not(:disabled) { background: var(--cue-field); }
+.chip:disabled { cursor: default; }
+.chip .n { min-width: 15px; height: 15px; border-radius: 5px; background: var(--cue-chip); font-weight: 600; font-size: 10px; display: grid; place-items: center; }
+.chip .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.tools { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity 0.15s; }
+.msg.bot:hover .tools { opacity: 1; }
+.tools .btn-ghost { width: 22px; height: 22px; }
+
+/* Thinking: the same three rising dots as the icon's thinking state. */
+.typing { display: inline-flex; gap: 4px; padding: 6px 2px; }
+.typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--cue-muted); animation: hop 1.2s ease-in-out infinite; }
+.typing i:nth-child(2) { animation-delay: 0.2s; }
+.typing i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes hop { 0%, 60%, 100% { transform: translateY(0); opacity: 0.45; } 30% { transform: translateY(-4px); opacity: 1; } }
+.typing-note { color: var(--cue-muted); font-size: 12px; margin-left: 6px; }
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 8px 10px 10px;
+  padding: 6px 6px 6px 11px;
+  border: 1px solid var(--cue-border);
+  border-radius: 12px;
+  background: var(--cue-field);
+}
+.composer:focus-within { border-color: var(--cue-accent); }
+.composer textarea {
+  flex: 1;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--cue-fg);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+  padding: 4px 0;
+  max-height: 96px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.send {
+  border: 0;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--cue-accent);
+  color: var(--cue-accent-fg);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.send:disabled { opacity: 0.4; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .typing i { animation: none; } }

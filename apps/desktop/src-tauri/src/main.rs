@@ -7,6 +7,7 @@
 //! (no Tauri IPC — see capabilities/default.json).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cue;
 mod notify;
 mod shell_log;
 mod sidecar;
@@ -24,7 +25,7 @@ use tauri_plugin_opener::OpenerExt;
 pub(crate) const MAIN: &str = "main";
 
 /// Port of the sidecar currently serving the page (changes on restart).
-struct CurrentPort(Mutex<Option<u16>>);
+pub(crate) struct CurrentPort(pub(crate) Mutex<Option<u16>>);
 
 fn page_url(port: u16) -> Url {
     Url::parse(&format!("http://127.0.0.1:{port}/")).expect("loopback url")
@@ -34,7 +35,7 @@ fn page_url(port: u16) -> Url {
 /// in this window, but only a page served by our own loopback server gets it.
 /// `chrome: 'overlay'` tells the shell page the content runs under the title
 /// bar (macOS), so it leaves room for the traffic lights.
-fn token_script(token: &str) -> String {
+pub(crate) fn token_script(token: &str) -> String {
     let chrome = if cfg!(target_os = "macos") { "overlay" } else { "native" };
     format!(
         "(function(){{ if (location.protocol === 'http:' && location.hostname === '127.0.0.1') {{ \
@@ -65,6 +66,7 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
             // Restarted sidecar (crash, or Open Folder…): same token, new port.
             let _ = w.navigate(page_url(port));
             let _ = w.set_zoom(*app2.state::<Zoom>().0.lock().unwrap());
+            open_cue(&app2);
             return;
         }
         let token = app2.state::<sidecar::Supervisor>().token().to_string();
@@ -108,7 +110,14 @@ fn on_sidecar_ready(app: &AppHandle, port: u16) {
             }
             Err(e) => eprintln!("[shell] could not open the window: {e}"),
         }
+        // After the main window, so the icon opens on the screen it is on.
+        open_cue(&app2);
     });
+}
+
+/// The work-brief icon (cue.rs), on the sidecar currently serving.
+fn open_cue(app: &AppHandle) {
+    cue::sync(app, false);
 }
 
 fn open_folder(app: &AppHandle) {
@@ -354,7 +363,14 @@ fn main() {
         }),
         Arc::new(move |json| {
             if let Some(app) = notify_slot.lock().unwrap().as_ref() {
-                notify::from_sidecar(app, json);
+                // Settings → Ask about my work arrives on the same channel (sidecar/main.ts).
+                if json.contains("\"kind\":\"cue-prefs\"") {
+                    let app2 = app.clone();
+                    let json = json.to_string();
+                    let _ = app.run_on_main_thread(move || cue::apply(&app2, &json));
+                } else {
+                    notify::from_sidecar(app, json);
+                }
             }
         }),
         // The chat's folder chip (vscode.openFolder in vscode-compat).
@@ -385,9 +401,12 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| show_main(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // The work-brief icon always starts in its corner, collapsed.
+        .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&[cue::CUE]).build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        // The work-brief hotkey (cue.rs), set in Settings → Ask about my work.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(CurrentPort(Mutex::new(None)))
         .manage(LayoutRefresh(AtomicBool::new(false)))
         .manage(updater::Updates::default())
@@ -395,6 +414,8 @@ fn main() {
         .setup(move |app| {
             app.manage(notify::Notifications::load(app.handle()));
             app.manage(Zoom(Mutex::new(load_zoom(app.handle()))));
+            app.manage(cue::load(app.handle()));
+            cue::start(app.handle());
             *handle_slot.lock().unwrap() = Some(app.handle().clone());
             let (menu, check_updates, notify_toggle) = build_menu(app.handle())?;
             app.manage(NotifyToggle(notify_toggle));
@@ -445,6 +466,11 @@ fn main() {
             if let tauri::WindowEvent::Focused(true) = event {
                 if window.label() == MAIN {
                     notify::clear_badge(window.app_handle());
+                }
+            }
+            if let tauri::WindowEvent::Moved(_) = event {
+                if window.label() == MAIN {
+                    cue::follow_main(window.app_handle());
                 }
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

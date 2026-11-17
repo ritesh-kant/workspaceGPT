@@ -43,6 +43,14 @@
         "title": "WorkspaceGPT: Ask"
       },
       {
+        "command": "workspacegpt.askAboutMyWork",
+        "title": "WorkspaceGPT: Ask About My Work"
+      },
+      {
+        "command": "workspacegpt.workBrief.refresh",
+        "title": "WorkspaceGPT: Refresh My Work Brief"
+      },
+      {
         "command": "workspacegpt.setupMcp",
         "title": "WorkspaceGPT: Connect MCP Server"
       },

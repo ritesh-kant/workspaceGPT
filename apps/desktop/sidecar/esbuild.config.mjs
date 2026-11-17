@@ -102,11 +102,14 @@ const relay = {
 /** The shell page's script: same browser target as the bridge. */
 const shell = { ...bridge, entryPoints: [path.join(root, 'bridge/shell.ts')], outfile: path.join(outBridge, 'shell.js') };
 
+/** The work-brief icon overlay's script (bridge/cue.html). */
+const cue = { ...bridge, entryPoints: [path.join(root, 'bridge/cue.ts')], outfile: path.join(outBridge, 'cue.js') };
+
 /** The markdown preview's diagram renderer; loaded on demand (bridge/mermaid-entry.ts). */
 const mermaidBundle = { ...bridge, entryPoints: [path.join(root, 'bridge/mermaid-entry.ts')], outfile: path.join(outBridge, 'mermaid.js') };
 
 /** Served as-is from dist/bridge. */
-const STATIC_BRIDGE_FILES = ['appearance.js', 'theme.css', 'skin.css', 'shell.css', 'shell.html'];
+const STATIC_BRIDGE_FILES = ['appearance.js', 'theme.css', 'skin.css', 'shell.css', 'shell.html', 'cue.html', 'cue.css', 'cue-ready.svg', 'cue-thinking.svg', 'cue-listening.svg'];
 /** xterm's stylesheet, from its package (the shell page's CSP allows only same-origin styles). */
 const XTERM_CSS = path.join(root, 'node_modules/@xterm/xterm/css/xterm.css');
 
@@ -139,12 +142,12 @@ async function run() {
   fs.copyFileSync(XTERM_CSS, path.join(outBridge, 'xterm.css'));
   linkExtensionDist();
   if (watch) {
-    const contexts = await Promise.all([esbuild.context(sidecar), esbuild.context(bridge), esbuild.context(shell), esbuild.context(mermaidBundle), esbuild.context(relay)]);
+    const contexts = await Promise.all([esbuild.context(sidecar), esbuild.context(bridge), esbuild.context(shell), esbuild.context(cue), esbuild.context(mermaidBundle), esbuild.context(relay)]);
     await Promise.all(contexts.map((c) => c.watch()));
     console.log('👀 desktop sidecar + bridge watching');
     return;
   }
-  await Promise.all([esbuild.build(sidecar), esbuild.build(bridge), esbuild.build(shell), esbuild.build(mermaidBundle), esbuild.build(relay)]);
+  await Promise.all([esbuild.build(sidecar), esbuild.build(bridge), esbuild.build(shell), esbuild.build(cue), esbuild.build(mermaidBundle), esbuild.build(relay)]);
   console.log('✅ desktop sidecar + bridge built → apps/desktop/dist');
 }
 

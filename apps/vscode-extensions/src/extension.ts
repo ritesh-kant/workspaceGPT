@@ -13,6 +13,7 @@ import { syncContextKeys } from './utils/syncContextKeys';
 import { recordRecentFolder } from './services/agent/workspaceControls';
 import { migrateModeSettings } from './utils/migrateModeSettings';
 import { UpdateChecker } from './utils/updateChecker';
+import { registerWorkBrief } from './services/workBrief/workBrief';
 import { startCopilotBridgeIfSelected } from './services/copilotBridge';
 import { RemoteSignInService, describeRemoteAuthError, webviewFieldsFromProfile } from './services/remote/remoteSignInService';
 
@@ -186,6 +187,8 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(askDisposable);
+  // Work brief: answers about the user's own last year of work (services/workBrief).
+  context.subscriptions.push(...registerWorkBrief(context, (event, props) => analyticsService.trackEvent(event, props)));
   context.subscriptions.push(newChatDisposable);
   context.subscriptions.push(settingsDisposable);
 

@@ -240,6 +240,7 @@ interface UiFrame {
       else if (frame.t === 'diff') showDiff(frame as DiffFrame);
       else if (frame.t === 'dictation') onDictation(frame.event);
       else if (frame.t === 'calls') onCalls(frame.event);
+      else if (frame.t === 'cue') onCue(frame.event);
       else if (frame.t === 'storage-status') {
         storageFailed = frame.failed === true;
         renderBanner();
@@ -306,6 +307,15 @@ interface UiFrame {
     window.dispatchEvent(new CustomEvent('wgpt-calls', { detail: event }));
   }
 
+  // Settings → Ask about my work (beta): the page sends its settings to the
+  // shell through __wgptBridge.cue.set and hears back (hotkey registered or
+  // why not) as 'wgpt-cue' events.
+  let cueStatus: unknown;
+  function onCue(event: unknown): void {
+    cueStatus = event;
+    window.dispatchEvent(new CustomEvent('wgpt-cue', { detail: event }));
+  }
+
   // What the shell calls into: its header buttons run the same title actions.
   w.__wgptBridge = {
     viewType,
@@ -315,6 +325,10 @@ interface UiFrame {
     dictation: {
       available: () => dictationAvailable,
       request: (op: 'start' | 'stop' | 'cancel', locale?: string) => send({ t: 'dictation', op, locale }),
+    },
+    cue: {
+      latest: () => cueStatus,
+      set: (prefs: { enabled: boolean; hideInShares: boolean; hotkey: string }) => send({ t: 'cue', prefs }),
     },
     calls: {
       latest: () => ({ capability: callsCapability, state: callsState, recording: callsRecording, model: callsModel }),

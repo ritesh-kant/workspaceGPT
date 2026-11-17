@@ -50,6 +50,7 @@ const callNotesMod = await import(path.join(outDir, 'callNotes.mjs'));
 const whisperModelMod = await import(path.join(outDir, 'whisperModel.mjs'));
 const callSummaryMod = await import(path.join(outDir, 'callNoteSummary.mjs'));
 const callCorrectMod = await import(path.join(outDir, 'callNoteCorrect.mjs'));
+const briefMod = await import(path.join(outDir, 'brief.mjs'));
 
 // ── tiny runner ──
 let pass = 0;
@@ -8070,6 +8071,115 @@ console.log('\ncommandChanges (files a turn changed through commands)');
     fs.rmSync(bare, { recursive: true, force: true });
   });
   fs.rmSync(repo, { recursive: true, force: true });
+}
+
+// ═══ work brief (services/workBrief/brief.ts) ═══
+console.log('\nwork brief (tiers, lookup, prompt, sources)');
+{
+  const { tierItems, lookupCards, buildAnswerPrompt, citedSources, answerParts, speakable, dedupe, renderCard, HOT_CHARS } = briefMod;
+  const NOW = Date.parse('2026-11-16T10:00:00Z');
+  const D = 86_400_000;
+  const item = (n, over = {}) => ({ tag: `ADO #${n}`, source: 'ado', kind: 'Bug', title: `Item ${n}`, roles: ['assigned'], updatedAt: NOW - n * D, ...over });
+  await t('recent items are full cards, old ones are lines', () => {
+    const r = tierItems([item(3), item(200)], NOW);
+    assert.deepEqual(r.hot.map((i) => i.tag), ['ADO #3']);
+    assert.deepEqual(r.warm.map((i) => i.tag), ['ADO #200']);
+  });
+  await t('an old item the source says is open is still a full card', () => {
+    const r = tierItems([item(200, { open: true })], NOW);
+    assert.equal(r.hot.length, 1);
+  });
+  await t('cards over the budget become lines, nothing is dropped silently', () => {
+    const big = Array.from({ length: 400 }, (_, i) => item(i % 20, { tag: `ADO #${1000 + i}`, text: 'x'.repeat(600) }));
+    const r = tierItems(big, NOW);
+    const chars = r.hot.reduce((n, i) => n + renderCard(i).length + 2, 0);
+    assert.ok(chars <= HOT_CHARS, String(chars));
+    assert.equal(r.hot.length + r.warm.length + r.unlisted.length, 400);
+    assert.ok(r.warm.length > 0);
+  });
+  await t('lookup finds an item by the id said in the question', () => {
+    const items = [item(100, { tag: 'JIRA PAY-77', title: 'Refund rounding' }), item(120, { title: 'Checkout latency' })];
+    const got = lookupCards('what happened with pay-77?', items, new Set());
+    assert.equal(got[0].tag, 'JIRA PAY-77');
+  });
+  await t('lookup ranks by words in the title and skips items already shown', () => {
+    const items = [item(100, { title: 'Checkout latency spike' }), item(101, { title: 'Login copy' }), item(102, { title: 'Checkout button colour' })];
+    const got = lookupCards('the checkout latency issue', items, new Set(['ADO #102']));
+    assert.deepEqual(got.map((i) => i.tag), ['ADO #100']);
+  });
+  await t('lookup returns nothing for an unrelated question', () => {
+    assert.deepEqual(lookupCards('weather tomorrow', [item(100, { title: 'Checkout latency' })], new Set()), []);
+  });
+  await t('prompt holds brief first, question last, and the looked-up card', () => {
+    const items = [item(2, { title: 'Recent thing' }), item(300, { title: 'Payment retry backoff', text: 'exponential backoff with jitter' })];
+    const { prompt, shown } = buildAnswerPrompt({ question: 'how did I do the payment retry?', items, user: 'Ritesh', now: NOW });
+    assert.ok(prompt.indexOf('RECENT AND OPEN') < prompt.indexOf('Question:'));
+    assert.ok(prompt.includes('DETAIL FOR THIS QUESTION'));
+    assert.ok(prompt.includes('exponential backoff'));
+    assert.ok(prompt.trimEnd().endsWith('Question: how did I do the payment retry?'));
+    assert.ok(shown.has('ADO #300'));
+  });
+  await t('only cited AND shown ids become source links', () => {
+    const items = [item(1, { url: 'https://x/1' }), item(2)];
+    const answer = 'I fixed it last week [ADO #1] and reviewed [ADO #2] [ADO #999].';
+    const got = citedSources(answer, items, new Set(['ADO #1']));
+    assert.deepEqual(got, [{ tag: 'ADO #1', label: '#1', title: 'Item 1', source: 'ado', url: 'https://x/1' }]);
+  });
+  await t('a shortened id links only when exactly one shown item ends with it', () => {
+    const items = [item(1, { tag: 'PR github acme/app#12610', url: 'https://g/1' }), item(2, { tag: 'PR github acme/web#77' }), item(3, { tag: 'PR github acme/api#77' })];
+    const shown = new Set(items.map((i) => i.tag));
+    assert.deepEqual(citedSources('Merged [PR #12610].', items, shown).map((s) => s.tag), ['PR github acme/app#12610']);
+    assert.deepEqual(citedSources('See [PR #77].', items, shown), []);
+    assert.deepEqual(citedSources('See [PR #610].', items, shown), []);
+  });
+  await t('the prompt gives explicit cut-off dates for recent windows', () => {
+    const { prompt } = buildAnswerPrompt({ question: 'x', items: [item(1)], now: NOW });
+    assert.ok(prompt.includes('last 14 days = on or after 2026-11-02'), prompt.slice(0, 900));
+  });
+  await t('answer parts number cited sources and drop made-up ids', () => {
+    const items = [item(1, { url: 'https://x/1' }), item(2)];
+    const shown = new Set(['ADO #1', 'ADO #2']);
+    const answer = 'Fixed it [ADO #1] [ADO #1], and see [ADO #999].';
+    const sources = citedSources(answer, items, shown);
+    assert.deepEqual(answerParts(answer, items, shown, sources), ['Fixed it', 0, ', and see', '.']);
+  });
+  await t('a follow-up carries earlier turns and looks up what the last question named', () => {
+    const items = [item(2, { title: 'Recent thing' }), item(300, { tag: 'JIRA PAY-77', title: 'Refund rounding', text: 'banker rounding' })];
+    const { prompt } = buildAnswerPrompt({ question: 'who reviewed it?', items, now: NOW,
+      history: [{ q: 'what happened with refund rounding?', a: 'I fixed it [JIRA PAY-77].' }] });
+    assert.ok(prompt.includes('EARLIER IN THIS CONVERSATION'));
+    assert.ok(prompt.includes('DETAIL FOR THIS QUESTION'));
+    assert.ok(prompt.indexOf('EARLIER IN THIS CONVERSATION') < prompt.indexOf('Question: who reviewed it?'));
+  });
+  await t('"my last call" looks up the newest call with its long transcript', () => {
+    const call = (n, text) => ({ tag: `CALL c${n}`, source: 'call', kind: 'Call', title: `Call ${n}`, roles: ['attended'], updatedAt: NOW - n * D, text });
+    const items = [call(1, 'Transcript: ' + 'we agreed to ship on Friday. '.repeat(60)), call(5, 'older call'), item(3)];
+    const { prompt } = buildAnswerPrompt({ question: 'summarize my last call', items, now: NOW });
+    const detail = prompt.slice(prompt.indexOf('DETAIL FOR THIS QUESTION'));
+    assert.ok(detail.startsWith('DETAIL FOR THIS QUESTION ===\n[CALL c1]'), detail.slice(0, 120));
+    assert.ok(detail.length > 1500, String(detail.length));
+  });
+  await t('spoken text drops the citation brackets', () => {
+    // "my last call": a call whose title is only "Call on …" must not outrank newer calls.
+    {
+      const c = (id, h, title) => ({ tag: `CALL ${id}`, source: 'call', kind: 'Call', title, roles: [], updatedAt: Date.UTC(2026, 10, 16, h), text: 'notes' });
+      const got = lookupCards('Summarize my last call', [c('old', 19, 'Call on Mon, Nov 16, 07:48 PM'), c('new', 20, 'Commerce Cloud training')], new Set());
+      assert.deepEqual(got.map((i) => i.tag), ['CALL new', 'CALL old']);
+    }
+    // Six calls on one day: only the time says which is the last one.
+    const at = (h) => Date.UTC(2026, 10, 16, h, 1);
+    const call = (h) => renderCard({ tag: `CALL c${h}`, source: 'call', kind: 'Call', title: 't', roles: [], updatedAt: at(h), createdAt: at(h) });
+    assert.match(call(14), /updated 2026-11-16 14:01 UTC/);
+    assert.notEqual(call(14), call(15).replace('c15', 'c14'));
+    assert.equal(speakable('It is in review [PR github a/b#7].'), 'It is in review.');
+    assert.equal(speakable('**It is in review.** [PR github a/b#7]\n- QA owns it now'), 'It is in review.\nQA owns it now');
+  });
+  await t('duplicates merge roles and keep the newest', () => {
+    const merged = dedupe([item(5, { roles: ['authored'] }), item(1, { tag: 'ADO #5', roles: ['reviewed'] })]);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0].updatedAt, NOW - D);
+    assert.deepEqual(merged[0].roles.sort(), ['authored', 'reviewed']);
+  });
 }
 
 // ── summary ──
