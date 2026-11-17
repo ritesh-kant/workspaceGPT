@@ -1,57 +1,48 @@
 """
-The work-brief overlay's icons (bridge/cue-*.svg), drawn from the app icon
-(src-tauri/icons/128x128.png): one shared drawing, three states.
+The work-brief overlay's icons (bridge/cue-*.svg): an "ask me" speech bubble
+on the app's blue, with the state drawn inside the bubble in the app's mint.
+Simple enough to read at 36px, where the full app icon (brain, brackets and
+bulb) blurred into one shape.
 
   python3 scripts/cue-icons.py bridge
 
-ready      the app icon
-thinking   the bulb lines become three rising dots, like "typing…" (building / answering)
-listening  the bulb lines become a bouncing voice meter (for a future listening mode)
+ready      a small spark that breathes slowly
+thinking   three dots that rise in turn, like "typing…" (building / answering)
+listening  a bouncing voice meter (for a future listening mode)
 Animations stop under prefers-reduced-motion.
 """
 import sys, os
 out = sys.argv[1]
 BLUE, GREEN, WHITE = '#1E69B8', '#21F0B3', '#F7F8F9'
-# Left half of the brain (the right half is its mirror image about x=64).
-HEMI = ('M62 30 C60 26 54 25 51 29 C45 27 40 31 40 37 C34 38 31 44 33 49 C29 53 29 60 33 63 '
-        'C31 68 34 74 39 75 C40 81 47 84 52 81 C55 85 60 85 62 82 Z')
-FOLDS = 'M51 47 C46 49 45 55 49 58 M43 64 C47 64 49 67 48 71 M52 76 C55 75 56 71 54 68'
-MIRROR = 'translate(128 0) scale(-1 1)'
 
-# Narrower and a little lower than the drawing above, to match the PNG.
-FIT = 'matrix(0.86 0 0 0.947 8.96 4.37)'
+# A rounded square (the page clips it with the same 30% radius) and the bubble.
+TILE = f'<rect x="1" y="1" width="38" height="38" rx="12" fill="{BLUE}"/>'
+BUBBLE = (f'<path d="M12 11h16a3.5 3.5 0 0 1 3.5 3.5v8a3.5 3.5 0 0 1-3.5 3.5h-9l-5 4v-4h-2'
+          f'a3.5 3.5 0 0 1-3.5-3.5v-8A3.5 3.5 0 0 1 12 11Z" fill="none" stroke="{WHITE}" stroke-width="2.2" stroke-linejoin="round"/>')
+REDUCED = '@media (prefers-reduced-motion: reduce){*{animation:none!important}}'
+ORIGIN = '{transform-box:fill-box;transform-origin:center}'
 
-def brain(stroke=GREEN, extra=''):
-    return (f'<g transform="{FIT}" fill="none" stroke="{stroke}" stroke-width="4.7" stroke-linecap="round" stroke-linejoin="round"{extra}>'
-            f'<path d="{HEMI}"/><path d="{FOLDS}"/>'
-            f'<g transform="{MIRROR}"><path d="{HEMI}"/><path d="{FOLDS}"/></g></g>')
+def svg(title, inside, style):
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="128" height="128" role="img" aria-label="{title}">'
+            f'<title>{title}</title><style>.a{ORIGIN}{style}{REDUCED}</style>{TILE}{BUBBLE}{inside}</svg>\n')
 
-BULB = (f'<g class="bulb" stroke="{GREEN}" stroke-width="5" stroke-linecap="round">'
-        '<path d="M53.5 92 H71"/><path d="M57.5 99.5 H67"/></g>')
-CHEVRONS = (f'<g fill="none" stroke="{WHITE}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">'
-            '<path d="M30 44.5 L21 62 L30 79.5"/><path d="M98 44.5 L107 62 L98 79.5"/></g>')
+# Ready: a four-point spark, breathing slowly enough not to pull the eye during a call.
+ready = svg('WorkspaceGPT: ready',
+    f'<path class="a s" d="M20 14.5Q20.6 18 24 18.5 20.6 19 20 22.5 19.4 19 16 18.5 19.4 18 20 14.5Z" fill="{GREEN}"/>',
+    '.s{animation:breathe 3.2s ease-in-out infinite}@keyframes breathe{50%{transform:scale(1.3);opacity:.7}}')
 
-def svg(title, body, style=''):
-    css = f'<style>{style}@media (prefers-reduced-motion: reduce){{*{{animation:none!important}}}}</style>' if style else ''
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="{title}">'
-            f'<title>{title}</title>{css}<circle cx="64" cy="64" r="64" fill="{BLUE}"/>{body}</svg>\n')
+# Thinking: three dots that rise in turn.
+dots = ''.join(f'<circle class="a d d{i}" cx="{x}" cy="18.5" r="1.8"/>' for i, x in enumerate([15.8, 20, 24.2]))
+thinking = svg('WorkspaceGPT: thinking', f'<g fill="{GREEN}">{dots}</g>',
+    '.d{animation:hop 1.1s ease-in-out infinite}.d1{animation-delay:.15s}.d2{animation-delay:.3s}'
+    '@keyframes hop{0%,60%,100%{transform:translateY(0);opacity:.55}30%{transform:translateY(-2.5px);opacity:1}}')
 
-# Ready: the brand icon as it is.
-ready = svg('WorkspaceGPT: ready', CHEVRONS + brain() + BULB)
-
-# Thinking: the bulb's two lines become three dots that rise in turn, like a chat "typing…"
-# (the same place the voice meter uses, so every state changes only the bulb).
-dots = ''.join(f'<circle class="d d{i}" cx="{x}" cy="96" r="4.2"/>' for i, x in enumerate([54, 64, 74]))
-thinking = svg('WorkspaceGPT: thinking', CHEVRONS + brain() + f'<g fill="{GREEN}">{dots}</g>',
-    '.d{animation:hop 1.2s ease-in-out infinite}.d1{animation-delay:.2s}.d2{animation-delay:.4s}'
-    '@keyframes hop{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-6px);opacity:1}}')
-
-# Listening: the bulb's two lines become five bars that bounce, like a voice meter.
-bars = ''.join(f'<path class="b b{i}" d="M{x} 92 V100"/>' for i, x in enumerate([52, 58, 64, 70, 76]))
-listening = svg('WorkspaceGPT: listening', CHEVRONS + brain() + f'<g stroke="{GREEN}" stroke-width="4.6" stroke-linecap="round">{bars}</g>',
-    '.b{transform-box:fill-box;transform-origin:center;animation:eq .9s ease-in-out infinite}'
-    '.b0{animation-delay:-.45s}.b1{animation-delay:-.15s}.b2{animation-delay:-.6s}.b3{animation-delay:-.3s}.b4{animation-delay:-.75s}'
-    '@keyframes eq{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1.45)}}')
+# Listening: four bars that bounce, like a voice meter.
+bars = ''.join(f'<rect class="a b b{i}" x="{x}" y="{y}" width="2" height="{h}" rx="1"/>'
+               for i, (x, y, h) in enumerate([(14.2, 16, 5), (17.6, 14.5, 8), (21, 15.5, 6), (24.4, 16.5, 4)]))
+listening = svg('WorkspaceGPT: listening', f'<g fill="{GREEN}">{bars}</g>',
+    '.b{animation:eq .8s ease-in-out infinite}.b1{animation-delay:.15s}.b2{animation-delay:.3s}.b3{animation-delay:.45s}'
+    '@keyframes eq{50%{transform:scaleY(.3)}}')
 
 for name, text in [('cue-ready.svg', ready), ('cue-thinking.svg', thinking), ('cue-listening.svg', listening)]:
     open(os.path.join(out, name), 'w').write(text)

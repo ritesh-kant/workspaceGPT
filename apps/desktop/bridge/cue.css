@@ -42,7 +42,7 @@ html, body {
   right: 4px;
   width: 36px;
   height: 36px;
-  border-radius: 50%;
+  border-radius: 11px;
   border: 0;
   background: transparent;
   display: grid;
@@ -51,8 +51,8 @@ html, body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
   padding: 0;
 }
-/* The app icon, already round. */
-.icon img { width: 36px; height: 36px; border-radius: 50%; display: block; pointer-events: none; }
+/* A rounded square (scripts/cue-icons.py), the same 30% radius as its tile. */
+.icon img { width: 36px; height: 36px; border-radius: 11px; display: block; pointer-events: none; }
 .icon:hover img { filter: brightness(1.12); }
 .icon:focus-visible { outline: 2px solid var(--cue-accent); outline-offset: 1px; }
 /* The icon itself shows ready / thinking (cue-*.svg); the dot only flags "no brief yet" or an error. */
