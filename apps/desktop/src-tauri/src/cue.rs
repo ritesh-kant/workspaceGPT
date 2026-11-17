@@ -45,6 +45,8 @@ pub struct CuePrefs(pub Mutex<Prefs>);
 
 /// Whether the window is the panel (true) or the icon.
 static EXPANDED: AtomicBool = AtomicBool::new(false);
+/// Where the icon was inside the open panel (logical points from its corner).
+static ICON_AT: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 /// Why the hotkey could not be registered, for Settings to show.
 static HOTKEY_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
@@ -101,16 +103,34 @@ fn resize(app: &AppHandle, expand: bool) {
         // negative x, so clamp to the icon's own screen, not to 0 (which is
         // the main screen's left edge and moved the panel there).
         let pos = pos.to_logical::<f64>(scale);
-        let right = pos.x + size.to_logical::<f64>(scale).width;
-        let left = w
+        let size = size.to_logical::<f64>(scale);
+        let right = pos.x + size.width;
+        // The screen's usable area (without menu bar and dock), in points.
+        let (left, top, bottom) = w
             .current_monitor()
             .ok()
             .flatten()
-            .map(|m| m.position().x as f64 / m.scale_factor())
-            .unwrap_or(f64::MIN);
-        let x = (right - lw).max(left);
+            .map(|m| {
+                let (a, s) = (m.work_area(), m.scale_factor());
+                let top = a.position.y as f64 / s;
+                (a.position.x as f64 / s, top, top + a.size.height as f64 / s)
+            })
+            .unwrap_or((f64::MIN, f64::MIN, f64::MAX));
+        let (x, y) = if expand {
+            // Near the bottom of the screen the panel opens upward, its bottom
+            // level with the icon's; near the left edge it opens rightward.
+            let x = (right - lw).max(left);
+            let y = if pos.y + lh > bottom { (pos.y + size.height - lh).max(top) } else { pos.y };
+            // Where the icon sits inside the panel, to fold back to that spot.
+            *ICON_AT.lock().unwrap() = Some((pos.x - x, pos.y - y));
+            (x, y)
+        } else if let Some((dx, dy)) = ICON_AT.lock().unwrap().take() {
+            (pos.x + dx, pos.y + dy)
+        } else {
+            (right - lw, pos.y)
+        };
         let _ = w.set_size(LogicalSize::new(lw, lh));
-        let _ = w.set_position(LogicalPosition::new(x, pos.y));
+        let _ = w.set_position(LogicalPosition::new(x, y));
     } else {
         let _ = w.set_size(LogicalSize::new(lw, lh));
     }
