@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
@@ -97,10 +97,20 @@ fn resize(app: &AppHandle, expand: bool) {
     let scale = w.scale_factor().unwrap_or(1.0);
     let (lw, lh) = if expand { (PANEL_W, PANEL_H) } else { (ICON, ICON) };
     if let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) {
-        let right = pos.x + size.width as i32;
-        let x = (right - (lw * scale).round() as i32).max(0);
+        // Logical points, as in place(): a screen left of the main one has
+        // negative x, so clamp to the icon's own screen, not to 0 (which is
+        // the main screen's left edge and moved the panel there).
+        let pos = pos.to_logical::<f64>(scale);
+        let right = pos.x + size.to_logical::<f64>(scale).width;
+        let left = w
+            .current_monitor()
+            .ok()
+            .flatten()
+            .map(|m| m.position().x as f64 / m.scale_factor())
+            .unwrap_or(f64::MIN);
+        let x = (right - lw).max(left);
         let _ = w.set_size(LogicalSize::new(lw, lh));
-        let _ = w.set_position(PhysicalPosition::new(x, pos.y));
+        let _ = w.set_position(LogicalPosition::new(x, pos.y));
     } else {
         let _ = w.set_size(LogicalSize::new(lw, lh));
     }
