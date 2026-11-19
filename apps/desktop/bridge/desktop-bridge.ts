@@ -152,6 +152,11 @@ interface UiFrame {
   // A socket can die without onclose ever firing (the webview suspended, the
   // network stack reset). Probe it; if nothing comes back, drop it and reconnect.
   let lastHeard = Date.now();
+  let pingSentAt = 0;
+  const ping = (): void => {
+    pingSentAt = Date.now();
+    socket?.send('{"t":"ping"}');
+  };
   let downSince: number | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const revive = (why: string): void => {
@@ -171,6 +176,8 @@ interface UiFrame {
     }
     disconnectBanner ??= setTimeout(() => banner('Disconnected from WorkspaceGPT — reconnecting…', 'warning'), BANNER_GRACE_MS);
     console.warn(`[wgpt-bridge] reviving socket: ${why}`);
+    // Queued until the new socket opens, so the sidecar log says why a page dropped.
+    send({ t: 'page-log', level: 'info', text: `[bridge] ${viewType} reconnected its socket: ${why}` });
     connect();
   };
   setInterval(() => {
@@ -190,14 +197,17 @@ interface UiFrame {
       }
     }
     if (open && socket && socket.readyState === WebSocket.OPEN) {
-      if (Date.now() - lastHeard > 35000) revive('no reply to ping for 35s');
-      else socket.send('{"t":"ping"}');
+      // Judge only a ping that went unanswered. Silence since the last tick is
+      // not death: WebKit throttles timers in a background window, so a tick
+      // can land minutes late on a healthy socket that simply had nothing to say.
+      if (pingSentAt > lastHeard && Date.now() - pingSentAt > 20000) revive('no reply to ping for 20s');
+      else if (pingSentAt <= lastHeard) ping();
     }
   }, 10000);
   const wake = () => {
     if (document.visibilityState === 'hidden') return;
     if (!open || !socket || socket.readyState !== WebSocket.OPEN) revive('page woke with no live socket');
-    else socket.send('{"t":"ping"}'); // the watchdog above judges the answer
+    else if (pingSentAt <= lastHeard) ping(); // the watchdog above judges the answer
   };
   document.addEventListener('visibilitychange', wake);
   window.addEventListener('online', wake);
