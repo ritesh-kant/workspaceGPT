@@ -36,6 +36,38 @@ async function getRequestContext(context: vscode.ExtensionContext): Promise<Jira
   return { authHeader, apiBase: jiraApiBase(site.id), siteUrl: site.url };
 }
 
+/** Project key prefix → the site that answered for it, so a lookup probes other sites at most once per project. */
+const siteByProject = new Map<string, { apiBase: string; siteUrl: string }>();
+
+/**
+ * The request context for one issue key. The connection stores a single site
+ * (the first accessible one at sign-in), but the same OAuth token reaches
+ * every site the user granted — and an org's projects can live on different
+ * sites. When the stored site doesn't know the key, try the others.
+ */
+async function getIssueContext(context: vscode.ExtensionContext, key: string): Promise<JiraRequestContext> {
+  const ctx = await getRequestContext(context);
+  const project = `${ctx.apiBase} ${key.split('-')[0]}`;
+  const known = siteByProject.get(project);
+  if (known) return { ...ctx, ...known };
+  const exists = async (apiBase: string) =>
+    (await fetch(`${apiBase}/rest/api/3/issue/${encodeURIComponent(key)}?fields=key`, { headers: { Authorization: ctx.authHeader, Accept: 'application/json' } })).ok;
+  if (await exists(ctx.apiBase).catch(() => false)) {
+    siteByProject.set(project, { apiBase: ctx.apiBase, siteUrl: ctx.siteUrl });
+    return ctx;
+  }
+  const sites = await new JiraAuthService(context).getAccessibleResources(ctx.authHeader.replace(/^Bearer /, '')).catch(() => []);
+  for (const site of sites) {
+    const apiBase = jiraApiBase(site.id);
+    if (apiBase === ctx.apiBase) continue;
+    if (await exists(apiBase).catch(() => false)) {
+      siteByProject.set(project, { apiBase, siteUrl: site.url });
+      return { ...ctx, apiBase, siteUrl: site.url };
+    }
+  }
+  return ctx; // nowhere else either — the stored site's own 404 names the problem
+}
+
 async function jiraGet(ctx: JiraRequestContext, url: string, what: string): Promise<any> {
   const response = await fetch(url, { headers: { Authorization: ctx.authHeader, Accept: 'application/json' } });
   if (!response.ok) {
@@ -144,7 +176,7 @@ export async function fetchJiraAttachment(
   args: { id: string | number; name: string }
 ): Promise<TicketAttachmentContent> {
   const key = parseIssueKey(String(args?.id ?? ''));
-  const ctx = await getRequestContext(context);
+  const ctx = await getIssueContext(context, key);
   const item = await jiraGet(ctx, `${ctx.apiBase}/rest/api/3/issue/${encodeURIComponent(key)}?fields=attachment`, key);
   const want = String(args?.name ?? '').trim().toLowerCase();
   const att = (item.fields?.attachment ?? []).find((a: any) => String(a?.filename ?? '').toLowerCase() === want);
@@ -191,7 +223,7 @@ export async function fetchJiraIssue(
   args: { id: string | number; includeComments?: boolean }
 ): Promise<TicketDetail> {
   const key = parseIssueKey(String(args?.id ?? ''));
-  const ctx = await getRequestContext(context);
+  const ctx = await getIssueContext(context, key);
 
   const item = await jiraGet(ctx, `${ctx.apiBase}/rest/api/3/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS}`, key);
   const f = item.fields ?? {};
@@ -234,7 +266,7 @@ export async function fetchJiraIssue(
 
 /** Post a comment on an issue (the agent's run report, after "Create PR"). `markdown` is rendered to ADF, mirroring shipHelpers.ts's reportToHtml for ADO. */
 export async function addJiraComment(context: vscode.ExtensionContext, key: string, markdown: string): Promise<void> {
-  const ctx = await getRequestContext(context);
+  const ctx = await getIssueContext(context, key);
   const response = await fetch(`${ctx.apiBase}/rest/api/3/issue/${encodeURIComponent(key)}/comment`, {
     method: 'POST',
     headers: { Authorization: ctx.authHeader, Accept: 'application/json', 'Content-Type': 'application/json' },
