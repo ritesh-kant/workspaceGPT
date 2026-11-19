@@ -467,7 +467,7 @@ async function main(): Promise<void> {
   createCallDetection(surface, callNotesDir(paths.storageDir), path.join(paths.root, 'models'), (title, body) => {
     if (args.parentStdio) process.stdout.write(`${NOTIFY_PREFIX}${JSON.stringify({ kind: 'call', title, body, visible: true })}\n`);
     else console.log(`[desktop] notify (call): ${title} — ${body}`);
-  });
+  }, (listening) => cueHost.setListening(listening));
 
   // Settings → Ask about my work (beta) → the shell (src-tauri/src/cue.rs), which
   // shows or hides the icon, sets screen-share hiding and registers the hotkey,

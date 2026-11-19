@@ -154,7 +154,9 @@ export function createCallDetection(
   surface: ViewSurface,
   notesDir: string,
   modelDir: string,
-  notify: (title: string, body: string) => void
+  notify: (title: string, body: string) => void,
+  /** A call is being recorded (true) or not; the work-brief icon shows it. */
+  onListening?: (listening: boolean) => void
 ): void {
   const callsBin = callsHelperPath();
   const notesBin = notesHelperPath();
@@ -201,6 +203,7 @@ export function createCallDetection(
           notesDir,
           (event) => {
             if (event.type === 'recording') recordingState = event.state === 'idle' ? undefined : event;
+            if (event.type === 'recording') onListening?.(event.state === 'starting' || event.state === 'recording');
             send(event);
             // A call that started while the last one's transcript was still finishing.
             if (event.type === 'recording' && event.state === 'idle') autoRecord();

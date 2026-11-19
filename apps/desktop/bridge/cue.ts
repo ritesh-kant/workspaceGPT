@@ -38,17 +38,19 @@ let ws: WebSocket | undefined;
 let seq = 0;
 let pending: { id: number; q: string; el: HTMLDivElement } | undefined;
 let lastStatus: Status | undefined;
+/** Call notes is recording a call (host/cueHost.ts). */
+let listening = false;
 /** Answered turns of this conversation, sent with each follow-up. */
 let turns: Turn[] = [];
 
 /**
  * The icon shows what the brief is doing: thinking while it builds or
- * answers, ready otherwise (bridge/cue-*.svg, made by scripts/cue-icons.py).
- * cue-listening.svg waits for a listening mode; this one is ask-only.
+ * answers, listening while call notes records a call, ready otherwise
+ * (bridge/cue-*.svg, made by scripts/cue-icons.py).
  */
 function updateIcon() {
   const busy = pending !== undefined || lastStatus?.state === 'building';
-  const src = `/__desktop/cue-${busy ? 'thinking' : 'ready'}.svg`;
+  const src = `/__desktop/cue-${busy ? 'thinking' : listening ? 'listening' : 'ready'}.svg`;
   if (!iconImg.src.endsWith(src)) iconImg.src = src;
 }
 
@@ -290,7 +292,10 @@ function connect() {
       return;
     }
     if (msg.t === 'status') renderStatus(msg.status);
-    else if (msg.t === 'answer' && msg.id === pending?.id) finish(msg.result);
+    else if (msg.t === 'listening') {
+      listening = !!msg.on;
+      updateIcon();
+    } else if (msg.t === 'answer' && msg.id === pending?.id) finish(msg.result);
     else if (msg.t === 'error' && msg.id !== undefined && msg.id === pending?.id) {
       finish({ ok: false, answer: msg.message, spoken: '', sources: [], ms: 0 });
     }

@@ -6,6 +6,7 @@
  *
  *   page → host  {t:'status'} | {t:'ask', id, q, history?: {q, a}[]} | {t:'refresh'} | {t:'open', url}
  *   host → page  {t:'status', status} | {t:'answer', id, result} | {t:'error', id?, message}
+ *                | {t:'listening', on}   (call notes is recording a call)
  */
 import type { WebSocket } from 'ws';
 
@@ -16,11 +17,21 @@ export interface CueHostDeps {
 }
 
 export function createCueHost(deps: CueHostDeps) {
+  const sockets = new Set<WebSocket>();
+  let listening = false;
   return {
+    /** Call notes started or stopped recording a call. */
+    setListening(on: boolean) {
+      if (on === listening) return;
+      listening = on;
+      for (const ws of sockets) if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ t: 'listening', on }));
+    },
     attach(ws: WebSocket) {
       const send = (msg: unknown) => {
         if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
       };
+      sockets.add(ws);
+      ws.on('close', () => sockets.delete(ws));
       const status = async () => {
         try {
           send({ t: 'status', status: await deps.executeCommand('workspacegpt.workBrief.status') });
@@ -65,6 +76,7 @@ export function createCueHost(deps: CueHostDeps) {
       });
       deps.log?.('[desktop] work brief overlay connected');
       void status();
+      send({ t: 'listening', on: listening });
     },
   };
 }
