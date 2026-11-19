@@ -212,6 +212,19 @@ export function startServer(opts: ServerOptions): Promise<DesktopServer> {
   });
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
+  /**
+   * A protocol error (a bad frame from a page, e.g. invalid UTF-8) is emitted
+   * as 'error' on the socket. With no listener it surfaced as an uncaught
+   * exception that never said which page sent it. Listen on every socket: log
+   * which one, and close only that one (the page reconnects).
+   */
+  const guard = (ws: WebSocket, label: string): WebSocket => {
+    ws.on('error', (err) => {
+      opts.log?.(`[desktop] ${label} socket error: ${err.message}`);
+      ws.terminate();
+    });
+    return ws;
+  };
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const origin = req.headers.origin ?? '';
@@ -226,12 +239,12 @@ export function startServer(opts: ServerOptions): Promise<DesktopServer> {
     if (!tokenMatches(url.searchParams.get('t'), opts.token)) return reject(401, 'Unauthorized');
     if (url.pathname === '/__desktop/cue') {
       if (!opts.onCueSocket) return reject(404, 'Not Found');
-      wss.handleUpgrade(req, socket, head, (ws) => opts.onCueSocket!(ws));
+      wss.handleUpgrade(req, socket, head, (ws) => opts.onCueSocket!(guard(ws, 'work brief')));
       return;
     }
     if (url.pathname === '/__desktop/term') {
       if (!opts.onTerminalSocket) return reject(404, 'Not Found');
-      wss.handleUpgrade(req, socket, head, (ws) => opts.onTerminalSocket!(ws));
+      wss.handleUpgrade(req, socket, head, (ws) => opts.onTerminalSocket!(guard(ws, 'terminal')));
       return;
     }
     const viewType = url.searchParams.get('view') ?? '';
@@ -239,7 +252,7 @@ export function startServer(opts: ServerOptions): Promise<DesktopServer> {
     if (!surface) return reject(404, 'Not Found');
     wss.handleUpgrade(req, socket, head, (ws) => {
       opts.log?.(`[desktop] ${viewType} connected (${origin})`);
-      surface.attach(ws);
+      surface.attach(guard(ws, viewType));
     });
   });
 
