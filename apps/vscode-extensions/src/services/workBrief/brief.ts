@@ -194,6 +194,9 @@ export interface BuiltPrompt {
   prompt: string;
   /** Every tag shown to the model; only these become source links. */
   shown: Set<string>;
+  /** `prompt` in two halves: the brief, the same for every question until it is rebuilt (cacheable), then this question's part. */
+  head: string;
+  tail: string;
 }
 
 /**
@@ -234,6 +237,7 @@ export function buildAnswerPrompt(input: PromptInput): BuiltPrompt {
     `=== WORK BRIEF: EARLIER THIS YEAR (${warm.length}${unlisted.length ? `, ${unlisted.length} older not listed` : ''}) ===`,
     ...warm.map(renderLine),
   ];
+  const headLength = parts.length;
   if (extra.length) {
     parts.push('', '=== DETAIL FOR THIS QUESTION ===', extra.map((i) => renderCard(i, DETAIL_TEXT_CHARS)).join('\n\n'));
   }
@@ -241,7 +245,7 @@ export function buildAnswerPrompt(input: PromptInput): BuiltPrompt {
     parts.push('', '=== EARLIER IN THIS CONVERSATION ===', ...history.map((t) => `Q: ${oneLine(t.q)}\nA: ${oneLine(t.a)}`));
   }
   parts.push('', `Question: ${input.question.trim()}`);
-  return { prompt: parts.join('\n'), shown };
+  return { prompt: parts.join('\n'), shown, head: parts.slice(0, headLength).join('\n'), tail: parts.slice(headLength).join('\n') };
 }
 
 export interface AnswerSource {

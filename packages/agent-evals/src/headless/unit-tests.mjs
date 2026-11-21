@@ -8136,6 +8136,14 @@ console.log('\nwork brief (tiers, lookup, prompt, sources)');
     const { prompt } = buildAnswerPrompt({ question: 'x', items: [item(1)], now: NOW });
     assert.ok(prompt.includes('last 14 days = on or after 2026-11-02'), prompt.slice(0, 900));
   });
+  await t('the brief half of the prompt is the same for every question (cacheable)', () => {
+    const items = [item(1), item(2)];
+    const a = buildAnswerPrompt({ question: 'what about ADO 1?', items, now: NOW });
+    const b = buildAnswerPrompt({ question: 'who reviewed it?', items, now: NOW, history: [{ q: 'x', a: 'y' }] });
+    assert.equal(a.head, b.head);
+    assert.equal(`${a.head}\n${a.tail}`, a.prompt);
+    assert.ok(!a.head.includes('Question:') && a.tail.endsWith('Question: what about ADO 1?'));
+  });
   await t('answer parts number cited sources and drop made-up ids', () => {
     const items = [item(1, { url: 'https://x/1' }), item(2)];
     const shown = new Set(['ADO #1', 'ADO #2']);
