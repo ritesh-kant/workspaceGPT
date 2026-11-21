@@ -16,9 +16,56 @@
 import * as vscode from 'vscode';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
-import { completer } from '../callNoteActions';
+import { COPILOT_PROVIDER } from '../../../constants';
+import { getLlmSettings } from '../../utils/getLlmSettings';
+import { withKeyFailover } from '../../utils/apiKeyFailover';
+import { normalizeModelId } from '../../utils/normalizeModelId';
+import { getProviderDefaultHeaders } from '../../utils/anthropicHeaders';
+import { markUserTurn } from '../copilotDirect';
 import { answerParts, buildAnswerPrompt, citedSources, dedupe, speakable, type AnswerSource, type WorkItem } from './brief';
 import { callWork, fetchMyWork, WINDOW_DAYS } from './fetchMyWork';
+
+/** The answer so far, for a caller that shows it as it arrives. */
+export type OnPartial = (text: string) => void;
+
+const stripThinking = (text: string) => text.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim();
+
+/**
+ * One answer, streamed. The brief goes as its own message ahead of the
+ * question, so a provider's prompt cache reuses it for the next question
+ * instead of re-reading ~25k tokens: Copilot caches Claude only at a marked
+ * message (copilotDirect.ts markCacheBreakpoints), OpenAI-style providers
+ * cache the shared prefix on their own.
+ */
+async function streamAnswer(context: vscode.ExtensionContext, head: string, tail: string, onPartial?: OnPartial): Promise<string> {
+  const s = getLlmSettings(context);
+  if (!s.provider || !s.baseUrl || !s.model) throw new Error('Select a chat model (Settings → Model).');
+  const copilot = s.provider === COPILOT_PROVIDER;
+  if (copilot) markUserTurn();
+  const OpenAI = (await import('openai')).default;
+  return withKeyFailover(s.apiKeys.length ? s.apiKeys : ['local'], async (apiKey) => {
+    const client = new OpenAI({ apiKey: apiKey || 'local', baseURL: s.baseUrl, maxRetries: 2, defaultHeaders: getProviderDefaultHeaders(s.baseUrl, apiKey) });
+    const stream = await client.chat.completions.create({
+      model: normalizeModelId(s.model!),
+      messages: [
+        { role: 'user', content: head, ...(copilot ? { copilot_cache_control: { type: 'ephemeral' } } : {}) } as any,
+        { role: 'user', content: tail },
+      ],
+      temperature: 0.2,
+      // Room for a thinking model's reasoning as well as the answer.
+      max_tokens: 4096,
+      stream: true,
+    });
+    let text = '';
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (!delta) continue;
+      text += delta;
+      onPartial?.(stripThinking(text));
+    }
+    return text;
+  });
+}
 
 /** A brief older than this is rebuilt in the background on the next question. */
 const STALE_MS = 6 * 3_600_000;
@@ -113,7 +160,7 @@ export class WorkBrief {
     };
   }
 
-  async ask(question: string, history: { q: string; a: string }[] = []): Promise<AskResult> {
+  async ask(question: string, history: { q: string; a: string }[] = [], onPartial?: OnPartial): Promise<AskResult> {
     const started = Date.now();
     const q = String(question ?? '').trim().slice(0, 2000);
     if (!q) return { ok: false, answer: 'Ask a question about your work.', spoken: '', sources: [], ms: 0 };
@@ -134,10 +181,10 @@ export class WorkBrief {
     const turns = (Array.isArray(history) ? history : [])
       .filter((t) => typeof t?.q === 'string' && typeof t?.a === 'string')
       .map((t) => ({ q: t.q.slice(0, 2000), a: t.a.slice(0, 4000) }));
-    const { prompt, shown } = buildAnswerPrompt({ question: q, items, user: brief.user, builtAt: brief.builtAt, notes: brief.notes, history: turns });
+    const { head, tail, shown } = buildAnswerPrompt({ question: q, items, user: brief.user, builtAt: brief.builtAt, notes: brief.notes, history: turns });
     let answer: string;
     try {
-      answer = (await completer(this.context)(prompt)).replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      answer = stripThinking(await streamAnswer(this.context, head, tail, onPartial));
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);
       return { ok: false, answer: /Select a chat model/.test(why) ? 'Select a chat model in Settings → Model to ask about your work.' : `The model did not answer: ${why}`, spoken: '', sources: [], builtAt: brief.builtAt, ms: Date.now() - started };
@@ -150,13 +197,13 @@ export class WorkBrief {
 /** Registers the brief's commands; returns the disposables. */
 export function registerWorkBrief(context: vscode.ExtensionContext, track?: (event: string, props: Record<string, unknown>) => void): vscode.Disposable[] {
   const brief = new WorkBrief(context);
-  const ask = async (question: string, history?: { q: string; a: string }[]) => {
-    const result = await brief.ask(question, history);
+  const ask = async (question: string, history?: { q: string; a: string }[], onPartial?: OnPartial) => {
+    const result = await brief.ask(question, history, typeof onPartial === 'function' ? onPartial : undefined);
     track?.('work_brief_asked', { ok: result.ok, ms: result.ms, sources: result.sources.length, followUp: !!history?.length });
     return result;
   };
   return [
-    vscode.commands.registerCommand('workspacegpt.workBrief.ask', (question: string, history?: { q: string; a: string }[]) => ask(question, history)),
+    vscode.commands.registerCommand('workspacegpt.workBrief.ask', (question: string, history?: { q: string; a: string }[], onPartial?: OnPartial) => ask(question, history, onPartial)),
     vscode.commands.registerCommand('workspacegpt.workBrief.status', () => brief.status()),
     vscode.commands.registerCommand('workspacegpt.workBrief.refresh', async () => {
       const started = Date.now();

@@ -18,7 +18,7 @@ type Status = {
   error?: string;
 };
 type Source = { tag: string; label?: string; title: string; source?: string; url?: string };
-type Result = { ok: boolean; answer: string; spoken: string; sources: Source[]; parts?: Array<string | number>; ms: number };
+type Result = { ok: boolean; answer: string; spoken: string; sources: Source[]; parts?: Array<string | number>; ms: number; streaming?: boolean };
 type Turn = { q: string; a: string };
 
 const w = window as unknown as { __WGPT_DESKTOP__?: { token: string } };
@@ -215,7 +215,7 @@ function fillAnswer(el: HTMLDivElement, r: Result) {
     });
     el.append(srcs);
   }
-  if (r.ok) {
+  if (r.ok && !r.streaming) {
     const tools = document.createElement('div');
     tools.className = 'tools';
     const copy = document.createElement('button');
@@ -295,6 +295,10 @@ function connect() {
     else if (msg.t === 'listening') {
       listening = !!msg.on;
       updateIcon();
+    } else if (msg.t === 'partial' && msg.id === pending?.id && typeof msg.text === 'string') {
+      // The answer as it arrives; citations become chips only in the final 'answer'.
+      const text = msg.text.replace(/\s*\[[^\]\n]*(\]|$)/g, '');
+      if (text.trim() && pending) fillAnswer(pending.el, { ok: true, answer: text, spoken: '', sources: [], ms: 0, streaming: true });
     } else if (msg.t === 'answer' && msg.id === pending?.id) finish(msg.result);
     else if (msg.t === 'error' && msg.id !== undefined && msg.id === pending?.id) {
       finish({ ok: false, answer: msg.message, spoken: '', sources: [], ms: 0 });

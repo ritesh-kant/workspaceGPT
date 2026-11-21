@@ -7,6 +7,7 @@
  *   page → host  {t:'status'} | {t:'ask', id, q, history?: {q, a}[]} | {t:'refresh'} | {t:'open', url}
  *   host → page  {t:'status', status} | {t:'answer', id, result} | {t:'error', id?, message}
  *                | {t:'listening', on}   (call notes is recording a call)
+ *                | {t:'partial', id, text}   (the answer so far, before its 'answer')
  */
 import type { WebSocket } from 'ws';
 
@@ -61,7 +62,8 @@ export function createCueHost(deps: CueHostDeps) {
             const history = Array.isArray(msg.history)
               ? msg.history.slice(-6).filter((t: any) => typeof t?.q === 'string' && typeof t?.a === 'string')
               : [];
-            const pending = deps.executeCommand('workspacegpt.workBrief.ask', msg.q.slice(0, 2000), history);
+            const partial = (text: string) => send({ t: 'partial', id, text });
+            const pending = deps.executeCommand('workspacegpt.workBrief.ask', msg.q.slice(0, 2000), history, partial);
             // A first question builds the brief; let the page say so.
             void status();
             send({ t: 'answer', id, result: await pending });
