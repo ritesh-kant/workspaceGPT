@@ -116,6 +116,11 @@ export class ChatMessageHandler {
         this.analyticsService.trackEvent('agent_write_decision', { approved: !!data.approved, scope: data.scope });
         this.chatService?.resolveAgentWrite(data.id, !!data.approved, data.feedback, data.scope);
         return true;
+      case MESSAGE_TYPES.SET_RUN_PERMISSION:
+        if (typeof data.sessionId === 'string' && isPermission(data.permission)) {
+          this.chatService?.setRunPermission(data.sessionId, data.permission);
+        }
+        return true;
       case MESSAGE_TYPES.RENDER_DIAGRAMS_RESPONSE:
         this.chatService?.resolveDiagramRender(data.id, data.images);
         return true;

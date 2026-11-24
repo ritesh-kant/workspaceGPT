@@ -482,6 +482,10 @@ const App: React.FC = () => {
   const setChatModePersisted = (next: ChatMode) => {
     setChatMode(next);
     if (next !== 'plan') setLastPermission(next);
+    // A running turn keeps the level it was sent with unless told; Full also releases its waiting cards.
+    if (next !== 'plan' && currentSessionId && assistantMode !== 'chat') {
+      vscode.postMessage({ type: MESSAGE_TYPES.SET_RUN_PERMISSION, sessionId: currentSessionId, permission: next });
+    }
     try {
       // Full is session-only: a reload comes back as Auto.
       localStorage.setItem('wgpt.chatMode', next === 'full' ? 'auto' : next);

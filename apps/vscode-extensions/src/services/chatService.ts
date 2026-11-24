@@ -444,6 +444,8 @@ interface SessionRun {
    * this one. Set per sendMessage call, never sticky.
    */
   permission: Permission;
+  /** This turn was forced down to Manual (local Ollama model); a dial change must not lift it. */
+  permissionDegraded?: boolean;
   /**
    * Plan mode for the CURRENT turn (the composer dial). The worker is not
    * offered write tools; gatedWrite refuses any that arrive anyway. Set per
@@ -1192,6 +1194,7 @@ export class ChatService {
       // review-gated flow (with a visible notice) rather than refusing the run.
       let effPermission = resolvePermission(permission, autonomous);
       autonomous = effPermission !== 'manual';
+      run.permissionDegraded = false;
       if (autonomous && mode !== 'remote' && (provider ?? '').toLowerCase() === 'ollama') {
         this.post(run, {
           type: MESSAGE_TYPES.AGENT_STEP,
@@ -1203,6 +1206,7 @@ export class ChatService {
         });
         autonomous = false;
         effPermission = 'manual';
+        run.permissionDegraded = true;
       }
       run.autonomous = autonomous;
       run.permission = effPermission;
@@ -2989,6 +2993,21 @@ export class ChatService {
     if (!done) return;
     this.pendingDiagramRenders.delete(id);
     done(Array.isArray(images) ? images : []);
+  }
+
+  /**
+   * Webview SET_RUN_PERMISSION handler. A send carries the dial as it was then,
+   * so without this, switching to Full mid-turn left the turn on its old level
+   * and its approval cards kept waiting. The new level governs the rest of the
+   * turn; switching to Full also approves the cards already waiting (questions
+   * still need an answer). Plan mode is per turn and is not changed here.
+   */
+  public setRunPermission(sessionId: string, permission: Permission): void {
+    const run = this.runs.get(sessionId);
+    if (!run || run.planMode || run.permissionDegraded) return;
+    run.permission = permission;
+    run.autonomous = permission !== 'manual';
+    if (permission === 'full') run.writeGate.approveAll(['question']);
   }
 
   /** Webview AGENT_WRITE_DECISION handler — resolves the parked write gate. */

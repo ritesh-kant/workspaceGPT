@@ -68,6 +68,16 @@ export class AgentWriteGate {
     return this.pending.size > 0;
   }
 
+  /** Approve everything outstanding except `skipKinds` (questions need an answer, not an approval). */
+  approveAll(skipKinds: readonly string[]): void {
+    for (const [id, entry] of this.pending) {
+      if (skipKinds.includes(entry.write.kind)) continue;
+      if (entry.timer) clearTimeout(entry.timer);
+      this.pending.delete(id);
+      entry.resolve({ approved: true });
+    }
+  }
+
   /** Reject everything outstanding — used when the run is stopped or the chat is reset. */
   rejectAll(reason: string): void {
     for (const [id, entry] of this.pending) {

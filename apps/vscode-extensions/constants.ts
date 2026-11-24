@@ -95,6 +95,9 @@ export const MESSAGE_TYPES = {
   // 'stopped' when the decision arrived after its gate died with the run.
   // The card only says "Applied" on this, never on the click itself.
   AGENT_WRITE_OUTCOME: 'agent-write-outcome',
+  // Webview → host: the composer dial changed. Applies to that session's
+  // running turn too (a send only carries the dial as it was at send time).
+  SET_RUN_PERMISSION: 'set-run-permission',
   // Webview → host: open a reviewed file (edit/create/delete) in the editor.
   OPEN_FILE_IN_EDITOR: 'open-file-in-editor',
   // A fenced shell block's ▶ Run shows its output under the block, in the chat.
