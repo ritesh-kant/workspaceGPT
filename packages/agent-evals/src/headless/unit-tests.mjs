@@ -37,7 +37,7 @@ const resumeStore = await import(path.join(outDir, 'resumeStore.mjs'));
 const continuation = await import(path.join(outDir, 'continuationIntent.mjs'));
 const { startMockModel } = await import('./mock-model.mjs');
 const { withKeyFailover, isRateLimitError, isTransientServerError, isAllowanceExhaustedError, TRANSIENT_RETRY_DELAYS_MS } = await import(path.join(outDir, 'apiKeyFailover.mjs'));
-const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, INCOMPLETE_ANSWER_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer, isUnbackedCompletionClaim, claimsFileChanges, REPORT_CLAIMS_DONE_RE, ROOT_CAUSE_NARRATION_RE, isUnfinishedWriteRun, writeWasExpected: answerGatesWriteWasExpected, commitNudgeTriggers, hasWriteIntent, resolveHarnessProfile, phraseGatesEnabled, SMALL_MODEL_HINT_RE } = await import(path.join(outDir, 'answerGates.mjs'));
+const { PREMATURE_AMBIGUITY_RE, PERMISSION_SEEKING_RE, CHANGE_PLAN_RE, INCOMPLETE_ANSWER_RE, TICKET_TERMINAL_RE, REPORT_SHAPED_RE, REPORT_STATUS_HEADING_RE, stripReportPreamble, IMPLEMENT_MANDATE_RE, CLAIMS_CHANGES_RE, MISSING_TOOL_CLAIM_RE, extractAnswerFilePaths, isStallShapedAnswer, isUnbackedCompletionClaim, claimsFileChanges, withoutQuotes, REPORT_CLAIMS_DONE_RE, ROOT_CAUSE_NARRATION_RE, isUnfinishedWriteRun, writeWasExpected: answerGatesWriteWasExpected, commitNudgeTriggers, hasWriteIntent, resolveHarnessProfile, phraseGatesEnabled, SMALL_MODEL_HINT_RE } = await import(path.join(outDir, 'answerGates.mjs'));
 const filePathDisplay = await import(path.join(outDir, 'filePathDisplay.mjs'));
 const ticketRefs = await import(path.join(outDir, 'ticketRefs.mjs'));
 const { formatModelHistory, MODEL_HISTORY_MAX_CHARS } = await import(path.join(outDir, 'chatHistory.mjs'));
@@ -1725,6 +1725,18 @@ The ticket's expected behaviour is unambiguous. The code path causing the miss i
       'The root cause is the isVariantSelected ternary at ProductTile.tsx:165. The strike-through lives in mapPrice.';
     assert.ok(!CLAIMS_CHANGES_RE.test(blocked), 'false positive on genuine blocker');
     assert.ok(!CLAIMS_CHANGES_RE.test(investigation), 'false positive on investigation report');
+  });
+  // #1305014: the answer QUOTED the ticket's closing comment and was confronted
+  // twice for claiming an edit. A quote is someone else's words.
+  await t('claims-changes ignores quoted ticket text', () => {
+    const quoted = 'Per the ticket, this was fixed by PayPal: *"This has been fixed now from paypal team after multiple follow up"* (2026-06-19).';
+    const block = 'Closing comment:\n> This has been fixed now from paypal team\nNo repo change is referenced.';
+    assert.ok(!CLAIMS_CHANGES_RE.test(withoutQuotes(quoted)));
+    assert.ok(!claimsFileChanges(quoted));
+    assert.ok(!claimsFileChanges(block));
+    // The agent's own claim still trips it, even next to a quoted path.
+    assert.ok(claimsFileChanges('I updated "src/foo.ts" to clear the cache.'));
+    assert.ok(CLAIMS_CHANGES_RE.test(withoutQuotes(PHANTOM_ANSWER_7)));
   });
   await t('phantom report is stall-shaped for transcript retention', () => {
     // Via the diff fence / met-after-fix in the full live answer; the worker
@@ -6161,7 +6173,9 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     assert.ok(isBugWorkItem('Bug') && isBugWorkItem(' defect ') && isBugWorkItem('Production Bug'));
     assert.ok(!isBugWorkItem('Spike') && !isBugWorkItem('User Story') && !isBugWorkItem(undefined));
     const prompt = debugWorkItemPrompt('1234567');
-    assert.ok(IMPLEMENT_MANDATE_RE.test(prompt) || hasWriteIntent(prompt), 'the host must read the button prompt as a mandate to fix');
+    // The narrow regex alone: the host's Debug-mode entry no longer reads hasWriteIntent (#1305014).
+    assert.ok(IMPLEMENT_MANDATE_RE.test(prompt), 'the host must read the button prompt as a mandate to fix');
+    assert.ok(!IMPLEMENT_MANDATE_RE.test('Can you look into this ticket and summarise it in a way to raise a adyen and support ticket for this?'), 'a summary request is not a mandate');
   });
 
   await t('probeFamily and checkProbeExpr: supported languages, observe-only expressions, no credentials', () => {
@@ -6421,6 +6435,13 @@ console.log('\nDebug mode (docs/design/debug-mode.md — probes, the evidence le
     assert.equal(ticketHasWebRepro({ description: 'x', comments: [{ text: 'still on http://staging.shop.test/checkout' }] }), true);
     assert.equal(ticketHasWebRepro({ url: 'https://dev.azure.com/org/_workitems/edit/1', description: 'NullReferenceException in the export job' }), false);
     assert.equal(ticketHasWebRepro(null), false);
+  });
+
+  await t('a closed ticket is history, not a live bug to reproduce (#1305014)', () => {
+    const { ticketIsClosed } = dbg;
+    for (const st of ['Closed', 'Resolved', ' done ', 'Removed', 'Completed', 'Cancelled']) assert.equal(ticketIsClosed({ state: st }), true, st);
+    for (const st of ['Active', 'New', 'In Progress', 'Reopened', '']) assert.equal(ticketIsClosed({ state: st }), false, st);
+    assert.equal(ticketIsClosed(null), false);
   });
 
   await t('a Debug report headed Done must have fixed something and confirmed the cause', () => {

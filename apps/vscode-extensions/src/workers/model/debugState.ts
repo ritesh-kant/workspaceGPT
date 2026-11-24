@@ -81,6 +81,15 @@ export function ticketHasWebRepro(t: { reproSteps?: string; description?: string
   return /https?:\/\/[^\s"'<>]+/i.test(text);
 }
 
+/**
+ * Is the ticket in a terminal state (a fact from the tracker)? A closed bug is
+ * history being read, not a live bug to reproduce — #1305014 was summarised for
+ * a vendor ticket and still got pushed into a browser repro of stage.
+ */
+export function ticketIsClosed(t: { state?: string } | null | undefined): boolean {
+  return /^(closed|done|resolved|removed|completed|cancell?ed)$/i.test(String(t?.state ?? '').trim());
+}
+
 export interface CommandResultLike {
   exitCode?: number | null;
   timedOut?: boolean;

@@ -25,6 +25,7 @@ import {
   stripReportPreamble,
   IMPLEMENT_MANDATE_RE,
   CLAIMS_CHANGES_RE,
+  withoutQuotes,
   MISSING_TOOL_CLAIM_RE,
   extractAnswerFilePaths,
   isStallShapedAnswer,
@@ -82,7 +83,7 @@ import {
   LimitKind,
   pruneStaleHarnessMessages,
 } from './resumeHygiene';
-import { DebugTracker, claimedRootCauseStatus, isTestPath, ticketHasWebRepro } from './debugState';
+import { DebugTracker, claimedRootCauseStatus, isTestPath, ticketHasWebRepro, ticketIsClosed } from './debugState';
 import { hasRegressionCue, ticketTexts } from '../../utils/regressionCue';
 import { AutoVerifyTracker, CheckResultLike, CheckKindName, PendingCheck, AUTO_CHECKABLE_FILE_RE } from './autoVerify';
 import { stripLineNumbers } from '../../services/codebase/lineNumbers';
@@ -3939,7 +3940,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       // ("Changes Made: renamed..."): the model role-played the task instead
       // of doing it — observed live with qwen writing a full markdown story of
       // edits it never attempted. Confront once.
-      const claimsChanges = CLAIMS_CHANGES_RE.test(outcome.content);
+      const claimsChanges = CLAIMS_CHANGES_RE.test(withoutQuotes(outcome.content));
       // Not in plan mode: a plan's "the change to X" is its deliverable, and
       // this nudge's "make the changes NOW" names tools the run doesn't have.
       if (!planMode && writesApplied === 0 && claimsChanges && phantomChangesNudgesUsed < 2) {
@@ -4231,6 +4232,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
         !browserReproNudgeUsed &&
         toolAvailability?.browser &&
         ticketHasWebRepro(ticketContext) &&
+        !ticketIsClosed(ticketContext) &&
         !Object.keys(toolNameCounts).some((n) => n.startsWith('browser_')) &&
         claimedRootCauseStatus(outcome.content) !== 'confirmed'
       ) {
@@ -4466,7 +4468,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
       const deliverable = finalizeDeliverable(cleanedContent);
       if (deliverable) parentPort?.postMessage({ type: 'chunk', content: deliverable });
       emitMetrics();
-      parentPort?.postMessage({ type: 'done', content: deliverable, writesApplied, diagnostics: runDiagnostics, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(deliverable) || CLAIMS_CHANGES_RE.test(deliverable)) });
+      parentPort?.postMessage({ type: 'done', content: deliverable, writesApplied, diagnostics: runDiagnostics, stallShaped: !planMode && writesApplied === 0 && (isStallShapedAnswer(deliverable) || CLAIMS_CHANGES_RE.test(withoutQuotes(deliverable))) });
       return;
     }
 
@@ -5075,7 +5077,7 @@ async function runAgentLoop(initialPrompt: string, model: string, baseURL: strin
     }) ||
     (!planMode &&
       writesApplied === 0 &&
-      (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(finalDeliverable)));
+      (isStallShapedAnswer(finalDeliverable) || CLAIMS_CHANGES_RE.test(withoutQuotes(finalDeliverable))));
   parentPort?.postMessage({ type: 'done', content: finalDeliverable, writesApplied, diagnostics: runDiagnostics, stallShaped: forcedExitStalled });
 }
 

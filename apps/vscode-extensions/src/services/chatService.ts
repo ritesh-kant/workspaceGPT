@@ -3689,7 +3689,11 @@ Query: "${query}"`;
         !chatOnly &&
         !!codebaseRoots?.length &&
         (debugRequested ||
-          (!!ticketContext && isBugWorkItem(ticketContext.type) && (ticketImplementIntent || autonomous || planMode)) ||
+          // Not ticketImplementIntent: its hasWriteIntent half is a wide verb net ("support",
+          // "handle", "update") that is safe for one reminder but must not decide the run's
+          // shape — "summarise it to raise a support ticket" on a closed Bug became a Debug
+          // run that was pushed into a browser repro (#1305014).
+          (!!ticketContext && isBugWorkItem(ticketContext.type) && (executeMandate || IMPLEMENT_MANDATE_RE.test(message) || autonomous || planMode)) ||
           (run.lastDebugMode && (!!resumeTranscript?.length || executeMandate)));
       run.lastDebugMode = debugMode;
       const ticketLookupOnly = !!ticketContext && !autonomous && !planMode && !ticketImplementIntent && !debugRequested;

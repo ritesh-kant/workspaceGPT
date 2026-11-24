@@ -71,7 +71,7 @@ const TICKET = {
   reproSteps: '1. Add three items priced 1, 2, 3\n2. Open the cart\n3. Total shows 3, expected 6',
 };
 const REGRESSION_TICKET = { ...TICKET, description: 'The cart total was working before the last release; now it is short by the price of the last item.' };
-const PROMPT = 'Debug bug #1520855 — reproduce it, find the root cause and prove it with something you ran, then fix it with the smallest change and add a regression test.';
+const PROMPT = 'Debug bug #1520855 — reproduce it, find the root cause and prove it with something you ran, then fix this bug with the smallest change and add a regression test.';
 
 // ── the host half the worker talks to, mirroring chatService's methods ─
 

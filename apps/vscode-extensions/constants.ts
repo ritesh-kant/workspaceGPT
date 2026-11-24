@@ -1388,7 +1388,7 @@ export function isBugWorkItem(type?: string): boolean {
  */
 export function debugWorkItemPrompt(id: string): string {
   return (
-    `Debug bug #${id} — reproduce it, find the root cause and prove it with something you ran, then fix it with the smallest change and add a regression test. ` +
+    `Debug bug #${id} — reproduce it, find the root cause and prove it with something you ran, then fix this bug with the smallest change and add a regression test. ` +
     'If it cannot be reproduced here or a fact only I can give is missing, ask me instead of guessing.'
   );
 }

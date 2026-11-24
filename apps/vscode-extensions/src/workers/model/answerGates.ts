@@ -435,6 +435,20 @@ export const CLAIMS_CHANGES_RE =
   /\b(changes made|implemented fix|fix (implemented|applied|landed)|i (have )?(successfully )?(changed|renamed|updated|modified|created|fixed|implemented|applied|removed|replaced|edited|added|introduced|extracted|wired|rewired|refactored|moved)|(has|have) been (\w+ly )?(changed|renamed|updated|modified|created|fixed|implemented|applied|removed|replaced)|(was|were) (\w+ly )?(changed|renamed|updated|replaced|removed)|successfully (changed|renamed|updated|modified|created|fixed|implemented|applied)|is (now )?(removed|replaced)|now passes)\b|^\s*#{1,4}\s*implemented\b/im;
 
 /**
+ * The answer with quoted material removed — blockquote lines and "…" / “…”
+ * spans. CLAIMS_CHANGES_RE is about the agent's OWN claims; a quote is someone
+ * else's words. Observed live on #1305014: the answer quoted the ticket's
+ * closing comment ("This has been fixed now from paypal team") and was twice
+ * confronted for claiming an edit it never claimed.
+ */
+export function withoutQuotes(answer: string): string {
+  return String(answer ?? '')
+    .replace(/^\s*>.*$/gm, '')
+    .replace(/"[^"\n]{1,500}"/g, '""')
+    .replace(/“[^”\n]{1,500}”/g, '“”');
+}
+
+/**
  * The answer claims a WRITE tool is missing from its tool list ("the
  * edit_file tool has not been exposed to me in this turn", "I cannot make a
  * code change without a write tool"). Observed live as the eighth
@@ -468,7 +482,7 @@ export const REPORT_CHANGES_SECTION_RE =
 /** Does this answer claim that files were changed — by prose or by report section? */
 export function claimsFileChanges(answer: string): boolean {
   const a = String(answer ?? '');
-  return CLAIMS_CHANGES_RE.test(a) || REPORT_CHANGES_SECTION_RE.test(a);
+  return CLAIMS_CHANGES_RE.test(withoutQuotes(a)) || REPORT_CHANGES_SECTION_RE.test(a);
 }
 
 /**
