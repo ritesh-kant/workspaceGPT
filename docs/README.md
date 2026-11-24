@@ -35,6 +35,9 @@ top of each says what was built and when.
 
 - [proposals/skills.md](proposals/skills.md): deterministic skill recipes for
   smaller models.
+- [proposals/computer-use.md](proposals/computer-use.md): the agent operates
+  native desktop apps (desktop, macOS first), with per-app grants, and
+  screenshots that are never stored. Includes the Claude and Codex comparison.
 
 ## Elsewhere
 
