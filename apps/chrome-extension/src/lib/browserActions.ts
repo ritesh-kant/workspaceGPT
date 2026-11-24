@@ -389,9 +389,30 @@ async function resolveTab(rawTabId?: unknown): Promise<chrome.tabs.Tab> {
  */
 async function showAgentTab(tab: chrome.tabs.Tab): Promise<chrome.tabs.Tab> {
   if (tab.active) return tab;
+  // The user has switched to a tab of their own in this window. Switching back would pull
+  // them off it on every action, so give the agent's group a window of its own instead.
+  if (await userTabShowing(tab)) await moveGroupToOwnWindow(tab.groupId);
   const shown = await chrome.tabs.update(tab.id!, { active: true });
   await sleep(300);
   return shown ?? tab;
+}
+
+/** Whether the tab `tab`'s window shows is outside the agent's group, i.e. the user's own. */
+async function userTabShowing(tab: chrome.tabs.Tab): Promise<boolean> {
+  const [showing] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+  return !!showing && showing.groupId !== tab.groupId;
+}
+
+/**
+ * Move the agent's group to a new unfocused window. Its tab is then the one that window
+ * shows (so it paints and takes input, with focus emulation against throttling) while the
+ * user's window keeps the tab they chose.
+ */
+async function moveGroupToOwnWindow(groupId: number): Promise<void> {
+  const win = await chrome.windows.create({ focused: false });
+  const blank = win.tabs?.[0]?.id;
+  await chrome.tabGroups.move(groupId, { windowId: win.id!, index: -1 });
+  if (blank !== undefined) await chrome.tabs.remove(blank).catch(() => undefined);
 }
 
 /** The tab to act on, or an error the model can act on: its own group, or the tab the user is looking at. */
@@ -1464,9 +1485,14 @@ export async function handleBrowserRequest(method: string, params: any): Promise
       let tab: chrome.tabs.Tab;
       if (groupId !== undefined) {
         const group = await chrome.tabGroups.get(groupId);
-        tab = await chrome.tabs.create({ windowId: group.windowId, url, active: true });
+        const [showing] = await chrome.tabs.query({ active: true, windowId: group.windowId });
+        // The user is on a tab of their own in the agent's window: open beside the group
+        // without taking the window from them or raising it.
+        const userThere = !!showing && showing.groupId !== groupId;
+        tab = await chrome.tabs.create({ windowId: group.windowId, url, active: !userThere });
         await chrome.tabs.group({ tabIds: tab.id!, groupId });
-        await chrome.windows.update(group.windowId, { focused: true }).catch(() => undefined);
+        // No raising the group's window: once it is a window of its own, that would put it over the user's.
+        if (userThere) tab = await showAgentTab(await chrome.tabs.get(tab.id!));
       } else {
         // First tab: a new tab in the window the user is in, put in a "WorkspaceGPT"
         // group so it is marked as the agent's. A separate unfocused window opened
